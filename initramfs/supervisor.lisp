@@ -93,9 +93,10 @@
               (parse-integer (line "/sys/class/graphics/fb0/stride")        :junk-allowed t)
               (parse-integer (line "/sys/class/graphics/fb0/bits_per_pixel") :junk-allowed t)))))
 
-(defun draw-alien (&optional (margin 16))
+(defun draw-alien (&key (margin 16) announce)
   "Blit the alien sprite into the top-right corner of /dev/fb0.
-   Pure userland: the framebuffer is memory we seek into and write."
+   Pure userland: the framebuffer is memory we seek into and write.
+   :announce t prints a status line (we stay silent on routine menu redraws)."
   (handler-case
       (multiple-value-bind (xres yres stride bpp) (read-fb-geometry)
         (unless (= bpp 32)
@@ -131,20 +132,24 @@
                 (file-position fb dst)
                 (write-sequence row fb)))
             (finish-output fb))
-          (format t "~&alien drawn at (~a,~a) on a ~ax~a framebuffer.~%"
-                  x0 y0 xres yres)
-          (finish-output)))
+          (when announce
+            (format t "~&alien drawn at (~a,~a) on a ~ax~a framebuffer.~%"
+                    x0 y0 xres yres)
+            (finish-output))))
     (serious-condition (c)
       (format t "~&couldn't draw the alien: ~a~%" c) (finish-output))))
 
 (defun print-menu ()
-  (format t "~&~%========= micro-lisp supervisor =========~%")
+  (format t "~&~%======== lisp-over-linux supervisor ========~%")
+  (format t "  I am PID ~a · SBCL ~a~%~%"
+          (sb-unix:unix-getpid) (lisp-implementation-version))
   (format t "  r) run a Lisp REPL~%")
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
   (format t "  s) shut down (power off)~%")
-  (format t "=========================================~%")
-  (format t "choice> ") (finish-output))
+  (format t "============================================~%")
+  (format t "choice> ") (finish-output)
+  (draw-alien))                  ; (re)paint the alien LAST so it stays on screen
 
 (defun supervisor-main ()
   "PID 1: an interactive menu loop. Never returns."
@@ -152,7 +157,8 @@
           (sb-unix:unix-getpid) (lisp-implementation-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
-  (draw-alien)                    ; greet the user with the LoL alien
+  (sleep 1)                       ; let the boot diagnostics be read first
+  (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien
   (let ((worker-id 0))
     (loop
       (handler-case
@@ -168,7 +174,7 @@
                  (incf worker-id)
                  (format t "~&spawning worker ~a~%" worker-id)
                  (spawn-worker worker-id))
-                ((string-equal choice "a") (draw-alien))
+                ((string-equal choice "a") (draw-alien :announce t))
                 ((string-equal choice "s") (power-off))
                 ((string= choice ""))                 ; bare Enter: just redraw
                 (t (format t "~&unknown choice: ~a~%" choice)))))

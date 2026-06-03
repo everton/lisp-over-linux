@@ -7,6 +7,11 @@ userland is *SBCL Common Lisp running as PID 1*. No GRUB, no systemd, no shell �
 firmware → kernel → Lisp. "lisp-over-linux", LoL for short (yes, also a nod to
 the *Land of Lisp* alien this thing paints in the corner of the screen).
 
+[[./media/screenshot.png]]
+
+/Booted under QEMU/OVMF: SBCL is PID 1, printing the supervisor menu on the
+framebuffer console (Terminus 16x32 font, kernel tag #20)./
+
 This is a learning project: prefer reading the =.org= docs below over guessing.
 
 * What is in this repo (and what is NOT)

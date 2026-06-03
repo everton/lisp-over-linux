@@ -122,8 +122,11 @@ How each piece works:
   - *Alien (framebuffer graphics).* =draw-alien= reads the fb geometry from
     sysfs (=read-fb-geometry=) and blits a 256x150 RGBA sprite (=/alien.rgba=)
     into the top-right of =/dev/fb0= via seek + read-modify-write, honouring the
-    alpha channel for a transparent cutout. Pure userland, no kernel change. Full
-    write-up: [[file:framebuffer.org][framebuffer.org]] §8 (and §5 for /dev/fb0).
+    alpha channel for a transparent cutout. The menu clears the screen and calls
+    =draw-alien= *after* printing, every cycle, so the alien persists in the
+    corner (silent on redraws; =a)= passes =:announce t= for the status line).
+    Pure userland, no kernel change. Full write-up:
+    [[file:framebuffer.org][framebuffer.org]] §8 (and §5 for /dev/fb0).
 
 Key bits learned while writing it:
   - =sb-posix:getpid= is a CONTRIB and is NOT loaded by default (and

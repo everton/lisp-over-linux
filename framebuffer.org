@@ -160,8 +160,9 @@ Notes:
 - Largest mainline built-in is TER16x32; beyond that needs a custom font.
 - =setfont= (kbd package) could change fonts at runtime, but we do not ship that
   userland, so compile-in + cmdline is the realistic path here.
-- Bigger font => the alien's top-right corner is reached by console text sooner,
-  so press =a= to redraw it (see section 8).
+- The supervisor clears the screen for its menu and repaints the alien *after*
+  the menu each cycle, so it stays in the corner regardless of font size (see
+  section 8).
 
 * 8. Drawing an image (the Land-of-Lisp alien) in a corner — *IMPLEMENTED*
 
@@ -197,9 +198,12 @@ How it is wired up:
    magenta). If a different machine reports swapped colours, exchange the two
    marked B/R lines in =draw-alien=.
 
-Caveat (still true): fbcon shares the framebuffer, so console scrolling will
-overwrite the alien. That is why =a)= redraws it on demand; the boot-time draw
-is just a greeting.
+Persistence: fbcon shares the framebuffer, so console scrolling overwrites the
+alien. The supervisor handles this by clearing the screen before its menu and
+calling =draw-alien= *after* printing the menu on every cycle — so the alien
+sits in the (otherwise blank) top-right corner and is repainted each prompt.
+=draw-alien= is silent during these routine redraws; the =a)= menu key calls it
+with =:announce t= to print the "alien drawn at …" status line.
 
 Dependencies:
 - Build host (one-off only): ImageMagick =convert= + the source PNG. Not needed
