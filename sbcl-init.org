@@ -1,0 +1,369 @@
+#+TITLE: SBCL Common Lisp as PID 1 — running a Lisp runtime as init
+#+STARTUP: showall
+
+Parent doc: [[file:micro-distro.org][micro-distro.org]] (the base EFISTUB micro-linux).
+Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
+This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
+Common Lisp) the very first userspace process.
+
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #20). A C preinit mounts
+/proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
+interactive console menu: (r) Lisp REPL, (w) spawn a worker, (a) draw the
+Land-of-Lisp alien to the framebuffer, (s) power off.
+Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
+with [[file:build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
+(USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
+(Terminus 16x32, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7). See
+=* The supervisor= / "Two findings".
+
+* The challenge in one sentence
+
+Our previous inits (glibc/musl "hello") were a few KB and self-contained.
+SBCL is a whole *language runtime*: a ~2 MB C runtime PLUS a ~34 MB Lisp heap
+image ("core"), and it is *dynamically linked* against glibc. So "make it init"
+becomes a lesson in shipping a dynamic program + its shared libraries inside an
+initramfs — the exact thing static linking let us avoid before.
+
+* Findings from the actual ~/sbcl tree (grounded, measured)
+
+SBCL here is a *built source tree*, version 2.5.7.42-d4575c591:
+  - runtime:  ~/sbcl/src/runtime/sbcl        (2.1 MB, ELF, dynamically linked)
+  - core:     ~/sbcl/output/sbcl.core        (34 MB Lisp heap image)
+  - contribs: ~/sbcl/contrib/...             (NOT needed for a minimal init)
+
+Runtime shared-library dependencies (from =ldd=) — the ONLY external pieces:
+  - /lib64/ld-linux-x86-64.so.2   the glibc dynamic loader  (~225 KB)
+  - libc.so.6                     glibc                      (~2.0 MB)
+  - libm.so.6                     glibc math                 (~1.0 MB)
+  - linux-vdso.so.1               provided by the kernel, NOT a file to ship
+(modern glibc folded libpthread/libdl into libc.so.6, so there are no separate
+pthread/dl libraries to copy. No libzstd => this core is uncompressed.)
+
+Crucial runtime behaviour:
+  - A standalone =:executable= image finds its embedded core by reading
+    */proc/self/exe* (confirmed: the string is in the runtime binary).
+    => /proc MUST be mounted before SBCL starts, or it can't find its core.
+  - SBCL uses threads (futex), mmaps a large dynamic space (~1 GB reserved,
+    lazily committed) => give the VM/host enough RAM (>= ~1-2 GB).
+
+* The approach we followed
+
+1. *Standalone image.* =save-lisp-and-die :executable t= bakes the core INTO a
+   single ~36 MB executable (/sbin/lisp). No separate .core file to manage.
+2. *Ship glibc.* Copy the 3 glibc pieces (loader + libc + libm) into the
+   initramfs at the exact paths the binary expects.
+3. *C preinit.* A tiny musl-static C =/init= mounts /proc /sys /dev /tmp and then
+   =execv=s /sbin/lisp (so /proc exists before SBCL looks for its core; PID 1 is
+   replaced in place, staying PID 1).
+4. *Separate initrd.* The kernel embeds NO initramfs (=CONFIG_INITRAMFS_SOURCE=""=);
+   the ~38 MB cpio is a SECOND file the EFISTUB loads via =initrd== on the
+   built-in cmdline. Keeps the kernel small and lets us iterate on the Lisp world
+   without ever rebuilding the kernel.
+
+* Dependency checklist (what must be inside the initramfs)
+
+  | path in initramfs                          | source on host                                   | why                         |
+  |--------------------------------------------+--------------------------------------------------+-----------------------------|
+  | /init                                      | initramfs/preinit (musl static C)                | mounts fs, execs the Lisp   |
+  | /sbin/lisp                                 | initramfs/lisp-init (save-lisp-and-die)          | the SBCL image (PID 1)      |
+  | /lib64/ld-linux-x86-64.so.2                | /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2   | dynamic loader (hard path)  |
+  | /usr/lib/x86_64-linux-gnu/libc.so.6        | same                                             | glibc                       |
+  | /usr/lib/x86_64-linux-gnu/libm.so.6        | same                                             | glibc math                  |
+  | /dev/console,/dev/null,/dev/tty (nodes)    | gen_init_cpio nod entries                        | stdio before devtmpfs       |
+  | dirs: /proc /sys /dev /tmp /sbin /lib64 /usr /usr/lib /usr/lib/x86_64-linux-gnu | gen_init_cpio dir entries | mount points + lib paths |
+
+Note: no =ld.so.cache= exists in the initramfs, so the loader uses its built-in
+default search path (which includes =/usr/lib/x86_64-linux-gnu=). Placing the
+libs there is what makes them resolvable.
+
+* Build & run it — build.sh
+
+=~/linux/micro/build.sh= is the one-step rebuild. The fast path rebuilds only the
+userland (the whole point of the separate initrd — no kernel rebuild):
+
+  - =./build.sh=                 preinit + lisp-init + initramfs.cpio   (seconds)
+  - =./build.sh --kernel=        ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
+  - =./build.sh --run=           build, then boot in QEMU and screenshot it
+  - =./build.sh --kernel --run=  the full cycle
+  (flags combine; env =QEMU_WAIT=<seconds>= tunes the pre-screenshot boot wait)
+
+=--run= boots iso_root/ under OVMF headless, waits, grabs the framebuffer via the
+QMP socket to =screen.png=, and prints the serial boot markers. Everyday loop:
+edit =supervisor.lisp= -> =./build.sh --run= -> open =screen.png=.
+
+The sections below spell out what build.sh does, for reference.
+
+* The supervisor (didactic, not production)
+
+Source: =initramfs/supervisor.lisp=. One executable, two roles chosen by argv:
+no args => interactive SUPERVISOR menu (PID 1); "worker <id>" => a short-lived
+WORKER. Toplevel =init-toplevel= dispatches; key functions =supervisor-main=,
+=run-repl=, =power-off=, =worker-main=, =spawn-worker=.
+
+The supervisor is an interactive menu read from the console:
+  r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
+  w) spawn a worker process       -> fork+exec another /sbin/lisp as a worker
+  a) draw the Land-of-Lisp alien  -> blit a sprite to /dev/fb0 (see framebuffer.org §8)
+  s) shut down (power off)        -> sync + reboot(2)
+
+How each piece works:
+  - *Reading the console.* The menu reads =*standard-input*= (= fd 0 = /dev/console
+    = the fb console). The kernel N_TTY line discipline gives canonical input, so
+    you type a choice and press Enter; backspace works.
+  - *REPL.* =run-repl= is a guarded read/eval/print loop. EVERY read and eval is
+    wrapped in =handler-case= for =serious-condition=, so a bad form or error
+    just prints and re-prompts — it can never kill PID 1. =:quit= leaves the REPL.
+  - *Shutdown.* =power-off= calls libc via sb-alien FFI: =sync()= then
+    =reboot(#x4321fedc)= (=RB_POWER_OFF=). No new dependency — the symbols live in
+    the libc we already ship. If power-off is refused it returns to the menu.
+  - *Workers.* spawned with =sb-ext:run-program= (forks+execs /sbin/lisp, reaps
+    its own children). The menu loop catches =serious-condition= too, so nothing
+    in a menu action can crash init.
+  - *Alien (framebuffer graphics).* =draw-alien= reads the fb geometry from
+    sysfs (=read-fb-geometry=) and blits a 256x150 RGBA sprite (=/alien.rgba=)
+    into the top-right of =/dev/fb0= via seek + read-modify-write, honouring the
+    alpha channel for a transparent cutout. Pure userland, no kernel change. Full
+    write-up: [[file:framebuffer.org][framebuffer.org]] §8 (and §5 for /dev/fb0).
+
+Key bits learned while writing it:
+  - =sb-posix:getpid= is a CONTRIB and is NOT loaded by default (and
+    =(require :sb-posix)= fails against this source tree). Use the built-in
+    =(sb-unix:unix-getpid)= instead — no contrib needed.
+  - PID 1 must reap children or they become zombies. =run-program= reaps the
+    children IT launched. A fuller init would also reap *reparented* orphans with
+    a waitpid(-1, WNOHANG) loop on SIGCHLD — noted, not implemented.
+  - PID 1 must never return — every menu action loops or powers off.
+
+** Two findings while testing in QEMU
+  - *"segfault" spam on the console is NORMAL SBCL.* Its generational GC uses
+    write-protected pages + a SIGSEGV handler as a write barrier (fault code 7 =
+    user write to a write-protected page); SBCL handles each and resumes. The
+    kernel logs every one as "lisp[1]: segfault ..." onto the console. The preinit
+    silences it: write "0" to =/proc/sys/debug/exception-trace= after mounting /proc.
+  - *ACPI power-off — FIXED (kernel #19).* It used to halt instead of powering off:
+    the DSDT wouldn't load ("ACPI: Unable to load the System Description Tables",
+    AE_BAD_PARAMETER during Region init) so there was no \_S5. ROOT CAUSE: the
+    kernel had =# CONFIG_PCI is not set=. A DSDT declares operation regions in PCI
+    *config space*; with PCI off the ACPI PCI-config region handler isn't
+    registered, so region init fails and the whole DSDT is rejected. Enabling
+    =CONFIG_PCI=y= fixed it — now "reboot: Power down" and QEMU exits cleanly.
+    (Same root cause as the real-hardware keyboard bug below — see
+    [[file:micro-distro.org][micro-distro.org]] "Real-hardware input (PCI/USB/HID)".)
+  - *Real-hardware keyboard — FIXED (kernel #19).* The supervisor booted on the
+    laptop but the keyboard was dead, while QEMU worked. QEMU emulates a legacy
+    PS/2 keyboard (i8042, which we had); a real laptop keyboard is USB or I2C-HID,
+    both PCI-bus devices — and PCI was off. Enabling PCI + the USB stack + USB_HID
+    + I2C-HID made it work; verified in QEMU with =-device qemu-xhci -device usb-kbd=
+    (the QEMU USB Keyboard enumerated and drove the menu). The supervisor now also
+    prints =/proc/bus/input/devices= names at startup (=show-input-devices=) as a
+    keyboard-detection diagnostic.
+
+** Building the SBCL image (what build.sh stage 2 runs)
+#+begin_src sh :results output
+  cat > /tmp/build-sup.lisp <<'LISP'
+  (load "/home/everton/linux/micro/initramfs/supervisor.lisp")
+  (sb-ext:save-lisp-and-die "/home/everton/linux/micro/initramfs/lisp-init"
+    :executable t :toplevel #'init-toplevel)
+  LISP
+  cd ~/sbcl
+  ./src/runtime/sbcl --core output/sbcl.core --no-userinit --no-sysinit \
+       --non-interactive --load /tmp/build-sup.lisp
+#+end_src
+(=--no-userinit --no-sysinit= so a personal ~/.sbclrc/quicklisp can't interfere.)
+
+* The C preinit
+
+=initramfs/preinit.c=:
+#+begin_src c :tangle initramfs/preinit.c
+  /* Preinit: PID 1 entry. Mount the basics so SBCL can find /proc/self/exe,
+   * then become SBCL via execv (process stays PID 1). */
+  #include <sys/mount.h>
+  #include <unistd.h>
+  #include <stdio.h>
+
+  int main(void) {
+      mount("proc",     "/proc", "proc",     0, NULL);
+      mount("sysfs",    "/sys",  "sysfs",    0, NULL);
+      mount("devtmpfs", "/dev",  "devtmpfs", 0, NULL);
+      mount("tmpfs",    "/tmp",  "tmpfs",    0, "size=64m,mode=1777");
+
+      char *argv[] = { "/sbin/lisp", NULL };
+      execv("/sbin/lisp", argv);
+
+      /* Only reached if exec failed. */
+      perror("preinit: execv /sbin/lisp");
+      for (;;) pause();
+      return 1;
+  }
+#+end_src
+Built tiny with musl: =musl-gcc -static -O2 -s -o preinit preinit.c=.
+
+* The initramfs description (gen_init_cpio)
+
+=initramfs/initramfs.sbcl.list= — gen_init_cpio can create device nodes WITHOUT
+root, which is why we use it instead of =find | cpio=:
+#+begin_src text :tangle initramfs/initramfs.sbcl.list
+  # --- directories (mount points + library search paths + /tmp) ---
+  dir  /dev                       0755 0 0
+  dir  /proc                      0755 0 0
+  dir  /sys                       0755 0 0
+  dir  /tmp                       1777 0 0
+  dir  /sbin                      0755 0 0
+  dir  /lib64                     0755 0 0
+  dir  /usr                       0755 0 0
+  dir  /usr/lib                   0755 0 0
+  dir  /usr/lib/x86_64-linux-gnu  0755 0 0
+  # --- device nodes (so stdio works before devtmpfs is mounted) ---
+  nod  /dev/console 0600 0 0 c 5 1
+  nod  /dev/null    0666 0 0 c 1 3
+  nod  /dev/tty     0666 0 0 c 5 0
+  # --- the C preinit is /init ---
+  file /init      /home/everton/linux/micro/initramfs/preinit   0755 0 0
+  # --- the SBCL standalone image ---
+  file /sbin/lisp /home/everton/linux/micro/initramfs/lisp-init 0755 0 0
+  # --- glibc runtime the SBCL binary needs (paths matter) ---
+  file /lib64/ld-linux-x86-64.so.2         /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 0755 0 0
+  file /usr/lib/x86_64-linux-gnu/libc.so.6 /usr/lib/x86_64-linux-gnu/libc.so.6            0755 0 0
+  file /usr/lib/x86_64-linux-gnu/libm.so.6 /usr/lib/x86_64-linux-gnu/libm.so.6            0755 0 0
+#+end_src
+
+* Separate-initrd kernel config (one-time)
+
+The userland rebuild (build.sh) never touches the kernel. The kernel only needs
+this config ONCE; build.sh --kernel rebuilds it afterwards.
+#+begin_src sh :results output
+  cd ~/linux/linux-6.18.3
+  ./scripts/config --set-str INITRAMFS_SOURCE ""      # embed NOTHING
+  ./scripts/config --enable TMPFS                      # for the /tmp mount
+  # EFISTUB opens initrd= RELATIVE TO THE VOLUME ROOT, so a backslash-free path
+  # works: "initrd=initramfs.cpio" resolves to \initramfs.cpio. (scripts/config
+  # strips backslashes anyway.) Confirmed by dmesg: "Unpacking initramfs...
+  # Freeing initrd memory: 38340K".
+  ./scripts/config --set-str CMDLINE "console=ttyS0,115200 console=tty0 initrd=initramfs.cpio"
+  make olddefconfig
+  make -j"$(nproc)" bzImage
+  cp arch/x86/boot/bzImage ~/linux/micro/iso_root/efi/boot/bootx64.efi
+#+end_src
+
+The cpio is built by hand (build.sh stage 3):
+=~/linux/linux-6.18.3/usr/gen_init_cpio initramfs/initramfs.sbcl.list > iso_root/initramfs.cpio=
+
+ESP/USB layout — TWO files (the point of the separate initrd):
+  \EFI\BOOT\BOOTX64.EFI   small kernel (no embedded initramfs)
+  \initramfs.cpio         the 38 MB SBCL world (loaded by EFISTUB at boot)
+
+* Boot it / put it on the USB
+
+Boot test: =./build.sh --run= (or the qemu+OVMF line in micro-distro.org, =-m 2048=).
+Expected on screen: the supervisor spawning workers, workers computing, and the
+supervisor reaping them (exit code == worker id), looping forever.
+
+Refresh the real USB (partitioning already done; copy BOTH files):
+#+begin_src sh
+  DEV=/dev/sda
+  sudo mount "${DEV}1" /mnt
+  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI
+  sudo cp ~/linux/micro/iso_root/initramfs.cpio       /mnt/initramfs.cpio
+  sync; sudo umount /mnt
+#+end_src
+
+* /tmp — what it took
+
+Two ingredients:
+  1. The directory must EXIST. One gen_init_cpio line creates it with the
+     conventional sticky, world-writable mode:
+        dir /tmp 1777 0 0
+  2. (optional but done here) A dedicated *tmpfs* mounted on it, for a real,
+     size-capped scratch fs separate from the root. Requires =CONFIG_TMPFS=y=
+     (we enabled it; =CONFIG_SHMEM=y= is its prerequisite). The preinit mounts it:
+        mount("tmpfs", "/tmp", "tmpfs", 0, "size=64m,mode=1777");
+Because the initramfs root is ALREADY a writable RAM filesystem, step 1 alone
+makes /tmp usable; step 2 just gives it isolation + a size limit.
+
+* Gotchas / lessons (the interesting part)
+
+  - *PID 1 must never exit.* The Lisp =:toplevel= loops forever; if it returns,
+    the kernel panics ("Attempted to kill init!"). Same rule as the C init.
+  - */proc before the core.* The =:executable= image finds its embedded core via
+    /proc/self/exe — mount /proc FIRST (the C preinit does). Without it SBCL may
+    fail to locate its core. This is the whole reason for the preinit shim.
+  - *Dynamic linking is the real tax.* We must ship the loader + libc + libm at
+    the exact paths and keep them version-matched to the host that built SBCL.
+    Mismatched glibc => loader errors at boot.
+  - *No ld.so.cache.* The loader can't consult /etc/ld.so.cache; rely on default
+    search paths (place libs in /usr/lib/x86_64-linux-gnu).
+  - *RAM.* SBCL wants real memory; don't test with -m 256.
+  - *Skip personal config* when building images: --no-userinit --no-sysinit.
+  - Secure Boot, framebuffer console, BOOTX64.EFI placement: all unchanged from
+    micro-distro.org — only the initramfs contents (and initrd= cmdline) differ.
+
+* rlwrap (rich line editing) — dependency notes  [NOT IMPLEMENTED]
+
+Reference notes so we don't re-derive this. The framebuffer console already gives
+*canonical-mode* line editing for free (backspace, Ctrl-U, Ctrl-W, line-at-a-time
+via the kernel N_TTY line discipline). What it does NOT give is *rich* editing —
+command history (up-arrow), in-line cursor movement (left/right, Ctrl-A/E), tab
+completion. Those need a readline layer. =rlwrap= is one way to add it.
+
+Cost: ~1 MB of files + a terminfo entry + a devpts mount. NO kernel rebuild
+(CONFIG_UNIX98_PTYS is already =y=). Measured against this host:
+
+** 1. Binary + 4 NEW shared libraries (beyond libc/libm/loader we already ship)
+   | soname (what the loader asks for) | real file on host        | size   |
+   |-----------------------------------+--------------------------+--------|
+   | libreadline.so.8                  | libreadline.so.8.3       | 379 KB |
+   | libtinfo.so.6                     | libtinfo.so.6.6          | 220 KB |
+   | libptytty.so.0                    | libptytty.so.0           | 117 KB |
+   | libgcc_s.so.1                     | libgcc_s.so.1            | 183 KB |
+   | (rlwrap itself)                   | /usr/bin/rlwrap          | 104 KB |
+   Subtlety: ship the REAL file at the SONAME path (gen_init_cpio lets dest != src):
+     file /usr/lib/x86_64-linux-gnu/libreadline.so.8 /usr/lib/x86_64-linux-gnu/libreadline.so.8.3 0755 0 0
+     file /usr/lib/x86_64-linux-gnu/libtinfo.so.6    /usr/lib/x86_64-linux-gnu/libtinfo.so.6.6     0755 0 0
+     file /usr/lib/x86_64-linux-gnu/libptytty.so.0   /usr/lib/x86_64-linux-gnu/libptytty.so.0      0755 0 0
+     file /usr/lib/x86_64-linux-gnu/libgcc_s.so.1    /usr/lib/x86_64-linux-gnu/libgcc_s.so.1       0755 0 0
+     file /usr/bin/rlwrap                            /usr/bin/rlwrap                                0755 0 0
+
+** 2. terminfo data file (easy to forget)
+   readline/libtinfo look up $TERM in the terminfo DB to know key sequences. The
+   fb console is TERM=linux => need /usr/share/terminfo/l/linux (1740 bytes):
+     dir  /usr/share/terminfo            0755 0 0
+     dir  /usr/share/terminfo/l          0755 0 0
+     file /usr/share/terminfo/l/linux  /usr/share/terminfo/l/linux  0644 0 0
+   AND set TERM=linux in the launch env (preinit: switch execv -> execve with
+   {"TERM=linux", NULL}). Without it, arrow keys won't decode.
+
+** 3. pty subsystem (the architectural one)
+   rlwrap runs the wrapped program inside a PSEUDO-TERMINAL (child on the slave
+   side; rlwrap shuttles bytes + does the editing in the middle). Needs:
+     - CONFIG_UNIX98_PTYS=y   -> already enabled, no rebuild
+     - /dev/ptmx              -> appears automatically once devtmpfs is mounted
+     - devpts mounted at /dev/pts  -> NOT done yet; add:
+         (list)    dir /dev/pts 0755 0 0
+         (preinit) mount("devpts","/dev/pts","devpts",0,"mode=0620,gid=5,ptmxmode=0666");
+
+** The catch (why we did NOT do it here)
+   rlwrap changes the process model: /init -> execv -> rlwrap (PID 1) -> forks ->
+   SBCL (child, in a pty). So rlwrap becomes PID 1, not SBCL, and rlwrap exits when
+   its child exits (PID 1 exiting = panic; fine only while the child loops forever).
+   rlwrap is built to wrap ONE interactive REPL, so it composes badly with our
+   supervisor-spawns-workers design. Good fit: a SIMPLE "SBCL REPL as init" image.
+   For an interactive REPL into the SUPERVISOR, prefer Swank/SLynk (next steps) —
+   no pty/terminfo/readline files at all, richer REPL from your editor.
+
+   PURE-LISP alternative (no rlwrap, no native readline): do the line editing in
+   Lisp itself — raw-mode termios via sb-alien FFI to the libc we already ship,
+   plus ANSI escapes the fbcon understands. See [[file:line-editing.org][line-editing.org]] for the full
+   write-up, the linedit feature list, and why linedit's deps (osicat native shim
+   + terminfo DB) make a hand-rolled editor the better fit here.
+
+* Next steps / ideas
+
+  - On-demand by a real trigger: have the supervisor spawn a worker in response
+    to input (a console line, a socket message) rather than a timer/top-up loop.
+  - Reap reparented orphans too: a SIGCHLD handler doing waitpid(-1, ..., WNOHANG).
+  - Mount /proc,/sys from within Lisp via sb-alien (FFI to mount(2)) and drop the
+    C preinit entirely — a more "pure Lisp" init (but keep /proc for core lookup;
+    chicken-and-egg makes the shim safer).
+  - Give SBCL a real console REPL; add a getty-like read loop.
+  - Build SBCL static (musl) to eliminate the shipped glibc libs entirely.
+  - Swank/SLynk over a serial or network socket => remote Lisp REPL into PID 1.

@@ -1,0 +1,484 @@
+#+TITLE: Micro EFISTUB Linux — no bootloader, boots from USB via UEFI
+#+STARTUP: showall
+
+Related: [[file:sbcl-init.org][sbcl-init.org]] — running SBCL Common Lisp as PID 1
+(shipping a dynamic language runtime + its glibc libs inside the initramfs).
+Also: [[file:kernel-config.org][kernel-config.org]] — every kernel option we enable and why.
+Deep-dive: [[file:framebuffer.org][framebuffer.org]] — the framebuffer/console, end to end.
+Roadmap: [[file:networking.org][networking.org]] — bringing a network layer (planning only, next up).
+
+* Goal
+
+A *very* minimal Linux that a UEFI laptop boots directly from a USB stick,
+with *no GRUB / systemd-boot / any bootloader*. The kernel itself is the EFI
+application (EFISTUB), it carries an *embedded initramfs*, and the initramfs
+runs a tiny static =/init= that prints a banner and stays alive.
+
+Boot chain:
+  UEFI firmware  ->  \EFI\BOOT\BOOTX64.EFI (== the kernel)  ->  embedded
+  initramfs  ->  /init  ->  banner on the EFI framebuffer console.
+
+Status: *WORKING* — verified end-to-end in QEMU + OVMF (UEFI) AND on real
+hardware (boots on the laptop). See =* Testing=.
+Kernel build: linux-6.18.3. Config tag =#16= = first working glibc build;
+tag =#17= = same but with the musl-built init (see =* Shrinking init with musl=).
+USB written to /dev/sda (Kingston DataTraveler 3.0, 57.7G): GPT + one ESP
+(ef00, FAT32) with the kernel copied to \EFI\BOOT\BOOTX64.EFI.
+
+* What was wrong the first time (diagnosis)
+
+These are the bugs that made the first attempt "not boot". All are fixed below.
+
+1. *BOOTX64.EFI was not the kernel.* =iso_root/efi/boot/bootx64.efi= had been
+   filled with an ISO image (bytes started with all zeros). With EFISTUB the
+   *kernel bzImage IS the EFI application* — =BOOTX64.EFI= must literally be a
+   copy of =arch/x86/boot/bzImage=. The firmware was launching garbage.
+   Check:  =file iso_root/efi/boot/bootx64.efi=  must say "Linux kernel x86
+   boot executable, bzImage ... 64-bit EFI handoff entry point" and start with
+   the ASCII bytes =MZ=.
+
+2. *init exited.* The old =init.c= printed "Hello" and =return=ed. When PID 1
+   returns/exits the kernel immediately panics ("Attempted to kill init!").
+   PID 1 must loop forever.
+
+3. *No initramfs was actually embedded.* =CONFIG_INITRAMFS_SOURCE= was empty
+   (=""=) even though the notes said to set it, so the kernel had no =/init=.
+
+4. *No /dev/console + DEVTMPFS off.* With no console device node and
+   =CONFIG_DEVTMPFS= disabled, userspace had nowhere to print — a silent boot.
+
+5. *THE real-hardware killer: no framebuffer console.* The kernel had only
+   =CONFIG_VGA_CONSOLE= (legacy VGA text). A real UEFI laptop has *no* legacy
+   VGA text mode — only a GOP linear framebuffer. Without =efifb= + =fbcon=
+   (=CONFIG_FB=, =CONFIG_FB_EFI=, =CONFIG_FRAMEBUFFER_CONSOLE=) the kernel boots
+   fine but the *laptop screen stays blank*, which looks exactly like a failure.
+
+6. (Debug-quality-of-life, not fatal) =CONFIG_SERIAL_8250_CONSOLE= was off, so
+   =console=ttyS0= produced nothing — made headless QEMU debugging blind.
+
+* Layout / artifacts (in ~/linux/micro)
+
+  initramfs/init.c              tiny PID 1 (source)
+  initramfs/init               static ELF, built from init.c
+  initramfs/initramfs.list     gen_init_cpio description (nodes + /init)
+  iso_root/efi/boot/bootx64.efi == the kernel bzImage (EFISTUB)  <-- the bootable file
+  ovmf_vars_test.fd            writable copy of OVMF NVRAM for QEMU tests
+  serial.log / screen.png      last test capture
+  ~/linux/linux-6.18.3/        kernel source tree
+
+* Prerequisites (host packages)
+
+#+begin_src sh
+  sudo apt install \
+       build-essential bc kmod cpio flex bison \
+       libncurses-dev libelf-dev libssl-dev dwarves rsync \
+       qemu-system-x86 ovmf \
+       dosfstools mtools gdisk   # only needed to build the real USB image
+#+end_src
+
+OVMF firmware on this box:
+  /usr/share/OVMF/OVMF_CODE_4M.fd   (code, read-only)
+  /usr/share/OVMF/OVMF_VARS_4M.fd   (NVMR template -> copy to a writable file)
+
+Note: this user is NOT in the =kvm= group, so QEMU runs under TCG (no
+=-enable-kvm=); boots take ~20-40 s. Add the user to =kvm= for fast boots.
+
+* Step 1 — the init program
+
+=initramfs/init.c= (must never return; mounts the basics; prints banner):
+
+#+begin_src c :tangle initramfs/init.c
+  /* Minimal PID 1 for a no-bootloader EFISTUB Linux.
+   * Must NEVER return — when PID 1 exits the kernel panics. */
+  #include <stdio.h>
+  #include <unistd.h>
+  #include <sys/mount.h>
+
+  int main(void) {
+      /* Best-effort: errors are fine if a node/dir is missing. */
+      mount("proc",     "/proc", "proc",     0, NULL);
+      mount("sysfs",    "/sys",  "sysfs",    0, NULL);
+      mount("devtmpfs", "/dev",  "devtmpfs", 0, NULL);
+
+      printf("vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv\n");
+      printf("                      Hello from EFISTUB micro-linux!                          \n");
+      printf("                  Kernel booted directly by UEFI, no bootloader.               \n");
+      printf("^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n");
+      fflush(stdout);
+
+      /* Stay alive forever so the kernel never panics. */
+      for (;;)
+          pause();
+
+      return 0;
+  }
+#+end_src
+
+Build it *statically* (no libc in the initramfs):
+
+#+begin_src sh :results output
+  cd ~/linux/micro/initramfs
+  gcc -static -O2 -s -o init init.c
+  file init    # => ELF 64-bit ... statically linked
+#+end_src
+
+* Step 2 — the initramfs contents (gen_init_cpio list)
+
+We do NOT hand-roll a cpio. Instead we hand the kernel a *gen_init_cpio*
+description file via =CONFIG_INITRAMFS_SOURCE=. kbuild turns it into the
+embedded cpio at build time, and it can create device nodes *without root*.
+
+=initramfs/initramfs.list=:
+
+#+begin_src text :tangle initramfs/initramfs.list
+  # gen_init_cpio description file (used by CONFIG_INITRAMFS_SOURCE).
+  # Creates device nodes WITHOUT needing root on the build host.
+  dir  /dev          0755 0 0
+  nod  /dev/console  0600 0 0 c 5 1
+  nod  /dev/null     0666 0 0 c 1 3
+  nod  /dev/tty      0666 0 0 c 5 0
+  dir  /proc         0755 0 0
+  dir  /sys          0755 0 0
+  file /init /home/everton/linux/micro/initramfs/init 0755 0 0
+#+end_src
+
+(Alternative, the way the old notes did it — also fine but no device nodes:
+=cd initramfs && echo init | cpio -o -H newc > initramfs.cpio= and point
+=CONFIG_INITRAMFS_SOURCE= at that .cpio. The list-file approach is preferred
+because it gives us =/dev/console= without root.)
+
+* Step 3 — kernel configuration
+
+Start from the x86_64 default config, then apply the deltas below. The deltas
+are what make EFISTUB + embedded initramfs + a *visible* console work.
+
+#+begin_src sh :results output
+  cd ~/linux/linux-6.18.3
+  make defconfig          # base = x86_64_defconfig
+#+end_src
+
+Apply the required options with scripts/config (idempotent):
+
+#+begin_src sh :results output
+  cd ~/linux/linux-6.18.3
+  ./scripts/config \
+    --enable  EFI \
+    --enable  EFI_STUB \
+    --set-str INITRAMFS_SOURCE /home/everton/linux/micro/initramfs/initramfs.list \
+    --enable  BLK_DEV_INITRD \
+    --enable  DEVTMPFS \
+    --enable  DEVTMPFS_MOUNT \
+    --enable  CMDLINE_BOOL \
+    --set-str CMDLINE "console=ttyS0,115200 console=tty0" \
+    --disable CMDLINE_OVERRIDE \
+    --enable  SERIAL_8250 \
+    --enable  SERIAL_8250_CONSOLE \
+    --enable  SERIAL_8250_PCI \
+    --enable  FB \
+    --enable  FB_EFI \
+    --enable  FRAMEBUFFER_CONSOLE \
+    --enable  FRAMEBUFFER_CONSOLE_DETECT_PRIMARY
+  make olddefconfig
+#+end_src
+
+Why each one matters:
+  - EFI / EFI_STUB ......... make bzImage a launchable UEFI app (PE/COFF, "MZ").
+  - INITRAMFS_SOURCE ....... embeds our initramfs *inside* the kernel -> one
+                             self-contained file, no separate initrd to pass.
+  - BLK_DEV_INITRD ......... initramfs support.
+  - DEVTMPFS(+_MOUNT) ...... auto /dev so userspace has device nodes.
+  - CMDLINE_BOOL/CMDLINE ... built-in command line. With no bootloader and a
+                             removable-media fallback launch, there is nobody
+                             to type a cmdline, so we bake one in. The LAST
+                             "console=" (=tty0=) becomes /dev/console for init,
+                             i.e. the laptop screen.
+  - CMDLINE_OVERRIDE off .... still allow an EFI-provided cmdline to win if ever
+                             launched with one (e.g. via efibootmgr -u).
+  - SERIAL_8250_CONSOLE .... real =console=ttyS0= (for headless QEMU debugging).
+  - FB + FB_EFI + FRAMEBUFFER_CONSOLE  ... THE fix for a visible laptop screen:
+                             efifb drives the UEFI GOP framebuffer and fbcon
+                             renders text on it. Without this a UEFI laptop is
+                             blank even though the kernel booted.
+
+** Real-hardware input (PCI/USB/HID) — and why ACPI power-off needs PCI too
+
+This base config booted fine in QEMU and even on the laptop *screen*, but on the
+laptop the *keyboard was dead* (and ACPI power-off only halted). Both traced to
+ONE missing switch: =# CONFIG_PCI is not set=.
+
+Everything we relied on early is NON-PCI, so PCI being off never showed:
+  - screen  = EFI GOP framebuffer (efifb), memory-mapped by firmware
+  - rootfs  = initramfs in RAM
+  - QEMU keyboard = legacy PS/2 (i8042, on the LPC bus, not PCI)
+But a real laptop keyboard is USB or I2C-HID, and the USB xHCI controller is a
+*PCI device*. No PCI => no USB => no keyboard. AND a DSDT declares operation
+regions in PCI *config space*; with PCI off, ACPI can't init those regions, the
+DSDT is rejected ("Unable to load the System Description Tables"), so there is no
+\_S5 and power-off halts instead. Enabling PCI fixed the keyboard AND power-off.
+
+Enable PCI + the USB stack + HID transports (all built-in; modules won't load):
+#+begin_src sh
+  cd ~/linux/linux-6.18.3
+  ./scripts/config \
+    --enable PCI --enable PCI_MSI --enable PCIEPORTBUS \
+    --enable USB_SUPPORT --enable USB --enable USB_PCI \
+    --enable USB_XHCI_HCD --enable USB_XHCI_PCI \
+    --enable USB_EHCI_HCD --enable USB_EHCI_PCI \
+    --enable USB_OHCI_HCD --enable USB_OHCI_HCD_PCI --enable USB_UHCI_HCD \
+    --enable USB_HID --enable HID_GENERIC --enable INPUT_EVDEV \
+    --enable I2C --enable I2C_HID --enable I2C_HID_ACPI \
+    --enable I2C_DESIGNWARE_CORE --enable I2C_DESIGNWARE_PLATFORM
+  make olddefconfig
+#+end_src
+Verify in QEMU with an emulated USB keyboard (a modern-laptop setup):
+  qemu ... -device qemu-xhci -device usb-kbd
+Expect dmesg: "xhci_hcd ... xHCI Host Controller" and
+"input: QEMU QEMU USB Keyboard ...". Confirmed working in kernel tag #19;
+power-off then prints "reboot: Power down" and the VM exits.
+
+Sanity-check the resulting .config:
+
+#+begin_src sh :results output
+  cd ~/linux/linux-6.18.3
+  grep -E 'CONFIG_EFI_STUB|CONFIG_INITRAMFS_SOURCE|CONFIG_DEVTMPFS=|CONFIG_CMDLINE|CONFIG_SERIAL_8250_CONSOLE|CONFIG_FB=|CONFIG_FB_EFI=|CONFIG_FRAMEBUFFER_CONSOLE=' .config
+#+end_src
+
+* Step 4 — build the kernel
+
+#+begin_src sh :results output
+  cd ~/linux/linux-6.18.3
+  make -j"$(nproc)" bzImage
+  # Output: arch/x86/boot/bzImage   (~1.9 MB, EFISTUB, initramfs embedded)
+#+end_src
+
+Verify it is a real EFISTUB image:
+
+#+begin_src sh :results output
+  file arch/x86/boot/bzImage
+  # must contain: "64-bit EFI handoff entry point"
+  xxd arch/x86/boot/bzImage | head -1
+  # must start with: 4d5a ...  ("MZ")
+#+end_src
+
+* Step 5 — assemble the EFI boot file
+
+With EFISTUB, "installing the bootloader" is literally one copy. The UEFI
+*removable-media fallback path* is =\EFI\BOOT\BOOTX64.EFI= (x86-64), which
+firmware launches automatically off a USB stick with no NVRAM boot entry.
+
+#+begin_src sh :results output
+  cd ~/linux/micro
+  mkdir -p iso_root/efi/boot
+  cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage iso_root/efi/boot/bootx64.efi
+  file iso_root/efi/boot/bootx64.efi   # must say: Linux kernel ... bzImage
+#+end_src
+
+* Testing in QEMU (no root, no real USB needed)
+
+** A. Quick check: boot the kernel directly (no EFI) — isolates init/initramfs
+
+#+begin_src sh :results output
+  cd ~/linux/micro
+  : > serial.log
+  timeout 40 qemu-system-x86_64 -machine q35 -m 1024 \
+    -kernel ~/linux/linux-6.18.3/arch/x86/boot/bzImage \
+    -append "console=ttyS0,115200" \
+    -serial file:serial.log -display none -no-reboot
+  grep -E 'Run /init|Hello' serial.log
+#+end_src
+
+Expect: "Run /init as init process" then the Hello banner. (=timeout= kills it;
+exit 124 is expected because /init loops forever.)
+
+** B. The real thing: boot via OVMF as a UEFI app (== the USB boot path)
+
+QEMU's VVFAT exposes iso_root/ as a virtual FAT disk, so we test the exact
+=\EFI\BOOT\BOOTX64.EFI= fallback launch with zero root / zero real USB.
+
+#+begin_src sh :results output
+  cd ~/linux/micro
+  cp /usr/share/OVMF/OVMF_VARS_4M.fd ovmf_vars_test.fd   # writable NVRAM
+  : > serial.log
+  qemu-system-x86_64 -machine q35 -m 1024 \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
+    -drive if=pflash,format=raw,file=ovmf_vars_test.fd \
+    -drive file=fat:rw:iso_root,format=raw,if=ide \
+    -serial file:serial.log -display none -no-reboot &
+  QPID=$!; sleep 40; kill $QPID
+  grep -E 'efifb|Console: switching|Run /init' serial.log
+#+end_src
+
+Expect in serial.log:
+  BdsDxe: starting Boot0002 "UEFI QEMU HARDDISK ..."   (firmware launched our EFI app)
+  efifb: mode is 1280x800x32 ...
+  Console: switching to colour frame buffer device 160x50
+  Run /init as init process
+On the graphical console (the banner) you'd see the Hello box.
+
+** Grabbing a screenshot from a headless QEMU (via QMP)
+
+Add =-qmp unix:/tmp/qmp.sock,server,nowait= to the QEMU line, then:
+
+#+begin_src python :results output
+  import socket, time
+  s = socket.socket(socket.AF_UNIX); s.connect("/tmp/qmp.sock")
+  time.sleep(0.3); s.recv(65536)
+  s.sendall(b'{"execute":"qmp_capabilities"}\n'); time.sleep(0.3); s.recv(65536)
+  s.sendall(b'{"execute":"screendump","arguments":{"filename":"/home/everton/linux/micro/screen.ppm"}}\n')
+  time.sleep(0.6); s.recv(65536); s.close()
+#+end_src
+
+(=screen.ppm= is Netpbm P6; convert to PNG with any tool, or the inline Python
+PPM->PNG snippet used during the session.)
+
+* Writing to a real USB stick  (DESTRUCTIVE — pick the right device!)
+
+The kernel-as-BOOTX64.EFI only needs a *FAT32 EFI System Partition* on a
+GPT disk. Removable-media fallback means NO efibootmgr entry is required on the
+target laptop.
+
+** Identify the device FIRST
+#+begin_src sh
+  lsblk -o NAME,SIZE,TRAN,MODEL        # find the USB, e.g. /dev/sdX (NOT a partition)
+#+end_src
+
+** Partition (GPT, one ESP) + format FAT32 + copy the kernel
+#+begin_src sh
+  DEV=/dev/sdX                          # <-- set this to YOUR usb stick, double-check!
+  sudo sgdisk --zap-all "$DEV"
+  sudo sgdisk -n1:0:0 -t1:ef00 -c1:"EFI" "$DEV"   # ef00 = EFI System Partition
+  sudo mkfs.vfat -F32 "${DEV}1"
+  sudo mount "${DEV}1" /mnt
+  sudo mkdir -p /mnt/EFI/BOOT
+  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI
+  sync; sudo umount /mnt
+#+end_src
+
+** Alternative without mounting (mtools)
+#+begin_src sh
+  DEV=/dev/sdX
+  sudo sgdisk --zap-all "$DEV"
+  sudo sgdisk -n1:0:0 -t1:ef00 -c1:"EFI" "$DEV"
+  sudo mkfs.vfat -F32 "${DEV}1"
+  mmd   -i "${DEV}1" ::/EFI ::/EFI/BOOT
+  mcopy -i "${DEV}1" ~/linux/linux-6.18.3/arch/x86/boot/bzImage ::/EFI/BOOT/BOOTX64.EFI
+#+end_src
+
+** Boot it on the laptop
+  - Reboot, enter the firmware boot menu (F12/F9/F10/Esc — vendor specific).
+  - Pick the USB stick — choose the *UEFI* entry, e.g. "UEFI: Kingston
+    DataTraveler 3.0", NOT a legacy/CSM entry.
+  - If Secure Boot is ON: either disable it, or sign the kernel (sbsign +
+    enrolled keys) — an unsigned EFISTUB kernel won't launch under Secure Boot.
+
+** Real-hardware pre-flight checklist
+  1. Firmware boot menu key is vendor-specific (F12/F9/F10/Esc at power-on).
+  2. Must select the *UEFI* device entry (not legacy/CSM).
+  3. Secure Boot must be OFF (this kernel is unsigned).
+  4. Expected result: a few kernel log lines, then the banner
+       Hello from EFISTUB micro-linux!
+       Kernel booted directly by UEFI, no bootloader.
+     It then sits forever (init loops by design) — that is SUCCESS, not a
+     hang. Power off to exit.
+
+** Troubleshooting by where it stops (tells you the failing layer)
+  - Stick not listed in the boot menu
+      -> ESP / partition-type issue (need GPT + type ef00 + FAT32), or Secure
+         Boot is hiding/blocking it.
+  - Firmware error, or it bounces straight back to the boot menu
+      -> firmware FOUND \EFI\BOOT\BOOTX64.EFI but could not launch it:
+         Secure Boot blocking an unsigned image, or a corrupt/short copy.
+         Re-verify: file BOOTX64.EFI == "Linux kernel ... 64-bit EFI handoff".
+  - Blank screen but the machine does NOT reboot
+      -> kernel booted but no visible console: framebuffer issue. Confirm
+         CONFIG_FB_EFI + CONFIG_FRAMEBUFFER_CONSOLE are =y; if a GPU steals the
+         GOP, try the modern path instead: enable SYSFB_SIMPLEFB +
+         DRM_SIMPLEDRM + DRM_FBDEV_EMULATION. Add =earlyprintk=efi= to debug.
+  - Garbled text / wrong resolution
+      -> cosmetic; tune with the EFI framebuffer or a video= cmdline arg.
+
+* Shrinking init with musl libc
+
+Background: every C program needs a libc (printf, malloc, the startup code
+that calls main, the syscall wrappers). Debian's default is *glibc*, which is
+huge and not really designed for static linking. *musl* is a small, clean,
+MIT-licensed libc built for static linking from day one — the libc behind
+Alpine Linux. Same source, just a different libc linked in.
+
+Key caveat (why we still keep glibc around): musl and glibc are NOT
+ABI-compatible. A *prebuilt* glibc binary (a .deb, a downloaded blob) will not
+run against musl — it wants glibc's loader + libc.so.6 + GLIBC_x.y symbols.
+musl only helps for things we *compile ourselves*. Rule of thumb:
+  - building from source  -> musl is great (tiny static binaries)
+  - prebuilt glibc binary -> needs glibc (or a compat shim like Alpine gcompat)
+  - static linking (either libc) -> self-contained, needs no libc.so in rootfs
+
+Install the toolchain (provides the musl-gcc wrapper):
+#+begin_src sh
+  sudo apt install -y musl-tools
+#+end_src
+
+Build init with musl instead of glibc — just swap the compiler:
+#+begin_src sh :results output
+  cd ~/linux/micro/initramfs
+  gcc      -static -O2 -s -o init.glibc init.c   # for comparison
+  musl-gcc -static -O2 -s -o init.musl  init.c
+  cp init.musl init                              # initramfs.list points /init here
+  stat -c '%s  %n' init.glibc init.musl
+#+end_src
+
+Measured result (identical source, -static -O2 -s):
+  glibc static :  690536 bytes  (~674 KB)
+  musl  static :   17768 bytes  (~17 KB)   -> ~39x smaller
+Both are "not a dynamic executable"; both boot identically via EFISTUB (tag #17).
+
+Then rebuild the kernel so the smaller initramfs is re-embedded:
+#+begin_src sh
+  cd ~/linux/linux-6.18.3 && make -j"$(nproc)" bzImage
+  cp arch/x86/boot/bzImage ~/linux/micro/iso_root/efi/boot/bootx64.efi
+#+end_src
+
+Refresh the USB (partitioning already done — just replace the EFI file):
+#+begin_src sh
+  DEV=/dev/sda
+  sudo mount "${DEV}1" /mnt && \
+  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
+  sync && sudo umount /mnt
+#+end_src
+
+IMPORTANT — this one-file refresh is ONLY for *embedded-initramfs* builds (the
+base and musl variants, where the initramfs lives inside bzImage). If the kernel
+was built in *separate-initrd* mode (e.g. the SBCL build, CONFIG_INITRAMFS_SOURCE=""
++ initrd= on the cmdline), you must copy BOTH files:
+#+begin_src sh
+  DEV=/dev/sda
+  sudo mount "${DEV}1" /mnt && \
+  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
+  sudo cp ~/linux/micro/iso_root/initramfs.cpio       /mnt/initramfs.cpio && \
+  sync && sudo umount /mnt
+#+end_src
+See [[file:sbcl-init.org][sbcl-init.org]] for the separate-initrd build. Rule of thumb: one file if the
+initramfs is embedded; two files (kernel + \initramfs.cpio at the volume root)
+if it is a separate initrd.
+
+Note on future binaries (busybox, etc.): build them static too, and build them
+against the SAME libc as anything they need to interoperate with. A static musl
+busybox + a static musl init is a clean, tiny, consistent userland.
+
+* Notes & next steps
+
+  - The banner goes to whatever the LAST =console== is (=tty0= here = screen).
+    To prefer serial, put =console=ttyS0= last; to see it on BOTH, the kernel
+    printk already does — only userspace /init writes to a single /dev/console.
+  - To get an interactive shell instead of a banner, add a static busybox to
+    the initramfs (a =/bin/sh= line in initramfs.list) and =exec= it from init.
+  - To pass a cmdline without rebuilding, create an efibootmgr entry with
+    optional data, or use a UKI / systemd-boot — but that reintroduces tooling.
+  - Building a single dd-able USB *image* file (GPT+ESP) is possible but needs
+    loop-mount or mtools; on this box do it on the real device as above.
+
+* See also
+  - [[file:sbcl-init.org][sbcl-init.org]] — make SBCL Common Lisp the init process
+    (ship a dynamic language runtime + its glibc libs inside the initramfs).
+  - [[file:build.sh][build.sh]] — one-step rebuild of the SBCL build:
+    =./build.sh= (userland), =--kernel= (also the kernel), =--run= (boot + screenshot).

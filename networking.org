@@ -1,0 +1,162 @@
+#+TITLE: Networking — bringing a network layer to the SBCL micro-distro (PLANNING)
+#+STARTUP: showall
+
+Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
+[[file:kernel-config.org][kernel-config.org]] (the "Deliberately OFF → Networking" section) · Lisp side:
+[[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that would open the sockets).
+
+*STATUS: PLANNING ONLY — no work started. =CONFIG_NET= is still off; SBCL has
+no =sb-bsd-sockets=.* This file is the roadmap we will follow when we implement
+it. It is the single biggest subsystem we have taken on, because — unlike the
+framebuffer alien (pure userland) or the bigger console font (pure kernel) —
+networking straddles *BOTH* the kernel and userland at once.
+
+* The one-paragraph essence
+
+To "have networking" two independent things must both become true: (1) the
+KERNEL must be able to move packets — a socket layer (=NET=), a protocol stack
+(=INET= = TCP/IP), a network device layer, and a *driver for an actual NIC*; and
+(2) USERLAND must be able to *use* sockets — SBCL needs the =sb-bsd-sockets=
+contrib baked into its frozen image, the interface needs an *IP address*
+(static, or DHCP), and something has to resolve names (DNS) if we want them.
+Neither half is useful without the other. We will build the kernel half first
+(prove a link exists with packets), then the userland half (reach it from Lisp).
+
+* Why this is harder than everything so far
+
+| Past change            | Kernel? | Userland? | Notes                                   |
+|------------------------+---------+-----------+-----------------------------------------|
+| Draw the alien         | no      | yes       | /dev/fb0 already existed                 |
+| Bigger fbcon font      | yes     | no        | compile-in font + cmdline               |
+| *Networking*           | *yes*   | *yes*     | NET+INET+NIC driver AND sb-bsd-sockets  |
+
+Everything we relied on before boots *early* and needs no driver negotiation.
+A network link is different: a real driver must bind to a real (PCI) device,
+bring the link up, and exchange packets with something on the other end. So we
+test it in stages and prove each layer before adding the next.
+
+* 1. Kernel half — what has to be turned on
+
+Currently *all* of this is OFF (=grep -c '^CONFIG_NET=y'= returns 0). The
+keystone =CONFIG_PCI= is already on (we added it in tag #19 for USB/ACPI), and
+=CONFIG_PCI_MSI= too — modern NICs want MSI/MSI-X — so the bus plumbing a NIC
+needs is already present. The new options, smallest-useful-set first:
+
+| Option                     | Role                                                        |
+|----------------------------+-------------------------------------------------------------|
+| =CONFIG_NET=               | The socket / protocol core — THE master switch              |
+| =CONFIG_INET=              | IPv4 (TCP, UDP, ICMP). The thing we actually want           |
+| =CONFIG_UNIX=              | AF_UNIX local sockets (handy even before a NIC works)       |
+| =CONFIG_PACKET=            | AF_PACKET (raw sockets; some DHCP clients use it)           |
+| =CONFIG_NETDEVICES=        | The network-device layer (gate for any NIC driver)          |
+| =CONFIG_NET_CORE=          | Core netdev machinery                                        |
+| a NIC driver               | the actual hardware — see stage plan below                  |
+| (=CONFIG_IPV6=)            | optional; skip at first to stay minimal                     |
+
+NIC driver — the staged target list (easiest → hardest):
+
+1. *=CONFIG_VIRTIO_NET=* (+ =CONFIG_VIRTIO=, =CONFIG_VIRTIO_PCI=) — a QEMU
+   paravirtual NIC. This is the *first* target: trivial to wire up in
+   =build.sh --run= (=-netdev user,... -device virtio-net-pci,...=), reliable,
+   and isolates "does our NET/INET stack work" from any real-hardware quirk.
+2. *=CONFIG_E1000= / =CONFIG_E1000E=* — Intel emulated/real NIC; another easy
+   QEMU device and present on many laptops/desktops.
+3. *The laptop's actual NIC* — likely an Intel/Realtek Wi-Fi or Ethernet chip.
+   Wired Ethernet (e.g. =CONFIG_R8169=) is far easier than Wi-Fi. *Wi-Fi is a
+   big jump*: =CONFIG_CFG80211= + =CONFIG_MAC80211= + a vendor driver + loadable
+   *firmware blobs* (the NIC needs a firmware file shipped in the initramfs) +
+   a userland supplicant (WPA). Treat Wi-Fi as a separate, later project.
+
+Reminder (the frozen-heap / minimal rule): build NIC drivers *=y= (built-in)*,
+not =m= — we ship no modules and have no =modprobe=.
+
+* 2. Userland half — reaching the network from SBCL
+
+A working kernel link is invisible until userland does three things:
+
+** (a) sockets in the Lisp image — =sb-bsd-sockets=
+SBCL's BSD-sockets API lives in the *=sb-bsd-sockets= contrib*, which is a
+=require=-loaded fasl. Our image is a *frozen heap* (see [[file:sbcl-init.org][sbcl-init.org]]): we
+cannot =require= it at runtime (no contrib fasls on the initramfs, no network to
+fetch them — the very chicken-and-egg this whole file is about). So we must
+=(require :sb-bsd-sockets)= *at build time*, before =save-lisp-and-die=, so the
+socket code is baked into =/sbin/lisp=. Pure Lisp + kernel syscalls; no new
+native library. (Alternatively, hand-roll =socket/bind/connect= via =sb-alien=
+to libc — but baking the contrib is cleaner and gives us a real API.)
+
+** (b) an IP address — static first, DHCP later
+A NIC with no address can't talk. Two ways to get one:
+- *Static* (simplest first step): assign an address ourselves —
+  =ifconfig eth0 10.0.2.15 netmask 255.255.255.0= equivalent via =SIOCSIFADDR=
+  /=SIOCSIFFLAGS= ioctls. From Lisp that is a handful of =sb-alien= ioctl calls
+  (the same FFI-to-shipped-libc pattern as =reboot(2)= and the planned termios
+  line editor). QEMU user-mode networking hands out =10.0.2.15= with gateway
+  =10.0.2.2= — perfect for a hard-coded first test.
+- *DHCP* (real networks): a DHCP client is a UDP conversation (DISCOVER →
+  OFFER → REQUEST → ACK). We ship none. Options: write a tiny DHCP client in
+  Lisp (very much in this project's spirit — a few dozen lines over a UDP
+  socket), or ship a static =busybox udhcpc=. Start static, add DHCP when a
+  real LAN is in play.
+
+** (c) name resolution — DNS (optional, last)
+=getaddrinfo= via glibc would drag in NSS plugin files; cleaner to write a
+minimal DNS-over-UDP query in Lisp, or just use raw IPs at first. Defer.
+
+* 3. The staged bring-up plan (prove each layer before the next)
+
+1. *Kernel builds with NET+INET+VIRTIO_NET* — confirm =dmesg= shows the NIC and
+   =/sys/class/net/eth0= exists. (No address yet.) Kernel tag bumps; update
+   [[file:kernel-config.org][kernel-config.org]] in the same turn (REQUIRED — see AGENTS.md).
+2. *Static IP from Lisp* — =sb-alien= ioctls bring =eth0= up at =10.0.2.15=.
+   Verify the interface is UP/RUNNING.
+3. *First packet* — open a UDP or ICMP socket from SBCL (=sb-bsd-sockets= baked
+   in) and talk to QEMU's gateway / a host service. The "hello world" of the
+   net stack: a successful =sendto= / =recvfrom=.
+4. *TCP client* — connect out (e.g. fetch a fixed IP:port). Proves the full
+   INET path.
+5. *(later)* DHCP, DNS, a tiny TCP *server* (a Lisp REPL over the socket — note
+   this is the same idea as Swank but hand-rolled and tiny), then real-hardware
+   Ethernet, then — much later — Wi-Fi.
+
+* 4. QEMU test wiring (for build.sh --run)
+
+User-mode networking needs no root and no host bridge — ideal for our setup:
+
+#+begin_src sh
+  # add to the qemu line in build.sh --run:
+  -netdev user,id=net0,hostfwd=tcp::5555-:23 \
+  -device virtio-net-pci,netdev=net0
+#+end_src
+
+=user= (SLIRP) gives the guest =10.0.2.15=, gateway =10.0.2.2=, DNS =10.0.2.3=,
+all in software — no privileges. =hostfwd= forwards a host port to a guest port
+so we can later reach a Lisp TCP server from the host. This keeps the whole net
+bring-up testable headless, exactly like the framebuffer screenshots.
+
+* 5. What to NOT do (scope guards)
+
+- *No Wi-Fi at first* — cfg80211/mac80211 + firmware blobs + WPA supplicant is a
+  whole subsystem; wired/virtio first.
+- *No modules* — built-in (=y=) drivers only; we have no module loader.
+- *No glibc NSS / resolver files* — prefer tiny Lisp DNS over dragging NSS in.
+- *No IPv6 initially* — IPv4 only keeps the surface small.
+- Keep it *didactic*: a hand-rolled Lisp DHCP/DNS/echo teaches the protocols and
+  fits the "Lisp machine drives the hardware via FFI" theme better than shipping
+  opaque busybox applets (though busybox is the pragmatic fallback).
+
+* Open questions to settle when we start
+
+- Static-IP-via-ioctl vs ship =busybox ip/udhcpc= — which first? (Leaning: static
+  ioctl from Lisp, to stay self-contained and didactic.)
+- =sb-bsd-sockets= baked in vs raw =sb-alien socket()= — (leaning: bake the
+  contrib; it is the clean, documented API and still pure Lisp + syscalls.)
+- Confirm whether the SBCL build we use can =require :sb-bsd-sockets= at build
+  time from =~/sbcl/= (contrib must be present in the source tree).
+
+* See also
+  - [[file:kernel-config.org][kernel-config.org]] — the "Deliberately OFF → Networking" section (will move
+    here / become "ON" when implemented).
+  - [[file:sbcl-init.org][sbcl-init.org]] — the supervisor + the frozen-heap build where the socket
+    contrib must be baked in.
+  - [[file:line-editing.org][line-editing.org]] — same FFI-to-shipped-libc pattern (termios) that the
+    static-IP ioctls and raw sockets would use.

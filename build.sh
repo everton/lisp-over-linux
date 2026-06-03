@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+#
+# build.sh — rebuild (and optionally boot) the SBCL-as-init micro-linux.
+#
+# The fast path rebuilds only the userland — the whole point of the "separate
+# initrd" design: changing the Lisp does NOT need a kernel rebuild.
+#
+#   ./build.sh                 preinit + lisp-init + initramfs.cpio   (seconds)
+#   ./build.sh --kernel        ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
+#   ./build.sh --run           build, then boot in QEMU and screenshot it
+#   ./build.sh --kernel --run  the full cycle
+#
+# Flags combine in any order. Env: QEMU_WAIT=<seconds> (default 50) tunes how
+# long to let it boot before the screenshot (TCG is slow, no KVM here).
+#
+# See sbcl-init.org for the full explanation of every step.
+
+set -euo pipefail
+
+# ---- paths (edit here if anything moves) -----------------------------------
+MICRO="$HOME/linux/micro"
+KERNEL="$HOME/linux/linux-6.18.3"
+SBCL="$HOME/sbcl"
+
+INITRAMFS_DIR="$MICRO/initramfs"
+ISO_ROOT="$MICRO/iso_root"
+CPIO_OUT="$ISO_ROOT/initramfs.cpio"
+BOOTX64="$ISO_ROOT/efi/boot/bootx64.efi"
+
+GEN_INIT_CPIO="$KERNEL/usr/gen_init_cpio"
+SBCL_RUNTIME="$SBCL/src/runtime/sbcl"
+SBCL_CORE="$SBCL/output/sbcl.core"
+
+OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
+OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
+
+say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
+usage() { sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# ---- argument parsing (flags combine) --------------------------------------
+DO_KERNEL=0; DO_RUN=0
+for arg in "$@"; do
+  case "$arg" in
+    -k|--kernel) DO_KERNEL=1 ;;
+    -r|--run)    DO_RUN=1 ;;
+    -h|--help)   usage; exit 0 ;;
+    *) echo "unknown option: $arg" >&2; usage; exit 1 ;;
+  esac
+done
+
+# ---- preflight: make sure the tools/inputs exist ---------------------------
+for f in "$GEN_INIT_CPIO" "$SBCL_RUNTIME" "$SBCL_CORE" \
+         "$INITRAMFS_DIR/preinit.c" "$INITRAMFS_DIR/supervisor.lisp" \
+         "$INITRAMFS_DIR/initramfs.sbcl.list"; do
+  [ -e "$f" ] || { echo "ERROR: missing required input: $f" >&2; exit 1; }
+done
+command -v musl-gcc >/dev/null || { echo "ERROR: musl-gcc not found (apt install musl-tools)" >&2; exit 1; }
+
+# ---- 1. the C preinit (musl static, a few KB) ------------------------------
+say "Building preinit (musl static C)"
+musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/preinit" "$INITRAMFS_DIR/preinit.c"
+
+# ---- 2. the SBCL image with the supervisor baked in ------------------------
+say "Building lisp-init (SBCL save-lisp-and-die)"
+BUILD_LISP="$(mktemp /tmp/build-sup.XXXXXX.lisp)"
+trap 'rm -f "$BUILD_LISP"' EXIT
+cat > "$BUILD_LISP" <<LISP
+(load "$INITRAMFS_DIR/supervisor.lisp")
+(sb-ext:save-lisp-and-die "$INITRAMFS_DIR/lisp-init"
+  :executable t :toplevel #'init-toplevel)
+LISP
+# --no-userinit --no-sysinit so a personal ~/.sbclrc (quicklisp) can't interfere.
+"$SBCL_RUNTIME" --core "$SBCL_CORE" --no-userinit --no-sysinit \
+                --non-interactive --load "$BUILD_LISP"
+
+# ---- 3. pack the initramfs cpio (no root needed) ---------------------------
+say "Packing initramfs.cpio (gen_init_cpio)"
+"$GEN_INIT_CPIO" "$INITRAMFS_DIR/initramfs.sbcl.list" > "$CPIO_OUT"
+
+# ---- 4. (optional) rebuild the kernel and refresh BOOTX64.EFI --------------
+if [ "$DO_KERNEL" -eq 1 ]; then
+  say "Rebuilding kernel (make bzImage)"
+  make -C "$KERNEL" -j"$(nproc)" bzImage
+  cp "$KERNEL/arch/x86/boot/bzImage" "$BOOTX64"
+fi
+
+# ---- summary ---------------------------------------------------------------
+say "Build done"
+printf '  %-28s %s bytes\n' "preinit"        "$(stat -c%s "$INITRAMFS_DIR/preinit")"
+printf '  %-28s %s bytes\n' "lisp-init"      "$(stat -c%s "$INITRAMFS_DIR/lisp-init")"
+printf '  %-28s %s bytes\n' "initramfs.cpio" "$(stat -c%s "$CPIO_OUT")"
+printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
+[ "$DO_KERNEL" -eq 0 ] && echo "  (kernel NOT rebuilt — pass --kernel if you changed kernel config)"
+
+# ---- 5. (optional) boot it in QEMU and grab a screenshot -------------------
+if [ "$DO_RUN" -eq 1 ]; then
+  WAIT="${QEMU_WAIT:-50}"
+  VARS="$MICRO/ovmf_vars_test.fd"
+  SERIAL="$MICRO/serial.log"
+  SHOT_PPM="$MICRO/screen.ppm"; SHOT_PNG="$MICRO/screen.png"
+  QMP="/tmp/micro-qmp.sock"
+
+  [ -e "$OVMF_CODE" ] || { echo "ERROR: OVMF not found: $OVMF_CODE (apt install ovmf)" >&2; exit 1; }
+  say "Booting in QEMU (OVMF, headless) — screenshot after ${WAIT}s"
+  cp "$OVMF_VARS" "$VARS"                 # fresh writable NVRAM
+  : > "$SERIAL"; rm -f "$SHOT_PPM" "$SHOT_PNG"
+
+  qemu-system-x86_64 -machine q35 -m 2048 \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive if=pflash,format=raw,file="$VARS" \
+    -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
+    -serial file:"$SERIAL" -display none -no-reboot \
+    -qmp unix:"$QMP",server,nowait 2>/tmp/micro-qemu.err &
+  QPID=$!
+  sleep "$WAIT"
+
+  # take a screenshot through the QMP monitor socket
+  python3 - "$QMP" "$SHOT_PPM" <<'PY' || true
+import socket, sys, time
+sock, ppm = sys.argv[1], sys.argv[2]
+s = socket.socket(socket.AF_UNIX); s.connect(sock); time.sleep(0.3); s.recv(65536)
+s.sendall(b'{"execute":"qmp_capabilities"}\n'); time.sleep(0.3); s.recv(65536)
+s.sendall(('{"execute":"screendump","arguments":{"filename":"%s"}}\n' % ppm).encode())
+time.sleep(0.8); s.recv(65536); s.close()
+PY
+  kill "$QPID" 2>/dev/null || true
+
+  # convert PPM (P6) -> PNG with only the stdlib
+  python3 - "$SHOT_PPM" "$SHOT_PNG" <<'PY' || true
+import sys, zlib
+from struct import pack
+ppm, png = sys.argv[1], sys.argv[2]
+d = open(ppm, "rb").read(); assert d[:2] == b'P6'
+i = 2; f = []
+while len(f) < 3:
+    while d[i] in b' \t\n\r': i += 1
+    if d[i:i+1] == b'#':
+        while d[i] not in b'\n': i += 1
+        continue
+    j = i
+    while d[j] not in b' \t\n\r': j += 1
+    f.append(int(d[i:j])); i = j
+i += 1; w, h, _ = f; px = d[i:i+w*h*3]
+def ch(t, x): return pack(">I", len(x)) + t + x + pack(">I", zlib.crc32(t+x) & 0xffffffff)
+raw = bytearray()
+for y in range(h):
+    raw.append(0); raw += px[y*w*3:(y+1)*w*3]
+open(png, "wb").write(b'\x89PNG\r\n\x1a\n'
+    + ch(b'IHDR', pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+    + ch(b'IDAT', zlib.compress(bytes(raw), 9)) + ch(b'IEND', b''))
+print("  screenshot:", png)
+PY
+
+  echo "  serial markers:"
+  grep -aE 'Unpacking initramfs|Freeing initrd|Run /init|supervisor|worker' "$SERIAL" \
+       | head -8 | sed 's/^/    /' || true
+fi
+
+cat <<'TIP'
+
+Next:
+  Live window  :  add -display gtk to the qemu line (drop -display none) to watch it boot
+  Refresh USB  :  sudo cp iso_root/efi/boot/bootx64.efi  /mnt/EFI/BOOT/BOOTX64.EFI
+                  sudo cp iso_root/initramfs.cpio         /mnt/initramfs.cpio
+TIP

@@ -1,0 +1,162 @@
+#+TITLE: Kernel config inventory — what we enabled and why
+#+STARTUP: showall
+
+Parent doc: [[file:micro-distro.org][micro-distro.org]] (base EFISTUB micro-linux) ·
+sibling: [[file:sbcl-init.org][sbcl-init.org]] (SBCL as PID 1) ·
+deep-dive: [[file:framebuffer.org][framebuffer.org]] (the Display options explained).
+
+This file is the *single source of truth* for which kernel features the micro
+distro turns on, and — more importantly — *why each one is there*. It is meant
+to be read top-to-bottom by someone (re)building the kernel from scratch.
+
+Kernel: =linux-6.18.3=, config at =~/linux/linux-6.18.3/.config=.
+Current tag: *#20* (Terminus 16x32 fbcon font; built on top of #19 = CONFIG_PCI +
+full USB/HID + ACPI power-off on real hardware).
+~780 options are set in total; most are auto-selected defaults. The tables below
+list only the ones that *matter* for this machine — the ones we chose on purpose.
+
+* How to regenerate / audit this file
+
+These are the exact commands used to produce the inventory below. Re-run them
+after any =make menuconfig= and reconcile any differences into the tables.
+
+#+begin_src sh
+cd ~/linux/linux-6.18.3
+
+# the curated set we care about, grouped by subsystem:
+grep -E 'CONFIG_(EFI|EFI_STUB|FB|FB_EFI|FRAMEBUFFER_CONSOLE|VT|VT_CONSOLE|PCI|\
+PCI_MSI|PCIEPORTBUS|USB|XHCI|EHCI|OHCI|HID|INPUT_EVDEV|INPUT_KEYBOARD|\
+KEYBOARD_ATKBD|SERIO|I2C|ACPI|DEVTMPFS|TMPFS|TTY|SERIAL_8250|BLK_DEV_INITRD|\
+INITRAMFS_SOURCE|PRINTK|BINFMT_ELF|FUTEX|MULTIUSER|FONTS|FONT_)=' .config | sort
+
+# binfmt handlers (what executable formats the kernel can load):
+grep -E 'CONFIG_BINFMT' .config
+
+# confirm networking is still OFF (see "Deliberately OFF" below):
+grep -cE '^CONFIG_NET=y' .config        # expect 0
+#+end_src
+
+* 1. Boot — how the kernel becomes the EFI application
+
+| Option                     | State | Role                                                              |
+|----------------------------+-------+------------------------------------------------------------------|
+| =CONFIG_EFI=               | y     | UEFI runtime support                                             |
+| =CONFIG_EFI_STUB=          | y     | The bzImage *is* the =.EFI= app — UEFI launches it, no GRUB      |
+| =CONFIG_BLK_DEV_INITRD=    | y     | Accept an =initrd== from the firmware                           |
+| =CONFIG_INITRAMFS_SOURCE=  | ""    | *Empty on purpose*: initramfs is a SEPARATE file, not baked in  |
+| =CONFIG_BINFMT_ELF=        | y     | Load ELF binaries — THE line that makes userspace possible      |
+| =CONFIG_BINFMT_SCRIPT=     | y     | =#!= shebang scripts (delegates to an ELF interpreter)          |
+| =CONFIG_CMDLINE=           | str   | Baked-in kernel cmdline (see below) — EFISTUB fallback boot has no args |
+
+Baked cmdline (=CONFIG_CMDLINE_BOOL=y=, no override):
+="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio fbcon=font:TER16x32"=.
+=initrd== loads the separate initramfs; =fbcon=font:= selects the big console
+font (see Display table); the =console== pair drives both serial (QEMU markers)
+and the fb console.
+
+Note: =CONFIG_INITRAMFS_SOURCE=""= is why =build.sh= rebuilds in seconds —
+changing the Lisp does not need a kernel rebuild. The initramfs is passed as
+=initrd=initramfs.cpio= (EFISTUB opens it relative to the volume root).
+
+binfmt detail: with =BINFMT_ELF= off the kernel could run *nothing* in
+userspace (every path bottoms out at an ELF interpreter) and would panic with
+"No working init found". =BINFMT_AOUT= no longer exists in the tree (removed
+from x86 in 5.1); =BINFMT_MISC= is off.
+
+* 2. Display — why the laptop screen is not blank
+
+| Option                       | State | Role                                                       |
+|------------------------------+-------+------------------------------------------------------------|
+| =CONFIG_FB=                  | y     | Framebuffer core                                          |
+| =CONFIG_FB_EFI=              | y     | Use the framebuffer UEFI hands us (efifb)                 |
+| =CONFIG_FRAMEBUFFER_CONSOLE= | y     | Draw the text console onto that framebuffer (fbcon)       |
+| =CONFIG_VT=                  | y     | Virtual terminal layer                                    |
+| =CONFIG_VT_CONSOLE=          | y     | Console on the VT                                         |
+| =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                     |
+| =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                  |
+| =CONFIG_FONT_TER16x32=       | y     | Terminus 16x32 — the readable big font (selected on cmdline) |
+| =CONFIG_FONT_8x16=           | y     | Default 8x16 font, kept as fallback                      |
+
+The console font is selected at boot via =fbcon=font:TER16x32= in
+=CONFIG_CMDLINE= (see the Boot table). On the 1280x800 panel that turns the
+console from 160x50 (8x16) into a far more legible 80x25. See
+[[file:framebuffer.org][framebuffer.org]] section 7.
+
+Why it matters: real UEFI has *no legacy VGA text mode*. Without efifb+fbcon
+the laptop screen stays blank even though the kernel is running fine. This was
+the original "it booted but showed nothing" bug.
+
+* 3. Input — why you can type (the PCI saga)
+
+| Option                                   | State | Role                                             |
+|------------------------------------------+-------+--------------------------------------------------|
+| =CONFIG_PCI=                             | y     | *Keystone* — without it: no USB AND no ACPI S5   |
+| =CONFIG_PCI_MSI=                         | y     | Message-signalled interrupts                     |
+| =CONFIG_PCIEPORTBUS=                     | y     | PCIe port bus driver                             |
+| =CONFIG_USB_SUPPORT= / =CONFIG_USB=      | y     | USB core                                         |
+| =CONFIG_USB_XHCI_HCD= / =_PCI=           | y     | USB 3.x host controller (modern laptop ports)    |
+| =CONFIG_USB_EHCI_HCD= / =_PCI=           | y     | USB 2.0 host controller                          |
+| =CONFIG_USB_OHCI_HCD= / =_PCI=           | y     | USB 1.x host controller                          |
+| =CONFIG_USB_HID= / =CONFIG_HID=          | y     | Interpret a USB keyboard as keystrokes           |
+| =CONFIG_I2C= + =I2C_HID= + =_ACPI=       | y     | Internal I2C-HID keyboard bus (laptops)          |
+| =CONFIG_I2C_DESIGNWARE_CORE/_PLATFORM=   | y     | The common laptop I2C controller                 |
+| =CONFIG_SERIO= + =INPUT_KEYBOARD= + =KEYBOARD_ATKBD= | y | Legacy PS/2 keyboard (QEMU + old machines) |
+| =CONFIG_INPUT_EVDEV=                     | y     | =/dev/input/event*= layer (the diagnostic reads it) |
+
+Root-cause story: =CONFIG_PCI= was OFF in early builds. Everything used *early*
+in boot (EFI framebuffer, RAM rootfs, PS/2 keyboard in QEMU) is non-PCI, so the
+gap was invisible — until a real laptop needed USB (xHCI is a PCI device) for
+its keyboard, AND ACPI needed PCI config-space operation regions for =_S5=
+(power-off). Enabling PCI fixed BOTH the dead keyboard and the power-off halt.
+
+* 4. Platform & power
+
+| Option        | State | Role                                                          |
+|---------------+-------+---------------------------------------------------------------|
+| =CONFIG_ACPI= | y     | Power-off (=reboot(RB_POWER_OFF)= -> =_S5=); depends on PCI    |
+
+* 5. Filesystems & userland glue
+
+| Option              | State | Role                                                       |
+|---------------------+-------+------------------------------------------------------------|
+| =CONFIG_DEVTMPFS=   | y     | Auto-populated =/dev= (=/dev/console=, =/dev/null= …)       |
+| =CONFIG_TMPFS=      | y     | The size-capped =/tmp= that =preinit.c= mounts             |
+| =CONFIG_FUTEX=      | y     | Fast userspace mutexes (threads in SBCL/glibc)             |
+| =CONFIG_MULTIUSER=  | y     | uid/gid model glibc assumes                                |
+| =CONFIG_PRINTK=     | y     | Kernel log messages                                       |
+
+* 6. Debug / serial (for QEMU testing, not the laptop)
+
+| Option                  | State | Role                                                      |
+|-------------------------+-------+-----------------------------------------------------------|
+| =CONFIG_SERIAL_8250=    | y     | =console=ttyS0= so =build.sh --run= can scrape markers     |
+
+* Deliberately OFF (and what it would take to turn on)
+
+** Networking — there is NONE
+
+=CONFIG_NET= is *completely off* (=grep -c '^CONFIG_NET=y'= returns 0). That
+means we have none of: =CONFIG_NET= (sockets / protocol core), =CONFIG_INET=
+(TCP/IP), =CONFIG_UNIX= (even local AF_UNIX), =CONFIG_PACKET=,
+=CONFIG_NETDEVICES= + any NIC driver (virtio-net, e1000, the laptop's chip).
+Userland likewise has no =sb-bsd-sockets=, no DHCP client, no DNS.
+
+Adding a network is the biggest single subsystem we have considered: it touches
+*both* the kernel (NET core -> INET -> a NIC driver; MSI is already present) and
+userland (get an IP -> sockets reachable from SBCL). Easiest first target is
+=virtio-net= under QEMU. (No work started — planning only.) The full roadmap
+(staged kernel options, =sb-bsd-sockets= baked into the image, static-IP/DHCP,
+the QEMU SLIRP test wiring) lives in [[file:networking.org][networking.org]].
+
+** binfmt_misc — OFF; not needed (would only delegate to an ELF interpreter).
+
+* Change log (kernel tags)
+
+- =#16= first working glibc EFISTUB build (embedded initramfs, banner init).
+- =#17= same, init rebuilt with musl (smaller static binary).
+- =#18= SBCL-as-PID-1, separate initrd, interactive supervisor menu.
+- =#19= real-hardware fixes: =CONFIG_PCI= + full USB/HID + I2C-HID + ACPI
+  power-off. Fixed dead laptop keyboard AND the power-off halt (one root cause).
+- =#20= bigger fbcon font: =CONFIG_FONTS= + =CONFIG_FONT_TER16x32= and
+  =fbcon=font:TER16x32= on the cmdline (default 8x16 was too small on the
+  laptop). Incremental rebuild ~27 s on 8 cores.

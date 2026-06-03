@@ -1,0 +1,213 @@
+#+TITLE: The framebuffer — from pixels in RAM to text on the laptop panel
+#+STARTUP: showall
+
+Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
+[[file:kernel-config.org][kernel-config.org]] (Display section) · Lisp side:
+[[file:sbcl-init.org][sbcl-init.org]].
+
+Why this file exists: the framebuffer is what was missing the day the laptop
+booted to a *black screen*. Understanding it explains that bug, the four Display
+=CONFIG_= options, and how we could draw graphics from Lisp.
+
+* The one-sentence essence
+
+A framebuffer is *a region of memory where each pixel is a number*; the display
+hardware continuously *scans that memory out* to the panel. "Drawing" is just
+writing bytes into that region. Everything else is plumbing.
+
+* 1. What a framebuffer physically is
+
+Reserve a block of RAM with one slot per pixel (you have 32 bpp => 4 bytes:
+blue, green, red, pad). The GPU's display controller has a register pointing at
+the start of that block and, ~60x/second, walks it in order pushing each pixel
+to the panel. That walk is *scanout*. The screen is a *view onto memory*: store
+a color into a pixel's slot and it appears on the next scanout — no API, just a
+memory write.
+
+Two numbers define the layout:
+- *bpp* — bytes per pixel (you: 4).
+- *pitch* / *stride* — bytes from the start of one row to the start of the next
+  (usually width*bpp, but may be padded for alignment, so it is its OWN number).
+
+The address of pixel (x, y) — the only math in the whole subsystem:
+
+#+begin_src
+offset = y * pitch + x * (bpp / 8)
+#+end_src
+
+* 2. Text mode vs framebuffer — and the black-screen bug
+
+*Old VGA text mode* stored CHARACTERS, not pixels: a region at =0xB8000= held
+2 bytes per cell (ASCII code + color), and the video card's *font ROM* turned
+code =0x41= into the pixels of an "A" in hardware. The CPU never touched a
+pixel. The BIOS guaranteed this existed at power-on for ~30 years.
+
+*Modern UEFI* boots straight into a graphical framebuffer and, on most laptops,
+provides *NO legacy VGA text mode at all* — no character memory, no font ROM.
+The panel is pure pixels.
+
+That is exactly the original bug: the kernel ran fine but assumed it could write
+characters to a text mode that did not exist on real UEFI => healthy kernel,
+black screen. The fix was not "fix the kernel" but "give the kernel a way to
+render text AS pixels" => =FB_EFI= + =FRAMEBUFFER_CONSOLE=.
+
+* 3. Getting a framebuffer without a GPU driver (efifb)
+
+Writing a real driver for the laptop's specific GPU is huge and vendor-specific.
+We do NONE of it. UEFI firmware has *already* programmed the GPU and set up a
+working framebuffer (it needs one for its own menus) and exposes the details via
+the *GOP — Graphics Output Protocol*: framebuffer physical address, width,
+height, pitch, pixel format.
+
+The EFISTUB kernel reads those GOP values; then =CONFIG_FB_EFI= (=efifb=) is a
+deliberately DUMB driver: it does not program the GPU, it just *reuses the
+framebuffer the firmware already set up*. It inherits the mode, cannot change
+resolution, does zero acceleration — but it is tiny and works on virtually any
+UEFI machine. Right trade-off for a minimal distro.
+
+* 4. fbcon — turning printk/format into pixels
+
+A framebuffer only knows pixels; the kernel speaks characters (printk, tty, SBCL
+=format=). =CONFIG_FRAMEBUFFER_CONSOLE= (=fbcon=) bridges them: it is the *font
+ROM reimplemented in software*. It carries a built-in bitmap font; when the
+console says "put 'A' at row 5 col 12" it looks up the glyph bitmap and writes
+its pixels into the framebuffer (using the offset math above, scaled by the font
+cell size). It does in the CPU what the VGA card did in hardware.
+
+The full stack the "Supervisor up" banner travels through:
+
+#+begin_src
+SBCL (format t ...) / kernel printk
+   |  characters
+   v
+ tty layer            (CONFIG_TTY)
+   |
+ virtual terminal     (CONFIG_VT, VT_CONSOLE)   scrollback, cursor
+   |  "draw glyph G at cell (row,col)"
+   v
+ fbcon                (FRAMEBUFFER_CONSOLE)      software font: glyph -> pixels
+   |  pixel writes
+   v
+ efifb                (FB_EFI) -> /dev/fb0       firmware's framebuffer memory
+   |
+   v
+ GPU scanout -> the laptop panel
+#+end_src
+
+Every box is one of the Display =CONFIG_= options. Remove fbcon and the chain
+breaks at "glyph -> pixels": black screen again. That is why FB + FB_EFI +
+FRAMEBUFFER_CONSOLE + VT/TTY must all be on together.
+
+* 5. /dev/fb0 — driving the pixels yourself
+
+Because we have =CONFIG_FB= + =CONFIG_FB_DEVICE= + devtmpfs, the raw framebuffer
+is the device file */dev/fb0*. That file IS the pixel memory. Use it via:
+- *seek + write*: lseek to =y*pitch + x*bpp=, write the pixel bytes; or
+- *mmap*: map it into your address space and store directly (the fast path).
+
+Mode parameters are not guesswork:
+- =/sys/class/graphics/fb0/virtual_size=   -> "WxH"
+- =/sys/class/graphics/fb0/stride=         -> pitch in bytes
+- =/sys/class/graphics/fb0/bits_per_pixel= -> bpp
+- color channel offsets (which byte is R/G/B): =ioctl(FBIOGET_VSCREENINFO)=
+  (sysfs does not expose them; efifb is commonly 32bpp BGRX = bytes [B,G,R,pad]).
+
+SBCL can do all of this — plain binary file I/O on /dev/fb0, or =sb-alien= mmap,
+the same FFI it already uses for =reboot(2)=. So the Lisp machine is not limited
+to text; it can paint the screen. (No extra kernel option needed — FB is already
+on; drawing is PURE USERLAND.)
+
+* 6. Limits: efifb vs DRM/KMS
+
+| capability            | efifb (what we have)        | DRM/KMS (real GPU driver)   |
+|-----------------------+-----------------------------+-----------------------------|
+| programs the GPU      | no — inherits firmware mode | yes — full modesetting      |
+| change resolution     | no (locked to firmware)     | yes                         |
+| 2D/3D acceleration    | none — CPU writes pixels    | hardware-accelerated        |
+| size / complexity     | tiny, universal             | large, vendor-specific      |
+| right for minimal?    | YES                         | overkill                    |
+
+efifb is the lowest-common-denominator that always works. Acceleration, a
+window system, or changing resolution would mean the real DRM/KMS driver for the
+laptop's chip — much bigger, against this project's spirit.
+
+* 7. Increasing the fbcon font size — *DONE (Terminus 16x32, tag #20)*
+
+fbcon renders a *fixed bitmap font*; "bigger text" means selecting a font with a
+larger cell, not magnifying. fbcon computes
+=cols = xres/cell_w=, =rows = yres/cell_h=, so a bigger cell => bigger glyphs and
+fewer rows/cols. There is no integer-scaling knob in mainline fbcon. Concretely
+on the 1280x800 framebuffer: 8x16 gave 160x50; TER16x32 gives 80x25.
+
+The default 8x16 was too small on the real laptop panel, so we switched to
+*Terminus 16x32* (double the height). What was changed:
+
+1. Kernel config: =CONFIG_FONTS=y= + =CONFIG_FONT_TER16x32=y= (kept
+   =CONFIG_FONT_8x16=y= as fallback).
+2. Cmdline (=CONFIG_CMDLINE= is baked in this build): appended
+   =fbcon=font:TER16x32=. Final value:
+   ="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio fbcon=font:TER16x32"=
+3. Rebuilt the kernel (=build.sh --kernel=). Incremental rebuild on 8 cores took
+   *~27 s* wall (it is just a few font objects + the vmlinux relink + bzImage);
+   a no-op make is ~3 s. The build counter auto-bumped #19 -> #20.
+
+Gotcha hit while doing it: =scripts/config --enable FONT_TER16x32= silently did
+NOT set the symbol on this tree; a plain =sed= edit (then =make olddefconfig=)
+did, and the value survived because its deps (=FRAMEBUFFER_CONSOLE=y=, not SPARC,
+=FONTS=y=) are met.
+
+Notes:
+- Largest mainline built-in is TER16x32; beyond that needs a custom font.
+- =setfont= (kbd package) could change fonts at runtime, but we do not ship that
+  userland, so compile-in + cmdline is the realistic path here.
+- Bigger font => the alien's top-right corner is reached by console text sooner,
+  so press =a= to redraw it (see section 8).
+
+* 8. Drawing an image (the Land-of-Lisp alien) in a corner — *IMPLEMENTED*
+
+Drawing a raster image is PURE USERLAND (no new kernel option — /dev/fb0
+exists). The supervisor now paints the official Lisperati alien into the
+top-right corner at boot and on the =a= menu key. Verified in QEMU+OVMF:
+"alien drawn at (1008,16) on a 1280x800 framebuffer." with correct colours.
+
+How it is wired up:
+
+1. *Source -> raw pixels at build time (one-off)*: the sprite is
+   =lisplogo_alien_256.png= (256x150, RGBA with a real alpha channel),
+   converted ONCE on the dev host to a raw RGBA blob and committed:
+   #+begin_src sh
+   convert alien256.png -depth 8 RGBA:alien.rgba   # 256*150*4 = 153600 bytes
+   #+end_src
+   It is shipped as =/alien.rgba= via a =file= line in =initramfs.sbcl.list=.
+   (We pre-generate rather than convert in =build.sh= so the build needs no
+   ImageMagick and no network. Both =alien.rgba= and the source PNG live in
+   =initramfs/=.)
+2. *Read the framebuffer geometry at runtime* from sysfs — =read-fb-geometry=
+   parses =virtual_size= ("W,H"), =stride=, =bits_per_pixel=. We do NOT assume
+   pitch = width*bpp; we read =stride=.
+3. *Place it top-right*: =x0 = max(0, xres - 256 - margin)=, =y0 = margin=
+   (margin 16). Height is clamped to the screen.
+4. *Blit row by row into /dev/fb0* (=draw-alien=, opened =:direction :io=):
+   for each sprite row, seek to =(y0+y)*stride + x0*4=, READ the existing
+   background row, overlay only pixels whose *alpha >= 128*, then write the row
+   back. The read-modify-write is what gives a clean transparent cutout instead
+   of a black rectangle — and it is the hook for true alpha blending later.
+5. *Pixel format*: efifb here is 32bpp *BGRX* (bytes Blue,Green,Red,pad), so we
+   write =B,G,R= from the source =R,G,B=. Confirmed correct (alien is green, not
+   magenta). If a different machine reports swapped colours, exchange the two
+   marked B/R lines in =draw-alien=.
+
+Caveat (still true): fbcon shares the framebuffer, so console scrolling will
+overwrite the alien. That is why =a)= redraws it on demand; the boot-time draw
+is just a greeting.
+
+Dependencies:
+- Build host (one-off only): ImageMagick =convert= + the source PNG. Not needed
+  for normal rebuilds.
+- Runtime: /dev/fb0 + file I/O (already present). NO kernel rebuild needed —
+  =build.sh= (no =--kernel=) suffices.
+
+This is the clean contrast with the font question (section 7): bigger fonts = a
+KERNEL change; drawing an image = USERLAND only.
+
+See: =draw-alien= / =read-fb-geometry= in =initramfs/supervisor.lisp=.

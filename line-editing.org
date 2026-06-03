@@ -1,0 +1,124 @@
+#+TITLE: Line editing in pure Lisp — readline-class input without a native lib
+#+STARTUP: showall
+
+Parent doc: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor / REPL) ·
+related: [[file:framebuffer.org][framebuffer.org]] (the fbcon console that renders the
+escapes) · [[file:kernel-config.org][kernel-config.org]].
+
+Question that prompted this: the supervisor's menu/REPL only has the kernel's
+*canonical-mode* editing (backspace + line buffering). Can we get readline-style
+editing (history, arrows, Ctrl-A/E, kill/yank) *entirely in Lisp*, without
+shipping GNU readline or any new native =.so=?
+
+Short answer: SBCL's core has *no* built-in readline. But yes — rich editing is
+achievable in pure Lisp. The catch is one unavoidable syscall (raw mode), which
+is FFI into the =libc= we ALREADY ship, not a new library.
+
+* Why canonical mode is the wall
+
+The kernel TTY (N_TTY line discipline) defaults to *canonical mode*: it buffers a
+whole line and only hands it to the program on Enter; it handles backspace for
+you but NOTHING else. Arrow keys, history recall, word movement — the program
+never even sees those keystrokes.
+
+To do real editing you must switch the TTY to *raw mode* (disable canonical +
+echo) so you receive *each keystroke as it is pressed*, including the escape
+sequences arrows send (=ESC [ C=, =ESC [ D=, ...). You then echo and redraw the
+line yourself.
+
+* The one unavoidable bit: termios (and why it is NOT a new dependency)
+
+Raw mode is set via =termios= (=tcgetattr= / =tcsetattr=) — a *syscall*, not
+portable Lisp. But calling it is FFI into =libc.so.6=, which is already in the
+initramfs. So the EDITING LOGIC (buffer, cursor, history, key handling) is 100%
+Lisp; only the mode flip is a few lines of =sb-alien= to a function that is
+already present. No new native library, no new file.
+
+(=sb-posix= also exposes termios, but that contrib gave us friction earlier, so a
+direct =sb-alien tcsetattr= binding is the cleaner path here — no contrib fasl.)
+Always restore the saved termios on exit with =unwind-protect=.
+
+* What makes it render: fbcon speaks ANSI/VT
+
+The Linux framebuffer console is itself a *terminal emulator*: it interprets a
+solid set of ANSI/VT escape sequences — move cursor left/right, clear-to-EOL,
+go-to-column, etc. So a Lisp editor renders by EMITTING those escapes (=\e[K=,
+=\e[C=, =\e[D=, =\e[<n>G=) and they work on the framebuffer. That is exactly how
+readline drives a terminal. (This is the nuance behind the old "the fb console is
+line-based" remark: line-based is only the canonical DEFAULT; in raw mode the
+same console becomes a full escape-driven canvas. See [[file:framebuffer.org][framebuffer.org]].)
+
+* Path 1 — the linedit library (feature-rich, but NOT free of native deps)
+
+=linedit= (https://github.com/sharplispers/linedit) is a pure-CL line editor.
+You would bake it into the image at build time (=load= before
+=save-lisp-and-die=, the frozen-heap model).
+
+** Everything linedit brings (from its README)
+
+- *single-line text reader* — the readline-equivalent entry point.
+- *multi-line form reader* (=formedit=) — edit a whole Lisp form across lines,
+  with a continuation prompt.
+- *unlimited undo*.
+- *unlimited kill-ring* (kill/yank).
+- *unlimited history*, and *multiple histories*.
+- *paren matching* (shows the matching paren; NOT across lines).
+- *completion on packages and symbols* in the current image (Lisp-aware TAB).
+- *completion on directories and filenames*.
+- *apropos-word* and *describe-word* — inspect the symbol at point.
+- *paging* (pager for long output).
+- *fully customizable in CL* (key bindings / commands), though the README calls
+  deep customization "advanced and undocumented".
+- *REPL integration* via =install-repl= (keywords =:wrap-current=,
+  =:eof-quits=); entry points =linedit= (=:prompt=) and =formedit=
+  (=:prompt1=, =:prompt2=).
+- *help*: Meta-H (or ESC-H) in the prompt.
+- Works on SBCL and CCL; Linux / FreeBSD / macOS.
+
+** The catch for THIS project — linedit's dependencies
+
+=:depends-on (:cffi :terminfo :osicat :alexandria)=. Two of these break the
+"minimal, no native lib" goal:
+
+- *osicat* — ships a *native C shim* (=libosicat=) built via CFFI-grovel, so it
+  needs a C compiler at build time AND adds a native =.so= to ship. This is
+  exactly the native dependency we were trying to avoid.
+- *terminfo* (pure Lisp itself) reads the *terminfo database* at runtime to learn
+  the terminal's capabilities — so you must also ship the terminfo data files
+  (e.g. =/usr/share/terminfo/l/linux=) and set =TERM=linux=. Same class of
+  problem as the rlwrap notes in [[file:sbcl-init.org][sbcl-init.org]].
+- *cffi*, *alexandria* — pure Lisp, harmless.
+
+Net: linedit is powerful but is *not* a self-contained drop-in for our
+initramfs; it would re-introduce a native shim + a data-file dependency.
+
+* Path 2 — hand-roll a minimal editor (best fit for this project)
+
+A small editor in pure Lisp + one =sb-alien= termios call (to the libc we
+already ship) + ANSI escapes. No CFFI, no osicat, no terminfo DB, zero new files.
+Recipe:
+
+1. =tcgetattr= save; =tcsetattr= to raw (clear ICANON|ECHO).  [unwind-protect to restore]
+2. loop =read-char=; parse escape sequences for arrows / Home / End.
+3. maintain a buffer + cursor + a history list (plain Lisp).
+4. echo + redraw by emitting ANSI escapes to the console.
+5. on Enter, return the line; push it to history.
+
+Basic editing is a few dozen lines, and it folds neatly into the poll-loop idea
+(reading char-by-char already, so the alien-redraw and the editor share one
+loop). It teaches termios + ANSI + escape parsing — very much in this project's
+spirit.
+
+* What to NOT reach for
+
+- *cl-readline* — it is a BINDING to GNU readline, i.e. the native library we are
+  avoiding. Wrong tool here.
+- *Swank/SLY network REPL* — gives full editing from your editor, but needs a TCP
+  stack we do not have (networking is OFF, see [[file:kernel-config.org][kernel-config.org]]).
+
+* Recommendation
+
+For a self-contained local console under our constraints, *Path 2* (hand-rolled,
+FFI-to-existing-libc) is the right call. Reach for *linedit* only if you decide
+to relax the no-native-lib / minimal-files goal and accept osicat + a shipped
+terminfo database in exchange for its richer feature set.
