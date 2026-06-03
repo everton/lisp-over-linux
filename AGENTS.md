@@ -1,4 +1,4 @@
-# AGENTS.md — working notes for AI agents in `~/linux/micro`
+# AGENTS.md — working notes for AI agents in `~/lisp-over-linux`
 
 This is a **learning project**: a very minimal EFISTUB Linux that a UEFI laptop
 boots directly from a USB stick (no GRUB/bootloader), now running **SBCL Common
@@ -9,19 +9,25 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 
 | File | Role |
 |------|------|
-| `micro-distro.org` | Base EFISTUB micro-linux: boot chain, USB creation, first-build diagnosis. **Top-level doc.** |
+| `README.org` | **Entry point.** What the project is + how to reconstruct the env (the `./linux`/`./sbcl` symlinks, `deps.sh`, build). Read first. |
+| `micro-distro.org` | Base EFISTUB micro-linux: boot chain, USB creation, first-build diagnosis. |
 | `sbcl-init.org` | SBCL as PID 1: preinit shim, supervisor, separate-initrd, build. Extends `micro-distro.org`. |
 | `kernel-config.org` | **Inventory of every kernel option we enable and why.** Single source of truth for `.config`. |
 | `framebuffer.org` | Deep-dive: framebuffer → efifb → fbcon, `/dev/fb0`, font size, drawing images. Explains the Display options. |
 | `line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI), linedit's features + native-dep caveats, hand-rolled vs library. |
 | `networking.org` | **Roadmap (PLANNING ONLY):** bring a network layer — kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets` baked into the image. Not started. |
-| `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). |
+| `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
+| `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
 
-Kernel tree (outside this folder): `~/linux/linux-6.18.3/` — `.config` + `arch/x86/boot/bzImage`.
-SBCL source: `~/sbcl/`.
+External source trees are reached via **gitignored symlinks** in the project root,
+created by `deps.sh` (never hardcode a path):
+- `./linux` → a Linux kernel tree (`.config`, `arch/x86/boot/bzImage`, `usr/gen_init_cpio`).
+- `./sbcl` → a built SBCL tree (`src/runtime/sbcl`, `output/sbcl.core`).
+
+On this machine they currently point at `~/linux/linux-6.18.3` and `~/sbcl`.
 
 ## Keep the docs in sync with reality — REQUIRED
 
@@ -32,9 +38,9 @@ system, update the matching doc **in the same turn**:
   update **`kernel-config.org`**: fix the relevant table, bump the kernel tag,
   and add a line to its "Change log". Re-run the audit `grep`s documented in
   that file's "How to regenerate / audit" section and reconcile differences.
-  **Also refresh the tracked snapshot** in the same turn:
-  `cp ~/linux/linux-6.18.3/.config kernel/config-6.18.3` (the live `.config`
-  lives outside the repo; `kernel/config-6.18.3` is our committed copy).
+  **Also refresh the tracked snapshot** in the same turn (run from the project
+  root): `cp linux/.config kernel/config-6.18.3` (the live `.config` lives outside
+  the repo behind the `./linux` symlink; `kernel/config-6.18.3` is our copy).
 - **Changed the boot chain / USB / EFISTUB** → update `micro-distro.org`.
 - **Changed `preinit.c`, `supervisor.lisp`, the initramfs list, or `build.sh`** →
   update `sbcl-init.org` (and its STATUS line).
@@ -48,8 +54,11 @@ If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 - Every `.org` file starts with the **resume-session comment block** (the
   `cd … && claude --resume <session-id>` header) and `#+TITLE` / `#+STARTUP`.
 - Cross-link docs with `[[file:other.org][other.org]]`.
-- Kernel build tags are `#NN` (currently **#19**). Always say which tag a claim
+- Kernel build tags are `#NN` (currently **#20**). Always say which tag a claim
   refers to.
+- The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
+  them via those names, never an absolute/`$HOME` path. `build.sh` derives its own
+  location and the cpio source paths are relative — keep it that way.
 - Don't rebuild the kernel (`build.sh --kernel`, minutes) unless a *kernel*
   option actually changed; userland-only changes are `build.sh` (seconds).
 

@@ -9,7 +9,7 @@ This file is the *single source of truth* for which kernel features the micro
 distro turns on, and — more importantly — *why each one is there*. It is meant
 to be read top-to-bottom by someone (re)building the kernel from scratch.
 
-Kernel: =linux-6.18.3=, config at =~/linux/linux-6.18.3/.config=.
+Kernel: =linux-6.18.3=, config at =~/lisp-over-linux/linux/.config=.
 Current tag: *#20* (Terminus 16x32 fbcon font; built on top of #19 = CONFIG_PCI +
 full USB/HID + ACPI power-off on real hardware).
 ~780 options are set in total; most are auto-selected defaults. The tables below
@@ -21,7 +21,7 @@ These are the exact commands used to produce the inventory below. Re-run them
 after any =make menuconfig= and reconcile any differences into the tables.
 
 #+begin_src sh
-cd ~/linux/linux-6.18.3
+cd ~/lisp-over-linux/linux
 
 # the curated set we care about, grouped by subsystem:
 grep -E 'CONFIG_(EFI|EFI_STUB|FB|FB_EFI|FRAMEBUFFER_CONSOLE|VT|VT_CONSOLE|PCI|\

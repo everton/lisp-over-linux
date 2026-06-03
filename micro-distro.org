@@ -56,7 +56,7 @@ These are the bugs that made the first attempt "not boot". All are fixed below.
 6. (Debug-quality-of-life, not fatal) =CONFIG_SERIAL_8250_CONSOLE= was off, so
    =console=ttyS0= produced nothing — made headless QEMU debugging blind.
 
-* Layout / artifacts (in ~/linux/micro)
+* Layout / artifacts (in ~/lisp-over-linux)
 
   initramfs/init.c              tiny PID 1 (source)
   initramfs/init               static ELF, built from init.c
@@ -64,7 +64,7 @@ These are the bugs that made the first attempt "not boot". All are fixed below.
   iso_root/efi/boot/bootx64.efi == the kernel bzImage (EFISTUB)  <-- the bootable file
   ovmf_vars_test.fd            writable copy of OVMF NVRAM for QEMU tests
   serial.log / screen.png      last test capture
-  ~/linux/linux-6.18.3/        kernel source tree
+  ~/lisp-over-linux/linux/        kernel source tree
 
 * Prerequisites (host packages)
 
@@ -117,7 +117,7 @@ Note: this user is NOT in the =kvm= group, so QEMU runs under TCG (no
 Build it *statically* (no libc in the initramfs):
 
 #+begin_src sh :results output
-  cd ~/linux/micro/initramfs
+  cd ~/lisp-over-linux/initramfs
   gcc -static -O2 -s -o init init.c
   file init    # => ELF 64-bit ... statically linked
 #+end_src
@@ -139,7 +139,7 @@ embedded cpio at build time, and it can create device nodes *without root*.
   nod  /dev/tty      0666 0 0 c 5 0
   dir  /proc         0755 0 0
   dir  /sys          0755 0 0
-  file /init /home/everton/linux/micro/initramfs/init 0755 0 0
+  file /init /home/everton/lisp-over-linux/initramfs/init 0755 0 0
 #+end_src
 
 (Alternative, the way the old notes did it — also fine but no device nodes:
@@ -153,18 +153,18 @@ Start from the x86_64 default config, then apply the deltas below. The deltas
 are what make EFISTUB + embedded initramfs + a *visible* console work.
 
 #+begin_src sh :results output
-  cd ~/linux/linux-6.18.3
+  cd ~/lisp-over-linux/linux
   make defconfig          # base = x86_64_defconfig
 #+end_src
 
 Apply the required options with scripts/config (idempotent):
 
 #+begin_src sh :results output
-  cd ~/linux/linux-6.18.3
+  cd ~/lisp-over-linux/linux
   ./scripts/config \
     --enable  EFI \
     --enable  EFI_STUB \
-    --set-str INITRAMFS_SOURCE /home/everton/linux/micro/initramfs/initramfs.list \
+    --set-str INITRAMFS_SOURCE /home/everton/lisp-over-linux/initramfs/initramfs.list \
     --enable  BLK_DEV_INITRD \
     --enable  DEVTMPFS \
     --enable  DEVTMPFS_MOUNT \
@@ -218,7 +218,7 @@ DSDT is rejected ("Unable to load the System Description Tables"), so there is n
 
 Enable PCI + the USB stack + HID transports (all built-in; modules won't load):
 #+begin_src sh
-  cd ~/linux/linux-6.18.3
+  cd ~/lisp-over-linux/linux
   ./scripts/config \
     --enable PCI --enable PCI_MSI --enable PCIEPORTBUS \
     --enable USB_SUPPORT --enable USB --enable USB_PCI \
@@ -239,14 +239,14 @@ power-off then prints "reboot: Power down" and the VM exits.
 Sanity-check the resulting .config:
 
 #+begin_src sh :results output
-  cd ~/linux/linux-6.18.3
+  cd ~/lisp-over-linux/linux
   grep -E 'CONFIG_EFI_STUB|CONFIG_INITRAMFS_SOURCE|CONFIG_DEVTMPFS=|CONFIG_CMDLINE|CONFIG_SERIAL_8250_CONSOLE|CONFIG_FB=|CONFIG_FB_EFI=|CONFIG_FRAMEBUFFER_CONSOLE=' .config
 #+end_src
 
 * Step 4 — build the kernel
 
 #+begin_src sh :results output
-  cd ~/linux/linux-6.18.3
+  cd ~/lisp-over-linux/linux
   make -j"$(nproc)" bzImage
   # Output: arch/x86/boot/bzImage   (~1.9 MB, EFISTUB, initramfs embedded)
 #+end_src
@@ -267,9 +267,9 @@ With EFISTUB, "installing the bootloader" is literally one copy. The UEFI
 firmware launches automatically off a USB stick with no NVRAM boot entry.
 
 #+begin_src sh :results output
-  cd ~/linux/micro
+  cd ~/lisp-over-linux
   mkdir -p iso_root/efi/boot
-  cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage iso_root/efi/boot/bootx64.efi
+  cp ~/lisp-over-linux/linux/arch/x86/boot/bzImage iso_root/efi/boot/bootx64.efi
   file iso_root/efi/boot/bootx64.efi   # must say: Linux kernel ... bzImage
 #+end_src
 
@@ -278,10 +278,10 @@ firmware launches automatically off a USB stick with no NVRAM boot entry.
 ** A. Quick check: boot the kernel directly (no EFI) — isolates init/initramfs
 
 #+begin_src sh :results output
-  cd ~/linux/micro
+  cd ~/lisp-over-linux
   : > serial.log
   timeout 40 qemu-system-x86_64 -machine q35 -m 1024 \
-    -kernel ~/linux/linux-6.18.3/arch/x86/boot/bzImage \
+    -kernel ~/lisp-over-linux/linux/arch/x86/boot/bzImage \
     -append "console=ttyS0,115200" \
     -serial file:serial.log -display none -no-reboot
   grep -E 'Run /init|Hello' serial.log
@@ -296,7 +296,7 @@ QEMU's VVFAT exposes iso_root/ as a virtual FAT disk, so we test the exact
 =\EFI\BOOT\BOOTX64.EFI= fallback launch with zero root / zero real USB.
 
 #+begin_src sh :results output
-  cd ~/linux/micro
+  cd ~/lisp-over-linux
   cp /usr/share/OVMF/OVMF_VARS_4M.fd ovmf_vars_test.fd   # writable NVRAM
   : > serial.log
   qemu-system-x86_64 -machine q35 -m 1024 \
@@ -324,7 +324,7 @@ Add =-qmp unix:/tmp/qmp.sock,server,nowait= to the QEMU line, then:
   s = socket.socket(socket.AF_UNIX); s.connect("/tmp/qmp.sock")
   time.sleep(0.3); s.recv(65536)
   s.sendall(b'{"execute":"qmp_capabilities"}\n'); time.sleep(0.3); s.recv(65536)
-  s.sendall(b'{"execute":"screendump","arguments":{"filename":"/home/everton/linux/micro/screen.ppm"}}\n')
+  s.sendall(b'{"execute":"screendump","arguments":{"filename":"/home/everton/lisp-over-linux/screen.ppm"}}\n')
   time.sleep(0.6); s.recv(65536); s.close()
 #+end_src
 
@@ -350,7 +350,7 @@ target laptop.
   sudo mkfs.vfat -F32 "${DEV}1"
   sudo mount "${DEV}1" /mnt
   sudo mkdir -p /mnt/EFI/BOOT
-  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI
+  sudo cp ~/lisp-over-linux/linux/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI
   sync; sudo umount /mnt
 #+end_src
 
@@ -361,7 +361,7 @@ target laptop.
   sudo sgdisk -n1:0:0 -t1:ef00 -c1:"EFI" "$DEV"
   sudo mkfs.vfat -F32 "${DEV}1"
   mmd   -i "${DEV}1" ::/EFI ::/EFI/BOOT
-  mcopy -i "${DEV}1" ~/linux/linux-6.18.3/arch/x86/boot/bzImage ::/EFI/BOOT/BOOTX64.EFI
+  mcopy -i "${DEV}1" ~/lisp-over-linux/linux/arch/x86/boot/bzImage ::/EFI/BOOT/BOOTX64.EFI
 #+end_src
 
 ** Boot it on the laptop
@@ -420,7 +420,7 @@ Install the toolchain (provides the musl-gcc wrapper):
 
 Build init with musl instead of glibc — just swap the compiler:
 #+begin_src sh :results output
-  cd ~/linux/micro/initramfs
+  cd ~/lisp-over-linux/initramfs
   gcc      -static -O2 -s -o init.glibc init.c   # for comparison
   musl-gcc -static -O2 -s -o init.musl  init.c
   cp init.musl init                              # initramfs.list points /init here
@@ -434,15 +434,15 @@ Both are "not a dynamic executable"; both boot identically via EFISTUB (tag #17)
 
 Then rebuild the kernel so the smaller initramfs is re-embedded:
 #+begin_src sh
-  cd ~/linux/linux-6.18.3 && make -j"$(nproc)" bzImage
-  cp arch/x86/boot/bzImage ~/linux/micro/iso_root/efi/boot/bootx64.efi
+  cd ~/lisp-over-linux/linux && make -j"$(nproc)" bzImage
+  cp arch/x86/boot/bzImage ~/lisp-over-linux/iso_root/efi/boot/bootx64.efi
 #+end_src
 
 Refresh the USB (partitioning already done — just replace the EFI file):
 #+begin_src sh
   DEV=/dev/sda
   sudo mount "${DEV}1" /mnt && \
-  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
+  sudo cp ~/lisp-over-linux/linux/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
   sync && sudo umount /mnt
 #+end_src
 
@@ -453,8 +453,8 @@ was built in *separate-initrd* mode (e.g. the SBCL build, CONFIG_INITRAMFS_SOURC
 #+begin_src sh
   DEV=/dev/sda
   sudo mount "${DEV}1" /mnt && \
-  sudo cp ~/linux/linux-6.18.3/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
-  sudo cp ~/linux/micro/iso_root/initramfs.cpio       /mnt/initramfs.cpio && \
+  sudo cp ~/lisp-over-linux/linux/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI && \
+  sudo cp ~/lisp-over-linux/iso_root/initramfs.cpio       /mnt/initramfs.cpio && \
   sync && sudo umount /mnt
 #+end_src
 See [[file:sbcl-init.org][sbcl-init.org]] for the separate-initrd build. Rule of thumb: one file if the

@@ -1,0 +1,120 @@
+#+TITLE: lisp-over-linux (LoL) — a UEFI laptop that boots straight into SBCL
+#+STARTUP: showall
+
+A *very* minimal Linux that a UEFI machine boots directly from a USB stick with
+*no bootloader* (the kernel is the EFI application, EFISTUB), whose entire
+userland is *SBCL Common Lisp running as PID 1*. No GRUB, no systemd, no shell —
+firmware → kernel → Lisp. "lisp-over-linux", LoL for short (yes, also a nod to
+the *Land of Lisp* alien this thing paints in the corner of the screen).
+
+This is a learning project: prefer reading the =.org= docs below over guessing.
+
+* What is in this repo (and what is NOT)
+
+Tracked here: the *sources and docs* — the C preinit, the Lisp supervisor, the
+initramfs description, =build.sh=, =deps.sh=, every =.org= write-up, and a pinned
+snapshot of the kernel =.config= under =kernel/=.
+
+*NOT* tracked (too big, version-specific, per-machine): the *Linux kernel source
+tree* and the *SBCL source tree*. The build reaches them through two *gitignored
+symlinks* in the project root:
+
+#+begin_src
+  ./linux  ->  a Linux kernel source tree   (e.g. linux-6.18.3)
+  ./sbcl   ->  an SBCL source tree (already built)
+#+end_src
+
+=build.sh= locates itself and uses =./linux= and =./sbcl= — nothing hardcodes a
+home path, so the whole project folder is relocatable and clone-able by anyone.
+
+* Rebuilding the environment from scratch
+
+You need three things present: the two symlinks above (pointing at real trees)
+and the host toolchain. Use =deps.sh= to create the symlinks.
+
+** 1. Host packages (Debian/Ubuntu)
+
+#+begin_src sh
+  sudo apt install build-essential bc kmod cpio flex bison \
+       libncurses-dev libelf-dev libssl-dev dwarves rsync \
+       qemu-system-x86 ovmf dosfstools mtools gdisk musl-tools
+#+end_src
+
+** 2. The Linux kernel tree  (./linux)
+
+If you ALREADY have a kernel source tree:
+#+begin_src sh
+  ./deps.sh link linux /path/to/linux-6.18.3
+#+end_src
+
+From nothing (downloads into =./sources/=, symlinks, applies our pinned config):
+#+begin_src sh
+  ./deps.sh kernel 6.18.3      # version defaults to the one we pin in kernel/
+#+end_src
+
+The pinned config lives in =kernel/config-6.18.3= (see [[file:kernel-config.org][kernel-config.org]] for what
+every option is and why). =deps.sh kernel= copies it to =linux/.config= and runs
+=make olddefconfig= for you.
+
+** 3. The SBCL tree  (./sbcl)
+
+If you already have a *built* SBCL checkout:
+#+begin_src sh
+  ./deps.sh link sbcl /path/to/sbcl
+#+end_src
+
+From nothing (clones; you must then build it — SBCL needs an existing Lisp to
+bootstrap):
+#+begin_src sh
+  ./deps.sh sbcl
+  cd sbcl && sh make.sh && cd ..
+#+end_src
+
+=build.sh= expects =sbcl/src/runtime/sbcl= and =sbcl/output/sbcl.core= to exist.
+
+** 4. Build
+
+#+begin_src sh
+  ./deps.sh status        # sanity: both symlinks resolve
+  ./build.sh              # preinit + lisp-init + initramfs.cpio   (seconds)
+  ./build.sh --kernel     # ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
+  ./build.sh --run        # build, boot in QEMU/OVMF, screenshot it
+#+end_src
+
+Then write the USB / boot on real hardware — see [[file:micro-distro.org][micro-distro.org]].
+
+* Upgrading the kernel version
+
+The symlink is the whole trick: point =./linux= at the new tree and rebuild.
+#+begin_src sh
+  ./deps.sh kernel 6.19          # download + extract + symlink + apply config
+  # if 6.19 has no pinned snapshot yet, configure, then:
+  #   cp linux/.config kernel/config-6.19   (commit it)
+  ./build.sh --kernel
+#+end_src
+Nothing in the project needs editing — only the symlink moves.
+
+* The docs (read these)
+
+| File | What it covers |
+|------+----------------|
+| [[file:micro-distro.org][micro-distro.org]]  | The base EFISTUB boot chain, USB creation, real-hardware boot. |
+| [[file:sbcl-init.org][sbcl-init.org]]     | SBCL as PID 1: the preinit shim, the supervisor, the build. |
+| [[file:kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
+| [[file:framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
+| [[file:line-editing.org][line-editing.org]]  | Readline-class input in pure Lisp (planned: next task). |
+| [[file:networking.org][networking.org]]    | Bringing a network layer (planning only — the task after that). |
+| [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |
+
+* Layout
+
+#+begin_src
+  build.sh                 one-step build (userland, --kernel, --run)
+  deps.sh                  fetch/link/update the ./linux and ./sbcl trees
+  kernel/                  pinned .config snapshots (config-<version>)
+  initramfs/               preinit.c, supervisor.lisp, the cpio list, alien assets
+  iso_root/                build output: BOOTX64.EFI + initramfs.cpio (gitignored)
+  *.org                    the documentation
+  linux -> …  sbcl -> …    gitignored symlinks to the external source trees
+  sources/                 (optional) where deps.sh downloads trees (gitignored)
+#+end_src

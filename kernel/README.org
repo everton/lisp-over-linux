@@ -1,0 +1,33 @@
+#+TITLE: kernel/ — tracked snapshot of the kernel build config
+#+STARTUP: showall
+
+Parent: [[file:../README.org][../README.org]] · option-by-option rationale:
+[[file:../kernel-config.org][../kernel-config.org]].
+
+The kernel source tree is *not* in this repo (it is reached via the gitignored
+=./linux= symlink — see [[file:../README.org][../README.org]]). The tree itself is unmodified upstream
+Linux source plus one precious file, the =.config=. This directory keeps a
+tracked *copy* of that =.config= so the kernel side of the project can't be lost.
+
+- =config-6.18.3= — verbatim snapshot of the live =linux/.config= for that version.
+
+* This is a snapshot, not the live file
+
+The live =.config= (at =../linux/.config=) is still the truth (see
+[[file:../kernel-config.org][../kernel-config.org]]). After any kernel config change, refresh the snapshot in
+the same commit (run from the project root):
+
+#+begin_src sh
+  cp linux/.config kernel/config-6.18.3
+#+end_src
+
+* Rebuilding the kernel from scratch (or on a fresh machine)
+
+#+begin_src sh
+  ./deps.sh kernel 6.18.3      # downloads the tree, symlinks ./linux, and
+                               # copies config-6.18.3 in as .config + olddefconfig
+  ./build.sh --kernel
+#+end_src
+
+When bumping to a new kernel version, snapshot its config as a new
+=config-<version>= file and commit it alongside the change.

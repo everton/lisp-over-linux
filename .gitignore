@@ -23,5 +23,13 @@ serial.log
 screen.ppm
 screen.png
 
+# --- External source trees (machine-local; materialized by deps.sh) ---
+# ./linux and ./sbcl are symlinks to a Linux kernel tree and an SBCL tree.
+# They are huge, version-specific, and per-machine — never committed.
+/linux
+/sbcl
+# default location deps.sh downloads sources into (if not linking existing ones):
+/sources/
+
 # --- Local tooling state ---
 .claude/settings.local.json

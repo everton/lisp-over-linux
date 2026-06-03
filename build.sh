@@ -17,10 +17,14 @@
 
 set -euo pipefail
 
-# ---- paths (edit here if anything moves) -----------------------------------
-MICRO="$HOME/linux/micro"
-KERNEL="$HOME/linux/linux-6.18.3"
-SBCL="$HOME/sbcl"
+# ---- paths (the script locates itself; external trees are local symlinks) --
+# MICRO is wherever this script lives, so the whole project is relocatable.
+# KERNEL and SBCL are gitignored symlinks in the project root pointing at a
+# Linux source tree and an SBCL source tree — create them with ./deps.sh
+# (see README.org). Nothing here hardcodes $HOME.
+MICRO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KERNEL="$MICRO/linux"
+SBCL="$MICRO/sbcl"
 
 INITRAMFS_DIR="$MICRO/initramfs"
 ISO_ROOT="$MICRO/iso_root"
@@ -49,6 +53,12 @@ for arg in "$@"; do
 done
 
 # ---- preflight: make sure the tools/inputs exist ---------------------------
+# the two external trees are symlinks materialized by ./deps.sh
+for link in "$KERNEL:linux" "$SBCL:sbcl"; do
+  path="${link%:*}"; name="${link#*:}"
+  [ -e "$path" ] || { echo "ERROR: missing ./$name symlink (the $name source tree)." >&2
+                      echo "       run  ./deps.sh  to fetch/link it — see README.org" >&2; exit 1; }
+done
 for f in "$GEN_INIT_CPIO" "$SBCL_RUNTIME" "$SBCL_CORE" \
          "$INITRAMFS_DIR/preinit.c" "$INITRAMFS_DIR/supervisor.lisp" \
          "$INITRAMFS_DIR/initramfs.sbcl.list"; do
@@ -74,8 +84,11 @@ LISP
                 --non-interactive --load "$BUILD_LISP"
 
 # ---- 3. pack the initramfs cpio (no root needed) ---------------------------
+# Run from $MICRO so the *relative* source paths in initramfs.sbcl.list
+# (initramfs/preinit, …) resolve against the project root — keeps the list
+# free of any machine-specific absolute path.
 say "Packing initramfs.cpio (gen_init_cpio)"
-"$GEN_INIT_CPIO" "$INITRAMFS_DIR/initramfs.sbcl.list" > "$CPIO_OUT"
+( cd "$MICRO" && "$GEN_INIT_CPIO" "$INITRAMFS_DIR/initramfs.sbcl.list" > "$CPIO_OUT" )
 
 # ---- 4. (optional) rebuild the kernel and refresh BOOTX64.EFI --------------
 if [ "$DO_KERNEL" -eq 1 ]; then
