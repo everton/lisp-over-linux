@@ -145,3 +145,11 @@ compiled kernel (=bzImage=), which IS GPLv2. To comply you must make the
 linux-6.18.3 from kernel.org) together with the exact =.config= used — which we
 already keep under =kernel/=. Your MIT userland, merely aggregated alongside the
 kernel on the medium, is unaffected.
+
+** Artwork
+
+The alien sprite (=initramfs/alien256.png= and the derived =initramfs/alien.rgba=)
+is the *Lisp alien logo by Conrad Barski, M.D.* — https://www.lisperati.com/logo.html
+— released into the *public domain* ("anyone may use these freely for any purpose
+and in any way"). Attribution is not required but is appreciated, so: thanks,
+Conrad. The logo is also the namesake nod behind "LoL" / *Land of Lisp*.
