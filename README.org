@@ -118,3 +118,30 @@ Nothing in the project needs editing — only the symlink moves.
   linux -> …  sbcl -> …    gitignored symlinks to the external source trees
   sources/                 (optional) where deps.sh downloads trees (gitignored)
 #+end_src
+
+* Licensing
+
+This project's *own* code — =preinit.c=, =supervisor.lisp=, =build.sh=,
+=deps.sh=, the =.org= docs, and the =kernel/config-*= snapshots — is released
+under the *MIT License* (see [[file:LICENSE][LICENSE]]).
+
+Why MIT and not GPL, given we build on Linux: this repository does *not*
+redistribute the Linux kernel (its source and the compiled =bzImage= are
+gitignored; the tree is fetched separately via =deps.sh=), and our userland
+talks to the kernel only through *system calls* — which the kernel's own license
+explicitly excludes from being a derivative work. So our code is ours to license.
+
+Third-party components you obtain/build separately keep their own licenses:
+
+| Component | License | How it reaches you |
+|-----------+---------+--------------------|
+| Linux kernel | GPLv2 | fetched by =deps.sh= from kernel.org; never redistributed here |
+| musl libc | MIT | statically linked into =preinit= (you build it) |
+| SBCL | public domain + BSD-style | the runtime your image embeds (you build it) |
+
+*Important if you ever distribute a bootable image/USB:* that image contains the
+compiled kernel (=bzImage=), which IS GPLv2. To comply you must make the
+*corresponding kernel source* available (it is unmodified upstream
+linux-6.18.3 from kernel.org) together with the exact =.config= used — which we
+already keep under =kernel/=. Your MIT userland, merely aggregated alongside the
+kernel on the medium, is unaffected.
