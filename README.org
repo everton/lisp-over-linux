@@ -83,8 +83,14 @@ bootstrap):
   ./deps.sh status        # sanity: both symlinks resolve
   ./build.sh              # preinit + lisp-init + initramfs.cpio   (seconds)
   ./build.sh --kernel     # ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
-  ./build.sh --run        # build, boot in QEMU/OVMF, screenshot it
+  ./build.sh --run        # build, boot HEADLESS in QEMU/OVMF, screenshot it
+  ./build.sh --interactive  # build, boot in a QEMU WINDOW you can type into
 #+end_src
+
+Use =--interactive= (=-i=) to actually *drive* the supervisor menu and the Lisp
+REPL: PID 1's console is the framebuffer VT (=tty0=), so you type in the QEMU
+window while the launching terminal mirrors the serial/kernel log. =--run= is the
+non-interactive path (boots, screenshots, kills QEMU) for quick checks/CI.
 
 Then write the USB / boot on real hardware — see [[file:micro-distro.org][micro-distro.org]].
 

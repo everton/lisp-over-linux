@@ -83,13 +83,25 @@ userland (the whole point of the separate initrd — no kernel rebuild):
 
   - =./build.sh=                 preinit + lisp-init + initramfs.cpio   (seconds)
   - =./build.sh --kernel=        ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
-  - =./build.sh --run=           build, then boot in QEMU and screenshot it
+  - =./build.sh --run=           build, then boot HEADLESS in QEMU and screenshot it
+  - =./build.sh --interactive=   build, then boot in a QEMU WINDOW you can type into
   - =./build.sh --kernel --run=  the full cycle
-  (flags combine; env =QEMU_WAIT=<seconds>= tunes the pre-screenshot boot wait)
+  (flags combine; env =QEMU_WAIT=<seconds>= tunes the pre-screenshot boot wait,
+  =QEMU_DISPLAY=<gtk|sdl>= picks the =--interactive= window backend)
 
 =--run= boots iso_root/ under OVMF headless, waits, grabs the framebuffer via the
 QMP socket to =screen.png=, and prints the serial boot markers. Everyday loop:
 edit =supervisor.lisp= -> =./build.sh --run= -> open =screen.png=.
+
+=--interactive= is what you want to actually *use* the REPL. It boots the same
+image in a foreground QEMU window with =-display gtk= and =-serial mon:stdio=.
+Because the kernel cmdline ends with =console=tty0=, /dev/console (PID 1's
+stdin/stdout) is the *framebuffer VT* — so you type the menu/REPL in the QEMU
+window, while the terminal you launched from mirrors the serial + kernel log and
+gives you the QEMU monitor (=Ctrl-A C=). =-no-reboot= means the menu's
+=s) shut down= (which calls =reboot(RB_POWER_OFF)=) cleanly quits QEMU and
+returns your shell. This is the right mode for exercising the line editor (the
+arrows / Ctrl-A E K U W / history added in [[file:line-editing.org][line-editing.org]]).
 
 The sections below spell out what build.sh does, for reference.
 

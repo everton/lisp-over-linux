@@ -7,11 +7,19 @@
 #
 #   ./build.sh                 preinit + lisp-init + initramfs.cpio   (seconds)
 #   ./build.sh --kernel        ALSO rebuild the kernel + BOOTX64.EFI  (minutes)
-#   ./build.sh --run           build, then boot in QEMU and screenshot it
+#   ./build.sh --run           build, then boot HEADLESS in QEMU and screenshot it
+#   ./build.sh --interactive   build, then boot in a QEMU WINDOW you can type into
 #   ./build.sh --kernel --run  the full cycle
 #
-# Flags combine in any order. Env: QEMU_WAIT=<seconds> (default 50) tunes how
-# long to let it boot before the screenshot (TCG is slow, no KVM here).
+# --run is non-interactive (boots, screenshots, kills QEMU) — for CI/quick checks.
+# --interactive (-i) opens a real QEMU window: PID-1's console is tty0 (the
+# framebuffer VT, per the console= cmdline), so you drive the REPL from that
+# window; the launching terminal mirrors the serial/kernel log. It runs in the
+# foreground until you pick "s) shut down" in the menu (QEMU exits) or close it.
+#
+# Flags combine in any order. Env:
+#   QEMU_WAIT=<seconds>   (default 50) how long --run waits before the screenshot.
+#   QEMU_DISPLAY=<gtk|sdl> (default gtk) the window backend for --interactive.
 #
 # See sbcl-init.org for the full explanation of every step.
 
@@ -39,18 +47,26 @@ OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
 
 say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-usage() { sed -n '3,20p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ---- argument parsing (flags combine) --------------------------------------
-DO_KERNEL=0; DO_RUN=0
+DO_KERNEL=0; DO_RUN=0; DO_INTERACTIVE=0
 for arg in "$@"; do
   case "$arg" in
-    -k|--kernel) DO_KERNEL=1 ;;
-    -r|--run)    DO_RUN=1 ;;
-    -h|--help)   usage; exit 0 ;;
+    -k|--kernel)      DO_KERNEL=1 ;;
+    -r|--run)         DO_RUN=1 ;;
+    -i|--interactive) DO_INTERACTIVE=1 ;;
+    -h|--help)        usage; exit 0 ;;
     *) echo "unknown option: $arg" >&2; usage; exit 1 ;;
   esac
 done
+# --interactive and the headless --run are mutually exclusive (one screenshots
+# and kills, the other hands you the window). If both are asked for, interactive
+# wins — the foreground window is clearly what you wanted.
+if [ "$DO_INTERACTIVE" -eq 1 ] && [ "$DO_RUN" -eq 1 ]; then
+  echo "note: --interactive overrides --run (can't screenshot a window you're driving)." >&2
+  DO_RUN=0
+fi
 
 # ---- preflight: make sure the tools/inputs exist ---------------------------
 # the two external trees are symlinks materialized by ./deps.sh
@@ -105,7 +121,38 @@ printf '  %-28s %s bytes\n' "initramfs.cpio" "$(stat -c%s "$CPIO_OUT")"
 printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
 [ "$DO_KERNEL" -eq 0 ] && echo "  (kernel NOT rebuilt — pass --kernel if you changed kernel config)"
 
-# ---- 5. (optional) boot it in QEMU and grab a screenshot -------------------
+# ---- 5a. (optional) boot it INTERACTIVELY in a QEMU window -----------------
+# Foreground, visible window, no screenshot/kill. The window IS the console
+# (tty0); type the menu choices there. The terminal you launched from shows the
+# serial log + the QEMU monitor (toggle with Ctrl-A C; quit monitor with 'quit').
+if [ "$DO_INTERACTIVE" -eq 1 ]; then
+  DISPLAY_BACKEND="${QEMU_DISPLAY:-gtk}"
+  VARS="$MICRO/ovmf_vars_test.fd"
+
+  [ -e "$OVMF_CODE" ] || { echo "ERROR: OVMF not found: $OVMF_CODE (apt install ovmf)" >&2; exit 1; }
+  # gtk/sdl need a graphical session; warn early instead of a cryptic QEMU abort.
+  case "$DISPLAY_BACKEND" in
+    gtk|sdl)
+      if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        echo "WARNING: no \$DISPLAY/\$WAYLAND_DISPLAY — the '$DISPLAY_BACKEND' window may fail to open." >&2
+        echo "         Run this on a graphical session, or set QEMU_DISPLAY (gtk|sdl)." >&2
+      fi ;;
+  esac
+
+  say "Booting in QEMU ($DISPLAY_BACKEND window) — pick 's) shut down' to exit"
+  cp "$OVMF_VARS" "$VARS"                 # fresh writable NVRAM
+
+  # Foreground (no '&'): the script blocks here until QEMU exits. -no-reboot
+  # makes the menu's power-off actually quit QEMU (RB_POWER_OFF -> exit).
+  qemu-system-x86_64 -machine q35 -m 2048 \
+    -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
+    -drive if=pflash,format=raw,file="$VARS" \
+    -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
+    -serial mon:stdio -display "$DISPLAY_BACKEND" -no-reboot
+  exit 0
+fi
+
+# ---- 5b. (optional) boot it HEADLESS in QEMU and grab a screenshot ----------
 if [ "$DO_RUN" -eq 1 ]; then
   WAIT="${QEMU_WAIT:-50}"
   VARS="$MICRO/ovmf_vars_test.fd"
