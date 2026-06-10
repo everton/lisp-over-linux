@@ -107,6 +107,13 @@ int main(int argc, char **argv) {
     if (tcgetattr(STDIN_FILENO, &saved_tio) == 0) {
         struct termios raw = saved_tio;
         cfmakeraw(&raw);
+        /* cfmakeraw() also clears OPOST (output post-processing). Put it back:
+         * the guest sends a bare '\n' after each line and tracks the cursor
+         * column assuming '\n' returns to column 0 (the normal ONLCR -> CR+LF
+         * mapping). Without OPOST|ONLCR here, '\n' moves down but NOT to column
+         * 0, so each "=> result" line starts wherever the cursor happened to be.
+         * We only want raw INPUT (keystrokes forwarded); output stays cooked. */
+        raw.c_oflag |= OPOST | ONLCR;
         tcsetattr(STDIN_FILENO, TCSANOW, &raw);
         raw_active = 1;
         atexit(restore_tty);
