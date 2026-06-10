@@ -407,3 +407,16 @@ Cost: ~1 MB of files + a terminfo entry + a devpts mount. NO kernel rebuild
   - Give SBCL a real console REPL; add a getty-like read loop.
   - Build SBCL static (musl) to eliminate the shipped glibc libs entirely.
   - Swank/SLynk over a serial or network socket => remote Lisp REPL into PID 1.
+  - *A debugger that can't kill PID 1.* Today =run-repl= catches =serious-condition=
+    around every eval and just prints the error (=repl.lisp=) — so an error never
+    reaches =invoke-debugger=, and you lose the interactive debugger you'd get from
+    a normal SBCL. Two ways to get the debugger back without endangering init:
+    (a) instead of swallowing the condition, rebind =*debugger-hook*= to a small,
+    guarded mini-debugger (print the backtrace, offer a restart that returns to the
+    REPL/menu) so a debug session can always unwind back to a safe loop; or
+    (b) run the REPL in a *subprocess* (a worker, like =spawn-worker=) rather than
+    in PID 1 itself — then the child can drop into the real SBCL debugger, and even
+    if it dies it only kills the child, never init. (b) is the cleaner separation
+    of concerns: PID 1 stays a dumb, unkillable supervisor; the REPL/debugger lives
+    where a crash is survivable. Relates to the Swank/SLynk idea above, which also
+    moves the rich REPL off the PID-1 console.
