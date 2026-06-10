@@ -210,8 +210,13 @@ into a single small binary (the "busybox of ssh"). What adopting it would cost:
 - A new *static third-party binary* in the initramfs (a C program, not a library
   — consistent with our "no new native *libraries*" rule; links musl static like
   =preinit=).
-- Kernel: *PTY support* we do not have yet — =CONFIG_UNIX98_PTYS= +
-  =CONFIG_DEVPTS_FS= — plus mounting =devpts=, so a session can get a tty.
+- Kernel: *PTY support is already present* — =CONFIG_UNIX98_PTYS=y= is on (and
+  devpts is folded into it on modern kernels), so =/dev/ptmx= exists. The only
+  missing piece is *mounting devpts* (=mount -t devpts devpts /dev/pts=, plus a
+  =/dev/pts= dir) in =preinit=, so a session can get a slave tty. No kernel
+  rebuild needed for this. (The old *legacy* BSD PTYs were removed in tag #22 —
+  =CONFIG_LEGACY_PTYS= off — to declutter =/dev=; Unix98 is what anything modern
+  wants anyway.)
 - A minimal *accounts / host-key* setup: a host key generated at first boot, and
   one user (SSH authenticates *something*).
 - Point Dropbear's login program at =/sbin/lisp= instead of a shell — so logging

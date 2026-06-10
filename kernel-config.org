@@ -10,8 +10,8 @@ distro turns on, and — more importantly — *why each one is there*. It is mea
 to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-6.18.3=, config at =~/lisp-over-linux/linux/.config=.
-Current tag: *#21* (IPv4 networking + QEMU virtio-net; built on top of #20 =
-Terminus 16x32 fbcon font, #19 = CONFIG_PCI + full USB/HID + ACPI power-off).
+Current tag: *#22* (dropped legacy BSD PTYs; built on top of #21 = IPv4 networking
++ QEMU virtio-net, #20 = Terminus 16x32 fbcon font, #19 = CONFIG_PCI + USB/HID).
 ~780 options are set in total; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
@@ -75,6 +75,7 @@ from x86 in 5.1); =BINFMT_MISC= is off.
 | =CONFIG_VT=                  | y     | Virtual terminal layer                                    |
 | =CONFIG_VT_CONSOLE=          | y     | Console on the VT                                         |
 | =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                     |
+| =CONFIG_UNIX98_PTYS=         | y     | Modern PTYs (=/dev/ptmx= + =/dev/pts/=); legacy pool is OFF |
 | =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                  |
 | =CONFIG_FONT_TER16x32=       | y     | Terminus 16x32 — the readable big font (selected on cmdline) |
 | =CONFIG_FONT_8x16=           | y     | Default 8x16 font, kept as fallback                      |
@@ -190,6 +191,17 @@ boot. To seed instantly instead: =CONFIG_HW_RANDOM=y= + =CONFIG_HW_RANDOM_VIRTIO
 and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
 [[file:background.org][background.org]] §8.
 
+** Legacy BSD PTYs — OFF (tag #22)
+
+=# CONFIG_LEGACY_PTYS is not set=. The legacy scheme pre-allocated a *fixed pool*
+(=CONFIG_LEGACY_PTY_COUNT=, was 256) of =/dev/pty??= master + =/dev/tty??= slave
+nodes, which =devtmpfs= then exposed — 512 unused nodes cluttering =/dev= (the
+=/dev/ptya1= et al. you would see in a directory listing). Modern PTYs use
+=CONFIG_UNIX98_PTYS= (=/dev/ptmx= mints =/dev/pts/N= on demand), which stays ON,
+so nothing real is lost; turning legacy off just declutters =/dev=. (Unix98 PTYs
+are unused so far anyway — see [[file:networking.org][networking.org]] §6b: a Dropbear-style PTY session
+would only need =preinit= to mount =devpts=, no kernel change.)
+
 ** binfmt_misc — OFF; not needed (would only delegate to an ELF interpreter).
 
 * Change log (kernel tags)
@@ -206,3 +218,6 @@ and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
   =PACKET= + =NETDEVICES= + =VIRTIO=/=VIRTIO_PCI=/=VIRTIO_NET=; =CONFIG_IPV6= held
   OFF on purpose. Kernel half only — eth0 appears (down). Userland (sb-bsd-sockets,
   an IP) is the next stage. See [[file:networking.org][networking.org]].
+- =#22= dropped legacy BSD PTYs: =# CONFIG_LEGACY_PTYS is not set= (was =y= with a
+  256-pair pool). Removes 512 unused =/dev/pty??= / =/dev/tty??= nodes from =/dev=;
+  modern =CONFIG_UNIX98_PTYS= stays on. Cosmetic /dev declutter, no functional loss.

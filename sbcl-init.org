@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #21). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #22). A C preinit mounts
 /proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
 interactive console menu: (r) Lisp REPL, (w) spawn a worker, (a) draw the
 Land-of-Lisp alien to the framebuffer, (s) power off.
@@ -15,7 +15,8 @@ with [[file:build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
 (Terminus 16x32, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7); tag #21 = IPv4
 networking + QEMU virtio-net (kernel half only — =eth0= appears, see
-[[file:networking.org][networking.org]] and =show-net-interfaces=). See =* The supervisor= / "Two findings".
+[[file:networking.org][networking.org]] and =show-net-interfaces=); tag #22 = dropped legacy BSD PTYs
+(/dev declutter; Unix98 PTYs stay). See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
 
