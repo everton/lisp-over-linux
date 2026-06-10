@@ -125,6 +125,7 @@ Nothing in the project needs editing — only the symlink moves.
   deps.sh                  fetch/link/update the ./linux and ./sbcl trees
   kernel/                  pinned .config snapshots (config-<version>)
   initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
+  host-client/             HOST-side tools (NOT in the image): the network-REPL client
   iso_root/                build output: BOOTX64.EFI + initramfs.cpio (gitignored)
   *.org                    the documentation
   linux -> …  sbcl -> …    gitignored symlinks to the external source trees

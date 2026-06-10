@@ -1,0 +1,41 @@
+#+TITLE: host-client/ — tools that run on YOUR machine, not in the Lisp machine
+#+STARTUP: showall
+
+Everything in this directory runs on the *host* (the developer's machine). It is
+*not* part of the guest: nothing here is shipped in the initramfs, baked into
+=/sbin/lisp=, or ever runs as the guest's PID 1. The guest world lives in
+=initramfs/=; this is its deliberate opposite, kept separate so the boundary is
+obvious. It is written in *C* (not Lisp) on purpose — so it needs no host SBCL,
+and so it is plainly a separate host tool rather than part of the Lisp machine.
+
+* lol-repl-client.c — a host terminal for the guest's network REPL
+
+Connects your terminal to the guest's TCP REPL (enabled with =t= in the
+supervisor menu; see [[file:../networking.org][networking.org]] §6a). It puts your *local* terminal in raw
+mode and forwards keystrokes byte-by-byte, so the line editor *inside the guest*
+receives arrows/Ctrl-C/Ctrl-D and drives history + editing remotely — no PTY on
+the guest side needed.
+
+Build it once (the compiled binary is gitignored), then run it:
+
+#+begin_src sh
+  cc -O2 -o host-client/lol-repl-client host-client/lol-repl-client.c
+
+  # boot the guest first (keeps QEMU alive, wires the hostfwd):
+  ./build.sh --interactive
+  # in the guest menu, press  t  to enable the network REPL, then from the host:
+  host-client/lol-repl-client                 # defaults: 127.0.0.1 4005
+  host-client/lol-repl-client 10.0.2.15 4005
+#+end_src
+
+Keys (the guest interprets these; the client just forwards them raw):
+- =Ctrl-C= — abort the current input line; you stay connected.
+- =Ctrl-D= on an empty line — the guest ends the session, so the client
+  disconnects. The local terminal is always restored on exit (normal, error, or
+  signal).
+
+*Security:* the network REPL is a plaintext, unauthenticated remote =eval= — i.e.
+remote root, since the REPL is PID 1. Use it only over the QEMU =hostfwd= (host
+loopback) or a trusted cable; never on an untrusted network.
+
+Dependencies: a C compiler and a standard libc — nothing else.

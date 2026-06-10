@@ -64,6 +64,8 @@
   (format t "  r) run a Lisp REPL~%")
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
+  (format t "  t) network REPL on TCP :4005  [~a]~%"
+          (if (net-repl-running-p) "RUNNING" "stopped"))
   (format t "  s) shut down (power off)~%")
   (format t "============================================~%")
   (format t "choice> ") (finish-output)
@@ -75,16 +77,10 @@
           (sb-unix:unix-getpid) (lisp-implementation-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
-  ;; Bring eth0 up at the QEMU SLIRP address, then serve a TCP REPL in the
-  ;; BACKGROUND so the local menu keeps running (networking.org §2 + §6a).
+  ;; Configure eth0 (QEMU SLIRP address) so the network REPL is ready to enable —
+  ;; but do NOT start the server: it is an opt-in menu choice ('t'). (§2/§6.)
   (if (ignore-errors (bring-up-interface "eth0" "10.0.2.15" "255.255.255.0"))
-      (progn
-        (ignore-errors
-          (sb-thread:make-thread
-           (lambda () (ignore-errors (start-network-repl 4005)))
-           :name "net-repl"))
-        (format t "~&eth0 up at 10.0.2.15/24; network REPL on 0.0.0.0:4005~%")
-        (format t "  (INSECURE: remote eval = remote root — trusted wires only)~%"))
+      (format t "~&eth0 up at 10.0.2.15/24 — network REPL is OFF (enable with 't').~%")
       (format t "~&eth0 could not be configured (no NIC bound?).~%"))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
@@ -105,6 +101,14 @@
                  (format t "~&spawning worker ~a~%" worker-id)
                  (spawn-worker worker-id))
                 ((string-equal choice "a") (draw-alien :announce t))
+                ((string-equal choice "t")
+                 (ecase (toggle-net-repl)
+                   (:started
+                    (format t "~&network REPL ENABLED on 0.0.0.0:4005.~%")
+                    (format t "  connect from the HOST:  host-client/lol-repl-client~%")
+                    (format t "  (INSECURE: remote eval = remote root — trusted wires only)~%"))
+                   (:stopped
+                    (format t "~&network REPL disabled.~%"))))
                 ((string-equal choice "s") (power-off))
                 ((string= choice ""))                 ; bare Enter: just redraw
                 (t (format t "~&unknown choice: ~a~%" choice)))))

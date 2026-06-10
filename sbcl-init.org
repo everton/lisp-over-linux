@@ -116,8 +116,12 @@ before repl) and all baked into one image by =save-lisp-and-die=:
   | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
   | =repl.lisp=        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
-  | =net.lisp=         | =bring-up-interface= (ioctls) + =start-network-repl= (TCP, [[file:networking.org][networking.org]]) |
+  | =net.lisp=         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
   | =supervisor.lisp=  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
+
+The network REPL is *off by default* and toggled from the menu (=t=). It serves
+the full line editor over the socket; a host-side raw-forwarding client lives in
+=host-client/= (NOT in the image). See [[file:networking.org][networking.org]] §6a.
 
 The =net.lisp= TCP REPL is built on the *=sb-bsd-sockets= contrib baked into the
 image*: =build.sh= does =(require :sb-bsd-sockets)= at build time (with =SBCL_HOME=

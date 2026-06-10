@@ -17,12 +17,16 @@
 
 (defun editing-repl (in out)
   "The editing REPL: read a line, and keep reading continuation lines until a
-   whole form is available (so multi-line forms work), then eval and print."
+   whole form is available (so multi-line forms work), then eval and print.
+   Used both locally (under with-raw-mode, via run-repl) and over the network
+   (net.lisp drives it on a socket stream — the host client supplies raw mode)."
   (loop
     (let ((text "") (prompt "lisp> "))
       (block one-form
         (loop
           (let ((line (read-line-edited in out prompt)))
+            (when (eq line :cancel)            ; Ctrl-C: abandon the in-progress form
+              (return-from one-form))
             (when (eq line :eof)
               (if (string= text "")
                   (return-from editing-repl)   ; EOF at a fresh prompt: leave the REPL

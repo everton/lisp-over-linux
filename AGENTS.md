@@ -21,6 +21,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
+| `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client. The deliberate opposite of `initramfs/`. |
 
 External source trees are reached via **gitignored symlinks** in the project root,
 created by `deps.sh` (never hardcode a path):

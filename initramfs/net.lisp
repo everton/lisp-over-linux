@@ -110,32 +110,73 @@
       (%close fd))))
 
 ;;; ---- a TCP REPL server (sb-bsd-sockets, baked into the image) ------------
+;;;
+;;; SECURITY: this is plaintext, unauthenticated remote =eval= — i.e. remote
+;;; ROOT, since the REPL is PID 1. Only safe when every wire that can reach the
+;;; port is trusted: the QEMU hostfwd (host loopback) or a direct dev cable.
+;;; NEVER expose it to an untrusted LAN. (networking.org §6.) That is one reason
+;;; it is OFF by default and toggled from the menu, not auto-started.
+;;;
+;;; We serve with the FULL line editor (editing-repl), not plain-repl: the host
+;;; client (host-client/lol-repl-client.c) puts the *host* terminal in raw mode
+;;; and forwards keystrokes byte-by-byte, so the editor here receives arrows etc.
+;;; and drives history/editing remotely — the redraw escapes go back to the
+;;; client's terminal. No PTY needed (see networking.org §6a).
 
-(defun start-network-repl (&optional (port 4005))
-  "Serve the Lisp REPL over TCP on PORT, one client at a time, forever.
+(defparameter +net-repl-port+ 4005)
+(defvar *net-repl-server* nil "Listening socket while the network REPL is enabled, else NIL.")
+(defvar *net-repl-client* nil "Socket of the currently-connected client, if any.")
+(defvar *net-repl-thread* nil "The background accept/serve thread, if running.")
 
-   SECURITY: this is a plaintext, unauthenticated remote =eval= — i.e. remote
-   ROOT, since the REPL is PID 1. Only safe when every wire that can reach the
-   port is trusted: the QEMU hostfwd (bound to host loopback) or a direct dev
-   cable. NEVER expose it to an untrusted LAN. (networking.org §6a.)
+(defun net-repl-running-p ()
+  "True when the network REPL is currently accepting connections."
+  (and *net-repl-thread* (sb-thread:thread-alive-p *net-repl-thread*)))
 
-   We serve with PLAIN-REPL, not the raw-mode line editor: a socket peer (nc) is
-   not a terminal we can put in raw mode, so line-buffered READ is the right tool."
+(defun %serve-net-repl ()
+  "Accept clients one at a time and run the editing REPL over each. Exits when the
+   listening socket is closed (that makes socket-accept error) — i.e. on stop."
+  (handler-case
+      (loop
+        (let ((client (sb-bsd-sockets:socket-accept *net-repl-server*)))
+          (setf *net-repl-client* client)
+          (unwind-protect
+               (ignore-errors
+                 (let ((stream (sb-bsd-sockets:socket-make-stream
+                                client :input t :output t
+                                       :element-type 'character :buffering :full)))
+                   (unwind-protect
+                        (let ((*standard-input* stream) (*standard-output* stream))
+                          (format stream "~&lisp-over-linux network REPL.~%~
+                                          Arrows/history work via the host client; ~
+                                          Ctrl-C aborts a line, Ctrl-D on an empty line disconnects.~%")
+                          (finish-output stream)
+                          (editing-repl stream stream))
+                     (ignore-errors (close stream)))))
+            (setf *net-repl-client* nil)
+            (ignore-errors (sb-bsd-sockets:socket-close client)))))
+    (serious-condition () nil)))          ; listening socket closed on stop -> end thread
+
+(defun start-net-repl (&optional (port +net-repl-port+))
+  "Begin serving the REPL on PORT in a background thread. No-op if already up."
+  (when (net-repl-running-p) (return-from start-net-repl nil))
   (let ((server (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
     (setf (sb-bsd-sockets:sockopt-reuse-address server) t)
     (sb-bsd-sockets:socket-bind server #(0 0 0 0) port)
-    (sb-bsd-sockets:socket-listen server 5)
-    (unwind-protect
-         (loop
-           (let ((client (sb-bsd-sockets:socket-accept server)))
-             (ignore-errors
-               (let ((stream (sb-bsd-sockets:socket-make-stream
-                              client :input t :output t
-                                     :element-type 'character :buffering :line)))
-                 (unwind-protect
-                      (let ((*standard-input* stream) (*standard-output* stream))
-                        (format stream "~&lisp-over-linux network REPL — :quit to disconnect.~%")
-                        (plain-repl stream stream))
-                   (ignore-errors (close stream)))))
-             (ignore-errors (sb-bsd-sockets:socket-close client))))
-      (ignore-errors (sb-bsd-sockets:socket-close server)))))
+    (sb-bsd-sockets:socket-listen server 1)
+    (setf *net-repl-server* server
+          *net-repl-thread* (sb-thread:make-thread #'%serve-net-repl :name "net-repl")))
+  t)
+
+(defun stop-net-repl ()
+  "Stop accepting connections and drop any active session. No-op if already down."
+  (unless (net-repl-running-p) (return-from stop-net-repl nil))
+  (ignore-errors (when *net-repl-client*            ; kick an in-progress session
+                   (sb-bsd-sockets:socket-close *net-repl-client*)))
+  (ignore-errors (sb-bsd-sockets:socket-close *net-repl-server*))  ; unblock accept -> thread ends
+  (setf *net-repl-server* nil *net-repl-client* nil *net-repl-thread* nil)
+  t)
+
+(defun toggle-net-repl ()
+  "Flip the network REPL on/off. Returns :started or :stopped."
+  (if (net-repl-running-p) (progn (stop-net-repl) :stopped)
+      (progn (start-net-repl) :started)))

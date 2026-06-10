@@ -8,14 +8,15 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 *STATUS: WIRED PATH WORKING end-to-end in QEMU.* Kernel half DONE (tag #21:
 =CONFIG_NET= + =INET= + =virtio-net=). Userland half DONE: =sb-bsd-sockets= is
 baked into the image, =bring-up-interface= (=sb-alien= ioctls) brings =eth0= up at
-=10.0.2.15/24= at boot, and =start-network-repl= serves the REPL over TCP on
-=:4005= from a background thread. Verified: from the host, =nc 127.0.0.1 4005=
-(via the QEMU =hostfwd=) gives a live remote REPL — =(* 6 7)= → =42=. All in
-=net.lisp= (see [[file:sbcl-init.org][sbcl-init.org]]). *Still ahead:* DHCP + DNS (still static IP / raw
-addresses), and Wi-Fi for real hardware (§7). It is the single biggest subsystem
-we have taken on, because — unlike the framebuffer alien (pure userland) or the
-bigger console font (pure kernel) — networking straddles *BOTH* the kernel and
-userland at once.
+=10.0.2.15/24= at boot, and the network REPL (=net.lisp=) serves the *full line
+editor* over TCP on =:4005= — *OFF by default*, toggled from the supervisor menu
+(=t=), with a host-side raw-forwarding client (=host-client/lol-repl-client.c=)
+so arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified:
+boot, press =t= to enable, then from the host the client gives a live editing REPL
+— =(+ 40 2)= → =42=. *Still ahead:* DHCP + DNS (still static IP / raw addresses),
+and Wi-Fi for real hardware (§7). It is the single biggest subsystem we have taken
+on, because — unlike the framebuffer alien (pure userland) or the bigger console
+font (pure kernel) — networking straddles *BOTH* the kernel and userland at once.
 
 * The one-paragraph essence
 
@@ -160,33 +161,36 @@ bring-up testable headless, exactly like the framebuffer screenshots.
 
 Once the userland half works (=sb-bsd-sockets= baked in, =eth0= has an IP), the
 SBCL REPL can be reached remotely. Two routes, in increasing cost — *(a) is now
-implemented* (=start-network-repl= in =net.lisp=); (b) remains planning:
+implemented* (=net.lisp=); (b) remains planning:
 
-** (a) Raw TCP REPL — *IMPLEMENTED* (=start-network-repl=, =net.lisp=)
-A listening socket whose stream is bound to =*standard-input*= /
-=*standard-output*= turns the REPL into a network REPL. As shipped it differs from
-the sketch below in two deliberate ways: it serves with =plain-repl= (not
-=run-repl=) — a socket peer is not a terminal we can put in raw mode, so the
-ANSI/raw line editor is wrong there and line-buffered =READ= is right; and the
-supervisor runs it in a *background thread* (=sb-thread:make-thread=) so the local
-framebuffer menu keeps working while the port is served. The original sketch:
+** (a) Raw TCP REPL — *IMPLEMENTED* (=net.lisp= + a host client)
+A listening socket whose stream is bound to =*standard-input*= / =*standard-output*=
+turns the REPL into a network REPL. How it actually ships:
 
-#+begin_src lisp
-  (let ((sock (make-instance 'sb-bsd-sockets:inet-socket
-                             :type :stream :protocol :tcp)))
-    (setf (sb-bsd-sockets:sockopt-reuse-address sock) t)
-    (sb-bsd-sockets:socket-bind sock #(0 0 0 0) 4005)
-    (sb-bsd-sockets:socket-listen sock 1)
-    (loop
-      (let* ((client (sb-bsd-sockets:socket-accept sock))
-             (stream (sb-bsd-sockets:socket-make-stream
-                      client :input t :output t :element-type 'character)))
-        (let ((*standard-input* stream) (*standard-output* stream))
-          (run-repl)))))           ; run-repl already exists in supervisor.lisp
-#+end_src
+- *OFF by default; a menu toggle.* =start-net-repl= / =stop-net-repl= /
+  =toggle-net-repl= manage a background accept thread; the supervisor menu's =t=
+  flips it and shows =[RUNNING]= / =[stopped]=. It is *not* auto-started — partly
+  because it is remote root (see the warning below).
+- *It serves the FULL line editor*, not =plain-repl=. The earlier worry was "a
+  socket peer is not a terminal we can put in raw mode" — true, but it does not
+  have to be: a tiny *host-side raw-forwarding client*
+  (=host-client/lol-repl-client.c=, ~120 lines, any libc) puts the *host* terminal
+  in raw mode and forwards keystrokes byte-by-byte, so =read-line-edited= receives
+  escapes and drives history/editing remotely; the redraw escapes go back to the
+  client. So we get full editing over a bare socket *with no PTY on the guest*
+  (this is the design worked out in the discussion behind §6 — the client owns
+  raw mode; the guest only needs a terminal if it runs *unmodified* programs,
+  which our custom editor is not).
+- *Ctrl-C / Ctrl-D* are forwarded raw and handled in =read-line-edited=: Ctrl-C
+  aborts the current line (=:cancel=, fresh prompt — it never reaches the editor
+  as a byte on the *local* console, where ISIG turns it into SIGINT), Ctrl-D on an
+  empty line ends the session and the client disconnects cleanly.
 
-Connect with =nc 10.0.2.15 4005= (or via the =hostfwd= in §4). Pure Lisp +
-syscalls; *no new kernel option and no native binary*.
+Connect from the host: build the client once (=cc -O2 -o host-client/lol-repl-client
+host-client/lol-repl-client.c=) then run =host-client/lol-repl-client= (defaults to
+the =hostfwd= =127.0.0.1:4005=). Pure Lisp + syscalls on the guest; *no new kernel
+option and no native binary in the image* — the client is host-only tooling (C, so
+it needs no host runtime at all; deliberately a different language from the guest).
 
 *The catch — this is plaintext and unauthenticated.* Anyone who can reach the
 port gets a remote =eval= (i.e. remote root, since the REPL is PID 1). It is

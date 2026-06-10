@@ -16,6 +16,8 @@ initramfs/lisp-init
 iso_root/initramfs.cpio
 # a copy of the kernel bzImage, ~2M:
 iso_root/efi/boot/bootx64.efi
+# compiled from host-client/lol-repl-client.c (host tool; build with cc):
+host-client/lol-repl-client
 
 # --- QEMU test / run scratch (build.sh --run) ---
 ovmf_vars_test.fd

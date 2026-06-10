@@ -104,9 +104,14 @@
 
 (defun read-line-edited (in out prompt)
   "Read one line from IN with in-line editing, rendering to OUT. Returns the
-   finished string, or :eof (Ctrl-D on an empty line, or stream end). Lines are
-   short here, so the buffer is just a string we rebuild on each edit — clearer
-   than juggling a gap buffer, and plenty fast for a console."
+   finished string, :eof (Ctrl-D on an empty line, or stream end), or :cancel
+   (Ctrl-C — abandon this line). Lines are short here, so the buffer is just a
+   string we rebuild on each edit — clearer than a gap buffer, and plenty fast.
+
+   Note on Ctrl-C: on the LOCAL console the editor runs under with-raw-mode, which
+   keeps ISIG enabled, so Ctrl-C raises SIGINT there and never reaches this code
+   as a byte. The byte-3 case below only fires over the NETWORK REPL, where the
+   host client forwards keystrokes raw (no signals) — there Ctrl-C aborts the line."
   (let ((line "") (point 0) (hpos -1) (stash ""))
     (labels ((redraw () (refresh-line out prompt line point))
              (ins (c) (setf line (concatenate 'string (subseq line 0 point)
@@ -140,6 +145,8 @@
           (when (eq c :eof) (terpri out) (return :eof))
           (case (char-code c)
             ((13 10) (terpri out) (finish-output out) (return line))  ; Enter
+            (3 (write-string "^C" out) (terpri out) (finish-output out)
+               (return :cancel))                                     ; Ctrl-C: abort line
             (4 (if (string= line "")                                  ; Ctrl-D
                    (progn (terpri out) (return :eof))
                    (progn (del-fwd) (redraw))))
