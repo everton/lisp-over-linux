@@ -14,6 +14,10 @@ Short answer: SBCL's core has *no* built-in readline. But yes — rich editing i
 achievable in pure Lisp. The catch is one unavoidable syscall (raw mode), which
 is FFI into the =libc= we ALREADY ship, not a new library.
 
+*Status: DONE.* Path 2 (below) is implemented and baked into the image — see
+[[*What we actually shipped][What we actually shipped]] at the end for the code, the key bindings, and the
+termios byte-patching. The rest of this doc is the reasoning that led there.
+
 * Why canonical mode is the wall
 
 The kernel TTY (N_TTY line discipline) defaults to *canonical mode*: it buffers a
@@ -122,3 +126,68 @@ For a self-contained local console under our constraints, *Path 2* (hand-rolled,
 FFI-to-existing-libc) is the right call. Reach for *linedit* only if you decide
 to relax the no-native-lib / minimal-files goal and accept osicat + a shipped
 terminfo database in exchange for its richer feature set.
+
+* What we actually shipped
+
+Path 2, folded straight into =initramfs/supervisor.lisp= (zero new files — the
+editor rides in the one =.lisp= that =build.sh= bakes into the image). The whole
+thing is ~120 lines of Lisp plus two FFI declarations.
+
+** The three pieces
+
+1. *Raw mode* — =with-raw-mode= flips the TTY out of canonical line-buffering and
+   echo so we see every keystroke. It is the project's *second* use of the
+   "FFI into the libc we already ship" trick (the first is =reboot(2)= in
+   =power-off=): two =sb-alien:define-alien-routine= bindings, =%tcgetattr= /
+   =%tcsetattr=. We treat =struct termios= as a 60-byte blob and patch only what
+   we need — clear =ICANON|ECHO= (=0x0A=) in =c_lflag='s low byte, set
+   =c_cc[VMIN]=1= / =c_cc[VTIME]=0= so =read()= returns one keystroke at a time.
+   The struct offsets are documented inline. =unwind-protect= restores the saved
+   settings on *every* exit (return, error, Ctrl-C), so a crash never leaves the
+   console in raw mode. We deliberately *keep ISIG enabled* so Ctrl-C still
+   interrupts a runaway eval the normal way.
+2. *Rendering* — =refresh-line= redraws the whole line on every edit with three
+   escapes the fbcon terminal already understands: =\r= (column 0), =\e[K=
+   (clear to EOL), =\e[<n>G= (absolute column for the cursor). One uniform redraw
+   covers insert, delete, cursor move and history. Single-line only (no wrap
+   handling yet).
+3. *Editing logic* (pure Lisp) — =read-line-edited= keeps a =line= string +
+   =point=, rebuilding the string on each edit (lines are short; clarity beats a
+   gap buffer). =read-escape= parses arrow / Home / End / Delete sequences
+   (=ESC [ …=, the numeric =ESC [ n ~= forms, and =ESC O H/F=). History is a
+   plain list in =*repl-history*=.
+
+** Key bindings
+
+| Key                | Action                                   |
+|--------------------+------------------------------------------|
+| Left / Right       | move cursor by one                       |
+| Home / End, C-a/C-e| jump to start / end of line              |
+| C-b / C-f          | move cursor (same as arrows)             |
+| Backspace, C-d     | delete before / under the cursor         |
+| Delete             | delete under the cursor                  |
+| C-k / C-u          | kill to end / to start of line           |
+| C-w                | kill the previous word                   |
+| C-l                | clear screen and redraw                  |
+| Up / Down, C-p/C-n | history previous / next                  |
+| C-d on empty line  | EOF — leave the REPL (same as =:quit=)   |
+
+** How it plugs into the REPL
+
+=run-repl= picks the mode at entry: =tty-raw-capable-p= (a throwaway
+=tcgetattr=) decides whether we have a real terminal. If yes →
+=with-raw-mode= + =editing-repl=; if stdin is a pipe/file → =plain-repl=, the
+old line-buffered =read= loop, unchanged. =editing-repl= reads a line, and if
+=complete-form= reports the form is unbalanced it keeps reading continuation
+lines (=  ...>= prompt) until a whole form is available — so multi-line forms
+work like a normal listener. Every =read= and =eval= stays wrapped so a typo
+can't kill PID 1.
+
+** Known limitations (deliberately out of scope for the "poor man's" version)
+
+- *Single line only*: a line longer than the screen width will mis-render on the
+  wrap (the =\r=/column math assumes one row). Fine for a REPL prompt.
+- *No kill-ring / yank*, no undo, no TAB completion, no paren-match. These are
+  exactly what =linedit= brings; add them here only if they earn their keep.
+- *Recalled multi-line history* is flattened to a single line (newlines → spaces)
+  so the single-line renderer stays honest.

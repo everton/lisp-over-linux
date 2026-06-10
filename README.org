@@ -108,7 +108,7 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
 | [[file:framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
 | [[file:background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
-| [[file:line-editing.org][line-editing.org]]  | Readline-class input in pure Lisp (planned: next task). |
+| [[file:line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |
 | [[file:networking.org][networking.org]]    | Bringing a network layer (planning only — the task after that). |
 | [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |
 
