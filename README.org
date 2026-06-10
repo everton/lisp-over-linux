@@ -107,6 +107,7 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:sbcl-init.org][sbcl-init.org]]     | SBCL as PID 1: the preinit shim, the supervisor, the build. |
 | [[file:kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
 | [[file:framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
+| [[file:background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
 | [[file:line-editing.org][line-editing.org]]  | Readline-class input in pure Lisp (planned: next task). |
 | [[file:networking.org][networking.org]]    | Bringing a network layer (planning only — the task after that). |
 | [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |

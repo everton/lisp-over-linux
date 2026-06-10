@@ -1,0 +1,307 @@
+#+TITLE: Background — the firmware, CPU, and hardware the boot rests on
+#+STARTUP: showall
+
+Parent doc: [[file:micro-distro.org][micro-distro.org]] (the boot chain) · related:
+[[file:framebuffer.org][framebuffer.org]] (the display) · [[file:kernel-config.org][kernel-config.org]] (the options).
+
+* What this file is — and what it is NOT
+
+The other docs explain *why this machine is the way it is*: a decision, a
+=CONFIG_= option, a line of Lisp, a bug we hit. They earn their place by ending
+at something in this repo.
+
+This file is different on purpose. It is the *background / theory companion*:
+the firmware, CPU, and hardware concepts the other docs quietly assume. Nothing
+here is a project rationale — it is the layer *beneath* the rationale, written
+out so a curious reader can go one level deeper without the main docs swelling
+into a computer-architecture textbook.
+
+So: every section below is general computing knowledge, and each one closes with
+a short *"In this project"* line tying it back to something concrete. If you only
+want to build and boot, you can skip this entire file — the others stand without
+it. Read it when you want to understand the ground the boot stands on.
+
+(This is the doc that holds the EFI-handoff, x86-mode, USB-HID, and multicore
+material that does not belong in the decision docs — kept apart precisely so it
+can be as deep as it likes.)
+
+* 1. Firmware: what runs before Linux (BIOS vs UEFI)
+
+The one-sentence essence: *firmware is a tiny operating system baked into a flash
+chip on the motherboard; it owns the machine from power-on until it hands control
+to ours.*
+
+When you press power, the CPU starts executing code from a fixed address wired
+into the silicon (the *reset vector*, near the top of the 32-bit address space,
+=0xFFFFFFF0=). That address is mapped to the motherboard's flash chip, so the
+very first instructions are firmware. Its job: bring up RAM, train the memory
+controller, enumerate buses, then find and launch an operating system.
+
+Two generations of firmware do this:
+
+- *BIOS* (legacy, ~1981–2010s): 16-bit, tiny. It read the first 512 bytes of a
+  disk (the *MBR boot sector*) into memory and jumped to it. It also exposed
+  *callable routines* (software interrupts like =INT 13h= for disk, =INT 10h=
+  for video) that the OS could use until it installed its own drivers.
+
+- *UEFI* (modern, what every machine since ~2012 uses): a far larger 32/64-bit
+  firmware — effectively a small OS with a driver model, a shell, a filesystem
+  reader, and a real executable loader. It does NOT read a magic boot sector.
+  Instead it reads a *file* off a FAT partition and launches it as a program.
+
+UEFI carries its own drivers for exactly what *it* needs during boot: a storage
+driver to read the boot file, a basic keyboard/console for its setup menus, and
+a display driver to draw them. These are minimal and disposable (see §3, §5) —
+they exist to get an OS loaded, not to run one.
+
+In this project: under QEMU the firmware is *OVMF* (the open-source UEFI build);
+on the laptop it is the vendor's UEFI. There is no BIOS, no MBR, no boot sector
+anywhere in the design — which is the whole reason the no-bootloader trick works.
+
+* 2. The x86 mode staircase — the CPU does NOT start in 64-bit
+
+The one-sentence essence: *an x86-64 CPU powers on as a 1978-vintage 16-bit 8086
+and has to be walked up three steps to reach 64-bit — and firmware does the
+walking before our kernel ever runs.*
+
+Every x86-64 core, no matter how modern, starts in *16-bit real mode* — bug-for-
+bug compatible with the original 8086, ~1 MB of addressable memory, no memory
+protection. This is a backwards-compatibility contract the architecture has
+never broken. The climb to 64-bit is three steps, each unlocked by setting bits
+in control registers:
+
+  16-bit *real mode*        (reset state — 8086, no protection)
+     |  set CR0.PE, load a GDT
+     v
+  32-bit *protected mode*   (80386, 1985 — paging, privilege rings)
+     |  build page tables, set EFER.LME + CR0.PG
+     v
+  64-bit *long mode*        (AMD64, 2003 — the mode everything runs in today)
+
+Each step needs the previous one's machinery in place (a descriptor table, then
+page tables), so you cannot leap straight to 64-bit; you must ascend.
+
+The payoff for us: *UEFI firmware does this entire climb itself.* By the time
+firmware launches a boot application, the CPU is already in long mode with paging
+on. So our kernel's EFI entry point begins life in 64-bit — we never write a line
+of mode-switch assembly. (A legacy-BIOS kernel, by contrast, is handed the CPU in
+16-bit real mode and must do the staircase in its own early boot code. EFISTUB
+skips all of it.)
+
+In this project: this is *why* a no-bootloader EFISTUB kernel is even feasible.
+The hard, fiddly part of x86 boot — the real→protected→long climb — is already
+done by UEFI before =BOOTX64.EFI= is invoked.
+
+* 3. The handoff: how UEFI launches the kernel and lets go
+
+The one-sentence essence: *UEFI loads our kernel like any other program, calls
+it with a table of services, and the kernel uses those services to learn the
+machine, then tells UEFI to "exit" — at which point the firmware's drivers die
+and the kernel owns the hardware alone.*
+
+** 3.1 The kernel is a UEFI executable (PE32+, EFISTUB)
+
+UEFI does not run raw machine code off a sector; it runs *programs in its own
+executable format* — *PE32+* (a.k.a. PE/COFF), the same family as Windows =.exe=
+files. (Linux's native format is ELF; PE32+ is UEFI's analog.) UEFI ships a real
+loader: it parses the file's headers and sections, applies relocations, and calls
+its entry point.
+
+So how can a Linux =bzImage= be launched by a Windows-style loader? *EFISTUB*
+(=CONFIG_EFI_STUB=) is the trick: it prepends a valid *PE32+ header* to the
+kernel image. The file is now legitimately BOTH things at once — a bootable Linux
+kernel AND a valid UEFI application. UEFI inspects the header, sees =MZ= /
+=PE\0\0=, thinks "a normal EFI program," and runs it. The stub code that runs
+first is the bridge from "UEFI app" into "Linux boot."
+
+(This is exactly the =file= check in [[file:micro-distro.org][micro-distro.org]]: the bootable image must
+report "Linux kernel … 64-bit EFI handoff entry point" *and* start with the ASCII
+bytes =MZ=. Two identities, one file.)
+
+** 3.2 The EFI System Table and Boot Services
+
+UEFI calls the kernel's entry point with two arguments: an *image handle* and a
+pointer to the *EFI System Table*. That table is the kernel's doorway to
+everything the firmware can do — most importantly the *Boot Services*: functions
+that are alive only *during* boot. While they live, the stub queries them for the
+facts only firmware knows:
+
+- the *GOP* (Graphics Output Protocol) → the framebuffer (see §4),
+- the *memory map* → which physical ranges are RAM vs reserved,
+- the *ACPI tables* → how to find the hardware description (CPUs, buses, power).
+
+** 3.3 ExitBootServices() — the point of no return
+
+When the kernel has extracted what it needs, it calls *=ExitBootServices()=*.
+This is the hard handoff: the firmware tears down its Boot Services and *all the
+disposable drivers behind them* (its storage driver, its keyboard, its console).
+From this instant the kernel owns the machine outright — no more firmware help.
+Anything it did not grab before this call is gone for good (which is why §4
+matters: the framebuffer details must be captured *before* ExitBootServices).
+
+** 3.4 Runtime Services — the sliver that survives
+
+Not all of UEFI dies. A small set of *Runtime Services* is deliberately kept
+alive for the OS's whole life: reading/writing the hardware clock, reading/
+writing *EFI variables* (Linux exposes these at =/sys/firmware/efi/efivars=;
+=efibootmgr= edits boot entries through them), firmware-assisted reset, and
+capsule updates. This is the modern, *narrow* analog to the old BIOS =INT=
+routines — but limited to a handful of housekeeping calls, not the general
+"firmware does I/O for you" model BIOS had.
+
+In this project: =BOOTX64.EFI= IS the kernel, launched straight by UEFI's PE
+loader off the FAT ESP — no GRUB in between. Boot Services are how EFISTUB learns
+the framebuffer and memory map; ExitBootServices is why those must be grabbed
+early; Runtime Services are the efivars we *could* touch but currently don't (our
+power-off goes through the kernel's ACPI path, not UEFI reset — see
+[[file:micro-distro.org][micro-distro.org]] §"Real-hardware input").
+
+* 4. Inheriting the framebuffer (GOP) — a pointer, not a duplicate
+
+UEFI has already programmed the GPU into a working graphical mode for its own
+menus, and exposes the parameters (framebuffer address, width, height, pitch,
+pixel format) via the *GOP*. EFISTUB reads those during Boot Services and stashes
+them where the kernel's =efifb= driver can find them. =efifb= then *reuses the
+firmware's framebuffer* rather than driving the GPU itself.
+
+This is the one place the kernel keeps a UEFI-provided resource instead of
+re-doing the work — and it is covered end to end in its own doc. See
+[[file:framebuffer.org][framebuffer.org]] §3 ("Getting a framebuffer without a GPU driver") rather than
+repeating it here.
+
+In this project: the framebuffer is the *only* hardware the kernel inherits from
+firmware; everything else it re-enumerates from scratch (§5).
+
+* 5. Why Linux re-enumerates the hardware (and the keyboard delay)
+
+The one-sentence essence: *UEFI's drivers exist to load an OS, not to run one, so
+the kernel throws them away at ExitBootServices and binds its OWN drivers to the
+same hardware — and that re-binding takes a moment, which our code has to allow
+for.*
+
+UEFI could read the disk and take keystrokes in its menus, so it clearly *had* a
+storage driver and a keyboard driver. But those were Boot Services drivers; they
+died at ExitBootServices (§3.3). The kernel does not adopt them — it has its own,
+better drivers and re-discovers the hardware itself:
+
+- storage → the kernel's own block/USB/NVMe stack,
+- keyboard/mouse → the kernel's *USB-HID* stack (and I2C-HID on laptops),
+- everything on PCI → re-enumerated by the kernel's PCI subsystem.
+
+The framebuffer (§4) is the one deliberate exception.
+
+The keyboard path is worth spelling out because it bites in practice. A real
+laptop keyboard is a *USB-HID* (or I2C-HID) device hanging off an *xHCI USB
+controller*, which is itself a *PCI device*. So the chain the kernel must bring
+up is: PCI → USB → xHCI → HID → input device. That is several layers of driver
+binding and bus probing, and crucially it is *asynchronous* — it completes a
+short time after the kernel starts userspace, not before. (The full
+=CONFIG_PCI / USB / HID= story, including the bug where a missing =CONFIG_PCI=
+killed the laptop keyboard *and* ACPI power-off, is in [[file:micro-distro.org][micro-distro.org]]
+§"Real-hardware input".)
+
+In this project: this is exactly why =supervisor-main= in
+[[file:initramfs/supervisor.lisp][initramfs/supervisor.lisp]] does =(sleep 2)= "give USB a moment to enumerate"
+before reading input, and why =show-input-devices= prints what the kernel sees in
+=/proc/bus/input/devices= — it is a direct check of whether the HID re-binding
+described above actually completed. UEFI having had a working keyboard does NOT
+carry over; the kernel must rebuild it.
+
+* 6. Multicore bring-up: one core boots, the rest are woken
+
+The one-sentence essence: *a multicore CPU does not power on as N running cores;
+exactly one boots, and it must deliberately wake the others with a special
+hardware signal.*
+
+At power-on the hardware elects a single *BSP* (BootStrap Processor) to run all
+the firmware and early kernel code. The other cores — the *APs* (Application
+Processors) — are held parked, halted, doing nothing. This BSP/AP distinction is
+an *architectural hardware fact*, not a firmware or OS convention: each core can
+read its own *Local APIC* and find bit 8 (=BSP=) of the =IA32_APIC_BASE= MSR set
+on exactly one core. Every core also has a unique *APIC ID* — its hardware name
+on the interrupt bus.
+
+To start the others, the BSP uses its *Local APIC* (a per-core block that is each
+core's gateway to interrupts) to send the APs a fixed wake-up handshake over the
+interrupt bus: *INIT–SIPI–SIPI*. The SIPI ("Startup IPI") carries an 8-bit
+*vector*, and the woken AP begins executing at physical address =vector << 12=
+(i.e. =vector × 0x1000=) in low memory — NOT back at the ROM reset vector. The OS
+pre-places a small real-mode *trampoline* at that address; each AP lands there,
+climbs the same mode staircase (§2), and reports in to the kernel. (=IPI= =
+*Inter-Processor Interrupt*: one core deliberately interrupting another. The
+wake-up is just its first use; §7 covers the rest.)
+
+Where does the kernel learn how many cores exist and their APIC IDs? From the
+*ACPI MADT* table (one of the tables it found via Boot Services in §3.2).
+
+Once running, Linux is a *fully distributed* SMP kernel: no single core "owns"
+it. Each core has its own scheduler runqueue, its own current task, its own
+kernel stack, and a per-CPU data area; genuinely shared state is protected by
+fine-grained locks (spinlocks, RCU). This is universal among modern general-
+purpose OSes — they earned it incrementally, breaking up one big lock into many
+over decades. The BSP is special *only at boot*; afterward it is just core 0.
+
+In this project: under QEMU we boot with a *single vCPU* (no =-smp=), so there is
+only a BSP — no APs, no INIT–SIPI–SIPI, no trampoline ever runs. And our SBCL
+userland is single-threaded. All the bring-up machinery above is present in the
+kernel but simply never exercised here; it wakes up only on =-smp >1= or on the
+real multi-core laptop.
+
+* 7. Interrupts on a multicore machine — who gets poked
+
+The one-sentence essence: *each core has a private interrupt gateway (its Local
+APIC); a shared router (the I/O APIC), or increasingly the device itself (MSI),
+decides which core's gateway a given interrupt knocks on; and cores poke each
+other through IPIs.*
+
+Three kinds of interrupt, routed differently:
+
+1. *External device interrupts* (a keypress, a packet, a disk completion). Path:
+
+   #+begin_src
+   device raises IRQ
+      -> I/O APIC      (a shared chip; its table picks a target core + vector)
+      -> that core's Local APIC
+      -> the core is interrupted
+      -> CPU indexes the vector in its IDT -> runs the handler
+   #+end_src
+
+   The *IDT* (Interrupt Descriptor Table) is the per-core map from an 8-bit
+   vector number to a handler address. The kernel decides which core fields which
+   device IRQ — *interrupt affinity* — and can pin one device to one core or let
+   the hardware spread load (the =irqbalance= idea). This is what keeps every
+   network interrupt from piling onto core 0.
+
+2. *Local (per-core) interrupts* — sources built into a core's own Local APIC
+   that never route anywhere: the *Local APIC timer* (each core has its own,
+   driving that core's scheduler tick), thermal sensors, performance-counter
+   overflow. Each core services its own.
+
+3. *IPIs* (Inter-Processor Interrupts) — core-to-core, sent by writing the Local
+   APIC. We met them waking the APs (§6); at runtime the kernel uses them
+   constantly: a *reschedule* poke, a *TLB shootdown* (one core changed a page
+   mapping → tell the others to flush stale entries), a *function-call* IPI ("run
+   this over there").
+
+The modern twist is *MSI / MSI-X* (Message-Signaled Interrupts): a PCIe device
+"raises an interrupt" not by asserting a wire into the I/O APIC but by doing a
+*memory write* to a magic address that the target Local APIC decodes — the
+address itself encodes the destination core and vector. This scales far better:
+one NIC can own dozens of vectors, e.g. one queue+interrupt *per core*, with no
+shared routing chip in the path. It is the dominant mechanism today.
+
+Per-core flow once an interrupt lands: finish the current instruction → mask
+equal/lower-priority interrupts → index the *IDT* by vector → run the handler
+(Linux keeps this half tiny and defers the real work to a softirq/threaded IRQ so
+the core is not stuck with interrupts off) → write *EOI* (End Of Interrupt) to
+the Local APIC, freeing it to deliver the next.
+
+In this project: with a single vCPU there is exactly one Local APIC, so there is
+nothing to route and IPIs never fire (no second core to signal). All of §7 is
+real in the kernel but dormant here — it comes alive only with more cores.
+
+* See also
+  - [[file:micro-distro.org][micro-distro.org]] — the boot chain as *built* (the decisions this doc's §1–5
+    sit underneath).
+  - [[file:framebuffer.org][framebuffer.org]] — the GOP/efifb/fbcon stack in full (this doc's §4 in depth).
+  - [[file:kernel-config.org][kernel-config.org]] — the =CONFIG_= options that turn the above into a kernel.

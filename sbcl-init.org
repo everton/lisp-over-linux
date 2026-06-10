@@ -161,6 +161,17 @@ Key bits learned while writing it:
     prints =/proc/bus/input/devices= names at startup (=show-input-devices=) as a
     keyboard-detection diagnostic.
 
+    *Why the startup =(sleep 2)= exists.* UEFI had a working keyboard in its own
+    menus, but that does NOT carry over: the firmware's keyboard driver is a Boot
+    Services driver, destroyed at =ExitBootServices()=, so the kernel must bind its
+    OWN keyboard. On a real laptop that means walking PCI -> USB -> xHCI -> USB-HID
+    -> input device, and that binding is *asynchronous* — it finishes a short moment
+    AFTER PID 1 starts, not before. So =supervisor-main= sleeps ~2 s "give USB a
+    moment to enumerate" before reading input, and =show-input-devices= is the
+    direct check that the re-binding actually completed. (Background — why firmware
+    drivers die at the handoff and the kernel re-enumerates everything except the
+    framebuffer: [[file:background.org][background.org]] §5, with the handoff itself in §3.)
+
 ** Building the SBCL image (what build.sh stage 2 runs)
 #+begin_src sh :results output
   cat > /tmp/build-sup.lisp <<'LISP'

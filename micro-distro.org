@@ -5,6 +5,9 @@ Related: [[file:sbcl-init.org][sbcl-init.org]] — running SBCL Common Lisp as P
 (shipping a dynamic language runtime + its glibc libs inside the initramfs).
 Also: [[file:kernel-config.org][kernel-config.org]] — every kernel option we enable and why.
 Deep-dive: [[file:framebuffer.org][framebuffer.org]] — the framebuffer/console, end to end.
+Background: [[file:background.org][background.org]] — the firmware/CPU/hardware concepts this boot
+chain rests on (UEFI handoff, x86 modes, USB-HID, multicore). Theory, not
+project rationale — read it to go one level deeper.
 Roadmap: [[file:networking.org][networking.org]] — bringing a network layer (planning only, next up).
 
 * Goal
