@@ -65,11 +65,12 @@ NIC driver — the staged target list (easiest → hardest):
    and isolates "does our NET/INET stack work" from any real-hardware quirk.
 2. *=CONFIG_E1000= / =CONFIG_E1000E=* — Intel emulated/real NIC; another easy
    QEMU device and present on many laptops/desktops.
-3. *The laptop's actual NIC* — likely an Intel/Realtek Wi-Fi or Ethernet chip.
-   Wired Ethernet (e.g. =CONFIG_R8169=) is far easier than Wi-Fi. *Wi-Fi is a
-   big jump*: =CONFIG_CFG80211= + =CONFIG_MAC80211= + a vendor driver + loadable
-   *firmware blobs* (the NIC needs a firmware file shipped in the initramfs) +
-   a userland supplicant (WPA). Treat Wi-Fi as a separate, later project.
+3. *The laptop's actual NIC.* This machine (checked with =lspci -nnk=) has *no
+   wired port at all* — only Intel Wi-Fi (=8086:34f0=, see §7). So on real
+   hardware Wi-Fi is the *only* path to a network; wired/virtio is a QEMU-only
+   convenience. Wi-Fi is a big jump and a separate, later project — its full
+   shape (and how to add it without polluting this MIT repo or hard-coding one
+   laptop) is §7.
 
 Reminder (the frozen-heap / minimal rule): build NIC drivers *=y= (built-in)*,
 not =m= — we ship no modules and have no =modprobe=.
@@ -204,6 +205,74 @@ into a single small binary (the "busybox of ssh"). What adopting it would cost:
 Sequencing: ship (a) first (it costs nothing beyond the socket work already in
 the plan and is perfect for QEMU/dev), and only take on (b) when a real,
 untrusted network is actually in play.
+
+* 7. Wi-Fi — needed eventually, but out-of-tree and opt-in (planning)
+
+We *will* need this. "Minimal" must not collide with "useful": a machine that
+can't reach a network is almost a toy, and — see §1 — this laptop has no wired
+port, so Wi-Fi is its only real link. So Wi-Fi is firmly on the roadmap; it is
+deferred only because it cannot be tested in QEMU (no emulated Wi-Fi), so it
+waits until the wired/QEMU path below is finished.
+
+** This machine's card (concrete)
+
+=lspci -nnk=: =00:14.3 [8086:34f0] Intel Ice Lake-LP PCH CNVi WiFi=, driver
+=iwlwifi= + op-mode =iwlmvm=, host interface =wlp0s20f3=. It is an *AX201 (Wi-Fi
+6)*; because it is *CNVi* (the MAC is integrated into the PCH, the RF is a
+companion module) it appears as a chipset device, not an M.2 card. Its firmware
+on the host is the =iwlwifi-Qu*-hr-b0-<api>.ucode= family plus a =.pnvm= blob and
+the signed =regulatory.db= / =regulatory.db.p7s=.
+
+** What it needs (four layers)
+
+- *Kernel 802.11 stack*, all built-in (=y=; we ship no modules): =CONFIG_CFG80211=
+  (config plane, driven over *nl80211 netlink*), =CONFIG_MAC80211= (soft-MAC — the
+  CPU runs the 802.11 MAC; Intel cards need it), =CONFIG_WLAN= +
+  =CONFIG_WLAN_VENDOR_INTEL=, =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=; pulls in crypto
+  (CCMP/=libarc4=) and =CONFIG_RFKILL=.
+- *Firmware blob* — the radio will not come up without the =.ucode= (+ =.pnvm= +
+  =regulatory.db=) loaded at probe. ~1–2 MB, proprietary, *binary only*.
+- *Userland supplicant* — any WPA2/WPA3 join needs the EAPOL 4-way handshake +
+  key management, i.e. =wpa_supplicant=. We ship none; hand-rolling it in Lisp is
+  unrealistic (association + handshake + AES-CCMP). nl80211 is *netlink*, much
+  heavier to drive than the wired static-IP ioctls of §2 — realistically shell out
+  to =iw= + =wpa_supplicant=. (An *open* network could skip the supplicant.)
+- *Then the §2–3 top of stack* — an IP (DHCP, since APs lease) and DNS, just over
+  =wlan0= instead of =eth0=.
+
+** The two design constraints we settled (so it stays honest)
+
+1. *Licensing — keep it out-of-tree, exactly like the kernel.* There is *no
+   source to vendor*: =iwlwifi= the driver is in-tree GPL (comes with the kernel
+   we already fetch); the proprietary part is the *firmware*, which is *data, not
+   code*. Intel's licence *permits binary redistribution* (that is why distros
+   ship =firmware-iwlwifi=), so we *could* legally commit it — we choose not to,
+   to keep this repo MIT and source-only. Instead the firmware is *fetched* (from
+   =linux-firmware=, or copied from the host's =/lib/firmware=) and copied into the
+   initramfs at pack time, *never committed* — one more row in the README
+   licensing table, alongside =Linux kernel | GPLv2 | fetched by deps.sh; never
+   redistributed here=. (Or embed it in the bzImage via =CONFIG_EXTRA_FIRMWARE= +
+   =CONFIG_EXTRA_FIRMWARE_DIR=, which never touches git either.)
+2. *Portability — make it opt-in and parameterized, not baked in.* In a
+   no-=modprobe=, everything-=y=, frozen-image distro, Wi-Fi is *inherently*
+   machine-specific — that is not a betrayal of "minimal", it is the same
+   per-machine specialisation the project already does (PCI added for *this*
+   laptop's keyboard in #19; the Terminus font for *this* screen). To keep the
+   default build card-agnostic: put the driver options in a *separate, opt-in
+   kernel config fragment* (e.g. =kernel/wifi-intel-ax201.config=) merged only on
+   request; fetch the firmware *keyed by card*; and keep *credentials out of git
+   entirely* — SSID/PSK live in a file on the USB's ESP or a build-time env var
+   (gitignored, with a committed =*.example=), never machine- or repo-bound. The
+   *pattern* is portable even though any one fragment/firmware/credential is not;
+   the doc says "for a different card, swap the fragment + firmware names."
+
+** Decision
+
+Planning only for now. Implement *after* the wired path (§2–3) is finished and
+proven in QEMU. When we do, follow the two constraints above so the repo stays
+MIT/source-only and the Wi-Fi bits remain a documented, swappable overlay rather
+than a one-laptop hack. This is the step that turns the box from a demo into a
+machine that is actually useful.
 
 * Open questions to settle when we start
 
