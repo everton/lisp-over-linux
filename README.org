@@ -124,7 +124,7 @@ Nothing in the project needs editing — only the symlink moves.
   build.sh                 one-step build (userland, --kernel, --run)
   deps.sh                  fetch/link/update the ./linux and ./sbcl trees
   kernel/                  pinned .config snapshots (config-<version>)
-  initramfs/               preinit.c, supervisor.lisp, the cpio list, alien assets
+  initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
   iso_root/                build output: BOOTX64.EFI + initramfs.cpio (gitignored)
   *.org                    the documentation
   linux -> …  sbcl -> …    gitignored symlinks to the external source trees

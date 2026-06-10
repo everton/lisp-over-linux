@@ -35,6 +35,18 @@ KERNEL="$MICRO/linux"
 SBCL="$MICRO/sbcl"
 
 INITRAMFS_DIR="$MICRO/initramfs"
+
+# The Lisp userland, split by concern and loaded IN THIS ORDER into the image
+# (only the macro with-raw-mode forces an order: line-editor before repl).
+# The .lisp sources are baked into lisp-init by save-lisp-and-die; they are NOT
+# shipped in the cpio (only the compiled binary is).
+LISP_SOURCES=(
+  "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
+  "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
+  "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit
+  "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
+  "$INITRAMFS_DIR/supervisor.lisp"   # the menu loop + init-toplevel (entry)
+)
 ISO_ROOT="$MICRO/iso_root"
 CPIO_OUT="$ISO_ROOT/initramfs.cpio"
 BOOTX64="$ISO_ROOT/efi/boot/bootx64.efi"
@@ -76,7 +88,7 @@ for link in "$KERNEL:linux" "$SBCL:sbcl"; do
                       echo "       run  ./deps.sh  to fetch/link it — see README.org" >&2; exit 1; }
 done
 for f in "$GEN_INIT_CPIO" "$SBCL_RUNTIME" "$SBCL_CORE" \
-         "$INITRAMFS_DIR/preinit.c" "$INITRAMFS_DIR/supervisor.lisp" \
+         "$INITRAMFS_DIR/preinit.c" "${LISP_SOURCES[@]}" \
          "$INITRAMFS_DIR/initramfs.sbcl.list"; do
   [ -e "$f" ] || { echo "ERROR: missing required input: $f" >&2; exit 1; }
 done
@@ -90,8 +102,11 @@ musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/preinit" "$INITRAMFS_DIR/preinit.c"
 say "Building lisp-init (SBCL save-lisp-and-die)"
 BUILD_LISP="$(mktemp /tmp/build-sup.XXXXXX.lisp)"
 trap 'rm -f "$BUILD_LISP"' EXIT
-cat > "$BUILD_LISP" <<LISP
-(load "$INITRAMFS_DIR/supervisor.lisp")
+: > "$BUILD_LISP"
+for src in "${LISP_SOURCES[@]}"; do            # load each module, in order
+  printf '(load "%s")\n' "$src" >> "$BUILD_LISP"
+done
+cat >> "$BUILD_LISP" <<LISP
 (sb-ext:save-lisp-and-die "$INITRAMFS_DIR/lisp-init"
   :executable t :toplevel #'init-toplevel)
 LISP

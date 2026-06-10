@@ -107,10 +107,20 @@ The sections below spell out what build.sh does, for reference.
 
 * The supervisor (didactic, not production)
 
-Source: =initramfs/supervisor.lisp=. One executable, two roles chosen by argv:
-no args => interactive SUPERVISOR menu (PID 1); "worker <id>" => a short-lived
-WORKER. Toplevel =init-toplevel= dispatches; key functions =supervisor-main=,
-=run-repl=, =power-off=, =worker-main=, =spawn-worker=.
+The Lisp userland is split by concern across a few small modules, loaded in this
+order (the only ordering constraint is the =with-raw-mode= macro: line-editor
+before repl) and all baked into one image by =save-lisp-and-die=:
+
+  | =process.lisp=     | =worker-main=, =spawn-worker=, =power-off=                 |
+  | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
+  | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
+  | =repl.lisp=        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
+  | =supervisor.lisp=  | the menu loop, =show-input-devices=, =init-toplevel= (entry)  |
+
+One executable, two roles chosen by argv: no args => interactive SUPERVISOR menu
+(PID 1); "worker <id>" => a short-lived WORKER. Toplevel =init-toplevel=
+dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
+=worker-main=, =spawn-worker=.
 
 The supervisor is an interactive menu read from the console:
   r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
@@ -187,7 +197,11 @@ Key bits learned while writing it:
 ** Building the SBCL image (what build.sh stage 2 runs)
 #+begin_src sh :results output
   cat > /tmp/build-sup.lisp <<'LISP'
-  (load "/home/everton/lisp-over-linux/initramfs/supervisor.lisp")
+  (load ".../initramfs/process.lisp")          ; build.sh loads the modules in order
+  (load ".../initramfs/framebuffer.lisp")
+  (load ".../initramfs/line-editor.lisp")
+  (load ".../initramfs/repl.lisp")
+  (load ".../initramfs/supervisor.lisp")
   (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP

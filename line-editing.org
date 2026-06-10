@@ -129,9 +129,11 @@ terminfo database in exchange for its richer feature set.
 
 * What we actually shipped
 
-Path 2, folded straight into =initramfs/supervisor.lisp= (zero new files — the
-editor rides in the one =.lisp= that =build.sh= bakes into the image). The whole
-thing is ~120 lines of Lisp plus two FFI declarations.
+Path 2, in =initramfs/line-editor.lisp= — the reusable readline toolkit (termios
++ editing + history), with the REPL that drives it in =initramfs/repl.lisp=.
+(Both started life inside =supervisor.lisp= and were split out when that file got
+crowded; see the module list in [[file:sbcl-init.org][sbcl-init.org]].) The editor itself is ~120 lines of
+Lisp plus two FFI declarations, and =build.sh= bakes every module into the image.
 
 ** The three pieces
 
