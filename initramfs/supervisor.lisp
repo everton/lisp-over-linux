@@ -51,7 +51,8 @@
                                        :if-does-not-exist nil)
                                   (and o (read-line o nil nil))))))
                   (setf any t)
-                  (format t "   ~a~@[  (~a)~]~%" name state))))))))
+                  (format t "   ~a~@[  (~a)~]~@[  ~a~]~%"
+                          name state (interface-ipv4 name)))))))))   ; address if any
     (unless any
       (format t "   (none found — is CONFIG_NET on?)~%")))
   (finish-output))
@@ -74,7 +75,18 @@
           (sb-unix:unix-getpid) (lisp-implementation-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
-  (show-net-interfaces)           ; diagnostic: did the NIC bind (eth0)?
+  ;; Bring eth0 up at the QEMU SLIRP address, then serve a TCP REPL in the
+  ;; BACKGROUND so the local menu keeps running (networking.org §2 + §6a).
+  (if (ignore-errors (bring-up-interface "eth0" "10.0.2.15" "255.255.255.0"))
+      (progn
+        (ignore-errors
+          (sb-thread:make-thread
+           (lambda () (ignore-errors (start-network-repl 4005)))
+           :name "net-repl"))
+        (format t "~&eth0 up at 10.0.2.15/24; network REPL on 0.0.0.0:4005~%")
+        (format t "  (INSECURE: remote eval = remote root — trusted wires only)~%"))
+      (format t "~&eth0 could not be configured (no NIC bound?).~%"))
+  (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
   (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien
   (let ((worker-id 0))

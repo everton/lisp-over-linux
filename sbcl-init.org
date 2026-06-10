@@ -116,7 +116,13 @@ before repl) and all baked into one image by =save-lisp-and-die=:
   | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
   | =repl.lisp=        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
-  | =supervisor.lisp=  | the menu loop, =show-input-devices=, =init-toplevel= (entry)  |
+  | =net.lisp=         | =bring-up-interface= (ioctls) + =start-network-repl= (TCP, [[file:networking.org][networking.org]]) |
+  | =supervisor.lisp=  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
+
+The =net.lisp= TCP REPL is built on the *=sb-bsd-sockets= contrib baked into the
+image*: =build.sh= does =(require :sb-bsd-sockets)= at build time (with =SBCL_HOME=
+pointed at the SBCL tree's =obj/sbcl-home=) before =save-lisp-and-die=, so sockets
+are frozen into =/sbin/lisp= and need no fasl at runtime. See [[file:networking.org][networking.org]].
 
 One executable, two roles chosen by argv: no args => interactive SUPERVISOR menu
 (PID 1); "worker <id>" => a short-lived WORKER. Toplevel =init-toplevel=
@@ -198,15 +204,18 @@ Key bits learned while writing it:
 ** Building the SBCL image (what build.sh stage 2 runs)
 #+begin_src sh :results output
   cat > /tmp/build-sup.lisp <<'LISP'
+  (require :sb-bsd-sockets)                     ; baked into the heap (needs SBCL_HOME)
   (load ".../initramfs/process.lisp")          ; build.sh loads the modules in order
   (load ".../initramfs/framebuffer.lisp")
   (load ".../initramfs/line-editor.lisp")
   (load ".../initramfs/repl.lisp")
+  (load ".../initramfs/net.lisp")
   (load ".../initramfs/supervisor.lisp")
   (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP
   cd ~/sbcl
+  SBCL_HOME=$PWD/obj/sbcl-home \
   ./src/runtime/sbcl --core output/sbcl.core --no-userinit --no-sysinit \
        --non-interactive --load /tmp/build-sup.lisp
 #+end_src

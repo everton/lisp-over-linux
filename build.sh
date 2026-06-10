@@ -45,6 +45,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
+  "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
   "$INITRAMFS_DIR/supervisor.lisp"   # the menu loop + init-toplevel (entry)
 )
 ISO_ROOT="$MICRO/iso_root"
@@ -110,8 +111,13 @@ musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/preinit" "$INITRAMFS_DIR/preinit.c"
 say "Building lisp-init (SBCL save-lisp-and-die)"
 BUILD_LISP="$(mktemp /tmp/build-sup.XXXXXX.lisp)"
 trap 'rm -f "$BUILD_LISP"' EXIT
+# Bake the sb-bsd-sockets contrib INTO the frozen heap: require it here (loaded
+# from $SBCL_HOME's contrib fasls), and save-lisp-and-die freezes it in — so the
+# running image has sockets with no fasl/SBCL_HOME needed at runtime. net.lisp
+# references the package at load time, so this must come first.
 : > "$BUILD_LISP"
-for src in "${LISP_SOURCES[@]}"; do            # load each module, in order
+printf '(require :sb-bsd-sockets)\n' >> "$BUILD_LISP"
+for src in "${LISP_SOURCES[@]}"; do            # then load each module, in order
   printf '(load "%s")\n' "$src" >> "$BUILD_LISP"
 done
 cat >> "$BUILD_LISP" <<LISP
@@ -119,7 +125,10 @@ cat >> "$BUILD_LISP" <<LISP
   :executable t :toplevel #'init-toplevel)
 LISP
 # --no-userinit --no-sysinit so a personal ~/.sbclrc (quicklisp) can't interfere.
-"$SBCL_RUNTIME" --core "$SBCL_CORE" --no-userinit --no-sysinit \
+# SBCL_HOME points at the built tree's contrib fasls so (require :sb-bsd-sockets)
+# resolves at build time (it is frozen into the image, so runtime needs neither).
+SBCL_HOME="$SBCL/obj/sbcl-home" "$SBCL_RUNTIME" --core "$SBCL_CORE" \
+                --no-userinit --no-sysinit \
                 --non-interactive --load "$BUILD_LISP"
 
 # ---- 3. pack the initramfs cpio (no root needed) ---------------------------

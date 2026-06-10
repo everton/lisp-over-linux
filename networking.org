@@ -5,14 +5,17 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 [[file:kernel-config.org][kernel-config.org]] (the "Deliberately OFF → Networking" section) · Lisp side:
 [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that would open the sockets).
 
-*STATUS: IN PROGRESS — kernel half DONE (tag #21).* =CONFIG_NET= + =INET= +
-=virtio-net= are built in; under QEMU =eth0= enumerates and the supervisor's
-=show-net-interfaces= lists it (=down= — no IP yet). *Userland half not started:*
-SBCL still has no =sb-bsd-sockets= baked in, and =eth0= has no address. This file
-is the roadmap; §1 and §3-step-1 are now done, §2 onward is next. It is the
-single biggest subsystem we have taken on, because — unlike the framebuffer alien
-(pure userland) or the bigger console font (pure kernel) — networking straddles
-*BOTH* the kernel and userland at once.
+*STATUS: WIRED PATH WORKING end-to-end in QEMU.* Kernel half DONE (tag #21:
+=CONFIG_NET= + =INET= + =virtio-net=). Userland half DONE: =sb-bsd-sockets= is
+baked into the image, =bring-up-interface= (=sb-alien= ioctls) brings =eth0= up at
+=10.0.2.15/24= at boot, and =start-network-repl= serves the REPL over TCP on
+=:4005= from a background thread. Verified: from the host, =nc 127.0.0.1 4005=
+(via the QEMU =hostfwd=) gives a live remote REPL — =(* 6 7)= → =42=. All in
+=net.lisp= (see [[file:sbcl-init.org][sbcl-init.org]]). *Still ahead:* DHCP + DNS (still static IP / raw
+addresses), and Wi-Fi for real hardware (§7). It is the single biggest subsystem
+we have taken on, because — unlike the framebuffer alien (pure userland) or the
+bigger console font (pure kernel) — networking straddles *BOTH* the kernel and
+userland at once.
 
 * The one-paragraph essence
 
@@ -79,24 +82,27 @@ not =m= — we ship no modules and have no =modprobe=.
 
 A working kernel link is invisible until userland does three things:
 
-** (a) sockets in the Lisp image — =sb-bsd-sockets=
-SBCL's BSD-sockets API lives in the *=sb-bsd-sockets= contrib*, which is a
-=require=-loaded fasl. Our image is a *frozen heap* (see [[file:sbcl-init.org][sbcl-init.org]]): we
-cannot =require= it at runtime (no contrib fasls on the initramfs, no network to
-fetch them — the very chicken-and-egg this whole file is about). So we must
-=(require :sb-bsd-sockets)= *at build time*, before =save-lisp-and-die=, so the
-socket code is baked into =/sbin/lisp=. Pure Lisp + kernel syscalls; no new
-native library. (Alternatively, hand-roll =socket/bind/connect= via =sb-alien=
-to libc — but baking the contrib is cleaner and gives us a real API.)
+** (a) sockets in the Lisp image — =sb-bsd-sockets= — *DONE*
+SBCL's BSD-sockets API lives in the *=sb-bsd-sockets= contrib*, a =require=-loaded
+fasl. Our image is a *frozen heap* (see [[file:sbcl-init.org][sbcl-init.org]]): we cannot =require= it at
+runtime (no contrib fasls on the initramfs, no network to fetch them — the very
+chicken-and-egg this whole file is about). So =build.sh= does
+=(require :sb-bsd-sockets)= *at build time*, before =save-lisp-and-die=, with
+=SBCL_HOME= pointed at the built tree's =obj/sbcl-home= so the contrib fasl
+resolves. The socket code is then frozen into =/sbin/lisp= — at runtime no fasl
+or =SBCL_HOME= is needed. Pure Lisp + kernel syscalls; no new native library.
+(Resolved the old open question: yes, this SBCL tree can =require= it at build
+time, given =SBCL_HOME=.)
 
 ** (b) an IP address — static first, DHCP later
 A NIC with no address can't talk. Two ways to get one:
-- *Static* (simplest first step): assign an address ourselves —
-  =ifconfig eth0 10.0.2.15 netmask 255.255.255.0= equivalent via =SIOCSIFADDR=
-  /=SIOCSIFFLAGS= ioctls. From Lisp that is a handful of =sb-alien= ioctl calls
-  (the same FFI-to-shipped-libc pattern as =reboot(2)= and the planned termios
-  line editor). QEMU user-mode networking hands out =10.0.2.15= with gateway
-  =10.0.2.2= — perfect for a hard-coded first test.
+- *Static* (DONE): =bring-up-interface= in =net.lisp= assigns the address and
+  brings the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS= ioctls
+  on a throwaway UDP socket — the classic =ifconfig= path, as a handful of
+  =sb-alien= calls (the same FFI-to-shipped-libc pattern as =reboot(2)= and the
+  termios line editor; no =ifconfig=/=ip= binary). The =struct ifreq= is built as
+  a 40-byte block and only the member each ioctl reads is filled. The supervisor
+  calls it at boot with =10.0.2.15/24= (QEMU SLIRP's address, gateway =10.0.2.2=).
 - *DHCP* (real networks): a DHCP client is a UDP conversation (DISCOVER →
   OFFER → REQUEST → ACK). We ship none. Options: write a tiny DHCP client in
   Lisp (very much in this project's spirit — a few dozen lines over a UDP
@@ -113,15 +119,15 @@ minimal DNS-over-UDP query in Lisp, or just use raw IPs at first. Defer.
    enumerates on PCI (=[1af4:1000]=, class 0x0200) and =show-net-interfaces=
    lists =eth0 (down)= at boot. =kernel-config.org= §7 + changelog updated; the
    QEMU NIC wiring is in =build.sh= (=QEMU_NET=).
-2. *Static IP from Lisp* — =sb-alien= ioctls bring =eth0= up at =10.0.2.15=.
-   Verify the interface is UP/RUNNING.
-3. *First packet* — open a UDP or ICMP socket from SBCL (=sb-bsd-sockets= baked
-   in) and talk to QEMU's gateway / a host service. The "hello world" of the
-   net stack: a successful =sendto= / =recvfrom=.
-4. *TCP client* — connect out (e.g. fetch a fixed IP:port). Proves the full
-   INET path.
-5. *(later)* DHCP, DNS, a tiny TCP *server* (a Lisp REPL over the socket — note
-   this is the same idea as Swank but hand-rolled and tiny), then real-hardware
+2. *Static IP from Lisp* — *DONE.* =bring-up-interface= (=net.lisp=) brings =eth0=
+   UP|RUNNING at =10.0.2.15/24=; =show-net-interfaces= now prints the address.
+3. *First packets — a TCP server* — *DONE.* We went straight to the TCP REPL
+   (§6a, =start-network-repl=): =bind= / =listen= / =accept= a connection and run
+   the REPL over the socket stream. From the host, =nc 127.0.0.1 4005= (QEMU
+   =hostfwd=) returns a live remote REPL — verified =(* 6 7)= → =42=. This proves
+   the whole INET path (a UDP/ICMP "hello" or an outbound TCP *client* would be
+   strictly easier and were skipped as redundant).
+4. *(later)* DHCP, DNS, then real-hardware
    Ethernet, then — much later — Wi-Fi.
 
 * 4. QEMU test wiring (for build.sh --run)
@@ -150,15 +156,20 @@ bring-up testable headless, exactly like the framebuffer screenshots.
   fits the "Lisp machine drives the hardware via FFI" theme better than shipping
   opaque busybox applets (though busybox is the pragmatic fallback).
 
-* 6. Exposing the REPL over the network (planning)
+* 6. Exposing the REPL over the network
 
 Once the userland half works (=sb-bsd-sockets= baked in, =eth0= has an IP), the
-SBCL REPL can be reached remotely. Two routes, in increasing cost:
+SBCL REPL can be reached remotely. Two routes, in increasing cost — *(a) is now
+implemented* (=start-network-repl= in =net.lisp=); (b) remains planning:
 
-** (a) Raw TCP REPL — trivial, but *insecure*
+** (a) Raw TCP REPL — *IMPLEMENTED* (=start-network-repl=, =net.lisp=)
 A listening socket whose stream is bound to =*standard-input*= /
-=*standard-output*= turns our existing =run-repl= (in =supervisor.lisp=) into a
-network REPL — roughly:
+=*standard-output*= turns the REPL into a network REPL. As shipped it differs from
+the sketch below in two deliberate ways: it serves with =plain-repl= (not
+=run-repl=) — a socket peer is not a terminal we can put in raw mode, so the
+ANSI/raw line editor is wrong there and line-buffered =READ= is right; and the
+supervisor runs it in a *background thread* (=sb-thread:make-thread=) so the local
+framebuffer menu keeps working while the port is served. The original sketch:
 
 #+begin_src lisp
   (let ((sock (make-instance 'sb-bsd-sockets:inet-socket
@@ -274,14 +285,17 @@ MIT/source-only and the Wi-Fi bits remain a documented, swappable overlay rather
 than a one-laptop hack. This is the step that turns the box from a demo into a
 machine that is actually useful.
 
-* Open questions to settle when we start
+* Open questions — RESOLVED (kept for the record)
 
-- Static-IP-via-ioctl vs ship =busybox ip/udhcpc= — which first? (Leaning: static
-  ioctl from Lisp, to stay self-contained and didactic.)
-- =sb-bsd-sockets= baked in vs raw =sb-alien socket()= — (leaning: bake the
-  contrib; it is the clean, documented API and still pure Lisp + syscalls.)
-- Confirm whether the SBCL build we use can =require :sb-bsd-sockets= at build
-  time from =~/sbcl/= (contrib must be present in the source tree).
+- Static-IP-via-ioctl vs =busybox ip/udhcpc=? → *ioctl from Lisp* (=net.lisp=),
+  self-contained and didactic, no binary.
+- =sb-bsd-sockets= baked vs raw =sb-alien socket()=? → *baked the contrib* — the
+  clean documented API, still pure Lisp + syscalls.
+- Can this SBCL =require :sb-bsd-sockets= at build time? → *yes*, with
+  =SBCL_HOME=$SBCL/obj/sbcl-home= so the contrib fasl resolves (=build.sh=).
+
+Still open for the *next* stages: DHCP (vs hard-coded static), DNS (tiny Lisp
+resolver vs raw IPs), and the whole of Wi-Fi (§7).
 
 * See also
   - [[file:kernel-config.org][kernel-config.org]] — the "Deliberately OFF → Networking" section (will move
