@@ -144,6 +144,62 @@ bring-up testable headless, exactly like the framebuffer screenshots.
   fits the "Lisp machine drives the hardware via FFI" theme better than shipping
   opaque busybox applets (though busybox is the pragmatic fallback).
 
+* 6. Exposing the REPL over the network (planning)
+
+Once the userland half works (=sb-bsd-sockets= baked in, =eth0= has an IP), the
+SBCL REPL can be reached remotely. Two routes, in increasing cost:
+
+** (a) Raw TCP REPL — trivial, but *insecure*
+A listening socket whose stream is bound to =*standard-input*= /
+=*standard-output*= turns our existing =run-repl= (in =supervisor.lisp=) into a
+network REPL — roughly:
+
+#+begin_src lisp
+  (let ((sock (make-instance 'sb-bsd-sockets:inet-socket
+                             :type :stream :protocol :tcp)))
+    (setf (sb-bsd-sockets:sockopt-reuse-address sock) t)
+    (sb-bsd-sockets:socket-bind sock #(0 0 0 0) 4005)
+    (sb-bsd-sockets:socket-listen sock 1)
+    (loop
+      (let* ((client (sb-bsd-sockets:socket-accept sock))
+             (stream (sb-bsd-sockets:socket-make-stream
+                      client :input t :output t :element-type 'character)))
+        (let ((*standard-input* stream) (*standard-output* stream))
+          (run-repl)))))           ; run-repl already exists in supervisor.lisp
+#+end_src
+
+Connect with =nc 10.0.2.15 4005= (or via the =hostfwd= in §4). Pure Lisp +
+syscalls; *no new kernel option and no native binary*.
+
+*The catch — this is plaintext and unauthenticated.* Anyone who can reach the
+port gets a remote =eval= (i.e. remote root, since the REPL is PID 1). It is
+only acceptable when *every wire that reaches the box is already trusted* — the
+QEMU =hostfwd= case (bound to the host loopback) or a direct cable to a dev
+machine. *Never bind it to an untrusted LAN.* Encryption cannot be added "for
+free": it must run on whatever machine the untrusted wire touches — which leads
+to (b).
+
+** (b) Dropbear — an authenticated/encrypted alternative
+If the box must sit on a network we do *not* control, the REPL needs real SSH in
+front of it. *OpenSSH is too heavy* (drags in OpenSSL/libcrypto, PAM, NSS — all
+against this project's spirit). The realistic choice is *Dropbear*: a tiny SSH
+server built for embedded systems that *statically links its own bundled crypto*
+into a single small binary (the "busybox of ssh"). What adopting it would cost:
+
+- A new *static third-party binary* in the initramfs (a C program, not a library
+  — consistent with our "no new native *libraries*" rule; links musl static like
+  =preinit=).
+- Kernel: *PTY support* we do not have yet — =CONFIG_UNIX98_PTYS= +
+  =CONFIG_DEVPTS_FS= — plus mounting =devpts=, so a session can get a tty.
+- A minimal *accounts / host-key* setup: a host key generated at first boot, and
+  one user (SSH authenticates *something*).
+- Point Dropbear's login program at =/sbin/lisp= instead of a shell — so logging
+  in drops you straight into the SBCL REPL, encrypted and authenticated.
+
+Sequencing: ship (a) first (it costs nothing beyond the socket work already in
+the plan and is perfect for QEMU/dev), and only take on (b) when a real,
+untrusted network is actually in play.
+
 * Open questions to settle when we start
 
 - Static-IP-via-ioctl vs ship =busybox ip/udhcpc= — which first? (Leaning: static
