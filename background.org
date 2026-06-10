@@ -300,6 +300,34 @@ In this project: with a single vCPU there is exactly one Local APIC, so there is
 nothing to route and IPIs never fire (no second core to signal). All of §7 is
 real in the kernel but dormant here — it comes alive only with more cores.
 
+* 8. Entropy and the CRNG — the "random: crng init done" message
+
+The kernel keeps a cryptographic random number generator (the *CRNG*, a
+ChaCha-based CSPRNG) behind =/dev/urandom= and the =getrandom()= syscall. At boot
+it is *unseeded*: it has not yet collected enough unpredictable bits to produce
+*cryptographically secure* output. The kernel accumulates "entropy" from
+unpredictable physical events — the precise timing of interrupts, input events
+(keystrokes!), disk completions — and, on capable hardware, from the CPU's
+=RDRAND=/=RDSEED= or a dedicated hardware/virtio RNG. Once it has gathered enough
+(≈256 bits) it marks the CRNG fully seeded and prints =random: crng init done=
+*exactly once* per boot. After that, =getrandom()= stops blocking and
+=/dev/urandom= output is considered fully secure. It is purely informational — not
+an error, not a warning.
+
+In this project: this machine has almost *no* entropy sources. =CONFIG_HW_RANDOM=
+is off (so no hwrng framework and no =virtio-rng= driver), the QEMU line passes no
+RNG device, and under TCG the CPU's =RDRAND= is not a trusted early seed. So on
+this near-idle VM the pool fills *slowly*, mostly from interrupt timing — and your
+own *keystrokes* (fed through the kernel's =add_input_randomness=) are often what
+finally tips it over the threshold. That is why =crng init done= tends to appear
+right as you start typing in the REPL; and because kernel =printk= shares the
+framebuffer console (=console=tty0=, see [[file:sbcl-init.org][sbcl-init.org]]), it lands mid-prompt. We
+keep it this way on purpose: nothing here needs secure randomness at boot, and it
+is a neat, visible reminder that entropy is a real, physical resource the machine
+has to *earn*. (To seed instantly instead: =CONFIG_HW_RANDOM= +
+=CONFIG_HW_RANDOM_VIRTIO= and a =-device virtio-rng-pci= on the QEMU line — see
+[[file:kernel-config.org][kernel-config.org]], "Deliberately OFF".)
+
 * See also
   - [[file:micro-distro.org][micro-distro.org]] — the boot chain as *built* (the decisions this doc's §1–5
     sit underneath).

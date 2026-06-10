@@ -148,6 +148,17 @@ userland (get an IP -> sockets reachable from SBCL). Easiest first target is
 (staged kernel options, =sb-bsd-sockets= baked into the image, static-IP/DHCP,
 the QEMU SLIRP test wiring) lives in [[file:networking.org][networking.org]].
 
+** Hardware RNG — OFF (entropy comes the slow way)
+
+=CONFIG_HW_RANDOM= is not set, so there is no hwrng framework and no =virtio-rng=
+driver, and the QEMU line passes no RNG device. The kernel therefore seeds its
+CRNG only from interrupt/input timing; on this idle VM that often completes only
+once you start *typing* — the =random: crng init done= line that lands in the
+middle of the REPL prompt. Harmless: nothing here needs secure randomness at
+boot. To seed instantly instead: =CONFIG_HW_RANDOM=y= + =CONFIG_HW_RANDOM_VIRTIO=y=
+and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
+[[file:background.org][background.org]] §8.
+
 ** binfmt_misc — OFF; not needed (would only delegate to an ELF interpreter).
 
 * Change log (kernel tags)
