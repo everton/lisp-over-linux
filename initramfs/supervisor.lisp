@@ -31,6 +31,31 @@
       (format t "   (none found — no keyboard driver bound)~%")))
   (finish-output))
 
+(defun show-net-interfaces ()
+  "Diagnostic: list the network interfaces the kernel currently sees (from
+   /proc/net/dev), with each one's link state from sysfs. Confirms the NIC
+   driver bound and created e.g. eth0 (lo always exists once NET is on)."
+  (format t "~&Network interfaces detected by the kernel:~%")
+  (let ((any nil))
+    (ignore-errors
+      (with-open-file (s "/proc/net/dev" :if-does-not-exist nil)
+        (when s
+          (read-line s nil nil) (read-line s nil nil)   ; skip the two header rows
+          (loop for line = (read-line s nil nil) while line do
+            (let ((colon (position #\: line)))
+              (when colon
+                (let* ((name  (string-trim " " (subseq line 0 colon)))
+                       (state (ignore-errors
+                                (with-open-file
+                                    (o (format nil "/sys/class/net/~a/operstate" name)
+                                       :if-does-not-exist nil)
+                                  (and o (read-line o nil nil))))))
+                  (setf any t)
+                  (format t "   ~a~@[  (~a)~]~%" name state))))))))
+    (unless any
+      (format t "   (none found — is CONFIG_NET on?)~%")))
+  (finish-output))
+
 (defun print-menu ()
   (format t "~&~%======== lisp-over-linux supervisor ========~%")
   (format t "  I am PID ~a · SBCL ~a~%~%"
@@ -49,6 +74,7 @@
           (sb-unix:unix-getpid) (lisp-implementation-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
+  (show-net-interfaces)           ; diagnostic: did the NIC bind (eth0)?
   (sleep 1)                       ; let the boot diagnostics be read first
   (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien
   (let ((worker-id 0))

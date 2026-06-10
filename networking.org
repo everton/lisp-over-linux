@@ -5,11 +5,14 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 [[file:kernel-config.org][kernel-config.org]] (the "Deliberately OFF → Networking" section) · Lisp side:
 [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that would open the sockets).
 
-*STATUS: PLANNING ONLY — no work started. =CONFIG_NET= is still off; SBCL has
-no =sb-bsd-sockets=.* This file is the roadmap we will follow when we implement
-it. It is the single biggest subsystem we have taken on, because — unlike the
-framebuffer alien (pure userland) or the bigger console font (pure kernel) —
-networking straddles *BOTH* the kernel and userland at once.
+*STATUS: IN PROGRESS — kernel half DONE (tag #21).* =CONFIG_NET= + =INET= +
+=virtio-net= are built in; under QEMU =eth0= enumerates and the supervisor's
+=show-net-interfaces= lists it (=down= — no IP yet). *Userland half not started:*
+SBCL still has no =sb-bsd-sockets= baked in, and =eth0= has no address. This file
+is the roadmap; §1 and §3-step-1 are now done, §2 onward is next. It is the
+single biggest subsystem we have taken on, because — unlike the framebuffer alien
+(pure userland) or the bigger console font (pure kernel) — networking straddles
+*BOTH* the kernel and userland at once.
 
 * The one-paragraph essence
 
@@ -37,10 +40,11 @@ test it in stages and prove each layer before adding the next.
 
 * 1. Kernel half — what has to be turned on
 
-Currently *all* of this is OFF (=grep -c '^CONFIG_NET=y'= returns 0). The
-keystone =CONFIG_PCI= is already on (we added it in tag #19 for USB/ACPI), and
-=CONFIG_PCI_MSI= too — modern NICs want MSI/MSI-X — so the bus plumbing a NIC
-needs is already present. The new options, smallest-useful-set first:
+*DONE in tag #21* — all of the below are now =y= (=grep -c '^CONFIG_NET=y'=
+returns 1). The keystone =CONFIG_PCI= was already on (tag #19 for USB/ACPI), and
+=CONFIG_PCI_MSI= too — modern NICs want MSI/MSI-X — so the bus plumbing was
+already present. The options we turned on, smallest-useful-set first
+(=CONFIG_IPV6= deliberately left OFF, see §5):
 
 | Option                     | Role                                                        |
 |----------------------------+-------------------------------------------------------------|
@@ -104,9 +108,10 @@ minimal DNS-over-UDP query in Lisp, or just use raw IPs at first. Defer.
 
 * 3. The staged bring-up plan (prove each layer before the next)
 
-1. *Kernel builds with NET+INET+VIRTIO_NET* — confirm =dmesg= shows the NIC and
-   =/sys/class/net/eth0= exists. (No address yet.) Kernel tag bumps; update
-   [[file:kernel-config.org][kernel-config.org]] in the same turn (REQUIRED — see AGENTS.md).
+1. *Kernel builds with NET+INET+VIRTIO_NET* — *DONE (tag #21).* The NIC
+   enumerates on PCI (=[1af4:1000]=, class 0x0200) and =show-net-interfaces=
+   lists =eth0 (down)= at boot. =kernel-config.org= §7 + changelog updated; the
+   QEMU NIC wiring is in =build.sh= (=QEMU_NET=).
 2. *Static IP from Lisp* — =sb-alien= ioctls bring =eth0= up at =10.0.2.15=.
    Verify the interface is UP/RUNNING.
 3. *First packet* — open a UDP or ICMP socket from SBCL (=sb-bsd-sockets= baked

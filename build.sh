@@ -58,6 +58,14 @@ SBCL_CORE="$SBCL/output/sbcl.core"
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
 
+# Paravirtual NIC for QEMU boots: user-mode (SLIRP) networking — no root, no host
+# bridge. Gives the guest 10.0.2.15 / gateway 10.0.2.2 / DNS 10.0.2.3 in software,
+# and forwards host port 4005 -> guest 4005 so a future Lisp TCP REPL is reachable
+# from the host with `nc localhost 4005`. Needs kernel virtio-net (tag #21+).
+# See networking.org §4. Shared by both the --interactive and --run QEMU lines.
+QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
+          -device virtio-net-pci,netdev=net0)
+
 say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
 
@@ -163,6 +171,7 @@ if [ "$DO_INTERACTIVE" -eq 1 ]; then
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VARS" \
     -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
+    "${QEMU_NET[@]}" \
     -serial mon:stdio -display "$DISPLAY_BACKEND" -no-reboot
   exit 0
 fi
@@ -184,6 +193,7 @@ if [ "$DO_RUN" -eq 1 ]; then
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VARS" \
     -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
+    "${QEMU_NET[@]}" \
     -serial file:"$SERIAL" -display none -no-reboot \
     -qmp unix:"$QMP",server,nowait 2>/tmp/micro-qemu.err &
   QPID=$!

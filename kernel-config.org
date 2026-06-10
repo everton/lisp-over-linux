@@ -10,8 +10,8 @@ distro turns on, and — more importantly — *why each one is there*. It is mea
 to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-6.18.3=, config at =~/lisp-over-linux/linux/.config=.
-Current tag: *#20* (Terminus 16x32 fbcon font; built on top of #19 = CONFIG_PCI +
-full USB/HID + ACPI power-off on real hardware).
+Current tag: *#21* (IPv4 networking + QEMU virtio-net; built on top of #20 =
+Terminus 16x32 fbcon font, #19 = CONFIG_PCI + full USB/HID + ACPI power-off).
 ~780 options are set in total; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
@@ -27,13 +27,15 @@ cd ~/lisp-over-linux/linux
 grep -E 'CONFIG_(EFI|EFI_STUB|FB|FB_EFI|FRAMEBUFFER_CONSOLE|VT|VT_CONSOLE|PCI|\
 PCI_MSI|PCIEPORTBUS|USB|XHCI|EHCI|OHCI|HID|INPUT_EVDEV|INPUT_KEYBOARD|\
 KEYBOARD_ATKBD|SERIO|I2C|ACPI|DEVTMPFS|TMPFS|TTY|SERIAL_8250|BLK_DEV_INITRD|\
-INITRAMFS_SOURCE|PRINTK|BINFMT_ELF|FUTEX|MULTIUSER|FONTS|FONT_)=' .config | sort
+INITRAMFS_SOURCE|PRINTK|BINFMT_ELF|FUTEX|MULTIUSER|FONTS|FONT_|\
+NET|INET|UNIX|PACKET|NETDEVICES|VIRTIO|VIRTIO_PCI|VIRTIO_NET)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
 
-# confirm networking is still OFF (see "Deliberately OFF" below):
-grep -cE '^CONFIG_NET=y' .config        # expect 0
+# networking is ON since tag #21 (IPv4 + virtio-net); IPv6 stays OFF:
+grep -cE '^CONFIG_NET=y' .config        # expect 1
+grep -cE '^CONFIG_IPV6=y' .config       # expect 0 (deliberately off, see below)
 #+end_src
 
 * 1. Boot — how the kernel becomes the EFI application
@@ -131,22 +133,51 @@ its keyboard, AND ACPI needed PCI config-space operation regions for =_S5=
 |-------------------------+-------+-----------------------------------------------------------|
 | =CONFIG_SERIAL_8250=    | y     | =console=ttyS0= so =build.sh --run= can scrape markers     |
 
+* 7. Networking (IPv4 + QEMU virtio-net) — NEW in tag #21
+
+The kernel half of the network stack (the roadmap in [[file:networking.org][networking.org]] §1). The bus
+plumbing a NIC needs — =CONFIG_PCI= + =CONFIG_PCI_MSI= — was already on from #19.
+Everything here is built-in (=y=), never a module: we ship no modules and have no
+=modprobe=.
+
+| Option               | State | Role                                                          |
+|----------------------+-------+---------------------------------------------------------------|
+| =CONFIG_NET=         | y     | The socket / protocol core — the master switch                |
+| =CONFIG_INET=        | y     | IPv4 (TCP, UDP, ICMP) — the thing we actually want            |
+| =CONFIG_UNIX=        | y     | AF_UNIX local sockets (useful even before a NIC has an IP)     |
+| =CONFIG_PACKET=      | y     | AF_PACKET raw sockets (some DHCP clients use it)              |
+| =CONFIG_NETDEVICES=  | y     | The network-device layer (gate for any NIC driver)            |
+| =CONFIG_NET_CORE=    | y     | Core netdev machinery (auto-selected)                         |
+| =CONFIG_VIRTIO=      | y     | Virtio core                                                   |
+| =CONFIG_VIRTIO_PCI=  | y     | Virtio-over-PCI transport                                     |
+| =CONFIG_VIRTIO_NET=  | y     | The QEMU paravirtual NIC driver — binds =[1af4:1000]= as eth0 |
+
+Verified (tag #21): under QEMU =-device virtio-net-pci= the NIC enumerates on PCI
+(=pci 0000:00:02.0: [1af4:1000] ... class 0x020000=), =virtio_net= binds it, and
+the supervisor's =show-net-interfaces= diagnostic lists =eth0 (down)= at boot
+(=down= = no IP/link yet — that is Stage 2, a userland job). The QEMU SLIRP wiring
+(=-netdev user,...hostfwd...=) lives in =build.sh= (=QEMU_NET=) and [[file:networking.org][networking.org]] §4.
+
+What is still OFF on the kernel side: real-hardware NIC drivers (=CONFIG_E1000=,
+=CONFIG_R8169=, …), all Wi-Fi (=CFG80211=/=MAC80211= + firmware + WPA), and IPv6
+(see below). The userland half (=sb-bsd-sockets= baked into the image, an IP via
+ioctl, a first packet) is not done yet — [[file:networking.org][networking.org]] §2–3.
+
 * Deliberately OFF (and what it would take to turn on)
 
-** Networking — there is NONE
+** IPv6 — OFF (IPv4 only, to keep the surface small)
 
-=CONFIG_NET= is *completely off* (=grep -c '^CONFIG_NET=y'= returns 0). That
-means we have none of: =CONFIG_NET= (sockets / protocol core), =CONFIG_INET=
-(TCP/IP), =CONFIG_UNIX= (even local AF_UNIX), =CONFIG_PACKET=,
-=CONFIG_NETDEVICES= + any NIC driver (virtio-net, e1000, the laptop's chip).
-Userland likewise has no =sb-bsd-sockets=, no DHCP client, no DNS.
+=olddefconfig= would default =CONFIG_IPV6=y= the moment =INET= is on; we set
+=# CONFIG_IPV6 is not set= on purpose (networking.org §5 scope guard). Everything
+we want first — static IPv4 under QEMU SLIRP, a UDP/TCP "hello" — is IPv4. Turn
+=CONFIG_IPV6=y= back on if/when an IPv6 path actually matters.
 
-Adding a network is the biggest single subsystem we have considered: it touches
-*both* the kernel (NET core -> INET -> a NIC driver; MSI is already present) and
-userland (get an IP -> sockets reachable from SBCL). Easiest first target is
-=virtio-net= under QEMU. (No work started — planning only.) The full roadmap
-(staged kernel options, =sb-bsd-sockets= baked into the image, static-IP/DHCP,
-the QEMU SLIRP test wiring) lives in [[file:networking.org][networking.org]].
+** Real-hardware & Wi-Fi NICs — OFF
+
+Only =virtio-net= (QEMU) is built in. A laptop's wired chip is one more =y=
+(=CONFIG_R8169= / =CONFIG_E1000E=); Wi-Fi is a whole subsystem
+(=CFG80211=+=MAC80211= + vendor driver + firmware blobs in the initramfs + a WPA
+supplicant) and is a separate, later project. See [[file:networking.org][networking.org]] §1.
 
 ** Hardware RNG — OFF (entropy comes the slow way)
 
@@ -171,3 +202,7 @@ and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
 - =#20= bigger fbcon font: =CONFIG_FONTS= + =CONFIG_FONT_TER16x32= and
   =fbcon=font:TER16x32= on the cmdline (default 8x16 was too small on the
   laptop). Incremental rebuild ~27 s on 8 cores.
+- =#21= IPv4 networking + QEMU virtio-net: =CONFIG_NET= + =INET= + =UNIX= +
+  =PACKET= + =NETDEVICES= + =VIRTIO=/=VIRTIO_PCI=/=VIRTIO_NET=; =CONFIG_IPV6= held
+  OFF on purpose. Kernel half only — eth0 appears (down). Userland (sb-bsd-sockets,
+  an IP) is the next stage. See [[file:networking.org][networking.org]].
