@@ -1,8 +1,8 @@
 #+TITLE: Background — the firmware, CPU, and hardware the boot rests on
 #+STARTUP: showall
 
-Parent doc: [[file:micro-distro.org][micro-distro.org]] (the boot chain) · related:
-[[file:framebuffer.org][framebuffer.org]] (the display) · [[file:kernel-config.org][kernel-config.org]] (the options).
+Parent doc: [[file:../micro-distro.org][micro-distro.org]] (the boot chain) · related:
+[[file:../framebuffer.org][framebuffer.org]] (the display) · [[file:../kernel-config.org][kernel-config.org]] (the options).
 
 * What this file is — and what it is NOT
 
@@ -114,7 +114,7 @@ kernel AND a valid UEFI application. UEFI inspects the header, sees =MZ= /
 =PE\0\0=, thinks "a normal EFI program," and runs it. The stub code that runs
 first is the bridge from "UEFI app" into "Linux boot."
 
-(This is exactly the =file= check in [[file:micro-distro.org][micro-distro.org]]: the bootable image must
+(This is exactly the =file= check in [[file:../micro-distro.org][micro-distro.org]]: the bootable image must
 report "Linux kernel … 64-bit EFI handoff entry point" *and* start with the ASCII
 bytes =MZ=. Two identities, one file.)
 
@@ -154,7 +154,7 @@ loader off the FAT ESP — no GRUB in between. Boot Services are how EFISTUB lea
 the framebuffer and memory map; ExitBootServices is why those must be grabbed
 early; Runtime Services are the efivars we *could* touch but currently don't (our
 power-off goes through the kernel's ACPI path, not UEFI reset — see
-[[file:micro-distro.org][micro-distro.org]] §"Real-hardware input").
+[[file:../micro-distro.org][micro-distro.org]] §"Real-hardware input").
 
 * 4. Inheriting the framebuffer (GOP) — a pointer, not a duplicate
 
@@ -166,7 +166,7 @@ firmware's framebuffer* rather than driving the GPU itself.
 
 This is the one place the kernel keeps a UEFI-provided resource instead of
 re-doing the work — and it is covered end to end in its own doc. See
-[[file:framebuffer.org][framebuffer.org]] §3 ("Getting a framebuffer without a GPU driver") rather than
+[[file:../framebuffer.org][framebuffer.org]] §3 ("Getting a framebuffer without a GPU driver") rather than
 repeating it here.
 
 In this project: the framebuffer is the *only* hardware the kernel inherits from
@@ -197,11 +197,11 @@ up is: PCI → USB → xHCI → HID → input device. That is several layers of 
 binding and bus probing, and crucially it is *asynchronous* — it completes a
 short time after the kernel starts userspace, not before. (The full
 =CONFIG_PCI / USB / HID= story, including the bug where a missing =CONFIG_PCI=
-killed the laptop keyboard *and* ACPI power-off, is in [[file:micro-distro.org][micro-distro.org]]
+killed the laptop keyboard *and* ACPI power-off, is in [[file:../micro-distro.org][micro-distro.org]]
 §"Real-hardware input".)
 
 In this project: this is exactly why =supervisor-main= in
-[[file:initramfs/supervisor.lisp][initramfs/supervisor.lisp]] does =(sleep 2)= "give USB a moment to enumerate"
+[[file:../../initramfs/supervisor.lisp][initramfs/supervisor.lisp]] does =(sleep 2)= "give USB a moment to enumerate"
 before reading input, and why =show-input-devices= prints what the kernel sees in
 =/proc/bus/input/devices= — it is a direct check of whether the HID re-binding
 described above actually completed. UEFI having had a working keyboard does NOT
@@ -321,15 +321,15 @@ this near-idle VM the pool fills *slowly*, mostly from interrupt timing — and 
 own *keystrokes* (fed through the kernel's =add_input_randomness=) are often what
 finally tips it over the threshold. That is why =crng init done= tends to appear
 right as you start typing in the REPL; and because kernel =printk= shares the
-framebuffer console (=console=tty0=, see [[file:sbcl-init.org][sbcl-init.org]]), it lands mid-prompt. We
+framebuffer console (=console=tty0=, see [[file:../sbcl-init.org][sbcl-init.org]]), it lands mid-prompt. We
 keep it this way on purpose: nothing here needs secure randomness at boot, and it
 is a neat, visible reminder that entropy is a real, physical resource the machine
 has to *earn*. (To seed instantly instead: =CONFIG_HW_RANDOM= +
 =CONFIG_HW_RANDOM_VIRTIO= and a =-device virtio-rng-pci= on the QEMU line — see
-[[file:kernel-config.org][kernel-config.org]], "Deliberately OFF".)
+[[file:../kernel-config.org][kernel-config.org]], "Deliberately OFF".)
 
 * See also
-  - [[file:micro-distro.org][micro-distro.org]] — the boot chain as *built* (the decisions this doc's §1–5
+  - [[file:../micro-distro.org][micro-distro.org]] — the boot chain as *built* (the decisions this doc's §1–5
     sit underneath).
-  - [[file:framebuffer.org][framebuffer.org]] — the GOP/efifb/fbcon stack in full (this doc's §4 in depth).
-  - [[file:kernel-config.org][kernel-config.org]] — the =CONFIG_= options that turn the above into a kernel.
+  - [[file:../framebuffer.org][framebuffer.org]] — the GOP/efifb/fbcon stack in full (this doc's §4 in depth).
+  - [[file:../kernel-config.org][kernel-config.org]] — the =CONFIG_= options that turn the above into a kernel.

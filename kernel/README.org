@@ -2,7 +2,7 @@
 #+STARTUP: showall
 
 Parent: [[file:../README.org][../README.org]] · option-by-option rationale:
-[[file:../kernel-config.org][../kernel-config.org]].
+[[file:../doc/kernel-config.org][doc/kernel-config.org]].
 
 The kernel source tree is *not* in this repo (it is reached via the gitignored
 =./linux= symlink — see [[file:../README.org][../README.org]]). The tree itself is unmodified upstream
@@ -14,7 +14,7 @@ tracked *copy* of that =.config= so the kernel side of the project can't be lost
 * This is a snapshot, not the live file
 
 The live =.config= (at =../linux/.config=) is still the truth (see
-[[file:../kernel-config.org][../kernel-config.org]]). After any kernel config change, refresh the snapshot in
+[[file:../doc/kernel-config.org][doc/kernel-config.org]]). After any kernel config change, refresh the snapshot in
 the same commit (run from the project root):
 
 #+begin_src sh

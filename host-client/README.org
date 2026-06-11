@@ -11,7 +11,7 @@ and so it is plainly a separate host tool rather than part of the Lisp machine.
 * lol-repl-client.c — a host terminal for the guest's network REPL
 
 Connects your terminal to the guest's TCP REPL (enabled with =t= in the
-supervisor menu; see [[file:../networking.org][networking.org]] §6a). It puts your *local* terminal in raw
+supervisor menu; see [[file:../doc/networking.org][networking.org]] §6a). It puts your *local* terminal in raw
 mode and forwards keystrokes byte-by-byte, so the line editor *inside the guest*
 receives arrows/Ctrl-C/Ctrl-D and drives history + editing remotely — no PTY on
 the guest side needed.

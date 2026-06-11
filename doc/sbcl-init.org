@@ -11,7 +11,7 @@ STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #22). A C preinit mounts
 interactive console menu: (r) Lisp REPL, (w) spawn a worker, (a) draw the
 Land-of-Lisp alien to the framebuffer, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
-with [[file:build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
+with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
 (Terminus 16x32, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7); tag #21 = IPv4
 networking + QEMU virtio-net (kernel half only — =eth0= appears, see
@@ -205,7 +205,7 @@ Key bits learned while writing it:
     moment to enumerate" before reading input, and =show-input-devices= is the
     direct check that the re-binding actually completed. (Background — why firmware
     drivers die at the handoff and the kernel re-enumerates everything except the
-    framebuffer: [[file:background.org][background.org]] §5, with the handoff itself in §3.)
+    framebuffer: [[file:background/background.org][background.org]] §5, with the handoff itself in §3.)
 
 ** Building the SBCL image (what build.sh stage 2 runs)
 #+begin_src sh :results output

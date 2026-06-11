@@ -1,0 +1,230 @@
+#+TITLE: Learn networking — from zero, then into our code
+#+STARTUP: showall content
+
+This is a *from-scratch* tutorial: it assumes you know nothing about networking
+and builds up just enough to understand how our box gets an IP (DHCP) and what it
+would take to reach the outside world (routing, NAT, and the famous "ping"). It is
+deliberately short — read one section, then ask about it; we go deeper together.
+
+Each section ends with two things:
+- *In the code* — direct links into the exact spot in *our userland* (=initramfs/=)
+  or the *kernel source* (=./linux/=) that does this, so you can jump straight from
+  the idea to the implementation. (Kernel links need the fetched =./linux= tree.)
+- *Check yourself* — a question to make sure it stuck.
+
+Companion: [[file:background.org][background.org]] (firmware/CPU theory) · the project's networking write-up
+is [[file:../networking.org][networking.org]] · the kernel options are in [[file:../kernel-config.org][kernel-config.org]].
+
+* Progress  [0/9]
+Tick a box as you finish a section (in Emacs: =C-c C-c= on the checkbox).
+- [ ] 1. Hosts, links, and packets
+- [ ] 2. Two kinds of address: MAC vs IP
+- [ ] 3. Your local street: subnet + netmask
+- [ ] 4. ARP: finding the MAC behind an IP
+- [ ] 5. Leaving the street: routers + the default gateway
+- [ ] 6. DHCP: getting your address automatically
+- [ ] 7. NAT: why your address is private
+- [ ] 8. QEMU SLIRP: our NAT in software (and why ping is special)
+- [ ] 9. Synthesis: what really happens when we ping 8.8.8.8
+
+* 1. Hosts, links, and packets
+
+A *network* is just machines (*hosts*) joined by *links*, sending each other small
+chunks of data called *packets*. A packet is a header (who it's from, who it's
+for, what kind it is) followed by a payload (the actual data).
+
+Networking is built in *layers*, each wrapping the one above in its own header —
+like putting a letter in an envelope, then that envelope in a bigger one:
+- *Link* (Ethernet): move a frame across one physical hop.
+- *Network* (IP): get a packet across many hops, end to end.
+- *Transport* (TCP/UDP): turn that into a usable stream or messages between programs.
+- *Application*: your data (a DHCP request, a REPL line, ...).
+
+Each layer only cares about its own header; it hands the payload up or down.
+
+*In the code:*
+- Our virtual NIC's driver (turns packets into "wire"): [[file:../../linux/drivers/net/virtio_net.c][linux → drivers/net/virtio_net.c]]
+- Where userland hands packets to the kernel (the socket API): [[file:../../linux/net/socket.c][linux → net/socket.c]]
+
+*Check yourself:* name the four layers, and what each one adds to a packet.
+
+* 2. Two kinds of address: MAC vs IP
+
+There are *two* addresses in play, and beginners always conflate them:
+- A *MAC address* (48-bit, e.g. =52:54:00:12:34:56=) belongs to a *NIC* and
+  identifies it on the *local link*. Think "which card on this wire."
+- An *IP address* (e.g. =10.0.2.15=) identifies a *host* in the wider network.
+  Think "which house in the world."
+
+Why two? Because they answer different questions. The IP address says where a
+packet should ultimately end up; the MAC address says who to hand it to *on the
+current hop*. As a packet crosses routers, its *IP* src/dst stay the same the
+whole way, but its *MAC* src/dst are rewritten at *every* hop.
+
+*In the code:*
+- We read our NIC's MAC with the =SIOCGIFHWADDR= ioctl: [[file:../../initramfs/dhcp.lisp::defun interface-mac][dhcp.lisp → interface-mac]]
+- We assign our IP with the =SIOCSIFADDR= ioctl: [[file:../../initramfs/net.lisp::defun bring-up-interface][net.lisp → bring-up-interface]]
+- The kernel side of per-interface IP config: [[file:../../linux/net/ipv4/devinet.c][linux → net/ipv4/devinet.c]]
+
+*Check yourself:* which address stays constant end-to-end, and which changes at
+every hop?
+
+* 3. Your local street: subnet + netmask
+
+Hosts on the same *subnet* are like houses on one street: they can hand packets
+directly to each other, no router needed. They are *on-link*.
+
+The *netmask* says where the "street name" ends and the "house number" begins.
+=255.255.255.0= (written =/24=) means "the first 3 bytes are the network, the last
+byte is the host." So =10.0.2.15/24= is house =15= on street =10.0.2.0=, and every
+address from =10.0.2.0= to =10.0.2.255= is on the same street (on-link). Anything
+else is *off-link* and needs a router (§5).
+
+*In the code:*
+- When [[file:../../initramfs/net.lisp::defun bring-up-interface][net.lisp → bring-up-interface]] sets our IP *and mask*, the kernel
+  automatically adds an "on-link" route for the whole =/24=. That single line is
+  why we can already reach the gateway =10.0.2.2= and DNS =10.0.2.3= with *no*
+  default route — they're on our street.
+- The kernel's routing table (FIB): [[file:../../linux/net/ipv4/route.c][linux → net/ipv4/route.c]]
+- The options that turn the IP stack on: [[file:../kernel-config.org][kernel-config.org]] §7.
+
+*Check yourself:* for =10.0.2.15/24=, is =10.0.2.200= on-link? Is =10.0.3.5=?
+
+* 4. ARP: finding the MAC behind an IP
+
+You want to send to an on-link IP (say =10.0.2.2=), and §2 said you need its *MAC*
+to build the frame. How do you learn it? *ARP* (Address Resolution Protocol): the
+host broadcasts "who has =10.0.2.2=? tell =10.0.2.15=", and whoever owns that IP
+answers with its MAC. The answer is cached so it isn't asked every time.
+
+ARP only works *on-link* — it's a broadcast on your street, and broadcasts don't
+leave the subnet. That's the whole reason off-link traffic needs a router instead.
+
+*In the code:*
+- The kernel does ARP for us, transparently, the first time we send to an on-link
+  IP — we never write ARP code. It lives in [[file:../../linux/net/ipv4/arp.c][linux → net/ipv4/arp.c]].
+
+*Check yourself:* why can't ARP find the MAC for =8.8.8.8=?
+
+* 5. Leaving the street: routers + the default gateway
+
+For an IP that's *not* on your subnet, you can't ARP it (it's not on your link).
+Instead you hand the packet to a *router*: a host with a foot in two networks that
+forwards it onward, hop by hop, until it arrives.
+
+The *default gateway* is "the router I send everything off-link to." The *default
+route* (=0.0.0.0/0=, "match anything") points at it. The neat trick: to send to
+=8.8.8.8= you build a frame whose *IP* destination is =8.8.8.8= but whose *MAC*
+destination is the *gateway's* MAC — local delivery to the router, which then
+rewrites the MAC and passes it along (this is §2's "MAC changes every hop").
+
+*In the code:*
+- DHCP told us our gateway is =10.0.2.2= and we stash it: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
+- We have *not yet* added the default route (the =SIOCADDRT= ioctl) — which is
+  exactly why off-subnet hosts aren't reachable yet. That's the missing piece for
+  ping; see the plan in [[file:../networking.org][networking.org]] §2c.
+- Kernel routing decisions: [[file:../../linux/net/ipv4/fib_frontend.c][linux → net/ipv4/fib_frontend.c]]
+
+*Check yourself:* to send to =8.8.8.8=, whose *MAC* goes in the frame — Google's,
+or the gateway's?
+
+* 6. DHCP: getting your address automatically
+
+Hard-coding =10.0.2.15= works in QEMU but not on a real LAN. *DHCP* lets a host
+*ask* the network for an address. It's a four-message conversation over UDP
+(client port 68, server port 67):
+
+1. *DISCOVER* — the client broadcasts "anyone have an address for me?"
+2. *OFFER* — a server replies "you can have =10.0.2.15="
+3. *REQUEST* — the client broadcasts "yes, I'll take that one"
+4. *ACK* — the server confirms, and includes the *mask, gateway, DNS, lease time*
+
+It's all *broadcast* because the client has no address yet; the two sides match
+their messages by a random *transaction id* (xid).
+
+*In the code:* this whole dance is ours, in pure Lisp —
+- builds the request packet: [[file:../../initramfs/dhcp.lisp::defun build-dhcp][dhcp.lisp → build-dhcp]]
+- parses the reply: [[file:../../initramfs/dhcp.lisp::defun parse-dhcp][dhcp.lisp → parse-dhcp]]
+- runs DISCOVER→REQUEST: [[file:../../initramfs/dhcp.lisp::defun dhcp-acquire][dhcp.lisp → dhcp-acquire]]
+- applies the lease at boot: [[file:../../initramfs/dhcp.lisp::defun configure-eth0][dhcp.lisp → configure-eth0]]
+- why it works with no IP yet (broadcast flag + SO_BINDTODEVICE): [[file:../networking.org][networking.org]] §2b
+- The kernel even has its *own* tiny DHCP, for the =ip=dhcp= boot option: [[file:../../linux/net/ipv4/ipconfig.c][linux → net/ipv4/ipconfig.c]]
+
+*Check yourself:* which of the four messages carries the subnet mask and gateway?
+
+* 7. NAT: why your address is private
+
+Addresses like =10.x.x.x=, =192.168.x.x=, =172.16–31.x.x= are *private*: every
+home and office reuses them, and they are *not routable* on the public internet
+(there simply aren't enough IPv4 addresses for every device to have a public one).
+
+So how does a private host reach the internet? *NAT* (Network Address
+Translation): the router rewrites your private source IP to its *one* public IP on
+the way out, and remembers the mapping so the reply finds its way back to you.
+Many hosts share a single public address this way.
+
+The big consequence: NAT lets you reach *out* (it remembers connections you start),
+but nobody can reach *in* uninvited — there's no fixed mapping for your host until
+*you* open a connection. Inbound needs an explicit, manually-configured rule.
+
+*In the code:*
+- Our guest's =10.0.2.15= is a private address. The NAT here is *QEMU itself*
+  (next section), not our kernel — so there's no NAT code in our tree. (When Linux
+  *is* the router, NAT is done by netfilter.) This is why the host can only reach
+  our REPL through an explicit "hostfwd" rule: [[file:../../build.sh::QEMU_NET][build.sh → QEMU_NET]]
+
+*Check yourself:* why can the host connect to our network REPL only through the
+hostfwd, and not just by dialing =10.0.2.15= directly?
+
+* 8. QEMU SLIRP: our NAT in software (and why ping is special)
+
+QEMU's "user-mode networking" (a.k.a. *SLIRP*) is a NAT router implemented purely
+*in software inside the QEMU process* — no root, no real NIC. It hands the guest
+=10.0.2.15=, pretends to be the gateway =10.0.2.2= and the DNS server =10.0.2.3=,
+and NATs the guest's outbound *TCP and UDP* into ordinary sockets on the host.
+
+Because it forwards TCP and UDP faithfully, our DHCP (UDP) and our network REPL
+(TCP) just work. But *ICMP* — the protocol =ping= uses — is special: SLIRP isn't a
+real router, so to relay a ping to the real internet it has to open a special ICMP
+socket *on the host*, which the host only allows under certain settings
+(=net.ipv4.ping_group_range=). Often it isn't allowed, so a perfectly correct ping
+to an external address just times out. Pinging the gateway =10.0.2.2= works,
+because SLIRP answers that itself.
+
+A *hostfwd* (=hostfwd=tcp::4005-:4005=) is simply a hand-written *inbound* NAT
+rule: "host port 4005 → guest port 4005."
+
+*In the code:*
+- The SLIRP + hostfwd wiring: [[file:../../build.sh::QEMU_NET][build.sh → QEMU_NET]]
+- The kernel side of ping (raw / ICMP sockets), for when we add ping: [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]] and [[file:../../linux/net/ipv4/icmp.c][linux → net/ipv4/icmp.c]]
+
+*Check yourself:* why does a TCP connection to the internet succeed through SLIRP
+while an external =ping= may not?
+
+* 9. Synthesis: what really happens when we ping 8.8.8.8
+
+Now put it all together. When our REPL tries to ping =8.8.8.8=:
+
+1. *Is it on-link?* =8.8.8.8= is not in =10.0.2.0/24= (§3), so we need the
+   *default route* (§5). We haven't added it yet → the kernel returns
+   =ENETUNREACH= and nothing leaves the box. *(Prerequisite 1: add the route.)*
+2. *Build the frame:* with the route, the packet's IP dst is =8.8.8.8= but its MAC
+   dst is the gateway =10.0.2.2='s MAC (§2, §5) — found via ARP (§4) — and off it
+   goes to SLIRP.
+3. *Through the NAT:* SLIRP must relay the ICMP echo to the real internet (§8) →
+   needs host ICMP permission → *may not work*. *(Prerequisite 2: SLIRP/host
+   cooperation — or sidestep it with a TCP test.)*
+
+So "add ping" really means three things: (a) the default route (=SIOCADDRT=),
+(b) a raw ICMP socket + a hand-built Echo packet in Lisp, and (c) SLIRP/host
+cooperating on ICMP. A *TCP* reachability test avoids (c) entirely, which is why
+it's the more reliable "am I online?" check here.
+
+*In the code (where each piece will land):*
+- the gateway we'd route through: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
+- where the route + a ping helper would go (alongside the other ioctls): [[file:../../initramfs/net.lisp::defun bring-up-interface][net.lisp → net.lisp ioctls]]
+- the kernel's ICMP socket support: [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]]
+- the plan: [[file:../networking.org][networking.org]] §2c.
+
+*Check yourself:* name the three things that must all be true for our ping to
+=8.8.8.8= to actually get a reply.

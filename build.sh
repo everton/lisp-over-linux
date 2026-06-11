@@ -21,7 +21,7 @@
 #   QEMU_WAIT=<seconds>   (default 50) how long --run waits before the screenshot.
 #   QEMU_DISPLAY=<gtk|sdl> (default gtk) the window backend for --interactive.
 #
-# See sbcl-init.org for the full explanation of every step.
+# See doc/sbcl-init.org for the full explanation of every step.
 
 set -euo pipefail
 
@@ -64,7 +64,7 @@ OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
 # bridge. Gives the guest 10.0.2.15 / gateway 10.0.2.2 / DNS 10.0.2.3 in software,
 # and forwards host port 4005 -> guest 4005 so a future Lisp TCP REPL is reachable
 # from the host with `nc localhost 4005`. Needs kernel virtio-net (tag #21+).
-# See networking.org §4. Shared by both the --interactive and --run QEMU lines.
+# See doc/networking.org §4. Shared by both the --interactive and --run QEMU lines.
 QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
           -device virtio-net-pci,netdev=net0)
 

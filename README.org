@@ -57,7 +57,7 @@ From nothing (downloads into =./sources/=, symlinks, applies our pinned config):
   ./deps.sh kernel 6.18.3      # version defaults to the one we pin in kernel/
 #+end_src
 
-The pinned config lives in =kernel/config-6.18.3= (see [[file:kernel-config.org][kernel-config.org]] for what
+The pinned config lives in =kernel/config-6.18.3= (see [[file:doc/kernel-config.org][kernel-config.org]] for what
 every option is and why). =deps.sh kernel= copies it to =linux/.config= and runs
 =make olddefconfig= for you.
 
@@ -92,7 +92,7 @@ REPL: PID 1's console is the framebuffer VT (=tty0=), so you type in the QEMU
 window while the launching terminal mirrors the serial/kernel log. =--run= is the
 non-interactive path (boots, screenshots, kills QEMU) for quick checks/CI.
 
-Then write the USB / boot on real hardware — see [[file:micro-distro.org][micro-distro.org]].
+Then write the USB / boot on real hardware — see [[file:doc/micro-distro.org][micro-distro.org]].
 
 * Upgrading the kernel version
 
@@ -109,13 +109,14 @@ Nothing in the project needs editing — only the symlink moves.
 
 | File | What it covers |
 |------+----------------|
-| [[file:micro-distro.org][micro-distro.org]]  | The base EFISTUB boot chain, USB creation, real-hardware boot. |
-| [[file:sbcl-init.org][sbcl-init.org]]     | SBCL as PID 1: the preinit shim, the supervisor, the build. |
-| [[file:kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
-| [[file:framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
-| [[file:background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
-| [[file:line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |
-| [[file:networking.org][networking.org]]    | Bringing a network layer (planning only — the task after that). |
+| [[file:doc/micro-distro.org][micro-distro.org]]  | The base EFISTUB boot chain, USB creation, real-hardware boot. |
+| [[file:doc/sbcl-init.org][sbcl-init.org]]     | SBCL as PID 1: the preinit shim, the supervisor, the build. |
+| [[file:doc/kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
+| [[file:doc/framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
+| [[file:doc/background/background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
+| [[file:doc/background/learn-networking.org][learn-networking.org]] | From-scratch networking tutorial (progress tracker + code links). |
+| [[file:doc/line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |
+| [[file:doc/networking.org][networking.org]]    | The network layer: virtio-net, static IP/DHCP, the TCP REPL (wired path working). |
 | [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |
 
 * Layout
@@ -127,7 +128,8 @@ Nothing in the project needs editing — only the symlink moves.
   initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
   host-client/             HOST-side tools (NOT in the image): the network-REPL client
   iso_root/                build output: BOOTX64.EFI + initramfs.cpio (gitignored)
-  *.org                    the documentation
+  README.org               this file (the only .org in the root)
+  doc/                     all other documentation (*.org); doc/background/ = theory + tutorials
   linux -> …  sbcl -> …    gitignored symlinks to the external source trees
   sources/                 (optional) where deps.sh downloads trees (gitignored)
 #+end_src

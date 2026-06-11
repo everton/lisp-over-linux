@@ -9,13 +9,16 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 
 | File | Role |
 |------|------|
-| `README.org` | **Entry point.** What the project is + how to reconstruct the env (the `./linux`/`./sbcl` symlinks, `deps.sh`, build). Read first. |
-| `micro-distro.org` | Base EFISTUB micro-linux: boot chain, USB creation, first-build diagnosis. |
-| `sbcl-init.org` | SBCL as PID 1: preinit shim, supervisor, separate-initrd, build. Extends `micro-distro.org`. |
-| `kernel-config.org` | **Inventory of every kernel option we enable and why.** Single source of truth for `.config`. |
-| `framebuffer.org` | Deep-dive: framebuffer → efifb → fbcon, `/dev/fb0`, font size, drawing images. Explains the Display options. |
-| `line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI), linedit's features + native-dep caveats, hand-rolled vs library. |
-| `networking.org` | **Roadmap (PLANNING ONLY):** bring a network layer — kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets` baked into the image. Not started. |
+| `README.org` | **Entry point.** What the project is + how to reconstruct the env (the `./linux`/`./sbcl` symlinks, `deps.sh`, build). Read first. The only `.org` in root. |
+| `doc/` | All other `.org` documentation lives here (keeps the root clean). |
+| `doc/micro-distro.org` | Base EFISTUB micro-linux: boot chain, USB creation, first-build diagnosis. |
+| `doc/sbcl-init.org` | SBCL as PID 1: preinit shim, supervisor, separate-initrd, build. Extends `micro-distro.org`. |
+| `doc/kernel-config.org` | **Inventory of every kernel option we enable and why.** Single source of truth for `.config`. |
+| `doc/framebuffer.org` | Deep-dive: framebuffer → efifb → fbcon, `/dev/fb0`, font size, drawing images. Explains the Display options. |
+| `doc/line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI). |
+| `doc/networking.org` | Networking: kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets`, static IP/DHCP, the TCP REPL. Wired path working; DNS/Wi-Fi ahead. |
+| `doc/background/background.org` | General firmware/CPU/hardware theory (UEFI handoff, x86 modes, USB-HID, multicore). "Not project rationale." |
+| `doc/background/learn-networking.org` | From-scratch networking tutorial with a progress tracker + deep links into the code. |
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
@@ -36,17 +39,17 @@ The `.org` files are the deliverable, not an afterthought. When you change the
 system, update the matching doc **in the same turn**:
 
 - **Changed the kernel `.config`** (enabled/disabled any option) →
-  update **`kernel-config.org`**: fix the relevant table, bump the kernel tag,
+  update **`doc/kernel-config.org`**: fix the relevant table, bump the kernel tag,
   and add a line to its "Change log". Re-run the audit `grep`s documented in
   that file's "How to regenerate / audit" section and reconcile differences.
   **Also refresh the tracked snapshot** in the same turn (run from the project
   root): `cp linux/.config kernel/config-6.18.3` (the live `.config` lives outside
   the repo behind the `./linux` symlink; `kernel/config-6.18.3` is our copy).
-- **Changed the boot chain / USB / EFISTUB** → update `micro-distro.org`.
-- **Changed `preinit.c`, `supervisor.lisp`, the initramfs list, or `build.sh`** →
-  update `sbcl-init.org` (and its STATUS line).
+- **Changed the boot chain / USB / EFISTUB** → update `doc/micro-distro.org`.
+- **Changed `preinit.c`, the Lisp modules, the initramfs list, or `build.sh`** →
+  update `doc/sbcl-init.org` (and its STATUS line).
 - **Bumped the kernel build** → bump the tag (`#NN`) consistently across
-  `kernel-config.org`, `sbcl-init.org`, and `micro-distro.org`.
+  `doc/kernel-config.org`, `doc/sbcl-init.org`, and `doc/micro-distro.org`.
 
 If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 
@@ -54,8 +57,11 @@ If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 
 - Every `.org` file starts with the **resume-session comment block** (the
   `cd … && claude --resume <session-id>` header) and `#+TITLE` / `#+STARTUP`.
-- Cross-link docs with `[[file:other.org][other.org]]`.
-- Kernel build tags are `#NN` (currently **#20**). Always say which tag a claim
+- The docs live under **`doc/`** (and theory/tutorials under `doc/background/`);
+  only `README.org` stays in the repo root. Cross-link with **relative** paths:
+  within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
+  doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
+- Kernel build tags are `#NN` (currently **#22**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
   them via those names, never an absolute/`$HOME` path. `build.sh` derives its own

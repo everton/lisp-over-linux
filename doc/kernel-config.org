@@ -189,7 +189,7 @@ once you start *typing* — the =random: crng init done= line that lands in the
 middle of the REPL prompt. Harmless: nothing here needs secure randomness at
 boot. To seed instantly instead: =CONFIG_HW_RANDOM=y= + =CONFIG_HW_RANDOM_VIRTIO=y=
 and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
-[[file:background.org][background.org]] §8.
+[[file:background/background.org][background.org]] §8.
 
 ** Legacy BSD PTYs — OFF (tag #22)
 
