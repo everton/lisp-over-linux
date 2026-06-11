@@ -77,11 +77,7 @@
           (sb-unix:unix-getpid) (lisp-implementation-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
-  ;; Configure eth0 (QEMU SLIRP address) so the network REPL is ready to enable —
-  ;; but do NOT start the server: it is an opt-in menu choice ('t'). (§2/§6.)
-  (if (ignore-errors (bring-up-interface "eth0" "10.0.2.15" "255.255.255.0"))
-      (format t "~&eth0 up at 10.0.2.15/24 — network REPL is OFF (enable with 't').~%")
-      (format t "~&eth0 could not be configured (no NIC bound?).~%"))
+  (configure-eth0)                ; DHCP (DISCOVER/REQUEST), static fallback; prints result
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
   (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien

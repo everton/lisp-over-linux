@@ -118,6 +118,7 @@ before repl) and all baked into one image by =save-lisp-and-die=:
   | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
   | =repl.lisp=        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
   | =net.lisp=         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
+  | =dhcp.lisp=        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
   | =supervisor.lisp=  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
 The network REPL is *off by default* and toggled from the menu (=t=). It serves
@@ -215,6 +216,7 @@ Key bits learned while writing it:
   (load ".../initramfs/line-editor.lisp")
   (load ".../initramfs/repl.lisp")
   (load ".../initramfs/net.lisp")
+  (load ".../initramfs/dhcp.lisp")
   (load ".../initramfs/supervisor.lisp")
   (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)

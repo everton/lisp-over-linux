@@ -46,6 +46,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
+  "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client + configure-eth0 (uses net + sb-bsd-sockets)
   "$INITRAMFS_DIR/supervisor.lisp"   # the menu loop + init-toplevel (entry)
 )
 ISO_ROOT="$MICRO/iso_root"

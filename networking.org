@@ -7,14 +7,16 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 
 *STATUS: WIRED PATH WORKING end-to-end in QEMU.* Kernel half DONE (tag #21:
 =CONFIG_NET= + =INET= + =virtio-net=). Userland half DONE: =sb-bsd-sockets= is
-baked into the image, =bring-up-interface= (=sb-alien= ioctls) brings =eth0= up at
-=10.0.2.15/24= at boot, and the network REPL (=net.lisp=) serves the *full line
-editor* over TCP on =:4005= — *OFF by default*, toggled from the supervisor menu
-(=t=), with a host-side raw-forwarding client (=host-client/lol-repl-client.c=)
-so arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified:
-boot, press =t= to enable, then from the host the client gives a live editing REPL
-— =(+ 40 2)= → =42=. *Still ahead:* DHCP + DNS (still static IP / raw addresses),
-and Wi-Fi for real hardware (§7). It is the single biggest subsystem we have taken
+baked into the image; =eth0= is configured at boot by *DHCP* (=dhcp.lisp=, a real
+DISCOVER/REQUEST handshake — static fallback if no server answers); and the
+network REPL (=net.lisp=) serves the *full line editor* over TCP on =:4005= —
+*OFF by default*, toggled from the supervisor menu (=t=), with a host-side
+raw-forwarding client (=host-client/lol-repl-client.c=) so
+arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified
+against QEMU SLIRP: eth0 leases =10.0.2.15= (gw =10.0.2.2=, dns =10.0.2.3=), and
+the host client gives a live editing REPL — =(+ 40 2)= → =42=. *Still ahead:* an
+off-subnet default route + DNS (§2c), and Wi-Fi for real hardware (§7). It is the
+single biggest subsystem we have taken
 on, because — unlike the framebuffer alien (pure userland) or the bigger console
 font (pure kernel) — networking straddles *BOTH* the kernel and userland at once.
 
@@ -95,24 +97,31 @@ or =SBCL_HOME= is needed. Pure Lisp + kernel syscalls; no new native library.
 (Resolved the old open question: yes, this SBCL tree can =require= it at build
 time, given =SBCL_HOME=.)
 
-** (b) an IP address — static first, DHCP later
-A NIC with no address can't talk. Two ways to get one:
-- *Static* (DONE): =bring-up-interface= in =net.lisp= assigns the address and
-  brings the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS= ioctls
-  on a throwaway UDP socket — the classic =ifconfig= path, as a handful of
-  =sb-alien= calls (the same FFI-to-shipped-libc pattern as =reboot(2)= and the
-  termios line editor; no =ifconfig=/=ip= binary). The =struct ifreq= is built as
-  a 40-byte block and only the member each ioctl reads is filled. The supervisor
-  calls it at boot with =10.0.2.15/24= (QEMU SLIRP's address, gateway =10.0.2.2=).
-- *DHCP* (real networks): a DHCP client is a UDP conversation (DISCOVER →
-  OFFER → REQUEST → ACK). We ship none. Options: write a tiny DHCP client in
-  Lisp (very much in this project's spirit — a few dozen lines over a UDP
-  socket), or ship a static =busybox udhcpc=. Start static, add DHCP when a
-  real LAN is in play.
+** (b) an IP address — static, then DHCP — both *DONE*
+A NIC with no address can't talk.
+- *Static* (=bring-up-interface=, =net.lisp=): assigns address + mask and brings
+  the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS= ioctls on a
+  throwaway UDP socket — the classic =ifconfig= path as =sb-alien= calls (no
+  =ifconfig=/=ip= binary). Kept as the fallback if DHCP gets no answer.
+- *DHCP* (=dhcp.lisp=): a real *DISCOVER → OFFER → REQUEST → ACK* conversation,
+  ~a hundred lines of pure Lisp on a =sb-bsd-sockets= UDP socket. The BOOTP packet
+  and option parsing are built/parsed by hand. Two tricks make it work with NO IP
+  yet, over an ordinary socket (no =AF_PACKET=): *SO_BINDTODEVICE* ties the socket
+  to =eth0= so the broadcast leaves the right NIC with no routing entry, and we set
+  the DHCP *broadcast flag* so the server broadcasts its replies to
+  =255.255.255.255:68= (receivable) instead of unicasting to an address we do not
+  have. =configure-eth0= runs it at boot, applies the leased IP+mask, and stashes
+  the gateway/DNS (=*gateway*= / =*dns*=) for §2c. Verified against QEMU SLIRP:
+  eth0 gets =10.0.2.15=, gw =10.0.2.2=, dns =10.0.2.3= from the ACK.
 
-** (c) name resolution — DNS (optional, last)
-=getaddrinfo= via glibc would drag in NSS plugin files; cleaner to write a
-minimal DNS-over-UDP query in Lisp, or just use raw IPs at first. Defer.
+** (c) name resolution + off-subnet routing — DNS (next)
+DHCP already hands us the gateway and DNS server (=*gateway*= / =*dns*=). Applying
+IP+mask gives an *on-link route* for the whole subnet, which is enough to reach
+everything in QEMU SLIRP's =10.0.2.0/24= (gateway =10.0.2.2=, DNS =10.0.2.3=). Two
+things remain for the *outbound* world: an *off-subnet default route* via the
+leased gateway (=SIOCADDRT= / =struct rtentry=), and *DNS* itself — =getaddrinfo=
+via glibc would drag in NSS plugin files, so cleaner to write a minimal
+DNS-over-UDP query in Lisp (sending to =*dns*=), or just use raw IPs at first.
 
 * 3. The staged bring-up plan (prove each layer before the next)
 
@@ -128,8 +137,11 @@ minimal DNS-over-UDP query in Lisp, or just use raw IPs at first. Defer.
    =hostfwd=) returns a live remote REPL — verified =(* 6 7)= → =42=. This proves
    the whole INET path (a UDP/ICMP "hello" or an outbound TCP *client* would be
    strictly easier and were skipped as redundant).
-4. *(later)* DHCP, DNS, then real-hardware
-   Ethernet, then — much later — Wi-Fi.
+4. *DHCP* — *DONE.* =dhcp.lisp= does a real DISCOVER/REQUEST handshake at boot
+   (=configure-eth0=), so =eth0= gets =10.0.2.15= dynamically instead of a hard
+   coded address; gateway/DNS are parsed and stashed. Verified against QEMU SLIRP.
+5. *(later)* off-subnet default route + DNS (§2c), then real-hardware Ethernet,
+   then — much later — Wi-Fi (§7).
 
 * 4. QEMU test wiring (for build.sh --run)
 
