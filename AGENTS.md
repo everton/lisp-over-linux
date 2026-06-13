@@ -55,8 +55,7 @@ If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 
 ## Conventions
 
-- Every `.org` file starts with the **resume-session comment block** (the
-  `cd … && claude --resume <session-id>` header) and `#+TITLE` / `#+STARTUP`.
+- Every `.org` file starts with `#+TITLE` / `#+STARTUP`.
 - The docs live under **`doc/`** (and theory/tutorials under `doc/background/`);
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
