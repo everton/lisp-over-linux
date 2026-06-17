@@ -179,5 +179,4 @@
       (t
        (ignore-errors (bring-up-interface ifname "10.0.2.15" "255.255.255.0"))
        (format t "~&eth0: no DHCP answer — fell back to static 10.0.2.15/24.~%")))
-    (format t "  network REPL is OFF (enable with 't').~%")
     (finish-output)))

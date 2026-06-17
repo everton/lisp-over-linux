@@ -114,8 +114,9 @@
 ;;; SECURITY: this is plaintext, unauthenticated remote =eval= — i.e. remote
 ;;; ROOT, since the REPL is PID 1. Only safe when every wire that can reach the
 ;;; port is trusted: the QEMU hostfwd (host loopback) or a direct dev cable.
-;;; NEVER expose it to an untrusted LAN. (networking.org §6.) That is one reason
-;;; it is OFF by default and toggled from the menu, not auto-started.
+;;; NEVER expose it to an untrusted LAN. (networking.org §6.) It starts ON at boot
+;;; for convenience and can be toggled off from the menu ('t') — acceptable only
+;;; because the one wire that can reach it is the trusted QEMU hostfwd.
 ;;;
 ;;; We serve with the FULL line editor (editing-repl), not plain-repl: the host
 ;;; client (host-client/lol-repl-client.c) puts the *host* terminal in raw mode
@@ -168,12 +169,18 @@
   t)
 
 (defun stop-net-repl ()
-  "Stop accepting connections and drop any active session. No-op if already down."
+  "Stop accepting connections and drop any active session. No-op if already down.
+   We must fully tear the accept thread down before returning, or a later restart
+   hits EADDRINUSE: closing the listening socket does NOT reliably wake a blocked
+   socket-accept in another thread, so we *shutdown* it (which does), then
+   *join* the thread so the port is released before we let anyone rebind it."
   (unless (net-repl-running-p) (return-from stop-net-repl nil))
-  (ignore-errors (when *net-repl-client*            ; kick an in-progress session
-                   (sb-bsd-sockets:socket-close *net-repl-client*)))
-  (ignore-errors (sb-bsd-sockets:socket-close *net-repl-server*))  ; unblock accept -> thread ends
-  (setf *net-repl-server* nil *net-repl-client* nil *net-repl-thread* nil)
+  (let ((server *net-repl-server*) (client *net-repl-client*) (thread *net-repl-thread*))
+    (ignore-errors (when client (sb-bsd-sockets:socket-close client)))        ; kick active session
+    (ignore-errors (sb-bsd-sockets:socket-shutdown server :direction :io))    ; wake the accept
+    (ignore-errors (sb-thread:join-thread thread :timeout 2))                 ; let the thread exit
+    (ignore-errors (sb-bsd-sockets:socket-close server))                      ; now release the port
+    (setf *net-repl-server* nil *net-repl-client* nil *net-repl-thread* nil))
   t)
 
 (defun toggle-net-repl ()

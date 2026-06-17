@@ -78,6 +78,13 @@
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
   (configure-eth0)                ; DHCP (DISCOVER/REQUEST), static fallback; prints result
+  ;; Start the network REPL automatically (toggle it off from the menu with 't').
+  (if (ignore-errors (start-net-repl))
+      (progn
+        (format t "~&network REPL ENABLED on 0.0.0.0:4005 — connect from the HOST with~%")
+        (format t "  host-client/lol-repl-client  (toggle off with 't' in the menu)~%")
+        (format t "  INSECURE: remote eval = remote root — trusted wires only.~%"))
+      (format t "~&network REPL could not start.~%"))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
   (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien

@@ -121,9 +121,9 @@ before repl) and all baked into one image by =save-lisp-and-die=:
   | =dhcp.lisp=        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
   | =supervisor.lisp=  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
-The network REPL is *off by default* and toggled from the menu (=t=). It serves
-the full line editor over the socket; a host-side raw-forwarding client lives in
-=host-client/= (NOT in the image). See [[file:networking.org][networking.org]] §6a.
+The network REPL starts *ON at boot* and can be toggled off from the menu (=t=).
+It serves the full line editor over the socket; a host-side raw-forwarding client
+lives in =host-client/= (NOT in the image). See [[file:networking.org][networking.org]] §6a.
 
 The =net.lisp= TCP REPL is built on the *=sb-bsd-sockets= contrib baked into the
 image*: =build.sh= does =(require :sb-bsd-sockets)= at build time (with =SBCL_HOME=

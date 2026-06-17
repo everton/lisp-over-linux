@@ -10,7 +10,7 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 baked into the image; =eth0= is configured at boot by *DHCP* (=dhcp.lisp=, a real
 DISCOVER/REQUEST handshake — static fallback if no server answers); and the
 network REPL (=net.lisp=) serves the *full line editor* over TCP on =:4005= —
-*OFF by default*, toggled from the supervisor menu (=t=), with a host-side
+*ON by default* (toggle off from the supervisor menu with =t=), with a host-side
 raw-forwarding client (=host-client/lol-repl-client.c=) so
 arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified
 against QEMU SLIRP: eth0 leases =10.0.2.15= (gw =10.0.2.2=, dns =10.0.2.3=), and
@@ -179,10 +179,14 @@ implemented* (=net.lisp=); (b) remains planning:
 A listening socket whose stream is bound to =*standard-input*= / =*standard-output*=
 turns the REPL into a network REPL. How it actually ships:
 
-- *OFF by default; a menu toggle.* =start-net-repl= / =stop-net-repl= /
-  =toggle-net-repl= manage a background accept thread; the supervisor menu's =t=
-  flips it and shows =[RUNNING]= / =[stopped]=. It is *not* auto-started — partly
-  because it is remote root (see the warning below).
+- *ON at boot; a menu toggle.* =start-net-repl= / =stop-net-repl= /
+  =toggle-net-repl= manage a background accept thread; =supervisor-main= starts it
+  at boot, and the menu's =t= toggles it, showing =[RUNNING]= / =[stopped]=. (It is
+  remote root — see the warning below — but acceptable here because the only wire
+  that reaches it is the trusted QEMU =hostfwd=.) =stop-net-repl= must =shutdown=
+  the listening socket and =join= the accept thread before returning, or a later
+  re-enable hits =EADDRINUSE= (closing a socket does not wake a blocked
+  =socket-accept= in another thread).
 - *It serves the FULL line editor*, not =plain-repl=. The earlier worry was "a
   socket peer is not a terminal we can put in raw mode" — true, but it does not
   have to be: a tiny *host-side raw-forwarding client*
