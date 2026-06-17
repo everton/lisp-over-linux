@@ -73,7 +73,8 @@ in control registers:
   16-bit *real mode*        (reset state — 8086, no protection)
      |  set CR0.PE, load a GDT
      v
-  32-bit *protected mode*   (80386, 1985 — paging, privilege rings)
+  32-bit *protected mode*   (80386, 1985 — 32-bit + paging; the privilege
+                             rings themselves came first, on the 80286, 1982)
      |  build page tables, set EFER.LME + CR0.PG
      v
   64-bit *long mode*        (AMD64, 2003 — the mode everything runs in today)
