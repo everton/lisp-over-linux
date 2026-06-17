@@ -102,6 +102,36 @@
          (cond ((eql c2 #\H) :home) ((eql c2 #\F) :end) (t :ignore))))
       (t :ignore))))
 
+(defvar *completer* nil
+  "Function of one arg (the partial token before point) returning a list of
+   completion strings, or NIL to disable <Tab> completion. repl.lisp sets it to
+   complete-symbol. Kept as a hook so this editor stays Lisp-agnostic.")
+
+(defun token-start (line point)
+  "Index where the token ending at POINT begins — scan back over symbol
+   constituents (anything that is not whitespace or a usual Lisp delimiter)."
+  (let ((i point))
+    (loop while (and (> i 0)
+                     (not (member (char line (1- i))
+                                  '(#\Space #\Tab #\Newline #\( #\) #\' #\" #\; #\` #\,))))
+          do (decf i))
+    i))
+
+(defun longest-common-prefix (strings)
+  "The longest string that every member of STRINGS starts with."
+  (if (null strings) ""
+      (reduce (lambda (a b) (subseq a 0 (or (mismatch a b) (length a)))) strings)))
+
+(defun list-candidates (out candidates &optional (limit 80))
+  "Print CANDIDATES space-separated on their own line (capped at LIMIT)."
+  (terpri out)
+  (let ((shown (if (> (length candidates) limit) (subseq candidates 0 limit) candidates)))
+    (format out "~{~a~^  ~}" shown)
+    (when (> (length candidates) limit)
+      (format out "  … (~d total)" (length candidates))))
+  (terpri out)
+  (finish-output out))
+
 (defun read-line-edited (in out prompt)
   "Read one line from IN with in-line editing, rendering to OUT. Returns the
    finished string, :eof (Ctrl-D on an empty line, or stream end), or :cancel
@@ -161,6 +191,26 @@
             (12 (format out "~C[2J~C[H" #\Escape #\Escape) (redraw)) ; Ctrl-L: clear screen
             (16 (hist-prev) (redraw))                                ; Ctrl-P
             (14 (hist-next) (redraw))                                ; Ctrl-N
+            (9 (when *completer*                                     ; Tab: completion
+                 (let* ((start (token-start line point))
+                        (token (subseq line start point))
+                        (cands (and (plusp (length token)) (funcall *completer* token))))
+                   (cond
+                     ((null cands))                                  ; no match: do nothing
+                     ((null (rest cands))                            ; one match: insert it
+                      (setf line (concatenate 'string (subseq line 0 start)
+                                              (first cands) (subseq line point))
+                            point (+ start (length (first cands))))
+                      (redraw))
+                     (t (let ((cp (longest-common-prefix cands)))
+                          (if (> (length cp) (length token))         ; many: extend prefix
+                              (progn
+                                (setf line (concatenate 'string (subseq line 0 start)
+                                                        cp (subseq line point))
+                                      point (+ start (length cp)))
+                                (redraw))
+                              (progn (list-candidates out cands)     ; can't extend: list
+                                     (redraw)))))))))
             (27 (case (read-escape in)                               ; ESC sequence
                   (:left  (when (> point 0) (decf point) (redraw)))
                   (:right (when (< point (length line)) (incf point) (redraw)))

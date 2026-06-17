@@ -5,6 +5,47 @@
 ;;;; falls back to plain line-buffered READ when stdin is a pipe/file. Every
 ;;;; read and eval is guarded so a bad form cannot kill PID 1.
 
+;;; ---- <Tab> symbol completion (the *completer* hook for line-editor.lisp) ----
+
+(defun prefix-ci-p (prefix string)
+  "True if STRING begins with PREFIX, case-insensitively."
+  (and (<= (length prefix) (length string))
+       (string-equal prefix string :end2 (length prefix))))
+
+(defun complete-symbol (token)
+  "Completions for the partial symbol TOKEN: symbols accessible in *package*, or
+   the symbols of a named package given a 'pkg:' (external) / 'pkg::' (all) prefix,
+   or keywords for a leading ':'. Case-insensitive; results are lowercased so they
+   read back correctly under the default upcasing readtable."
+  (when (plusp (length token))
+    (let ((colon (position #\: token)) (names '()))
+      (cond
+        ((and colon (zerop colon))                       ; :keyword
+         (let ((part (string-left-trim ":" token)))
+           (do-symbols (s (find-package :keyword))
+             (when (prefix-ci-p part (symbol-name s))
+               (push (format nil ":~(~a~)" (symbol-name s)) names)))))
+        (colon                                           ; pkg:sym / pkg::sym
+         (let* ((dbl (and (< (1+ colon) (length token)) (char= (char token (1+ colon)) #\:)))
+                (pname (subseq token 0 colon))
+                (spart (subseq token (if dbl (+ colon 2) (1+ colon))))
+                (pkg   (find-package (string-upcase pname))))
+           (when pkg
+             (if dbl
+                 (do-symbols (s pkg)
+                   (when (and (eq (symbol-package s) pkg) (prefix-ci-p spart (symbol-name s)))
+                     (push (format nil "~(~a~)::~(~a~)" pname (symbol-name s)) names)))
+                 (do-external-symbols (s pkg)
+                   (when (prefix-ci-p spart (symbol-name s))
+                     (push (format nil "~(~a~):~(~a~)" pname (symbol-name s)) names)))))))
+        (t                                               ; accessible in *package*
+         (do-symbols (s *package*)
+           (when (prefix-ci-p token (symbol-name s))
+             (push (string-downcase (symbol-name s)) names)))))
+      (sort (delete-duplicates names :test #'string=) #'string<))))
+
+(setf *completer* #'complete-symbol)     ; enable <Tab> completion in the editor
+
 (defun complete-form (text)
   "Try to READ one form from TEXT. Returns a second value telling the caller what
    to do: :ok (with the form), :incomplete (unbalanced — read another line),
@@ -66,7 +107,7 @@
    line) returns to the menu; every read/eval is guarded so a bad form cannot
    kill PID 1. Uses the editor on a real TTY; falls back to plain READ otherwise."
   (let ((in *standard-input*) (out *standard-output*))
-    (format out "~&~%Lisp REPL — edit with arrows / Ctrl-A E B F K U W, Up/Down for~%")
+    (format out "~&~%Lisp REPL — arrows / Ctrl-A E B F K U W, Tab completes, Up/Down~%")
     (format out "history, :quit (or Ctrl-D on an empty line) to return to the menu.~%")
     (finish-output out)
     (if (tty-raw-capable-p 0)

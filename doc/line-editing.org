@@ -172,7 +172,26 @@ Lisp plus two FFI declarations, and =build.sh= bakes every module into the image
 | C-w                | kill the previous word                   |
 | C-l                | clear screen and redraw                  |
 | Up / Down, C-p/C-n | history previous / next                  |
+| Tab                | complete the symbol at point (or list candidates) |
 | C-d on empty line  | EOF — leave the REPL (same as =:quit=)   |
+
+** Tab completion (symbols)
+
+=<Tab>= completes the partial symbol before the cursor. The editor stays
+Lisp-agnostic: =read-line-edited= just calls a hook =*completer*= (a function of
+the token → list of candidate strings), and the REPL layer points it at
+=complete-symbol= (=repl.lisp=). On =<Tab>= the editor:
+1. scans back from point over symbol constituents to find the token (=token-start=);
+2. asks =*completer*= for matches;
+3. one match → insert it; many → insert their =longest-common-prefix=; if that
+   can't extend the token, list the candidates on a fresh line and redraw.
+
+=complete-symbol= matches (case-insensitively, returning lowercase) symbols
+accessible in =*package*=, or — given a =pkg:= / =pkg::= prefix — the external /
+all symbols of that package, or keywords after a leading =:=. It iterates with
+=do-symbols= / =do-external-symbols=; nothing native, nothing precomputed. Because
+it rides =read-line-edited=, it works identically on the local console and over
+the network REPL (the host client just forwards the =Tab= byte).
 
 ** How it plugs into the REPL
 
@@ -189,7 +208,8 @@ can't kill PID 1.
 
 - *Single line only*: a line longer than the screen width will mis-render on the
   wrap (the =\r=/column math assumes one row). Fine for a REPL prompt.
-- *No kill-ring / yank*, no undo, no TAB completion, no paren-match. These are
-  exactly what =linedit= brings; add them here only if they earn their keep.
+- *No kill-ring / yank*, no undo, no paren-match. These are exactly what =linedit=
+  brings; add them here only if they earn their keep. (=Tab= symbol completion IS
+  done — see above.)
 - *Recalled multi-line history* is flattened to a single line (newlines → spaces)
   so the single-line renderer stays honest.
