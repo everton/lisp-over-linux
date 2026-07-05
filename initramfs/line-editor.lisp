@@ -66,13 +66,81 @@
 (defvar *repl-history* '()
   "Previously entered REPL lines, most recent first; recalled with Up/Down.")
 
-(defun refresh-line (out prompt line point)
+(defun delimiterp (c)
+  "True if C ends a Lisp token — whitespace or one of the usual reader
+   delimiters. Shared by token-start (completion) and colorize-lisp."
+  (member c '(#\Space #\Tab #\Newline #\Return #\( #\) #\' #\" #\; #\` #\,)))
+
+(defun colorize-lisp (line)
+  "Return LINE with ANSI color spliced in for basic Lisp syntax: \"strings\",
+   ; comments, :keywords, #\\char literals, and depth-cycled parentheses. One
+   left-to-right lexical pass; it does not track constructs across lines (the
+   editor works a line at a time), and never changes the visible characters —
+   only inserts zero-width SGR — so callers' column math stays exact. Always
+   ends with the terminal color reset. A no-op string copy when *ansi* is off."
+  (if (not *ansi*)
+      line
+      (with-output-to-string (out)
+        (let ((n (length line)) (i 0) (depth 0))
+          (flet ((paint (sgr ch)                       ; one colored character
+                   (write-string sgr out) (write-char ch out)
+                   (write-string (col-reset) out)))
+            (loop while (< i n) do
+              (let ((c (char line i)))
+                (cond
+                  ;; #\x char literal — copy #, \, and the literal char verbatim
+                  ;; (so a #\( or #\" or #\; can't start a paren/string/comment).
+                  ((and (char= c #\#) (< (1+ i) n) (char= (char line (1+ i)) #\\))
+                   (write-string (col-char) out)
+                   (write-char #\# out) (write-char #\\ out)
+                   (when (< (+ i 2) n) (write-char (char line (+ i 2)) out))
+                   (write-string (col-reset) out)
+                   (incf i 3))
+                  ;; "string" up to the closing quote, honoring \ escapes; an
+                  ;; unterminated string simply colors to end of line.
+                  ((char= c #\")
+                   (write-string (col-string) out)
+                   (write-char #\" out) (incf i)
+                   (loop while (< i n) do
+                     (let ((d (char line i)))
+                       (write-char d out) (incf i)
+                       (cond ((and (char= d #\\) (< i n))     ; escape: take next char raw
+                              (write-char (char line i) out) (incf i))
+                             ((char= d #\") (loop-finish)))))  ; closing quote
+                   (write-string (col-reset) out))
+                  ;; ; comment — everything to end of line
+                  ((char= c #\;)
+                   (write-string (col-comment) out)
+                   (write-string (subseq line i) out)
+                   (write-string (col-reset) out)
+                   (setf i n))
+                  ;; ( ) — colored by nesting depth
+                  ((char= c #\() (paint (col-paren depth) c) (incf depth) (incf i))
+                  ((char= c #\)) (when (> depth 0) (decf depth))
+                                 (paint (col-paren depth) c) (incf i))
+                  ;; :keyword — a leading colon at a token boundary, plus its run
+                  ((and (char= c #\:) (or (zerop i) (delimiterp (char line (1- i)))))
+                   (write-string (col-keyword) out)
+                   (write-char #\: out) (incf i)
+                   (loop while (and (< i n) (not (delimiterp (char line i))))
+                         do (write-char (char line i) out) (incf i))
+                   (write-string (col-reset) out))
+                  (t (write-char c out) (incf i))))))))))
+
+(defun refresh-line (out prompt prompt-sgr line point)
   "Redraw the single input line in place: carriage-return to column 0, repaint
    PROMPT+LINE, clear any leftover tail, then park the cursor at POINT. One
-   uniform redraw covers every edit (insert, delete, cursor move, history)."
+   uniform redraw covers every edit (insert, delete, cursor move, history).
+
+   Color is spliced in but never counted: PROMPT stays the PLAIN string (so its
+   length still gives the true visible width), wrapped at draw time in PROMPT-SGR
+   … reset; LINE goes through colorize-lisp. SGR sequences have zero width, so
+   the absolute-column math below is unaffected — we only reset before clearing
+   so the erased tail carries no lingering attributes."
   (write-char #\Return out)                          ; column 0
-  (write-string prompt out)
-  (write-string line out)
+  (write-string prompt-sgr out) (write-string prompt out) (write-string (col-reset) out)
+  (write-string (colorize-lisp line) out)
+  (write-string (col-reset) out)
   (format out "~C[K" #\Escape)                       ; clear to end of line
   (format out "~C[~dG" #\Escape (+ (length prompt) point 1))  ; absolute column (1-based)
   (finish-output out))
@@ -111,9 +179,7 @@
   "Index where the token ending at POINT begins — scan back over symbol
    constituents (anything that is not whitespace or a usual Lisp delimiter)."
   (let ((i point))
-    (loop while (and (> i 0)
-                     (not (member (char line (1- i))
-                                  '(#\Space #\Tab #\Newline #\( #\) #\' #\" #\; #\` #\,))))
+    (loop while (and (> i 0) (not (delimiterp (char line (1- i)))))
           do (decf i))
     i))
 
@@ -132,7 +198,7 @@
   (terpri out)
   (finish-output out))
 
-(defun read-line-edited (in out prompt)
+(defun read-line-edited (in out prompt &optional (prompt-sgr (col-prompt)))
   "Read one line from IN with in-line editing, rendering to OUT. Returns the
    finished string, :eof (Ctrl-D on an empty line, or stream end), or :cancel
    (Ctrl-C — abandon this line). Lines are short here, so the buffer is just a
@@ -143,7 +209,7 @@
    as a byte. The byte-3 case below only fires over the NETWORK REPL, where the
    host client forwards keystrokes raw (no signals) — there Ctrl-C aborts the line."
   (let ((line "") (point 0) (hpos -1) (stash ""))
-    (labels ((redraw () (refresh-line out prompt line point))
+    (labels ((redraw () (refresh-line out prompt prompt-sgr line point))
              (ins (c) (setf line (concatenate 'string (subseq line 0 point)
                                               (string c) (subseq line point)))
                   (incf point))

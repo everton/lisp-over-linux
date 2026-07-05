@@ -36,13 +36,15 @@ SBCL="$MICRO/sbcl"
 
 INITRAMFS_DIR="$MICRO/initramfs"
 
-# The Lisp userland, split by concern and loaded IN THIS ORDER into the image
-# (only the macro with-raw-mode forces an order: line-editor before repl).
+# The Lisp userland, split by concern and loaded IN THIS ORDER into the image.
+# Ordering constraints: ansi before line-editor+repl (color helpers), and
+# line-editor before repl (the with-raw-mode macro).
 # The .lisp sources are baked into lisp-init by save-lisp-and-die; they are NOT
 # shipped in the cpio (only the compiled binary is).
 LISP_SOURCES=(
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
+  "$INITRAMFS_DIR/ansi.lisp"         # 16-color SGR helpers (used by line-editor + repl)
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)

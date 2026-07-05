@@ -62,10 +62,10 @@
    Used both locally (under with-raw-mode, via run-repl) and over the network
    (net.lisp drives it on a socket stream — the host client supplies raw mode)."
   (loop
-    (let ((text "") (prompt "lisp> "))
+    (let ((text "") (prompt "lisp> ") (prompt-sgr (col-prompt)))
       (block one-form
         (loop
-          (let ((line (read-line-edited in out prompt)))
+          (let ((line (read-line-edited in out prompt prompt-sgr)))
             (when (eq line :cancel)            ; Ctrl-C: abandon the in-progress form
               (return-from one-form))
             (when (eq line :eof)
@@ -77,14 +77,17 @@
             (multiple-value-bind (form status) (complete-form text)
               (ecase status
                 (:empty      (return-from one-form))             ; blank line: re-prompt
-                (:incomplete (setf prompt "  ...> "))            ; unbalanced: keep reading
-                (:error      (format out "~&read error: ~a~%" form)
+                (:incomplete (setf prompt "  ...> "               ; unbalanced: keep reading
+                                   prompt-sgr (col-cont)))        ;   dim continuation prompt
+                (:error      (format out "~&~aread error:~a ~a~%" (col-error) (col-reset) form)
                              (finish-output out) (return-from one-form))
                 (:ok
                  (push-history text)
                  (when (eq form :quit) (return-from editing-repl))
-                 (handler-case (format out "~&=> ~s~%" (eval form))
-                   (serious-condition (c) (format out "~&error: ~a~%" c)))
+                 (handler-case
+                     (format out "~&~a=>~a ~s~%" (col-result) (col-reset) (eval form))
+                   (serious-condition (c)
+                     (format out "~&~aerror:~a ~a~%" (col-error) (col-reset) c)))
                  (finish-output out)
                  (return-from one-form))))))))))
 
@@ -93,14 +96,17 @@
    READ, no editing — the kernel still gives us backspace + line buffering."
   (let ((eof (list :eof)))
     (loop
-      (format out "~&lisp> ") (finish-output out)
+      (format out "~&~alisp>~a " (col-prompt) (col-reset)) (finish-output out)
       (let ((form (handler-case (read in nil eof)
-                    (serious-condition (c) (format out "~&read error: ~a~%" c) nil))))
+                    (serious-condition (c)
+                      (format out "~&~aread error:~a ~a~%" (col-error) (col-reset) c) nil))))
         (cond
           ((or (eq form eof) (eq form :quit)) (return))
           ((null form))
-          (t (handler-case (format out "~&=> ~s~%" (eval form))
-               (serious-condition (c) (format out "~&error: ~a~%" c)))))))))
+          (t (handler-case
+                 (format out "~&~a=>~a ~s~%" (col-result) (col-reset) (eval form))
+               (serious-condition (c)
+                 (format out "~&~aerror:~a ~a~%" (col-error) (col-reset) c)))))))))
 
 (defun run-repl ()
   "A read-eval-print loop with in-line editing. :quit (or Ctrl-D on an empty
