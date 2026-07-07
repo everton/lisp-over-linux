@@ -99,11 +99,14 @@ QMP = os.environ["QMP_SOCK"]
 PPM = os.environ["PPM_OUT"]
 
 # The literal forms typed into the console REPL, in order. EDIT HERE to change
-# what the screenshot demonstrates. Kept identical across font versions so the
-# shots stay comparable: green => 42, the green "SBCL" string, magenta :announce.
+# what the screenshot demonstrates. Kept stable across font versions so the shots
+# stay comparable: green => 42, the green "SBCL" string, the Linux kernel release
+# (software-version) — the "Lisp over Linux" theme in one line — then magenta
+# :announce.
 FORMS = [
     "(+ 40 2)",
     "(lisp-implementation-type)",
+    "(software-version)",
     "(draw-alien :announce t)",
 ]
 
