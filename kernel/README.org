@@ -9,7 +9,7 @@ The kernel source tree is *not* in this repo (it is reached via the gitignored
 Linux source plus one precious file, the =.config=. This directory keeps a
 tracked *copy* of that =.config= so the kernel side of the project can't be lost.
 
-- =config-6.18.3= — verbatim snapshot of the live =linux/.config= for that version.
+- =config-7.1.3= — verbatim snapshot of the live =linux/.config= for that version.
 
 * This is a snapshot, not the live file
 
@@ -18,14 +18,14 @@ The live =.config= (at =../linux/.config=) is still the truth (see
 the same commit (run from the project root):
 
 #+begin_src sh
-  cp linux/.config kernel/config-6.18.3
+  cp linux/.config kernel/config-7.1.3
 #+end_src
 
 * Rebuilding the kernel from scratch (or on a fresh machine)
 
 #+begin_src sh
-  ./deps.sh kernel 6.18.3      # downloads the tree, symlinks ./linux, and
-                               # copies config-6.18.3 in as .config + olddefconfig
+  ./deps.sh kernel 7.1.3       # downloads the tree, symlinks ./linux, and
+                               # copies config-7.1.3 in as .config + olddefconfig
   ./build.sh --kernel
 #+end_src
 

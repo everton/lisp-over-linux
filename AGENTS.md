@@ -31,7 +31,8 @@ created by `deps.sh` (never hardcode a path):
 - `./linux` → a Linux kernel tree (`.config`, `arch/x86/boot/bzImage`, `usr/gen_init_cpio`).
 - `./sbcl` → a built SBCL tree (`src/runtime/sbcl`, `output/sbcl.core`).
 
-On this machine they currently point at `~/linux/linux-6.18.3` and `~/sbcl`.
+On this machine they currently point at `./sources/linux-7.1.3` and `./sources/sbcl`
+(both source trees live under the project's gitignored `sources/` dir).
 
 ## Keep the docs in sync with reality — REQUIRED
 
@@ -43,8 +44,8 @@ system, update the matching doc **in the same turn**:
   and add a line to its "Change log". Re-run the audit `grep`s documented in
   that file's "How to regenerate / audit" section and reconcile differences.
   **Also refresh the tracked snapshot** in the same turn (run from the project
-  root): `cp linux/.config kernel/config-6.18.3` (the live `.config` lives outside
-  the repo behind the `./linux` symlink; `kernel/config-6.18.3` is our copy).
+  root): `cp linux/.config kernel/config-7.1.3` (the live `.config` lives outside
+  the repo behind the `./linux` symlink; `kernel/config-7.1.3` is our copy).
 - **Changed the boot chain / USB / EFISTUB** → update `doc/micro-distro.org`.
 - **Changed `preinit.c`, the Lisp modules, the initramfs list, or `build.sh`** →
   update `doc/sbcl-init.org` (and its STATUS line).

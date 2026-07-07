@@ -12,7 +12,7 @@
 # This script creates/updates those symlinks. Two ways to use it:
 #
 #   Already have the trees somewhere:
-#     ./deps.sh link linux  /path/to/linux-6.18.3
+#     ./deps.sh link linux  /path/to/linux-7.1.3
 #     ./deps.sh link sbcl   /path/to/sbcl
 #
 #   Start from nothing (downloads into ./sources/, then symlinks):
@@ -27,7 +27,7 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SRC="${LOL_SRC:-$HERE/sources}"     # where downloaded trees live (gitignored)
-KVER_DEFAULT="6.18.3"               # kept in step with kernel/config-<ver>
+KVER_DEFAULT="7.1.3"                # kept in step with kernel/config-<ver>
 
 say()  { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 die()  { echo "ERROR: $*" >&2; exit 1; }

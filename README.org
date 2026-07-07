@@ -27,7 +27,7 @@ tree* and the *SBCL source tree*. The build reaches them through two *gitignored
 symlinks* in the project root:
 
 #+begin_src
-  ./linux  ->  a Linux kernel source tree   (e.g. linux-6.18.3)
+  ./linux  ->  a Linux kernel source tree   (e.g. linux-7.1.3)
   ./sbcl   ->  an SBCL source tree (already built)
 #+end_src
 
@@ -51,15 +51,15 @@ and the host toolchain. Use =deps.sh= to create the symlinks.
 
 If you ALREADY have a kernel source tree:
 #+begin_src sh
-  ./deps.sh link linux /path/to/linux-6.18.3
+  ./deps.sh link linux /path/to/linux-7.1.3
 #+end_src
 
 From nothing (downloads into =./sources/=, symlinks, applies our pinned config):
 #+begin_src sh
-  ./deps.sh kernel 6.18.3      # version defaults to the one we pin in kernel/
+  ./deps.sh kernel 7.1.3       # version defaults to the one we pin in kernel/
 #+end_src
 
-The pinned config lives in =kernel/config-6.18.3= (see [[file:doc/kernel-config.org][kernel-config.org]] for what
+The pinned config lives in =kernel/config-7.1.3= (see [[file:doc/kernel-config.org][kernel-config.org]] for what
 every option is and why). =deps.sh kernel= copies it to =linux/.config= and runs
 =make olddefconfig= for you.
 
@@ -159,7 +159,7 @@ Third-party components you obtain/build separately keep their own licenses:
 *Important if you ever distribute a bootable image/USB:* that image contains the
 compiled kernel (=bzImage=), which IS GPLv2. To comply you must make the
 *corresponding kernel source* available (it is unmodified upstream
-linux-6.18.3 from kernel.org) together with the exact =.config= used — which we
+linux-7.1.3 from kernel.org) together with the exact =.config= used — which we
 already keep under =kernel/=. Your MIT userland, merely aggregated alongside the
 kernel on the medium, is unaffected.
 

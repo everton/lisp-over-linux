@@ -23,7 +23,7 @@ Boot chain:
 
 Status: *WORKING* — verified end-to-end in QEMU + OVMF (UEFI) AND on real
 hardware (boots on the laptop). See =* Testing=.
-Kernel build: linux-6.18.3. Config tag =#16= = first working glibc build;
+Kernel build: linux-7.1.3. Config tag =#16= = first working glibc build;
 tag =#17= = same but with the musl-built init (see =* Shrinking init with musl=).
 USB written to /dev/sda (Kingston DataTraveler 3.0, 57.7G): GPT + one ESP
 (ef00, FAT32) with the kernel copied to \EFI\BOOT\BOOTX64.EFI.

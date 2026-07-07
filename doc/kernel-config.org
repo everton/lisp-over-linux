@@ -9,9 +9,10 @@ This file is the *single source of truth* for which kernel features the micro
 distro turns on, and — more importantly — *why each one is there*. It is meant
 to be read top-to-bottom by someone (re)building the kernel from scratch.
 
-Kernel: =linux-6.18.3=, config at =~/lisp-over-linux/linux/.config=.
-Current tag: *#22* (dropped legacy BSD PTYs; built on top of #21 = IPv4 networking
-+ QEMU virtio-net, #20 = Terminus 16x32 fbcon font, #19 = CONFIG_PCI + USB/HID).
+Kernel: =linux-7.1.3=, config at =~/lisp-over-linux/linux/.config=.
+Current tag: *#23* (rebased the config onto Linux 7.1.3; built on top of #22 =
+dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
+16x32 fbcon font, #19 = CONFIG_PCI + USB/HID).
 ~780 options are set in total; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
@@ -221,3 +222,15 @@ would only need =preinit= to mount =devpts=, no kernel change.)
 - =#22= dropped legacy BSD PTYs: =# CONFIG_LEGACY_PTYS is not set= (was =y= with a
   256-pair pool). Removes 512 unused =/dev/pty??= / =/dev/tty??= nodes from =/dev=;
   modern =CONFIG_UNIX98_PTYS= stays on. Cosmetic /dev declutter, no functional loss.
+- =#23= rebased the config from Linux 6.18.3 onto *7.1.3* (latest stable line). The
+  jump was clean — =make olddefconfig= took 28 new symbols at safe defaults and
+  dropped only auto-derived/vendor helpers; every option we chose on purpose
+  survived. One deliberate fix: 7.x removed the static =PREEMPT_NONE= /
+  =PREEMPT_VOLUNTARY= models on x86 (they now =depend on ARCH_NO_PREEMPT= /
+  =!ARCH_HAS_PREEMPT_LAZY=, both false here), so the old =PREEMPT_NONE= reconciled
+  to full =PREEMPT= + =TREE_RCU=. We instead pin =CONFIG_PREEMPT_LAZY= (the x86
+  default and modern throughput-oriented successor), which — unlike full =PREEMPT= —
+  does *not* select =PREEMPT_RCU=, so =CONFIG_TINY_RCU= stays on our =SMP=-off,
+  =NR_CPUS=1= image. Net: same minimal uniprocessor character as before. Verified
+  end-to-end — boots clean in QEMU+OVMF (=Linux version 7.1.3=, no oops), supervisor
+  menu + REPL + virtio-net REPL on :4005 all up.

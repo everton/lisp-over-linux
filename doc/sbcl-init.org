@@ -437,20 +437,16 @@ Cost: ~1 MB of files + a terminfo entry + a devpts mount. NO kernel rebuild
     of concerns: PID 1 stays a dumb, unkillable supervisor; the REPL/debugger lives
     where a crash is survivable. Relates to the Swank/SLynk idea above, which also
     moves the rich REPL off the PID-1 console.
-  - *Bump the Linux kernel.* The SBCL base is current (see below); the other half
-    of the toolchain is the kernel behind the =./linux= symlink. Bumping it to a
-    newer stable is independent of SBCL: re-point/rebuild that tree (=deps.sh=) and
-    rebuild with =./build.sh --kernel=. The userland doesn't care which kernel it
-    boots on, so this should move forward on its own.
-
-The SBCL base version is *current and verified*. The image is built against
-=2.6.6= (the latest stable line, June 2026), baked in at build time by whatever
-the gitignored =./sbcl= symlink points at (=deps.sh=) — so moving the version is
-just: re-point/rebuild that SBCL source tree, then =./build.sh=. Nothing in the
-userland pins a version (the banner just reports =lisp-implementation-version=),
-which is why the jump from the old =2.5.7= tree moved forward cleanly: a full
-=make.sh= rebuild of SBCL, then =./build.sh=, then a headless QEMU boot, all
-green — no new =sb-alien=/=sb-int= style-warnings from the internals the line
-editor and REPL lean on, and the supervisor menu (REPL, worker, alien draw,
-network REPL on :4005) all came up working. So 2.6.6 is a known-good base; the
-same three-step recipe applies to any future bump.
+Both halves of the toolchain are *current and verified*. The image is built
+against SBCL =2.6.6= (the latest stable line, June 2026) on the Linux =7.1.3=
+kernel (latest stable) — each baked in at build time by whatever the gitignored
+=./sbcl= / =./linux= symlinks point at (=deps.sh=), so moving either version is
+independent of the other. Nothing in the userland pins a version (the banner just
+reports =lisp-implementation-version=), which is why the SBCL jump from the old
+=2.5.7= tree moved forward cleanly: a full =make.sh= rebuild, then =./build.sh=,
+then a headless QEMU boot, all green — no new =sb-alien=/=sb-int= style-warnings
+from the internals the line editor and REPL lean on. The kernel jump from =6.18.3=
+was likewise clean (=make olddefconfig= took the new symbols at safe defaults; the
+one deliberate fix was pinning =PREEMPT_LAZY= so =TINY_RCU= survives on our
+uniprocessor image — see [[file:kernel-config.org][kernel-config.org]] tag =#23=). Both recipes are the same
+shape: re-point the symlink, rebuild, boot-test — so any future bump is routine.
