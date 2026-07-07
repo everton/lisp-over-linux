@@ -26,12 +26,13 @@ image ("core"), and it is *dynamically linked* against glibc. So "make it init"
 becomes a lesson in shipping a dynamic program + its shared libraries inside an
 initramfs — the exact thing static linking let us avoid before.
 
-* Findings from the actual ~/sbcl tree (grounded, measured)
+* Findings from the actual ./sbcl tree (grounded, measured)
 
-SBCL here is a *built source tree*, version 2.6.6.74-c36b941e3:
-  - runtime:  ~/sbcl/src/runtime/sbcl        (2.2 MB, ELF, dynamically linked)
-  - core:     ~/sbcl/output/sbcl.core        (36 MB Lisp heap image)
-  - contribs: ~/sbcl/contrib/...             (NOT needed for a minimal init)
+SBCL here is a *built source tree*, version 2.6.6.74-c36b941e3 (reached via the
+gitignored =./sbcl= symlink -> =sources/sbcl=):
+  - runtime:  ./sbcl/src/runtime/sbcl        (2.2 MB, ELF, dynamically linked)
+  - core:     ./sbcl/output/sbcl.core        (36 MB Lisp heap image)
+  - contribs: ./sbcl/contrib/...             (NOT needed for a minimal init)
 
 Runtime shared-library dependencies (from =ldd=) — the ONLY external pieces:
   - /lib64/ld-linux-x86-64.so.2   the glibc dynamic loader  (~225 KB)
@@ -221,7 +222,7 @@ Key bits learned while writing it:
   (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP
-  cd ~/sbcl
+  cd ./sbcl
   SBCL_HOME=$PWD/obj/sbcl-home \
   ./src/runtime/sbcl --core output/sbcl.core --no-userinit --no-sysinit \
        --non-interactive --load /tmp/build-sup.lisp
