@@ -131,7 +131,17 @@ efifb is the lowest-common-denominator that always works. Acceleration, a
 window system, or changing resolution would mean the real DRM/KMS driver for the
 laptop's chip — much bigger, against this project's spirit.
 
-* 7. Increasing the fbcon font size — *DONE (Terminus 16x32, tag #20)*
+* 7. Increasing the fbcon font size — *REVERTED to the default 8x16*
+
+*Update:* the 16x32 switch below was later undone — we went back to the mainline
+default *8x16* (=# CONFIG_FONT_TER16x32 is not set=, and the =fbcon=font:= param
+dropped from =CONFIG_CMDLINE=). Reason: 80x25 was too cramped, and fbcon has *no
+scrollback* on mainline, so whatever scrolls off tty0 is gone. 8x16 gives
+*160x50* — twice the rows and columns, so multi-line output (a REPL session, the
+=m)= memory readout) stays on screen instead of scrolling away. The larger font
+was solving a "too small on the panel" problem that the extra screen real estate
+matters more than. The section below is kept as the record of how it was done
+(and how to redo it); just invert the two config lines and rebuild.
 
 fbcon renders a *fixed bitmap font*; "bigger text" means selecting a font with a
 larger cell, not magnifying. fbcon computes
