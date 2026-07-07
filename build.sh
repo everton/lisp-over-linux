@@ -44,6 +44,7 @@ INITRAMFS_DIR="$MICRO/initramfs"
 LISP_SOURCES=(
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
+  "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
   "$INITRAMFS_DIR/ansi.lisp"         # 16-color SGR helpers (used by line-editor + repl)
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
