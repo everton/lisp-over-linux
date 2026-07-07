@@ -101,21 +101,26 @@ PPM = os.environ["PPM_OUT"]
 # The literal forms typed into the console REPL, in order. EDIT HERE to change
 # what the screenshot demonstrates. Kept stable across font versions so the shots
 # stay comparable: green => 42, the green "SBCL" string, the Linux kernel release
-# (software-version) — the "Lisp over Linux" theme in one line — then magenta
-# :announce.
+# (software-version) — the "Lisp over Linux" theme in one line — then a small
+# multi-line loop that spells numbers out with (format ~r), chosen to show off
+# the live highlighter (rainbow-nested parens, a green "~r" string, a dim ;
+# comment, and the dim "  ...>" continuation prompt), and finally magenta
+# :announce. A '\n' inside a form drives the REPL's multi-line continuation.
 FORMS = [
     "(+ 40 2)",
     "(lisp-implementation-type)",
     "(software-version)",
+    "(loop for n in '(1 42 2026)   ; spell them out\n"
+    "      collect (format nil \"~r\" n))",
     "(draw-alien :announce t)",
 ]
 
 # --- char -> QMP QKeyCode(s). Shifted chars send a [shift, key] chord. -------
-PLAIN = {' ': 'spc', '-': 'minus'}
+PLAIN = {' ': 'spc', '-': 'minus', "'": 'apostrophe', ';': 'semicolon'}
 for c in "abcdefghijklmnopqrstuvwxyz0123456789":
     PLAIN[c] = c
 SHIFT = {'(': '9', ')': '0', '+': 'equal', ':': 'semicolon', '"': 'apostrophe',
-         '*': '8', '_': 'minus'}
+         '*': '8', '_': 'minus', '~': 'grave_accent'}
 
 def keys_for(ch):
     if ch in PLAIN: return [PLAIN[ch]]
@@ -148,7 +153,10 @@ class Qmp:
 
 def type_str(q, s, cps=0.05):
     for ch in s:
-        q.key(ch); time.sleep(cps)
+        if ch == '\n':
+            q.ret(); time.sleep(0.6)      # submit a continuation line, await "...>"
+        else:
+            q.key(ch); time.sleep(cps)
 
 # --- readiness + console-quieting, over ONE connection ----------------------
 # Two things must happen out-of-band before we type on the console, and both go
