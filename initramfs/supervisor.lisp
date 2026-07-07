@@ -60,8 +60,9 @@
 
 (defun print-menu ()
   (format t "~&~%======== lisp-over-linux supervisor ========~%")
-  (format t "  I am PID ~a · SBCL ~a~%~%"
-          (sb-unix:unix-getpid) (lisp-implementation-version))
+  (format t "  I am PID ~a · SBCL ~a · ~a ~a~%~%"
+          (sb-unix:unix-getpid) (lisp-implementation-version)
+          (software-type) (software-version))
   (format t "  r) run a Lisp REPL~%")
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
@@ -75,8 +76,9 @@
 
 (defun supervisor-main ()
   "PID 1: an interactive menu loop. Never returns."
-  (format t "~%Supervisor up — I am PID ~a, SBCL ~a.~%"
-          (sb-unix:unix-getpid) (lisp-implementation-version))
+  (format t "~%Supervisor up — I am PID ~a, SBCL ~a on ~a ~a.~%"
+          (sb-unix:unix-getpid) (lisp-implementation-version)
+          (software-type) (software-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
   (configure-eth0)                ; DHCP (DISCOVER/REQUEST), static fallback; prints result
