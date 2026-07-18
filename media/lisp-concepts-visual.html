@@ -1,0 +1,889 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Common Lisp — Visual Concept Map</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --void: #0D0D0D;
+    --surface: #111118;
+    --panel: #1A1A2E;
+    --panel-2: #13132B;
+    --text: #E8D5B7;
+    --text-dim: #7A7065;
+    --symbol: #7FDBCA;
+    --condition: #FF6B6B;
+    --macro: #C792EA;
+    --package: #FFCB6B;
+    --class: #89DDFF;
+    --generic: #A8FF78;
+    --restart: #FF9F43;
+    --border: rgba(232,213,183,0.08);
+    --border-glow: rgba(232,213,183,0.18);
+  }
+
+  body {
+    background: var(--void);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  code, .mono { font-family: 'JetBrains Mono', monospace; }
+
+  /* ── HEADER ── */
+  header {
+    padding: 3rem 2rem 2rem;
+    text-align: center;
+    position: relative;
+  }
+
+  .paren-universe {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(1rem, 2vw, 1.2rem);
+    color: var(--text-dim);
+    letter-spacing: 0.15em;
+    margin-bottom: 0.5rem;
+  }
+
+  header h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: clamp(1.6rem, 4vw, 2.8rem);
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+
+  header h1 span { color: var(--symbol); }
+
+  .subtitle {
+    margin-top: 0.75rem;
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  /* ── NAV PILLS ── */
+  .nav-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    justify-content: center;
+    padding: 1.5rem 2rem;
+  }
+
+  .pill {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.72rem;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: transparent;
+    color: inherit;
+  }
+
+  .pill:hover, .pill.active { opacity: 1; }
+  .pill:not(.active) { opacity: 0.45; }
+
+  .pill[data-cat="package"]   { color: var(--package);   border-color: var(--package); }
+  .pill[data-cat="symbol"]    { color: var(--symbol);    border-color: var(--symbol); }
+  .pill[data-cat="class"]     { color: var(--class);     border-color: var(--class); }
+  .pill[data-cat="generic"]   { color: var(--generic);   border-color: var(--generic); }
+  .pill[data-cat="macro"]     { color: var(--macro);     border-color: var(--macro); }
+  .pill[data-cat="condition"] { color: var(--condition); border-color: var(--condition); }
+  .pill[data-cat="restart"]   { color: var(--restart);   border-color: var(--restart); }
+  .pill[data-cat="all"]       { color: var(--text);      border-color: var(--border-glow); opacity: 1; }
+
+  /* ── MAIN GRID ── */
+  .canvas {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1rem 2rem 4rem;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 1.5rem;
+  }
+
+  /* ── CONCEPT NODE ── */
+  .node {
+    position: relative;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 0;
+    overflow: hidden;
+    transition: border-color 0.25s, transform 0.2s;
+    cursor: default;
+  }
+
+  .node:hover {
+    border-color: var(--border-glow);
+    transform: translateY(-2px);
+  }
+
+  /* Colored left rail = category */
+  .node::before {
+    content: '';
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 3px;
+  }
+
+  .node[data-cat="package"]::before   { background: var(--package); }
+  .node[data-cat="symbol"]::before    { background: var(--symbol); }
+  .node[data-cat="class"]::before     { background: var(--class); }
+  .node[data-cat="generic"]::before   { background: var(--generic); }
+  .node[data-cat="macro"]::before     { background: var(--macro); }
+  .node[data-cat="condition"]::before { background: var(--condition); }
+  .node[data-cat="restart"]::before   { background: var(--restart); }
+
+  .node-head {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 1.2rem 1.2rem 0.7rem 1.4rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .node-icon {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.4rem;
+    line-height: 1;
+    flex-shrink: 0;
+    margin-top: 0.1rem;
+  }
+
+  .node-title-group { flex: 1; }
+
+  .node-label {
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--text-dim);
+    margin-bottom: 0.2rem;
+  }
+
+  .node-title {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 1.05rem;
+    font-weight: 600;
+    line-height: 1.2;
+  }
+
+  .node[data-cat="package"]   .node-title { color: var(--package); }
+  .node[data-cat="symbol"]    .node-title { color: var(--symbol); }
+  .node[data-cat="class"]     .node-title { color: var(--class); }
+  .node[data-cat="generic"]   .node-title { color: var(--generic); }
+  .node[data-cat="macro"]     .node-title { color: var(--macro); }
+  .node[data-cat="condition"] .node-title { color: var(--condition); }
+  .node[data-cat="restart"]   .node-title { color: var(--restart); }
+
+  /* ── NODE BODY ── */
+  .node-body { padding: 0.9rem 1.2rem 0.9rem 1.4rem; }
+
+  .node-desc {
+    font-size: 0.82rem;
+    line-height: 1.6;
+    color: #BCA993;
+    margin-bottom: 0.9rem;
+  }
+
+  /* ── S-EXPR DIAGRAM ── */
+  .sexp {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 0.75rem 1rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.74rem;
+    line-height: 1.7;
+    color: #A09080;
+    white-space: pre;
+    overflow-x: auto;
+    margin-bottom: 0.9rem;
+  }
+
+  .sexp .kw   { color: var(--macro); }
+  .sexp .sym  { color: var(--symbol); }
+  .sexp .cls  { color: var(--class); }
+  .sexp .pkg  { color: var(--package); }
+  .sexp .cnd  { color: var(--condition); }
+  .sexp .rst  { color: var(--restart); }
+  .sexp .gen  { color: var(--generic); }
+  .sexp .str  { color: #FFCB6B; }
+  .sexp .cmt  { color: #4A4A5A; font-style: italic; }
+  .sexp .num  { color: #F07178; }
+  .sexp .paren { color: #555565; }
+  .sexp .self { color: var(--text-dim); }
+
+  /* ── STRUCTURE DIAGRAM (paren tree) ── */
+  .paren-tree {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+    line-height: 2;
+    margin-bottom: 0.9rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+  }
+
+  .pt-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+
+  .pt-bracket {
+    opacity: 0.35;
+    font-size: 0.9rem;
+  }
+
+  .pt-label {
+    padding: 0.1rem 0.55rem;
+    border-radius: 2px;
+    font-size: 0.65rem;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── TAGS ROW ── */
+  .node-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+  }
+
+  .tag {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.62rem;
+    padding: 0.15rem 0.5rem;
+    border-radius: 2px;
+    border: 1px solid;
+    opacity: 0.65;
+  }
+
+  .tag-package   { color: var(--package);   border-color: var(--package); }
+  .tag-symbol    { color: var(--symbol);    border-color: var(--symbol); }
+  .tag-class     { color: var(--class);     border-color: var(--class); }
+  .tag-generic   { color: var(--generic);   border-color: var(--generic); }
+  .tag-macro     { color: var(--macro);     border-color: var(--macro); }
+  .tag-condition { color: var(--condition); border-color: var(--condition); }
+  .tag-restart   { color: var(--restart);   border-color: var(--restart); }
+
+  /* ── WIDE NODE (spans 2 cols) ── */
+  .node-wide {
+    grid-column: span 2;
+  }
+
+  @media (max-width: 800px) {
+    .node-wide { grid-column: span 1; }
+    .canvas { grid-template-columns: 1fr; }
+  }
+
+  /* ── FLOW DIAGRAM (for conditions/restarts) ── */
+  .flow {
+    display: flex;
+    align-items: center;
+    gap: 0;
+    margin-bottom: 0.9rem;
+    flex-wrap: wrap;
+  }
+
+  .flow-box {
+    padding: 0.4rem 0.75rem;
+    border-radius: 3px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid;
+    white-space: nowrap;
+  }
+
+  .flow-arrow {
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    padding: 0 0.3rem;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* ── MOP DIAGRAM ── */
+  .mop-chain {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 0.9rem;
+  }
+
+  .mop-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.7rem;
+  }
+
+  .mop-key {
+    color: var(--text-dim);
+    width: 7rem;
+    flex-shrink: 0;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .mop-val {
+    padding: 0.2rem 0.55rem;
+    border-radius: 2px;
+    font-size: 0.7rem;
+  }
+
+  /* ── SECTION DIVIDER ── */
+  .section-divider {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.5rem 0;
+  }
+
+  .sd-label {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .sd-line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ── FOOTER ── */
+  footer {
+    text-align: center;
+    padding: 3rem 2rem;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+  }
+
+  /* hidden for filter */
+  .node.hidden { display: none; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="paren-universe">(  (  (  (  (  universe  )  )  )  )  )</div>
+  <h1>Common <span>Lisp</span><br>Visual Concept Map</h1>
+  <p class="subtitle">Packages · Symbols · CLOS · Generics · Macros · Conditions · Restarts</p>
+</header>
+
+<nav class="nav-pills">
+  <button class="pill active" data-cat="all">all</button>
+  <button class="pill" data-cat="package">package</button>
+  <button class="pill" data-cat="symbol">symbol</button>
+  <button class="pill" data-cat="class">clos</button>
+  <button class="pill" data-cat="generic">generic</button>
+  <button class="pill" data-cat="macro">macro</button>
+  <button class="pill" data-cat="condition">condition</button>
+  <button class="pill" data-cat="restart">restart</button>
+</nav>
+
+<main class="canvas" id="canvas">
+
+  <!-- ════ PACKAGES ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--package)">§ packages &amp; namespaces</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node" data-cat="package">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--package)">⬡</div>
+      <div class="node-title-group">
+        <div class="node-label">namespace</div>
+        <div class="node-title">PACKAGE</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">A first-class namespace mapping symbol names to symbol objects. Packages are not modules — they contain symbols, not code. Every symbol lives in exactly one home package.</p>
+      <div class="sexp"><span class="paren">(</span><span class="kw">defpackage</span> <span class="pkg">:my-system</span>
+  <span class="paren">(</span><span class="kw">:use</span> <span class="pkg">:cl</span> <span class="pkg">:alexandria</span><span class="paren">)</span>
+  <span class="paren">(</span><span class="kw">:export</span> <span class="sym">#:frobnicate</span> <span class="sym">#:widget</span><span class="paren">)</span>
+  <span class="paren">(</span><span class="kw">(:shadow</span> <span class="sym">#:list</span><span class="paren">))</span><span class="paren">)</span></div>
+      <div class="paren-tree">
+        <div class="pt-row"><span class="pt-bracket" style="color:var(--package)">⬡</span><span class="pt-label" style="background:rgba(255,203,107,0.08);color:var(--package)">:my-system</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(127,219,202,0.08);color:var(--symbol)">intern: FROBNICATE</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(127,219,202,0.08);color:var(--symbol)">intern: WIDGET</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(127,219,202,0.08);color:var(--symbol)">shadow: LIST</span></div>
+      </div>
+      <div class="node-tags">
+        <span class="tag tag-symbol">intern</span>
+        <span class="tag tag-symbol">export</span>
+        <span class="tag tag-package">:use</span>
+        <span class="tag tag-macro">:shadow</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="symbol">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--symbol)">◈</div>
+      <div class="node-title-group">
+        <div class="node-label">atomic unit</div>
+        <div class="node-title">SYMBOL</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Symbols are objects with identity. The same printed name interned in the same package always yields the identical object. They carry five cells: name, package, value, function, and plist.</p>
+      <div class="sexp"><span class="cmt">; anatomy of MY-SYS::FOO</span>
+<span class="paren">(</span><span class="sym">symbol-name</span>     <span class="str">"FOO"</span><span class="paren">)</span>
+<span class="paren">(</span><span class="sym">symbol-package</span>  <span class="pkg">#&lt;PACKAGE MY-SYS&gt;</span><span class="paren">)</span>
+<span class="paren">(</span><span class="sym">symbol-value</span>    <span class="num">42</span><span class="paren">)</span>
+<span class="paren">(</span><span class="sym">symbol-function</span> <span class="gen">#&lt;FUNCTION FOO&gt;</span><span class="paren">)</span>
+<span class="paren">(</span><span class="sym">symbol-plist</span>    <span class="paren">(</span><span class="kw">:doc</span> <span class="str">"…"</span><span class="paren">))</span></div>
+      <div class="node-tags">
+        <span class="tag tag-symbol">name</span>
+        <span class="tag tag-package">home-package</span>
+        <span class="tag tag-symbol">value-cell</span>
+        <span class="tag tag-generic">function-cell</span>
+        <span class="tag tag-symbol">plist</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ CLOS ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--class)">§ clos — classes &amp; instances</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node" data-cat="class">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--class)">▣</div>
+      <div class="node-title-group">
+        <div class="node-label">clos</div>
+        <div class="node-title">STANDARD-CLASS</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Classes are first-class objects themselves (instances of <code>STANDARD-CLASS</code>). Multiple inheritance is native. Slots are defined per-class with allocation, initargs, readers, writers, and type specifiers.</p>
+      <div class="sexp"><span class="paren">(</span><span class="kw">defclass</span> <span class="cls">widget</span> <span class="paren">(</span><span class="cls">drawable</span> <span class="cls">clickable</span><span class="paren">)</span>
+  <span class="paren">((</span><span class="sym">label</span>
+    <span class="kw">:initarg</span>  <span class="kw">:label</span>
+    <span class="kw">:initform</span> <span class="str">""</span>
+    <span class="kw">:accessor</span> <span class="sym">widget-label</span>
+    <span class="kw">:type</span>     <span class="cls">string</span><span class="paren">)</span>
+   <span class="paren">(</span><span class="sym">active-p</span>
+    <span class="kw">:initform</span> <span class="kw">nil</span>
+    <span class="kw">:accessor</span> <span class="sym">widget-active-p</span><span class="paren">)))</span></div>
+      <div class="paren-tree">
+        <div class="pt-row"><span class="pt-bracket" style="color:var(--class)">▣</span><span class="pt-label" style="background:rgba(137,221,255,0.08);color:var(--class)">widget</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">├</span><span class="pt-label" style="background:rgba(137,221,255,0.05);color:var(--class)">drawable (super)</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">├</span><span class="pt-label" style="background:rgba(137,221,255,0.05);color:var(--class)">clickable (super)</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">├</span><span class="pt-label" style="background:rgba(127,219,202,0.08);color:var(--symbol)">slot: label</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(127,219,202,0.08);color:var(--symbol)">slot: active-p</span></div>
+      </div>
+      <div class="node-tags">
+        <span class="tag tag-class">defclass</span>
+        <span class="tag tag-class">multiple-inheritance</span>
+        <span class="tag tag-symbol">slots</span>
+        <span class="tag tag-class">accessors</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="class">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--class)">◫</div>
+      <div class="node-title-group">
+        <div class="node-label">class hierarchy</div>
+        <div class="node-title">CLASS PRECEDENCE LIST</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">CLOS linearises the inheritance DAG into a CPL using C3 (as in Python). Method dispatch consults the CPL left-to-right. All classes ultimately inherit from <code>T</code>.</p>
+      <div class="paren-tree">
+        <div class="pt-row"><span class="pt-bracket" style="color:var(--class)">▣</span><span class="pt-label" style="background:rgba(137,221,255,0.1);color:var(--class)">widget</span><span style="color:var(--text-dim);font-size:0.62rem;font-family:'JetBrains Mono',monospace"> → CPL:</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">①</span><span class="pt-label" style="background:rgba(137,221,255,0.08);color:var(--class)">widget</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">②</span><span class="pt-label" style="background:rgba(137,221,255,0.06);color:var(--class)">drawable</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">③</span><span class="pt-label" style="background:rgba(137,221,255,0.05);color:var(--class)">clickable</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">④</span><span class="pt-label" style="background:rgba(137,221,255,0.03);color:var(--class)">standard-object</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">⑤</span><span class="pt-label" style="background:rgba(232,213,183,0.03);color:var(--text-dim)">t</span></div>
+      </div>
+      <div class="node-tags">
+        <span class="tag tag-class">CPL</span>
+        <span class="tag tag-class">C3-linearization</span>
+        <span class="tag tag-symbol">standard-object</span>
+        <span class="tag tag-symbol">t</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ GENERICS ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--generic)">§ generic functions &amp; methods</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node node-wide" data-cat="generic">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--generic)">⊕</div>
+      <div class="node-title-group">
+        <div class="node-label">dispatch</div>
+        <div class="node-title">GENERIC-FUNCTION</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">A generic function is a function whose behaviour specialises based on the runtime classes (or eql-specialisers) of one or more arguments. It holds a set of methods; dispatch selects and combines them via the <em>Effective Method</em>. This is multiple-dispatch — not single-dispatch OO.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div class="sexp"><span class="cmt">; generic definition</span>
+<span class="paren">(</span><span class="kw">defgeneric</span> <span class="gen">render</span> <span class="paren">(</span><span class="sym">obj</span> <span class="sym">surface</span><span class="paren">)</span>
+  <span class="paren">(</span><span class="kw">:documentation</span> <span class="str">"Draw obj."</span><span class="paren">)</span>
+  <span class="paren">(</span><span class="kw">:method-combination</span>
+    <span class="kw">standard</span><span class="paren">))</span>
+
+<span class="cmt">; primary method</span>
+<span class="paren">(</span><span class="kw">defmethod</span> <span class="gen">render</span>
+  <span class="paren">((</span><span class="sym">obj</span> <span class="cls">widget</span><span class="paren">)</span> <span class="paren">(</span><span class="sym">sfc</span> <span class="cls">framebuffer</span><span class="paren">))</span>
+  <span class="paren">(</span><span class="sym">blit</span> <span class="paren">(</span><span class="sym">widget-label</span> <span class="sym">obj</span><span class="paren">)</span> <span class="sym">sfc</span><span class="paren">))</span></div>
+        <div>
+          <div class="mop-chain">
+            <div class="mop-row">
+              <span class="mop-key">gf call</span>
+              <span class="mop-val" style="background:rgba(168,255,120,0.08);color:var(--generic)">(render w fb)</span>
+            </div>
+            <div class="mop-row">
+              <span class="mop-key">compute-em</span>
+              <span class="mop-val" style="background:rgba(168,255,120,0.06);color:var(--generic)">applicable methods</span>
+            </div>
+            <div class="mop-row">
+              <span class="mop-key">sort by CPL</span>
+              <span class="mop-val" style="background:rgba(137,221,255,0.06);color:var(--class)">most-specific first</span>
+            </div>
+            <div class="mop-row">
+              <span class="mop-key">:before</span>
+              <span class="mop-val" style="background:rgba(168,255,120,0.05);color:var(--generic)">run all</span>
+            </div>
+            <div class="mop-row">
+              <span class="mop-key">:primary</span>
+              <span class="mop-val" style="background:rgba(168,255,120,0.1);color:var(--generic);font-weight:600">call-next-method</span>
+            </div>
+            <div class="mop-row">
+              <span class="mop-key">:after</span>
+              <span class="mop-val" style="background:rgba(168,255,120,0.05);color:var(--generic)">run all (reversed)</span>
+            </div>
+          </div>
+          <div class="node-tags">
+            <span class="tag tag-generic">defgeneric</span>
+            <span class="tag tag-generic">defmethod</span>
+            <span class="tag tag-generic">:around</span>
+            <span class="tag tag-generic">call-next-method</span>
+            <span class="tag tag-class">eql-specialiser</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="generic">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--generic)">⊞</div>
+      <div class="node-title-group">
+        <div class="node-label">mop</div>
+        <div class="node-title">METHOD COMBINATION</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Beyond <code>standard</code>, combination types like <code>+</code>, <code>list</code>, <code>progn</code>, or custom ones via <code>define-method-combination</code> merge all applicable methods into a single effective method without <code>call-next-method</code>.</p>
+      <div class="sexp"><span class="paren">(</span><span class="kw">defgeneric</span> <span class="gen">collect-tags</span> <span class="paren">(</span><span class="sym">x</span><span class="paren">)</span>
+  <span class="paren">(</span><span class="kw">:method-combination</span> <span class="kw">append</span><span class="paren">))</span>
+
+<span class="paren">(</span><span class="kw">defmethod</span> <span class="gen">collect-tags</span> <span class="kw">append</span>
+  <span class="paren">((</span><span class="sym">x</span> <span class="cls">tagged-mixin</span><span class="paren">))</span>
+  <span class="paren">(</span><span class="sym">list</span> <span class="kw">:mixin</span><span class="paren">))</span></div>
+      <div class="node-tags">
+        <span class="tag tag-generic">standard</span>
+        <span class="tag tag-generic">append</span>
+        <span class="tag tag-generic">progn</span>
+        <span class="tag tag-generic">+</span>
+        <span class="tag tag-macro">define-method-combination</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ MACROS ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--macro)">§ macros &amp; special forms</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node" data-cat="macro">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--macro)">∿</div>
+      <div class="node-title-group">
+        <div class="node-label">compile-time</div>
+        <div class="node-title">DEFMACRO</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Macros transform code at read-time/compile-time. A macro function receives unevaluated forms and returns a new form for the compiler. Backquote syntax makes the expansion readable.</p>
+      <div class="sexp"><span class="paren">(</span><span class="kw">defmacro</span> <span class="macro" style="color:var(--macro)">when-let</span> <span class="paren">((</span><span class="sym">var</span> <span class="sym">expr</span><span class="paren">)</span> <span class="sym">&amp;body</span> <span class="sym">body</span><span class="paren">)</span>
+  <span class="self">`</span><span class="paren">(</span><span class="kw">let</span> <span class="paren">((</span><span class="sym">,var</span> <span class="sym">,expr</span><span class="paren">))</span>
+    <span class="paren">(</span><span class="kw">when</span> <span class="sym">,var</span>
+      <span class="sym">,@body</span><span class="paren">)))</span>
+
+<span class="cmt">; expands at compile time:</span>
+<span class="paren">(</span><span class="macro" style="color:var(--macro)">when-let</span> <span class="paren">(</span><span class="sym">x</span> <span class="paren">(</span><span class="sym">find-widget</span> <span class="kw">:main</span><span class="paren">))</span>
+  <span class="paren">(</span><span class="sym">render</span> <span class="sym">x</span><span class="paren">))</span></div>
+      <div class="node-tags">
+        <span class="tag tag-macro">backquote</span>
+        <span class="tag tag-macro">unquote</span>
+        <span class="tag tag-macro">splice</span>
+        <span class="tag tag-symbol">gensym</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="macro">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--macro)">⟲</div>
+      <div class="node-title-group">
+        <div class="node-label">reader</div>
+        <div class="node-title">READ MACRO</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Reader macros hook into the Lisp reader, transforming character sequences before the tokeniser sees them. <code>#'</code>, <code>'</code>, <code>`</code>, and <code>,@</code> are all built-in dispatch macros.</p>
+      <div class="sexp"><span class="cmt">; define #{ … } as a hash literal</span>
+<span class="paren">(</span><span class="sym">set-dispatch-macro-character</span>
+  <span class="str">#\#</span> <span class="str">#\{</span>
+  <span class="paren">(</span><span class="kw">lambda</span> <span class="paren">(</span><span class="sym">stream</span> <span class="sym">char</span> <span class="sym">n</span><span class="paren">)</span>
+    <span class="paren">(</span><span class="sym">read-hash-literal</span> <span class="sym">stream</span><span class="paren">)))</span>
+
+<span class="cmt">; now #{:a 1 :b 2} works</span></div>
+      <div class="node-tags">
+        <span class="tag tag-macro">readtable</span>
+        <span class="tag tag-macro">dispatch-macro</span>
+        <span class="tag tag-symbol">reader</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ CONDITIONS ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--condition)">§ condition system</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node node-wide" data-cat="condition">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--condition)">⚡</div>
+      <div class="node-title-group">
+        <div class="node-label">non-local flow</div>
+        <div class="node-title">CONDITION SYSTEM</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Conditions are CLOS classes. Signalling a condition searches the dynamic handler stack <em>without unwinding the stack first</em>. This is the key distinction from try/catch — the signaller's context is still live when the handler runs, enabling <em>restarts</em>.</p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+        <div>
+          <div class="flow" style="flex-direction:column;align-items:flex-start;gap:0.5rem">
+            <div style="display:flex;align-items:center;gap:0.4rem">
+              <div class="flow-box" style="color:var(--generic);border-color:var(--generic)">SIGNAL site</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box" style="color:var(--condition);border-color:var(--condition)">(signal cond)</div>
+            </div>
+            <div style="padding-left:1rem;color:var(--text-dim);font-size:0.7rem;font-family:'JetBrains Mono',monospace">stack NOT unwound yet ↓</div>
+            <div style="display:flex;align-items:center;gap:0.4rem">
+              <div class="flow-box" style="color:var(--class);border-color:var(--class)">HANDLER binds</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box" style="color:var(--macro);border-color:var(--macro)">handler-bind</div>
+            </div>
+            <div style="padding-left:1rem;color:var(--text-dim);font-size:0.7rem;font-family:'JetBrains Mono',monospace">may invoke restart ↓</div>
+            <div style="display:flex;align-items:center;gap:0.4rem">
+              <div class="flow-box" style="color:var(--restart);border-color:var(--restart)">RESTART runs</div>
+              <div class="flow-arrow">→</div>
+              <div class="flow-box" style="color:var(--restart);border-color:var(--restart)">restart-bind</div>
+            </div>
+            <div style="padding-left:1rem;color:var(--text-dim);font-size:0.7rem;font-family:'JetBrains Mono',monospace">NOW stack unwinds ↓</div>
+            <div class="flow-box" style="color:var(--symbol);border-color:var(--symbol)">resume / abort / retry</div>
+          </div>
+        </div>
+        <div class="sexp"><span class="paren">(</span><span class="kw">define-condition</span> <span class="cnd">parse-error</span>
+    <span class="paren">(</span><span class="cnd">error</span><span class="paren">)</span>
+  <span class="paren">((</span><span class="sym">input</span> <span class="kw">:reader</span> <span class="sym">bad-input</span><span class="paren">)))</span>
+
+<span class="paren">(</span><span class="kw">handler-bind</span>
+  <span class="paren">((</span><span class="cnd">parse-error</span>
+    <span class="paren">(</span><span class="kw">lambda</span> <span class="paren">(</span><span class="sym">c</span><span class="paren">)</span>
+      <span class="paren">(</span><span class="sym">invoke-restart</span>
+        <span class="rst">'use-default</span><span class="paren">))))</span>
+  <span class="paren">(</span><span class="sym">parse-form</span> <span class="sym">raw</span><span class="paren">))</span></div>
+      </div>
+      <div class="node-tags" style="margin-top:0.9rem">
+        <span class="tag tag-condition">define-condition</span>
+        <span class="tag tag-condition">signal</span>
+        <span class="tag tag-condition">error</span>
+        <span class="tag tag-condition">warn</span>
+        <span class="tag tag-macro">handler-bind</span>
+        <span class="tag tag-macro">handler-case</span>
+        <span class="tag tag-restart">restart-bind</span>
+        <span class="tag tag-restart">invoke-restart</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="condition">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--condition)">⬦</div>
+      <div class="node-title-group">
+        <div class="node-label">condition types</div>
+        <div class="node-title">CONDITION HIERARCHY</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Conditions form a CLOS class hierarchy. <code>SERIOUS-CONDITION</code> must be handled. <code>ERROR</code> invokes the debugger if unhandled. <code>WARNING</code> and <code>CONDITION</code> are advisory.</p>
+      <div class="paren-tree">
+        <div class="pt-row"><span class="pt-bracket" style="color:var(--condition)">◈</span><span class="pt-label" style="background:rgba(127,219,202,0.06);color:var(--text-dim)">condition (root)</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">├</span><span class="pt-label" style="background:rgba(255,107,107,0.06);color:var(--condition)">serious-condition</span></div>
+        <div class="pt-row" style="padding-left:2.4rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(255,107,107,0.1);color:var(--condition);font-weight:600">error ⚡</span></div>
+        <div class="pt-row" style="padding-left:1.2rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(255,203,107,0.06);color:var(--package)">warning</span></div>
+        <div class="pt-row" style="padding-left:2.4rem"><span class="pt-bracket">└</span><span class="pt-label" style="background:rgba(255,203,107,0.04);color:var(--package)">style-warning</span></div>
+      </div>
+      <div class="node-tags">
+        <span class="tag tag-condition">error</span>
+        <span class="tag tag-condition">cerror</span>
+        <span class="tag tag-condition">warn</span>
+        <span class="tag tag-symbol">signal</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════ RESTARTS ════ -->
+  <div class="section-divider">
+    <span class="sd-label" style="color:var(--restart)">§ restarts</span>
+    <div class="sd-line"></div>
+  </div>
+
+  <div class="node" data-cat="restart">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--restart)">↺</div>
+      <div class="node-title-group">
+        <div class="node-label">recovery points</div>
+        <div class="node-title">RESTART</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">Restarts are <em>named recovery strategies</em> established by the signalling code, not the handler. The handler (or the user in the debugger) chooses which to invoke. Policy lives high; mechanism lives low.</p>
+      <div class="sexp"><span class="paren">(</span><span class="kw">restart-case</span>
+  <span class="paren">(</span><span class="sym">parse-form</span> <span class="sym">raw</span><span class="paren">)</span>
+
+  <span class="paren">(</span><span class="rst">use-default</span> <span class="paren">()</span>
+    <span class="kw">:report</span> <span class="str">"Return default value"</span>
+    <span class="sym">*default*</span><span class="paren">)</span>
+
+  <span class="paren">(</span><span class="rst">retry</span> <span class="paren">(</span><span class="sym">new-raw</span><span class="paren">)</span>
+    <span class="kw">:report</span> <span class="str">"Try different input"</span>
+    <span class="kw">:interactive</span> <span class="sym">read-new-input</span>
+    <span class="paren">(</span><span class="sym">parse-form</span> <span class="sym">new-raw</span><span class="paren">)))</span></div>
+      <div class="node-tags">
+        <span class="tag tag-restart">restart-case</span>
+        <span class="tag tag-restart">restart-bind</span>
+        <span class="tag tag-restart">invoke-restart</span>
+        <span class="tag tag-restart">find-restart</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="node" data-cat="restart">
+    <div class="node-head">
+      <div class="node-icon" style="color:var(--restart)">⊛</div>
+      <div class="node-title-group">
+        <div class="node-label">built-in restarts</div>
+        <div class="node-title">STANDARD RESTARTS</div>
+      </div>
+    </div>
+    <div class="node-body">
+      <p class="node-desc">CL specifies a set of standard restarts that operators like <code>USE-VALUE</code>, <code>STORE-VALUE</code>, and <code>CONTINUE</code> invoke, enabling portable recovery across implementations.</p>
+      <div class="mop-chain">
+        <div class="mop-row">
+          <span class="mop-key">ABORT</span>
+          <span class="mop-val" style="background:rgba(255,107,107,0.08);color:var(--condition)">exit current op cleanly</span>
+        </div>
+        <div class="mop-row">
+          <span class="mop-key">CONTINUE</span>
+          <span class="mop-val" style="background:rgba(255,159,67,0.08);color:var(--restart)">resume after warning</span>
+        </div>
+        <div class="mop-row">
+          <span class="mop-key">USE-VALUE</span>
+          <span class="mop-val" style="background:rgba(127,219,202,0.08);color:var(--symbol)">substitute a value</span>
+        </div>
+        <div class="mop-row">
+          <span class="mop-key">STORE-VALUE</span>
+          <span class="mop-val" style="background:rgba(127,219,202,0.08);color:var(--symbol)">substitute + remember</span>
+        </div>
+        <div class="mop-row">
+          <span class="mop-key">MUFFLE-WARNING</span>
+          <span class="mop-val" style="background:rgba(255,203,107,0.08);color:var(--package)">suppress warning</span>
+        </div>
+      </div>
+      <div class="node-tags">
+        <span class="tag tag-restart">use-value</span>
+        <span class="tag tag-restart">store-value</span>
+        <span class="tag tag-restart">abort</span>
+        <span class="tag tag-restart">continue</span>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<footer>
+  ( common-lisp · visual-map · v0.1 · part of lisp-over-linux )
+</footer>
+
+<script>
+  const pills = document.querySelectorAll('.pill');
+  const nodes = document.querySelectorAll('.node');
+
+  pills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      pills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+
+      const cat = pill.dataset.cat;
+      nodes.forEach(node => {
+        if (cat === 'all' || node.dataset.cat === cat) {
+          node.classList.remove('hidden');
+        } else {
+          node.classList.add('hidden');
+        }
+      });
+
+      // re-layout section dividers
+      document.querySelectorAll('.section-divider').forEach(div => {
+        if (cat === 'all') {
+          div.style.display = '';
+        } else {
+          div.style.display = 'none';
+        }
+      });
+    });
+  });
+</script>
+</body>
+</html>
