@@ -23,7 +23,10 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
+| `initramfs/registry.lisp` | The definition registry: `load-recording` captures every module's source INTO the image, so the running system can show its own code (`source-of`, `show-source`, `senders`). Phase 0 of the code browser — see `doc/code-browser.org`. |
+| `initramfs/model.lisp` | The code browser's MODEL layer (Phase 1): CLOS introspection via `sb-mop` — class DAG (`show-class`), GF/method graph (`show-gf`, `applicable-methods`), `categorize`, object inspector (`show-inspect`). Headless/REPL-driven. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
+| `poc/` | Prototype for the code browser's pixel UI (pure-Lisp X11 client + framebuffer, a text view). Host-runnable; see `poc/README.org` and `doc/code-browser.org`. |
 | `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client. The deliberate opposite of `initramfs/`. |
 
 External source trees are reached via **gitignored symlinks** in the project root,
@@ -71,16 +74,24 @@ If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 
 ## Next things to do (roadmap)
 
-In order (agreed with the user). Neither is started:
+Done: the **line editor** (`line-editor.lisp`/`repl.lisp`) and **networking**
+(`net.lisp`/`dhcp.lisp`, the TCP REPL) — both shipped.
 
-1. **Built-in line editor** — hand-roll Path 2 from `line-editing.org` straight
-   into `supervisor.lisp`: one `sb-alien` termios call (raw mode) + a `read-char`
-   loop that parses arrow/Home/End escapes and redraws via ANSI. Pure userland,
-   **no kernel rebuild**, fast iteration with `build.sh`. Small and self-contained.
-2. **Networking** — the big, two-sided subsystem. Follow `networking.org`: kernel
-   `NET`→`INET`→`virtio-net` (QEMU first) **and** userland `sb-bsd-sockets` baked
-   into the frozen image + an IP (static ioctl first, DHCP later). Do a planning
-   pass before touching `.config`; give it its own changelog/tag discipline.
+The active major effort is a **Smalltalk/Pharo-style code browser** for the Lisp
+machine. Full plan: **`doc/code-browser.org`**; design mock-up:
+`media/browser-views-design.html` (open locally). Pixel-native (framebuffer +
+a pure-Lisp X11 client for host dev), built on a single `present` drill-down
+protocol in a tiled, keyboard-first shell. Progress:
+
+1. **Phase 0 — the definition registry** — *DONE* (`initramfs/registry.lisp`,
+   wired into `build.sh` via `load-recording`). The running image shows its own
+   source: `(show-source 'draw-alien)`, `(senders 'read-fb-geometry)`.
+2. **Phase 1 — the CLOS/model layer** — *DONE* (`initramfs/model.lisp`): class DAG,
+   GF/method graph, `applicable-methods`, `categorize`, object inspector. Headless.
+3. **Phase 2/3 UI toolkit** — *prototyped* in `poc/` (X11 client, `/dev/fb0`
+   backend, an editable text view). Host-runnable.
+4. **Next:** the Workspace, then the `present` drill-down shell (Phase 4). See the
+   Phases section of `doc/code-browser.org`.
 
 ## Known design facts (don't re-derive these)
 

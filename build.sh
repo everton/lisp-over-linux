@@ -36,12 +36,20 @@ SBCL="$MICRO/sbcl"
 
 INITRAMFS_DIR="$MICRO/initramfs"
 
+# registry.lisp is loaded FIRST, with a plain (load), because it defines
+# load-recording — the loader that captures each module's verbatim source into the
+# image (the code browser's definition registry; see doc/code-browser.org §2). The
+# modules below are then loaded with (load-recording ...) instead of (load ...),
+# which loads them identically AND records their source.
+REGISTRY_SRC="$INITRAMFS_DIR/registry.lisp"
+
 # The Lisp userland, split by concern and loaded IN THIS ORDER into the image.
 # Ordering constraints: ansi before line-editor+repl (color helpers), and
 # line-editor before repl (the with-raw-mode macro).
 # The .lisp sources are baked into lisp-init by save-lisp-and-die; they are NOT
 # shipped in the cpio (only the compiled binary is).
 LISP_SOURCES=(
+  "$INITRAMFS_DIR/model.lisp"        # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
@@ -101,7 +109,7 @@ for link in "$KERNEL:linux" "$SBCL:sbcl"; do
                       echo "       run  ./deps.sh  to fetch/link it — see README.org" >&2; exit 1; }
 done
 for f in "$GEN_INIT_CPIO" "$SBCL_RUNTIME" "$SBCL_CORE" \
-         "$INITRAMFS_DIR/preinit.c" "${LISP_SOURCES[@]}" \
+         "$INITRAMFS_DIR/preinit.c" "$REGISTRY_SRC" "${LISP_SOURCES[@]}" \
          "$INITRAMFS_DIR/initramfs.sbcl.list"; do
   [ -e "$f" ] || { echo "ERROR: missing required input: $f" >&2; exit 1; }
 done
@@ -121,8 +129,12 @@ trap 'rm -f "$BUILD_LISP"' EXIT
 # references the package at load time, so this must come first.
 : > "$BUILD_LISP"
 printf '(require :sb-bsd-sockets)\n' >> "$BUILD_LISP"
-for src in "${LISP_SOURCES[@]}"; do            # then load each module, in order
-  printf '(load "%s")\n' "$src" >> "$BUILD_LISP"
+# sb-introspect (who-calls &c) is frozen in the same way; registry.lisp's SENDERS
+# wrapper references its package, so require it before loading registry.lisp.
+printf '(require :sb-introspect)\n' >> "$BUILD_LISP"
+printf '(load "%s")\n' "$REGISTRY_SRC" >> "$BUILD_LISP"   # defines load-recording
+for src in "${LISP_SOURCES[@]}"; do            # then record+load each module, in order
+  printf '(load-recording "%s")\n' "$src" >> "$BUILD_LISP"
 done
 cat >> "$BUILD_LISP" <<LISP
 (sb-ext:save-lisp-and-die "$INITRAMFS_DIR/lisp-init"

@@ -112,8 +112,13 @@ The sections below spell out what build.sh does, for reference.
 
 The Lisp userland is split by concern across a few small modules, loaded in this
 order (the only ordering constraint is the =with-raw-mode= macro: line-editor
-before repl) and all baked into one image by =save-lisp-and-die=:
+before repl) and all baked into one image by =save-lisp-and-die=. =registry.lisp=
+is loaded FIRST, with a plain =load=, because it defines =load-recording= — the
+loader used for every module below (it loads them identically AND captures each
+one's verbatim source into the image; see [[file:code-browser.org][code-browser.org]] §2):
 
+  | =registry.lisp=    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
+  | =model.lisp=       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
   | =process.lisp=     | =worker-main=, =spawn-worker=, =power-off=                 |
   | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
@@ -212,13 +217,15 @@ Key bits learned while writing it:
 #+begin_src sh :results output
   cat > /tmp/build-sup.lisp <<'LISP'
   (require :sb-bsd-sockets)                     ; baked into the heap (needs SBCL_HOME)
-  (load ".../initramfs/process.lisp")          ; build.sh loads the modules in order
-  (load ".../initramfs/framebuffer.lisp")
-  (load ".../initramfs/line-editor.lisp")
-  (load ".../initramfs/repl.lisp")
-  (load ".../initramfs/net.lisp")
-  (load ".../initramfs/dhcp.lisp")
-  (load ".../initramfs/supervisor.lisp")
+  (require :sb-introspect)                       ; who-calls &c, also frozen in
+  (load ".../initramfs/registry.lisp")          ; defines load-recording (plain load)
+  (load-recording ".../initramfs/process.lisp") ; the modules: loaded AND source-captured
+  (load-recording ".../initramfs/framebuffer.lisp")
+  (load-recording ".../initramfs/line-editor.lisp")
+  (load-recording ".../initramfs/repl.lisp")
+  (load-recording ".../initramfs/net.lisp")
+  (load-recording ".../initramfs/dhcp.lisp")
+  (load-recording ".../initramfs/supervisor.lisp")
   (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP
