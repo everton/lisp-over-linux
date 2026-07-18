@@ -1,0 +1,92 @@
+#+TITLE: poc/ — the graphics proof-of-concept for the code browser
+#+STARTUP: showall
+
+Plan this validates: [[file:../doc/code-browser.org][doc/code-browser.org]] (§1, "one pixel buffer, two backends").
+
+* What this proves
+
+The code-browser plan rests on one claim:
+
+#+begin_quote
+The browser draws into a pixel buffer it owns, in pure Lisp. A *backend* does
+nothing but *present* that buffer and hand back events. So the same browser runs
+on the bare framebuffer AND in a window on the dev host — and "supporting X"
+never means running an X *server*, only writing a small X *client*.
+#+end_quote
+
+Everything except the X11 client was already proven by =draw-alien=
+([[file:../doc/framebuffer.org][framebuffer.org §8]]). The X11 client was *not*. This POC settles it.
+
+*Result: the claim holds.* The identical =canvas.lisp= + =scene.lisp= render the
+same mock browser in an X11 window on the host and on =/dev/fb0= with SBCL as
+PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
+
+| file             | role                                                             |
+|------------------+------------------------------------------------------------------|
+| =canvas.lisp=    | the pixel buffer + =fill-rect= / =blit-rgba= / PSF font + =draw-string=. *Backend-blind.* |
+| =scene.lisp=     | what we draw: a mock code browser (tabs, 3 list panes, syntax-coloured source, the alien). *Backend-blind.* |
+| =x11.lisp=       | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, events. ~250 lines. |
+| =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
+| =run-host.lisp=  | host entry: present via X11.                                      |
+| =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
+| =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
+| =font16.psf=     | an 8x16 PSF bitmap font (from the host's =consolefonts=; see /Licensing/). |
+
+* Run it
+
+First provide =poc/font16.psf= — it is NOT committed (it is Terminus, an OFL font
+borrowed from the host; see /Licensing/ below). Regenerate it from any 8x16 PSF on
+the host:
+
+#+begin_src sh
+  gunzip -c /usr/share/consolefonts/Lat15-Terminus16.psf.gz > poc/font16.psf
+#+end_src
+
+Then:
+
+#+begin_src sh
+  sbcl --script poc/run-host.lisp   # a window on your desktop. arrows/click; q quits.
+  ./poc/build-poc.sh                # boots the LoL machine; writes poc/screen-fb.png
+#+end_src
+
+=run-host.lisp= needs =$DISPLAY= and =$XAUTHORITY= (an ordinary X session).
+=build-poc.sh= touches *nothing* in =initramfs/= — it builds its own image and
+reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
+
+* What it settles, concretely
+
+- *X11 from scratch is small.* Because we do all our own drawing, the client
+  never asks X to render a glyph or a line — we hand it one finished image via
+  =PutImage=. Connection handshake + MIT-MAGIC-COOKIE-1 + =CreateWindow= +
+  =MapWindow= + =CreateGC= + =PutImage= + five event types is the *whole* protocol
+  surface we need.
+- *One pixel format serves both.* The canvas stores =#x00RRGGBB= words, which sit
+  in memory little-endian as =B,G,R,0= — exactly BGRX, exactly what efifb scans
+  out *and* what the X server wants at depth 24 on x86. Both backends ship the
+  buffer with zero conversion. (Confirmed by the alien coming out green, not
+  magenta.)
+- *Text is not a problem.* PSF1 is a 4-byte header and 256 glyph bitmaps. Parsing
+  it is 15 lines; blitting it is 20. Crisp, fast, and enough for a browser.
+- *=KD_GRAPHICS= works and is cheap* — one ioctl, and fbcon stops fighting us. It
+  does *not* stop key delivery, so the existing raw-mode keyboard survives intact.
+- *The mouse is already there.* The guest's boot log shows
+  =input: ImExPS/2 Generic Explorer Mouse ... input3=, so =/dev/input/event3= is
+  live under QEMU today. =CONFIG_INPUT_EVDEV=y= is already set: no kernel change.
+
+* Known rough edges (it is a POC)
+
+- The framebuffer path pushes a *full frame* per present (no damage tracking) and
+  writes it row-by-row rather than via =mmap=. Fine for a static scene; the real
+  toolkit needs dirty rectangles.
+- =run-guest.lisp= draws once and parks. It does not read the evdev mouse yet.
+- Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.
+- The =·= separators render as =Ö=: the Lat15 PSF indexes that codepoint
+  elsewhere. Stick to ASCII, or ship a font whose table we control.
+
+* Licensing note (matters — this repo is deliberately MIT)
+
+=font16.psf= is Terminus, taken from the host's =/usr/share/consolefonts= purely
+so the POC could run. *Do not ship it without checking* — and note the kernel's
+built-in =font_8x16= is *GPL* and must not be lifted either. For the real thing
+pick a permissive bitmap face (Cozette is MIT; Spleen is BSD-2) and bake it at
+build time, exactly as =alien.rgba= already is.
