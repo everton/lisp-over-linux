@@ -119,6 +119,7 @@ one's verbatim source into the image; see [[file:code-browser.org][code-browser.
 
   | =registry.lisp=    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
   | =model.lisp=       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
+  | =present.lisp=     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless) |
   | =process.lisp=     | =worker-main=, =spawn-worker=, =power-off=                 |
   | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |

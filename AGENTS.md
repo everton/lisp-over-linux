@@ -26,6 +26,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
 | `initramfs/registry.lisp` | The definition registry: `load-recording` captures every module's source INTO the image, so the running system can show its own code (`source-of`, `show-source`, `senders`). Phase 0 of the code browser — see `doc/code-browser.org`. |
 | `initramfs/model.lisp` | The code browser's MODEL layer (Phase 1): CLOS introspection via `sb-mop` — class DAG (`show-class`), GF/method graph (`show-gf`, `applicable-methods`), `categorize`, object inspector (`show-inspect`). Headless/REPL-driven. |
+| `initramfs/present.lisp` | The drill-down `present`/`commands-for` protocol + affordance model (code browser §4½). `(present subject)`→a view of drillable items; `(commands-for subject)`→declarative commands (menu/halo/palette/key). Headless; `(show-view subject)` demos it. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
 | `poc/` | Prototype for the code browser's pixel UI (pure-Lisp X11 client + framebuffer, a text view). Host-runnable; see `poc/README.org` and `doc/code-browser.org`. |
 | `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client. The deliberate opposite of `initramfs/`. |
@@ -89,10 +90,13 @@ protocol in a tiled, keyboard-first shell. Progress:
    source: `(show-source 'draw-alien)`, `(senders 'read-fb-geometry)`.
 2. **Phase 1 — the CLOS/model layer** — *DONE* (`initramfs/model.lisp`): class DAG,
    GF/method graph, `applicable-methods`, `categorize`, object inspector. Headless.
-3. **Phase 2/3 UI toolkit** — *prototyped* in `poc/` (X11 client, `/dev/fb0`
+3. **Phase 4 spine — the `present` protocol** — *DONE headless* (`initramfs/present.lisp`):
+   `present`/`commands-for` generics + affordance model; drill-down works in the
+   booted guest. Still owed: the tiled shell (pixels) and Accept-through-shell.
+4. **Phase 2/3 UI toolkit** — *prototyped* in `poc/` (X11 client, `/dev/fb0`
    backend, an editable text view). Host-runnable.
-4. **Next:** the Workspace, then the `present` drill-down shell (Phase 4). See the
-   Phases section of `doc/code-browser.org`.
+5. **Next:** the Workspace, then the tiled shell that renders `present` (Phase 4).
+   See the Phases section of `doc/code-browser.org`.
 
 ## Known design facts (don't re-derive these)
 

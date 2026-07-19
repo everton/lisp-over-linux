@@ -642,6 +642,71 @@ Buildable directly on the [[file:../poc/][poc/]] toolkit: a panel is a =present=
 into a region; the accordion is a stack of regions with collapse state; items are
 the clickable spans the text/list widgets already produce.
 
+** Content that talks back: affordances & =commands-for= (external side effects)
+
+Some content needs to influence the *shell*, not just paint itself: open a target
+in a NEW panel (like =target="_blank"=), contribute entries to a context menu, or
+(later) hang handles on a Morphic halo. The naive answer — let content call
+=open-panel!= / =add-menu-item!= — would destroy the invariant that makes =present=
+work (content is backend-blind and side-effect-free). So the rule is:
+
+#+begin_quote
+*Content never PERFORMS a side effect and never COMMANDS the shell. It DECLARES
+what it affords, as data; the shell — the one stateful layer that owns
+trails/tabs/menus/halos — decides whether and how to realise it.* Content proposes;
+the shell disposes. =present= stays a pure =subject → description=; the shell is the
+sole executor.
+#+end_quote
+
+This is exactly =target="_blank"=: the link does not open a window, it *annotates
+itself with a preferred disposition* the browser may honour, a popup blocker may
+veto, and a middle-click overrides.
+
+*Items carry declarative affordances.* Beyond =target= (drill) and =action= (do),
+an item can carry a *disposition* — =:in-place= (default) · =:new-trail= (the
+=_blank= case) · =:beside= · =:replace=. It states a preference; it opens nothing.
+
+*A second generic beside =present=: =commands-for=.* Type-level affordances ("every
+function can be disassembled, has senders, can be inspected") come from
+=(commands-for subject) → list of command=, dispatched on subject type. A *command*
+is itself declarative:
+
+: command = { label, do: (action | target+disposition),
+:             surfaces: {:menu :halo :palette :key}, key?, enabled? }
+
+When the shell needs the interaction surface for element X it unions X's item-local
+affordances + =(commands-for X)= + globals. This is CLIM (presentation types +
+commands + translators) and Glamorous Toolkit (=gtViewsFor:= beside =gtActionsFor:=)
+and Smalltalk's yellow-button menu — the same seam they all found.
+
+*The payoff — one command, many surfaces.* Menu, halo, command palette and key
+accelerator are four *renderings* of one command set, exactly as panels are
+renderings of one =present= view:
+- right-click → =commands-for(X)= filtered to =:menu=;
+- halo (future) → the SAME commands filtered to =:halo=, as handles — no new
+  mechanism, a halo is just another view of the command set;
+- =M-.= Senders → the same command via its =:key=;
+- =target="_blank"= → an item whose disposition defaults to =:new-trail=.
+One command, declared once on the subject type, appears wherever the shell offers
+it — and a headless/test shell offers none and ignores them all, unchanged.
+
+*Where something opens — three votes, in precedence:* user gesture (=SuperL-click=
+forces =:new-trail=) > content hint (the item's disposition) > shell policy (e.g.
+"the Debugger always opens as its own trail"). Content contributes one input and
+can never override the user.
+
+Why this preserves everything: =present= and =commands-for= are both *pure*
+(subject → data), REPL-testable headless like the model layer; the side effect
+happens only in the shell's event loop. Unknown affordance kinds *degrade
+gracefully* (the tiled shell honours =:menu=/=:new-trail=; a future Morphic shell
+adds =:halo=; a test harness honours none). And extensibility is unchanged: a new
+subject type gets a =present= method and optionally a =commands-for= method; a new
+*surface* needs zero content changes.
+
+(Distinct concern, kept separate: *liveness* — "this content changed, re-render me"
+— is the shell re-=present='ing a subject when its dependency signals, not a
+command. Do not overload commands to do double duty.)
+
 * 4¾. The environment — trails, the Spotter, and the tiled shell
 
 The accordion (§4½) is *one investigation*. This section is the container above
@@ -893,14 +958,18 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   it / Inspect it / Debug it) + a transcript binding. Small, and it is the surface
   everything else lands in, so it comes early. /Demo: eval a selection, weave the
   result inline./
-- *Phase 4 — the Browser: the =present= spine + the shell.* The drill-down
-  accordion driven by =present= (§4½), a first set of =present= methods (package,
-  definition, source), Accept (live compile), Senders/Implementors, Macroexpand,
-  Disassemble, Versions — and the tiled shell around it (§4¾): the area rail, the
-  trail tabs, and the Spotter. /Milestone: browse the browser, edit it live, watch
-  it change under you; ⌕-jump to another function in a new trail./ Note this is
-  *less* work than the old plan: one accordion shell + N =present= methods, not a
-  bespoke browser plus separate matrix/onion/source panes.
+- *Phase 4 — the Browser: the =present= spine + the shell.* [SPINE DONE headless —
+  [[file:../initramfs/present.lisp][present.lisp]]] The =present= + =commands-for= generics, the item/view/command
+  structs, the affordance/disposition model, and a first set of methods (package,
+  definition→source, subj-xref, class DAG, generic-function, and the =(T)=
+  inspector fallback). Verified *in the booted guest*:
+  =(view-kind (present (subj-defn 'draw-alien :function)))=→:SOURCE, the =error=
+  DAG →37 drillable items, =(commands-for …)=→(Senders Disassemble Inspect) with
+  =surfaces (:MENU :KEY :HALO)=, xref drilling back to =draw-alien=. Still owed:
+  Accept wired through the shell, and the tiled shell itself (§4¾) — trail tabs,
+  the Spotter, the accordion renderer over =present=. /Milestone: browse the
+  browser, edit it live, ⌕-jump to another function in a new trail./ Confirmed
+  *less* work than the old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
   generic-function and condition subjects. The generics matrix drills to the
   effective-method onion drills to source; the condition two-stack *is* the

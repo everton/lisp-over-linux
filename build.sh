@@ -50,6 +50,7 @@ REGISTRY_SRC="$INITRAMFS_DIR/registry.lisp"
 # shipped in the cpio (only the compiled binary is).
 LISP_SOURCES=(
   "$INITRAMFS_DIR/model.lisp"        # CLOS/introspection model: classes, GFs, categories, inspector
+  "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
