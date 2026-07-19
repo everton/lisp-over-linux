@@ -77,6 +77,21 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
 - =run-guest.lisp= draws once and parks. It does not read the evdev mouse yet.
 - Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.
 
+** Browser shell — known gaps / TODO (=shell.lisp=, =run-browser.lisp=)
+
+- *Scrolling is caret/selection-driven only.* A source pane scrolls only when the
+  caret moves off-screen (=↑↓=); a list pane scrolls only when the selection moves.
+  Missing: *mouse-wheel / touchpad scroll* (X sends the wheel as button 4/5 press
+  events — =run-browser= handles only button 1, so they are ignored) and
+  *PageUp/PageDown*. Fix: handle button 4/5 in the event loop → scroll the current
+  pane; add =:page-up=/=:page-down= (already decoded by =x11.lisp=) to =browser-key=
+  and a viewport-scroll that is independent of the caret.
+- No trail *tabs* / *Spotter* yet (single trail; §4¾).
+- *Jump-to-definition* not wired yet: =Ctrl-click= / =M-.= on a symbol → resolve →
+  drill (the "symbols are presentations" design, §4½ / §4¾).
+- Chrome markers are ASCII (=>= / =v= / =>=); the 6×15 blob is 256 codepoints, so
+  no ▸▾→ glyphs — draw chrome as shapes later (§6.2).
+
 * The font — Cozette (MIT)
 
 The shipped font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
