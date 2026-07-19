@@ -123,11 +123,13 @@
     (make-view
      :title (format nil "~(~a~) ~(~a~)" (getf i :kind) (getf i :name))
      :kind :class :subject c
+     ;; labels stay within the font's coverage (§6.2): the detail distinguishes
+     ;; super- from sub-class, so no >255 arrow glyphs in the text.
      :items (append
-             (mapcar (lambda (s) (make-item :label (format nil "▲ ~(~a~)" s)
+             (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
                                             :detail "superclass" :subject (find-class s)))
                      (getf i :supers))
-             (mapcar (lambda (s) (make-item :label (format nil "▼ ~(~a~)" s)
+             (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
                                             :detail "subclass" :subject (find-class s)))
                      (getf i :subs))
              (mapcar (lambda (sl) (make-item :label (format nil "slot ~(~a~)" (getf sl :name))

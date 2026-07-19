@@ -29,6 +29,8 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
+| =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. Drives the real =initramfs/= registry+model+present. |
+| =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
 | =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
 | =bdf2font.py=    | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |

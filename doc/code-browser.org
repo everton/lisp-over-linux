@@ -965,11 +965,17 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   inspector fallback). Verified *in the booted guest*:
   =(view-kind (present (subj-defn 'draw-alien :function)))=→:SOURCE, the =error=
   DAG →37 drillable items, =(commands-for …)=→(Senders Disassemble Inspect) with
-  =surfaces (:MENU :KEY :HALO)=, xref drilling back to =draw-alien=. Still owed:
-  Accept wired through the shell, and the tiled shell itself (§4¾) — trail tabs,
-  the Spotter, the accordion renderer over =present=. /Milestone: browse the
-  browser, edit it live, ⌕-jump to another function in a new trail./ Confirmed
-  *less* work than the old plan: one accordion shell + N =present= methods.
+  =surfaces (:MENU :KEY :HALO)=, xref drilling back to =draw-alien=.
+  [ACCORDION SHELL DONE on the host — [[file:../poc/shell.lisp][poc/shell.lisp]] + [[file:../poc/run-browser.lisp][poc/run-browser.lisp]]]
+  the drill-down accordion now renders =present= into pixels: breadcrumb bars for
+  ancestors, the deepest pane expanded (list views for classes/packages, the
+  syntax-coloured textview for source), drill on ↵/click, pop on ⌫ / breadcrumb-
+  click, =commands-for= in the status line. =sbcl --script poc/run-browser.lisp=,
+  rooted at CL-USER — and it *browses its own source* (registry/model/present/shell
+  are all load-recorded). Still owed: trail *tabs* + the *Spotter* (§4¾, multiple
+  trails), Accept wired through the shell, and moving it onto =/dev/fb0= (Phase 5).
+  /Milestone reached in part: browse the browser./ Confirmed *less* work than the
+  old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
   generic-function and condition subjects. The generics matrix drills to the
   effective-method onion drills to source; the condition two-stack *is* the
