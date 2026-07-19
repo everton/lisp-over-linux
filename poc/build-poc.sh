@@ -54,7 +54,7 @@ nod  /dev/null    0666 0 0 c 1 3
 nod  /dev/tty     0666 0 0 c 5 0
 file /init      initramfs/preinit 0755 0 0
 file /sbin/lisp poc/out/lisp-init 0755 0 0
-file /font16.psf poc/font16.psf   0644 0 0
+file /cozette.lolf poc/cozette.lolf 0644 0 0
 file /alien.rgba initramfs/alien.rgba 0644 0 0
 file /lib64/ld-linux-x86-64.so.2         /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 0755 0 0
 file /usr/lib/x86_64-linux-gnu/libc.so.6 /usr/lib/x86_64-linux-gnu/libc.so.6            0755 0 0

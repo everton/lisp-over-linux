@@ -124,7 +124,7 @@
 
 (let* ((here   (make-pathname :directory (pathname-directory *load-truename*)))
        (w 1080) (h 660)
-       (font   (load-psf (merge-pathnames "font16.psf" here)))
+       (font   (load-font (merge-pathnames "cozette.lolf" here)))
        (canvas (make-canvas w h))
        (tv     (lol.textview:make-textview :font font :focus t))
        (d      (lol.x11:open-display w h :title "lol - source pane prototype")))

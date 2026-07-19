@@ -30,19 +30,13 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
-| =font16.psf=     | an 8x16 PSF bitmap font (from the host's =consolefonts=; see /Licensing/). |
+| =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
+| =bdf2font.py=    | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |
+| =cozette-LICENSE.txt= | Cozette's MIT license (required to ship the font). |
 
 * Run it
 
-First provide =poc/font16.psf= — it is NOT committed (it is Terminus, an OFL font
-borrowed from the host; see /Licensing/ below). Regenerate it from any 8x16 PSF on
-the host:
-
-#+begin_src sh
-  gunzip -c /usr/share/consolefonts/Lat15-Terminus16.psf.gz > poc/font16.psf
-#+end_src
-
-Then:
+The font (=cozette.lolf=) is committed, so there is no setup — just run:
 
 #+begin_src sh
   sbcl --script poc/run-host.lisp   # a window on your desktop. arrows/click; q quits.
@@ -80,13 +74,21 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
   toolkit needs dirty rectangles.
 - =run-guest.lisp= draws once and parks. It does not read the evdev mouse yet.
 - Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.
-- The =·= separators render as =Ö=: the Lat15 PSF indexes that codepoint
-  elsewhere. Stick to ASCII, or ship a font whose table we control.
 
-* Licensing note (matters — this repo is deliberately MIT)
+* The font — Cozette (MIT)
 
-=font16.psf= is Terminus, taken from the host's =/usr/share/consolefonts= purely
-so the POC could run. *Do not ship it without checking* — and note the kernel's
-built-in =font_8x16= is *GPL* and must not be lifted either. For the real thing
-pick a permissive bitmap face (Cozette is MIT; Spleen is BSD-2) and bake it at
-build time, exactly as =alien.rgba= already is.
+The shipped font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
+chosen from a side-by-side comparison. It is baked into our own tiny =.lolf= blob
+(6x15, glyphs indexed by codepoint) by =bdf2font.py=, the way =alien.rgba= is
+pre-generated and committed. Note the kernel's built-in =font_8x16= is *GPL* and
+must not be lifted; Cozette's MIT license is committed alongside the blob.
+
+To *regenerate* =cozette.lolf= (the blob is committed, so this is only for updates):
+
+#+begin_src sh
+  curl -fsSL -o /tmp/cozette.bdf \
+    https://github.com/slavfox/Cozette/releases/latest/download/cozette.bdf
+  python3 poc/bdf2font.py /tmp/cozette.bdf poc/cozette.lolf
+#+end_src
+
+The =.lolf= format and the whole glyph→pixel path are documented in [[file:../doc/fonts.org][doc/fonts.org]].

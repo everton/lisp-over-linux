@@ -24,7 +24,7 @@
 (let* ((here  (make-pathname :directory (pathname-directory *load-truename*)))
        (root  (merge-pathnames "../" here))
        (w 1000) (h 640)
-       (font  (lol.canvas:load-psf (merge-pathnames "font16.psf" here)))
+       (font  (lol.canvas:load-font (merge-pathnames "cozette.lolf" here)))
        (alien (read-blob (merge-pathnames "initramfs/alien.rgba" root)))
        (ui    (lol.scene:make-ui :w w :h h :font font :alien alien))
        (canvas (lol.canvas:make-canvas w h))

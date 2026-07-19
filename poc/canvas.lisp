@@ -15,7 +15,7 @@
   (:use :cl)
   (:export #:canvas #:make-canvas #:canvas-w #:canvas-h #:canvas-pixels
            #:fill-rect #:draw-rect #:blit-rgba
-           #:font #:load-psf #:font-cw #:font-ch #:draw-string #:string-px
+           #:font #:load-psf #:load-font #:font-cw #:font-ch #:draw-string #:string-px
            #:rgb))
 
 (in-package :lol.canvas)
@@ -113,6 +113,26 @@
             (read-sequence g s)
             (setf (svref glyphs i) g)))
         (make-font :cw 8 :ch ch :glyphs glyphs)))))
+
+(defun load-font (path)
+  "Read a .lolf bitmap font blob into a FONT (the format poc/bdf2font.py writes).
+   Unlike load-psf, glyphs are indexed by codepoint 0..255 — we own the mapping,
+   so there are no PSF glyph-order surprises (the ·->Ö trap; see doc/fonts.org).
+   Header: magic 'LF', width byte, height byte; then 256 glyphs of HEIGHT bytes
+   (one byte per row, MSB = leftmost pixel). Widths >8 are rejected by the writer,
+   so one byte per row is always enough here — matching draw-string's blitter."
+  (with-open-file (s path :element-type '(unsigned-byte 8))
+    (let ((hdr (make-array 4 :element-type '(unsigned-byte 8))))
+      (read-sequence hdr s)
+      (unless (and (= (aref hdr 0) #x4c) (= (aref hdr 1) #x46))
+        (error "~a is not a .lolf font (magic ~x ~x)" path (aref hdr 0) (aref hdr 1)))
+      (let* ((w (aref hdr 2)) (h (aref hdr 3))
+             (glyphs (make-array 256)))
+        (dotimes (i 256)
+          (let ((g (make-array h :element-type '(unsigned-byte 8))))
+            (read-sequence g s)
+            (setf (svref glyphs i) g)))
+        (make-font :cw w :ch h :glyphs glyphs)))))
 
 (defun string-px (font string &key (scale 1))
   "Pixel width STRING will occupy — the metric the layout code needs."

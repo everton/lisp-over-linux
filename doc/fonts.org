@@ -1,0 +1,249 @@
+#+TITLE: Bitmap fonts — from a .psf file to letters on the panel
+#+STARTUP: showall
+
+Companion to [[file:framebuffer.org][framebuffer.org]] (which explains *pixels → panel*); this file explains
+*glyphs → pixels* — how a character becomes light on the screen in our pure-Lisp
+renderer. Code lives in the code-browser prototype: [[file:../poc/canvas.lisp][poc/canvas.lisp]] (the font +
+the blitter) and [[file:../poc/textview.lisp][poc/textview.lisp]] (how text is laid out). Design decisions:
+[[file:code-browser.org][code-browser.org §6.2]].
+
+This is an *orientation guide*: read it top to bottom once and you will know where
+every piece is and how to change it — including how to make the font bigger.
+
+* The one-sentence essence
+
+A bitmap font is *a lookup table from a character code to a tiny grid of on/off
+pixels*. "Drawing text" is: look up each character's grid, and copy its lit pixels
+into the framebuffer. There is no magic, no shaping, no math — just bits you stamp.
+
+(Contrast a *vector* font — TrueType — where a glyph is outlines you must rasterise.
+We are deliberately NOT doing that yet; see §7 and [[file:code-browser.org][code-browser.org §6.2]].)
+
+* 1. What a bitmap glyph physically is
+
+One glyph is a small rectangle of bits: *1 = ink, 0 = background*. Our font is
+*8 pixels wide × 16 tall*. Eight bits fit in one byte, so:
+
+- each *row* of a glyph is *one byte* (8 horizontal pixels), and
+- each *glyph* is *16 bytes* (16 rows), and
+- the *font* is *256 glyphs*, indexed by character code (=A= = code 65 = glyph 65).
+
+That is the whole data structure. Here is a capital *H*, drawn 8×8 for brevity
+(the real ones are 8×16). Read each row as a byte, *most-significant bit on the
+left*:
+
+#+begin_src
+  row  pixels     bits        byte
+   0   . . . . . . . .   00000000   #x00
+   1   . # . . . . # .   01000010   #x42
+   2   . # . . . . # .   01000010   #x42
+   3   . # . . . . # .   01000010   #x42
+   4   . # # # # # # .   01111110   #x7E
+   5   . # . . . . # .   01000010   #x42
+   6   . # . . . . # .   01000010   #x42
+   7   . . . . . . . .   00000000   #x00
+#+end_src
+
+So this "H" *is* the 8 bytes =00 42 42 42 7E 42 42 00=. Store 256 of these and you
+have a font. That "MSB = leftmost pixel" convention is the one thing to remember —
+the blitter (§4) relies on it.
+
+* 2. The PSF file format — the simplest way to get glyphs
+
+We do not hand-type those bytes; a *PSF* file (the Linux console font format) is
+the simplest source, and the one to understand first. (What the tool actually
+ships is Cozette in our own =.lolf= blob — §7 — but that is a two-byte tweak on
+this same idea, so learn PSF here.) *PSF1* is trivial:
+
+#+begin_src
+  ┌─ 4-byte header ─┐
+  │ #x36  #x04       magic ("this is a PSF1 file")
+  │ mode  charsize   mode flags; charsize = bytes-per-glyph = the HEIGHT (16)
+  └──────────────────┘
+  then 256 glyphs, each `charsize` bytes, back to back.
+#+end_src
+
+The reader is [[file:../poc/canvas.lisp][=load-psf=]]: it checks the magic, takes =charsize= as the glyph
+height, and slurps 256 glyphs into a vector. Width is *always 8* in PSF1 — that is
+why =load-psf= hardcodes =:cw 8=.
+
+To try =load-psf= against a real PSF, any host console font works, e.g.
+=gunzip -c /usr/share/consolefonts/Lat15-Fixed16.psf.gz > /tmp/f.psf=. But the
+*shipped* font is not a PSF at all — it is Cozette baked into our own =.lolf= blob
+(§7), committed with its MIT license, the way [[file:framebuffer.org][the alien]] is baked
+([[file:code-browser.org][code-browser.org §6.2]]).
+
+*PSF2* (magic =72 b5 4a 86=) is the richer format: it stores *width and height as
+real numbers*, so it can hold fonts wider than 8 (a 16×32 font, say). =load-psf=
+does not read PSF2 yet — that is step one of "a genuinely bigger font" in §7.
+
+* 3. The font object in the code
+
+=load-psf= returns a =font= struct — three fields, and that is the entire model
+([[file:../poc/canvas.lisp][poc/canvas.lisp]]):
+
+#+begin_src lisp
+  (defstruct font
+    (cw 8  :type fixnum)    ; cell WIDTH  in pixels (8 for PSF1)
+    (ch 16 :type fixnum)    ; cell HEIGHT in pixels (the charsize byte)
+    (glyphs ... ))          ; a 256-element vector; glyph N = a (ch)-byte array
+#+end_src
+
+Everything downstream asks the font only three questions: how wide is a cell
+(=cw=), how tall (=ch=), and what are the bytes of glyph N (=glyphs=). Because the
+font is *just data behind those three accessors*, swapping fonts is swapping data,
+never code — that is the whole point of keeping it a small "backend" ([[file:code-browser.org][§6.2]]).
+
+* 4. Blitting — glyph → pixels (the heart: =draw-string=)
+
+[[file:../poc/canvas.lisp][=draw-string=]] is where a character becomes light. Stripped to its logic, for one
+character at pen position =(x, y)=:
+
+#+begin_src
+  glyph = glyphs[char-code]
+  for row in 0..ch-1:                 ; each row is one byte
+    bits = glyph[row]
+    for col in 0..cw-1:               ; each of the 8 columns
+      if bit (7 - col) of bits is set:   ; MSB is the LEFT pixel (§1)
+        set canvas pixel (x+col, y+row) = colour
+  advance pen by cw                   ; next character sits cw pixels right
+#+end_src
+
+Three things worth seeing in the real code:
+
+1. *=(logbitp (- 7 col) bits)=* is the "is this pixel lit?" test. The =(- 7 col)=
+   is the MSB-first convention from §1: column 0 is bit 7.
+2. *It writes only lit pixels* — background is left untouched, so text composites
+   over whatever is already on the canvas (a panel colour, a selection band).
+3. *It returns the pen's final x.* That return value is how a line gets *syntax
+   colouring*: draw the =(defun= in one colour, take the returned x, draw the name
+   in another colour starting there, and so on — a chain of coloured runs on one
+   line. The lexer in [[file:../poc/textview.lisp][textview.lisp]] produces exactly those runs.
+
+*The =scale= knob.* =draw-string= takes =&key scale=; with =scale 2= it stamps each
+glyph pixel as a 2×2 block (the =sx=/=sy= inner loops), doubling the size. This is
+"integer scaling" — instant, but *blocky* (a dot becomes a square). It is half of
+the cheap size path in §7. The other half is that the *metrics* (§5) must agree, or
+the layout still thinks the text is small and everything overlaps.
+
+* 5. From a glyph to a line to the browser
+
+Above =draw-string= sit two more layers.
+
+*Measuring:* [[file:../poc/canvas.lisp][=string-px=]] returns =length × cw × scale= — the pixel width a string
+will take. Layout code needs this to place things and to wrap.
+
+*The text view's cells:* [[file:../poc/textview.lisp][textview.lisp]] is a grid of character cells, and every cell
+metric comes from the font:
+
+#+begin_src lisp
+  (defun tv-cw (tv)          (font-cw (tv-font tv)))         ; a column's pixel width
+  (defun tv-line-height (tv) (+ (font-ch (tv-font tv)) 3))   ; a row's pixel height (+lead)
+#+end_src
+
+and *hit-testing* — turning a mouse pixel into a (line, column) — is just those
+metrics run backwards ([[file:../poc/textview.lisp][=x-of-col=]] / [[file:../poc/textview.lisp][=col-at-x=]]):
+
+#+begin_src lisp
+  x-of-col : screen-x = tv-x + pad + col * cw     ; column -> pixel
+  col-at-x : col      = round((px - tv-x - pad) / cw)   ; pixel -> column
+#+end_src
+
+*This is the monospace assumption in ONE place.* Because every glyph is =cw= wide,
+column ↔ pixel is a multiply/divide. A proportional font (variable widths) would
+replace only these two functions with a per-glyph width scan — nothing else in the
+editor changes. (Also the reason getting =cw= right matters when you scale: §7.)
+
+The whole flow, then:
+
+#+begin_src
+  font file  ──load-psf──▶  font struct ──┐
+                                          ├─▶ draw-string ─▶ pixels in the canvas
+  textview / browser panes  ──cw, ch──────┘   (colour by run; scale optional)
+#+end_src
+
+* 6. How the pixels reach the panel
+
+=draw-string= writes into a *canvas* — an off-screen ARGB pixel buffer the renderer
+owns ([[file:../poc/canvas.lisp][=make-canvas=]]). Nothing in the font layer knows about the screen. A separate
+*backend* then ships that buffer out:
+
+- [[file:../poc/fb.lisp][poc/fb.lisp]] copies it to =/dev/fb0= (the framebuffer, on the LoL machine), or
+- [[file:../poc/x11.lisp][poc/x11.lisp]] =PutImage='s it into an X window (on the dev host).
+
+From there it is [[file:framebuffer.org][framebuffer.org]]'s story: the GPU scans the framebuffer out to the
+panel ~60×/second. So the full chain for one letter is:
+
+#+begin_src
+  char code → glyph bytes → draw-string stamps lit pixels → canvas (ARGB buffer)
+            → backend (fb0 memcpy / X PutImage) → GPU scanout → the panel
+#+end_src
+
+* 7. Changing the font — and its size
+
+Because a font is *data behind three accessors* (§3), all of this is local to
+[[file:../poc/canvas.lisp][canvas.lisp]] (+ a two-line metric tweak in [[file:../poc/textview.lisp][textview.lisp]]); the browser code never
+changes.
+
+*The shipped font is Cozette (MIT), via our own blob — not a raw PSF.* =load-psf=
+(§2) is the pedagogical baseline, but what the tool actually loads is =load-font=,
+reading a =.lolf= blob produced by [[file:../poc/bdf2font.py][=bdf2font.py=]] from a BDF. The blob is trivial
+(magic =LF=, width byte, height byte, then 256 glyphs) and, crucially, *its glyphs
+are indexed by real Unicode codepoint* — which is exactly what defeats the =·=→=Ö=
+trap (§9). Cozette is 6×15; its MIT license ships beside the blob. To regenerate:
+=python3 poc/bdf2font.py cozette.bdf poc/cozette.lolf= (see [[file:../poc/README.org][poc/README.org]]).
+
+*Swap the whole font:* point =load-font= at a different =.lolf= (rebuild it from a
+BDF with =bdf2font.py=), or =load-psf= at a =.psf=. Done. (Both are 1 byte per row,
+so ≤8 wide today; wider needs the PSF2 / multi-byte-row path below.)
+
+*Make it bigger — two paths* (decided: bitmap-first, see [[file:code-browser.org][§6.2]]):
+
+- /Path A — integer scaling (cheap, blocky)./ =draw-string= already scales; the
+  work is making the metrics agree so nothing overlaps:
+  1. add a =scale= field to the =font= struct (default 1);
+  2. default =draw-string='s and =string-px='s =scale= to =(font-scale font)=;
+  3. in [[file:../poc/textview.lisp][textview.lisp]], multiply by scale in =tv-cw= and =tv-line-height=;
+  4. =(setf (font-scale font) 2)= → uniform 16×32, pixel-doubled.
+  A dot becomes a 2×2 square — fine for reading while experimenting, not for shipping.
+
+- /Path B — a real bigger font (crisp)./ A true 16×32 font is *wider* than 8, i.e.
+  *PSF2*. So: teach =load-psf= the PSF2 header (width/height are real fields), and
+  generalise =draw-string='s inner loop to glyphs wider than 8 (each row spans
+  =ceil(width/8)= bytes instead of one). Then load a 16×32 font. Properly drawn
+  glyphs, no blockiness.
+
+- /Path C — TrueType (the future, separate effort)./ Arbitrary size/weight from any
+  =.ttf=, but a rasteriser + a grayscale-blending blitter. Out of scope for now
+  ([[file:code-browser.org][§6.2]]); it slots in as a second font backend behind the same =draw-string=.
+
+* 8. The map — where everything is
+
+| you want to…                          | look at                                   |
+|---------------------------------------+-------------------------------------------|
+| read a font file                      | =load-psf=            ([[file:../poc/canvas.lisp][canvas.lisp]])          |
+| the font's shape (cw/ch/glyphs)       | =defstruct font=     ([[file:../poc/canvas.lisp][canvas.lisp]])          |
+| turn a glyph into pixels              | =draw-string=        ([[file:../poc/canvas.lisp][canvas.lisp]])          |
+| measure text width                    | =string-px=          ([[file:../poc/canvas.lisp][canvas.lisp]])          |
+| a row/column's pixel size             | =tv-cw= / =tv-line-height=  ([[file:../poc/textview.lisp][textview.lisp]])   |
+| mouse pixel ↔ (line,column)           | =col-at-x= / =x-of-col=     ([[file:../poc/textview.lisp][textview.lisp]])   |
+| get the pixels onto the screen        | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]     |
+| see it run                            | =sbcl --script poc/run-editor.lisp=       |
+
+* 9. Gotchas & glossary
+
+- *MSB-first.* Column 0 is bit 7 of the row byte, not bit 0. Get this backwards and
+  every glyph mirrors left-to-right. (=(logbitp (- 7 col) bits)=.)
+- *The =·= → =Ö= trap — FIXED for the shipped font.* PSF1's 256-glyph order is an
+  *implicit* Latin-1-ish table; a codepoint you assume (say =#\·=) may map to a
+  different glyph. That is why the tool ships a =.lolf= blob whose glyphs are
+  *indexed by real codepoint* ([[file:../poc/bdf2font.py][=bdf2font.py=]] / =load-font=, §7): =#\·= (183) is the
+  middle dot, verified. The trap only bites raw =load-psf= use — still, keep UI
+  text to characters the font actually has ([[file:code-browser.org][§6.2]]).
+- *Aliased, not antialiased.* Bitmap glyphs are pure on/off — crisp and fast, no
+  grey edges. Antialiasing only arrives with the TrueType path (§7 Path C).
+- *cell vs glyph.* =cw=/=ch= are the *cell* (the box a character occupies, incl.
+  spacing); the glyph's ink usually fills less. Line spacing is =ch + lead= (the
+  =+ 3= in =tv-line-height=).
+- *scale ≠ a bigger font.* Scaling magnifies the same 8×16 bitmap (blocky). A
+  bigger *font* has more, properly-drawn pixels. Different things (§7 A vs B).

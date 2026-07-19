@@ -39,6 +39,3 @@ screen.png
 # graphics POC build outputs (poc/build-poc.sh)
 poc/out/
 poc/screen-fb.png
-# poc/font16.psf is Terminus (OFL) borrowed from the host — not redistributed
-# here; regenerate it per poc/README.org before running the POC.
-poc/font16.psf

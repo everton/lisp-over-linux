@@ -20,7 +20,7 @@
       (multiple-value-bind (xres yres stride bpp) (lol.fb:fb-geometry)
         (format t "[poc] framebuffer ~ax~a stride=~a bpp=~a~%" xres yres stride bpp)
         (finish-output)
-        (let* ((font   (lol.canvas:load-psf "/font16.psf"))
+        (let* ((font   (lol.canvas:load-font "/cozette.lolf"))
                (alien  (with-open-file (s "/alien.rgba"
                                           :element-type '(unsigned-byte 8))
                          (let ((v (make-array (file-length s)

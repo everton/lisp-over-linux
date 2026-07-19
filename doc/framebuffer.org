@@ -3,7 +3,8 @@
 
 Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
 [[file:kernel-config.org][kernel-config.org]] (Display section) · Lisp side:
-[[file:sbcl-init.org][sbcl-init.org]].
+[[file:sbcl-init.org][sbcl-init.org]]. Companion: [[file:fonts.org][fonts.org]] — how *our own* Lisp renderer turns a
+character into pixels (glyphs → pixels), where this file covers pixels → panel.
 
 Why this file exists: the framebuffer is what was missing the day the laptop
 booted to a *black screen*. Understanding it explains that bug, the four Display
