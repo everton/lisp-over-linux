@@ -776,16 +776,35 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   compositing. All on =(unsigned-byte 32)= arrays with type declarations; a full
   1280x800 clear is ~1 M words and costs single-digit milliseconds in SBCL.
   Damage rectangles keep the steady state far cheaper than that.
-- *Fonts.* The real decision.
-  - /Start:/ a good *bitmap* font at two or three sizes, baked into the image as a
-    blob exactly like =alien.rgba= ([[file:framebuffer.org][framebuffer.org §8]]). Crisp, aliased, fast, and
-    period-correct — Smalltalk-80 and Genera both looked superb this way.
-    *Licensing:* the kernel's built-in =font_8x16= is *GPL — do not lift it* (the
-    README's MIT stance is deliberate). Use a permissive bitmap face: Cozette
-    (MIT) or Spleen (BSD-2).
-  - /Later, optional:/ a TrueType rasterizer with grayscale antialiasing. Real work
-    (glyf parsing, quadratic curves, a scanline filler) and a genuinely fun
-    Lisp project, but a *distraction* from the browser. Do not start here.
+- *Fonts.* Decided (with the user): *bitmap-first; TTF is a separate future
+  effort, not now.* /How the current bitmap path works, end to end — a navigation
+  guide: [[file:fonts.org][fonts.org]]./ The key is that neither we, nor the browser, hand-authors
+  glyphs — a =font= is a *swappable backend* answering "give me the bitmap +
+  advance for this glyph"; =draw-string= renders whatever font object it is handed.
+  So font choice is data, not code, and adding TTF later is *additive* (a second
+  backend behind the same call), never a rewrite.
+  - /Now — the bitmap backend: DONE, font chosen./ The shipped font is *Cozette
+    (MIT)*, baked like =alien.rgba= ([[file:framebuffer.org][framebuffer.org §8]]) into our own tiny =.lolf=
+    blob ([[file:../poc/cozette.lolf][poc/cozette.lolf]], 6×15) by the build-host converter [[file:../poc/bdf2font.py][poc/bdf2font.py]]
+    (BDF → blob). The converter indexes glyphs by *real codepoint*, which is what
+    prevents the =·=→=Ö= class of bug (verified: =#\·= renders as the middle dot).
+    Its MIT licence ships beside it (=cozette-LICENSE.txt=). Crisp, fast,
+    period-correct (Smalltalk-80 and Genera looked superb this way). *Licensing:*
+    the kernel's =font_8x16= is *GPL — do not lift it*; Cozette was picked from a
+    side-by-side comparison (also-rans: Spleen BSD-2, the X11 "fixed" family). Dim
+    and colour are *free* (palette, not font); bold is a second variant or a
+    double-strike; italic is a shear or just colour.
+  - /Future, a SEPARATE effort:/ a TrueType/OpenType rasterizer with grayscale
+    antialiasing. This is what maximises font experimentation — *any* =.ttf=/=.otf=
+    at any size drops in, no conversion — which is why it is worth doing eventually;
+    but it is real work (glyf parsing, quadratic curves, a scanline filler, and
+    upgrading the blitter to per-pixel alpha) and is deliberately *out of scope for
+    the browser*. It slots in as a second =font= backend when its own time comes.
+  - *Chrome vs. text:* render *all text — including symbolic glyphs like the drill
+    arrows — through the font*, so swapping fonts restyles everything uniformly.
+    Draw only genuinely *non-textual* structure (panel borders, scrollbar, caret
+    bar, selection rectangle) as shapes with =fill-rect=/=draw-line= — no font
+    provides those as text, so drawing them constrains nothing.
 - *A widget layer:* panes, list views, scrollbars, splitters, menus, and — the
   biggest single piece — a *text view* with a proportional-font caret, click-to-
   position, drag-selection, and scrolling. This is strictly harder than a
@@ -895,6 +914,51 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   set, file-out (§5.1).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
+
+* 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
+
+Agreed with the user as a *future* direction, not a phase to schedule. The vision:
+*documentation stops being a static sibling of the code and becomes a navigable,
+always-in-sync surface inside the tool.* A guide like [[file:fonts.org][fonts.org]] would open *in the
+browser*, and its reference to =draw-string= would be a *live link* you click to
+drill straight into =(present #'draw-string)= — the real definition, its senders,
+its disassembly — instead of a =[[file:...]]= you resolve by hand. This is
+Glamorous Toolkit's "moldable development" / documenter, in our terms.
+
+It is not a new mechanism — it is the =present= protocol (§4½) meeting our =.org=
+docs:
+
+- *An =.org= document becomes a subject.* Parse it with a Common Lisp org parser
+  (e.g. =cl-org-mode=; keep it "an org parser" so we are not wedded to one), and
+  add =(present (d org-document))= — one new subject type + one =present= method,
+  exactly the extensibility the drill-down design was built for.
+- *Its code references become items with targets.* The parser hands us the
+  =[[file:…]]= links and inline symbol mentions; each becomes a drill item whose
+  target is the definition — resolved through the registry / model layer (§2, §4½)
+  we already have (name → definition is =definitions-of= / =class-info= / …). Click
+  it → the next panel is the live code.
+- *Runnable examples, later.* An org =src= block could become a Workspace Do-it —
+  the doc's examples execute against the live image. (Pharo/GT territory; optional.)
+
+Two dependencies make this a *horizon*, not a near step — and they are worth
+naming because it is our first real *third-party library*:
+
+1. *Getting a CL library INTO the image.* cl-org-mode would be *baked at build
+   time* the way =sb-bsd-sockets= already is (quicklisp on the build host → load →
+   =save-lisp-and-die= freezes it in) — no runtime quicklisp needed. This is the
+   first exercise of the library-integration story, and a good small one (we
+   already write org, so the library earns its place immediately).
+2. *Making that library's OWN source browsable* — the concrete test of §2's
+   layered =source-of=. Two options, pick per library: *load-record it at build
+   time* (bake its source into the registry — no disk needed, best for a curated
+   library like this one), or, once the machine has a *disk* (§5), read it on
+   demand from its files via =sb-introspect= source locations (SLIME's =M-.=,
+   library-agnostic). Either way, no per-library patching (see §2).
+
+So the sequencing: after the browser core (Phases 4–6); the curated-bake path needs
+only build-time quicklisp, the general path waits on the disk (§5). Nothing to do
+now — recorded so the guides we are writing (=[[file:fonts.org][fonts.org]]= and friends) are, in
+hindsight, the first content this feature will make live.
 
 * 9. Risks, honestly
 
