@@ -66,6 +66,8 @@
 (defparameter +row-h+ 17)
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
+(defvar *pending-accept* nil "T after the first C-c of the C-c C-c Accept chord.")
+(defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
 
 ;;; ---- drawing -------------------------------------------------------------
 
@@ -119,8 +121,7 @@
   ;; title strip
   (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-hi*)
   (lol.canvas:draw-string canvas *bfont* "lisp-over-linux · browser" 10 3 *sh-accent*)
-  (let* ((n (length *trail*))
-         (ancestors (butlast *trail*))
+  (let* ((ancestors (butlast *trail*))
          (cur (current-pane))
          (y (+ +bar-h+ 4)))
     ;; ancestor breadcrumb bars
@@ -152,9 +153,6 @@
 
 ;;; ---- input ---------------------------------------------------------------
 
-(defvar *pending-accept* nil  "T after the first C-c of the C-c C-c Accept chord.")
-(defvar *browser-status* nil  "A transient status message (e.g. Accept result), or NIL.")
-
 (defun accept-pane (pane)
   "Compile the edited source buffer into the live image + update the registry
    (accept-source). Sets *browser-status* to the outcome."
@@ -172,8 +170,14 @@
   (let ((p (current-pane)))
     (cond
       ((eq key :escape) :quit)                    ; universal escape hatch
+      ;; C-g = back, everywhere (the console can't deliver SuperL, so Ctrl-g is the
+      ;; portable "back" that also works while editing a source pane). At the root,
+      ;; there is nothing to pop, so C-g leaves the browser.
+      ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
+       (setf *pending-accept* nil *browser-status* nil)
+       (if (cdr *trail*) (progn (trail-pop) nil) :quit))
       ;; --- SuperL layer: trail navigation, over ANY pane (never the editor's) ---
-      ((lol.x11:super-p state)
+      ((lol.canvas:super-p state)
        (setf *pending-accept* nil)
        (case key
          (:left (trail-pop) (setf *browser-status* nil))   ; back
@@ -182,7 +186,7 @@
       ;; --- editable source pane: plain/Ctrl keys are the editor's; C-c C-c Accepts ---
       ((editable-pane-p p)
        (cond
-         ((and (lol.x11:ctrl-p state) (eql key #\c))
+         ((and (lol.canvas:ctrl-p state) (eql key #\c))
           (if *pending-accept*
               (progn (accept-pane p) (setf *pending-accept* nil))
               (setf *pending-accept* t))

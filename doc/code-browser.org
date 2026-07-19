@@ -1001,19 +1001,25 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   form → recompiled into the running image; Accept an invalid form → the error is
   shown. The modifier split keeps it collision-free — Backspace deletes, =SuperL-←=
   steps back (§4¾).
-  Still owed: trail *tabs* + the *Spotter* (§4¾, multiple trails), and moving it
-  onto =/dev/fb0= (Phase 5). /Milestone reached in part: browse the browser, edit
-  it live./ Confirmed *less* work than the old plan: one accordion shell + N
-  =present= methods.
+  Still owed: trail *tabs* + the *Spotter* (§4¾, multiple trails).
+  /Milestone reached in part: browse the browser, edit it live./ Confirmed *less*
+  work than the old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
   generic-function and condition subjects. The generics matrix drills to the
   effective-method onion drills to source; the condition two-stack *is* the
   debugger, so building it here means phase 6's debugger is mostly done. Design
   spec: [[file:../media/browser-views-design.html][media/browser-views-design.html]].
-- *Phase 5 — into the machine.* The framebuffer backend (§6.3) + evdev mouse +
-  =KD_GRAPHICS=. The identical browser, now on the bare metal, as PID 1.
-  /This is the screenshot the project exists for./ (The =/dev/fb0= present path and
-  =KD_GRAPHICS= are already proven in [[file:../poc/fb.lisp][poc/fb.lisp]].)
+- *Phase 5 — into the machine.* [DONE (keyboard) — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the *same*
+  shell runs full-screen on =/dev/fb0=, launched from the supervisor menu (=b)=),
+  as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input = the raw
+  console keyboard (=with-raw-mode= + =read-escape=, the line editor's) mapped to
+  the shell keys; back/quit = =C-g= (the console can't deliver SuperL). The toolkit
+  (canvas/textview/fb/shell) is baked into the image; =cozette.lolf= ships in the
+  cpio. /Verified by QMP screenshot: 233 CL-USER definitions listed on the bare
+  framebuffer — the machine browsing (and editing) its own code from its own menu,
+  no X, no host. This is the screenshot the project exists for./ Still owed: the
+  *evdev mouse* (=CONFIG_INPUT_EVDEV=y= is on; /dev/input/eventN unread) and
+  PageUp/Down + wheel scroll ([[file:../poc/README.org][poc/README.org]] gaps).
 - *Phase 6 — the live system.* Debugger pane (falls out of phase 4a), the change
   set, file-out (§5.1).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application

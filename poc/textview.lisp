@@ -370,8 +370,8 @@
 (defun tv-key (tv key state)
   "KEY is a character or a keyword (see lol.x11:decode-key). Returns :accept when
    the user asks to compile the buffer, else NIL."
-  (let ((shift (lol.x11:shift-p state))
-        (ctrl  (lol.x11:ctrl-p state)))
+  (let ((shift (lol.canvas:shift-p state))
+        (ctrl  (lol.canvas:ctrl-p state)))
     (cond
       ;; ---- Ctrl chords ----
       ((and ctrl (characterp key))

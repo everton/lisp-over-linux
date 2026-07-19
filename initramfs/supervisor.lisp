@@ -64,6 +64,7 @@
           (sb-unix:unix-getpid) (lisp-implementation-version)
           (software-type) (software-version))
   (format t "  r) run a Lisp REPL~%")
+  (format t "  b) code browser (drill-down, on the framebuffer)~%")
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
   (format t "  m) show memory usage~%")
@@ -103,6 +104,7 @@
               (cond
                 ((eq line :eof) (sleep 1))            ; no input source: don't spin
                 ((string-equal choice "r") (run-repl))
+                ((string-equal choice "b") (run-browser-fb))
                 ((string-equal choice "w")
                  (incf worker-id)
                  (format t "~&spawning worker ~a~%" worker-id)

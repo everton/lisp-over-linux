@@ -30,6 +30,9 @@ file /sbin/lisp initramfs/lisp-init 0755 0 0
 # (generated from lisplogo_alien_256.png: `convert alien256.png -depth 8 RGBA:alien.rgba`)
 file /alien.rgba initramfs/alien.rgba 0644 0 0
 
+# --- the code browser's font: Cozette (MIT), our 6x15 .lolf blob (poc/README) ---
+file /cozette.lolf poc/cozette.lolf 0644 0 0
+
 # --- glibc runtime the SBCL binary needs (exact paths the loader expects) ---
 file /lib64/ld-linux-x86-64.so.2         /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 0755 0 0
 file /usr/lib/x86_64-linux-gnu/libc.so.6 /usr/lib/x86_64-linux-gnu/libc.so.6            0755 0 0

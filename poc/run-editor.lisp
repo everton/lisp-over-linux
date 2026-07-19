@@ -143,7 +143,7 @@
                     ;; Esc quits
                     ((eq key :escape) (setf quit t))
                     ;; the C-c C-c prefix chord, exactly as the plan specifies
-                    ((and (lol.x11:ctrl-p st) (eql key #\c))
+                    ((and (lol.canvas:ctrl-p st) (eql key #\c))
                      (if pending-c-c
                          (progn (accept tv) (setf pending-c-c nil))
                          (setf pending-c-c t)))

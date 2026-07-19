@@ -25,7 +25,7 @@
   (:export #:open-display #:close-display #:display-w #:display-h
            #:present #:next-event #:event-kind #:event-x #:event-y
            #:event-detail #:event-w #:event-h #:event-state
-           #:decode-key #:shift-p #:ctrl-p #:super-p))
+           #:decode-key))
 
 (in-package :lol.x11)
 
@@ -207,9 +207,7 @@
           (setf (display-syms-per d) n
                 (display-keysyms d) syms))))))
 
-(defun shift-p (state) (logbitp 0 state))
-(defun ctrl-p  (state) (logbitp 2 state))
-(defun super-p (state) (logbitp 6 state))   ; Mod4 (the Super/StumpWM key)
+;; modifier predicates now live in lol.canvas (backend-neutral); decode-key uses them.
 
 (defun keysym (d keycode shift)
   "The keysym for KEYCODE at the shifted/unshifted level."
@@ -223,7 +221,7 @@
 (defun decode-key (d keycode state)
   "Return either a CHARACTER to insert, or a keyword for a named key, or NIL.
    Latin-1 keysyms ARE their character codes, which is most of the work."
-  (let ((k (keysym d keycode (shift-p state))))
+  (let ((k (keysym d keycode (lol.canvas:shift-p state))))
     (when k
       (cond
         ((or (<= #x20 k #x7e) (<= #xa0 k #xff)) (code-char k))
