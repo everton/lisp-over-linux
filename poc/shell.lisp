@@ -59,6 +59,7 @@
 (defparameter +bar-h+ 20)
 (defparameter +row-h+ 17)
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
+(defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
 
 ;;; ---- drawing -------------------------------------------------------------
 
@@ -121,6 +122,7 @@
           do (draw-crumb canvas y w p i) (incf y (+ +bar-h+ 3)))
     ;; the expanded current pane
     (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 24)))
+      (setf *content-top* body-y)                 ; remember it for click hit-testing
       (lol.canvas:fill-rect canvas 8 y (- w 16) (- h y 24) *sh-panel*)
       (lol.canvas:draw-rect canvas 8 y (- w 16) (- h y 24) *sh-rule*)
       (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
@@ -162,20 +164,20 @@
       (t nil))))
 
 (defun browser-click (x y)
-  "Click: a breadcrumb bar pops to that level; an item in the current list drills."
+  "Click: a breadcrumb bar pops to that level; an item in the current list drills.
+   Uses the geometry DRAW-BROWSER recorded (*crumb-rects*, *content-top*), so click
+   and draw can never disagree."
   (declare (ignorable x))
-  ;; breadcrumb?
-  (let ((hit (assoc-if (lambda (yt) (<= yt y (+ yt +bar-h+))) *crumb-rects* :key #'cdr)))
+  ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
+  (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*)))
     (if hit
         (trail-goto (car hit))
-        ;; else, an item in the current list view
+        ;; else an item in the current list view (source panes have no items)
         (let ((p (current-pane)))
-          (unless (pane-tv p)
+          (when (and (not (pane-tv p)) (>= y *content-top*))
             (let* ((items (view-items (pane-view p)))
-                   (rows (loop for a in *crumb-rects* maximize (+ (cdr a) +bar-h+ 3)))
-                   (body-y (+ (max (+ +bar-h+ 4) rows) +bar-h+ 4))
-                   (i (+ (pane-top p) (floor (- y body-y) +row-h+))))
-              (when (and (>= i 0) (< i (length items)))
+                   (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
+              (when (< i (length items))
                 (setf (pane-sel p) i)
                 (let ((it (nth i items)))
                   (when (item-subject it) (trail-push (item-subject it)))))))))))
