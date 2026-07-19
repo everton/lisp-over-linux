@@ -26,6 +26,7 @@
 (defconstant +vtime-off+    (+ 17 5))      ; c_cc[VTIME]
 (defconstant +vmin-off+     (+ 17 6))      ; c_cc[VMIN]
 (defconstant +icanon\|echo+ #x0A)          ; ICANON(0x02) | ECHO(0x08), both in c_lflag's low byte
+(defconstant +isig+         #x01)          ; ISIG — generates SIGINT/SIGQUIT from Ctrl-C/\
 
 (sb-alien:define-alien-routine ("tcgetattr" %tcgetattr) sb-alien:int
   (fd sb-alien:int) (tio (sb-alien:* sb-alien:unsigned-char)))
@@ -39,13 +40,17 @@
     (unwind-protect (zerop (%tcgetattr fd tio))
       (sb-alien:free-alien tio))))
 
-(defmacro with-raw-mode ((&optional (fd 0)) &body body)
+(defmacro with-raw-mode ((&optional (fd 0) (signals t)) &body body)
   "Run BODY with FD's TTY in raw-ish mode (no canonical line buffering, no echo;
    read() returns after each keystroke). Restores the saved settings on ANY exit
-   — return, error, or non-local — via unwind-protect. We keep ISIG enabled, so
-   Ctrl-C still interrupts a runaway eval the normal way."
-  (let ((g-fd (gensym)) (saved (gensym)) (work (gensym)) (i (gensym)))
+   — return, error, or non-local — via unwind-protect.
+
+   SIGNALS t (default) keeps ISIG on, so Ctrl-C still interrupts a runaway eval —
+   right for the REPL. Pass NIL to also clear ISIG, so Ctrl-C arrives as a BYTE
+   instead of a signal — the code browser needs that for its C-c C-c Accept chord."
+  (let ((g-fd (gensym)) (saved (gensym)) (work (gensym)) (i (gensym)) (mask (gensym)))
     `(let* ((,g-fd  ,fd)
+            (,mask  (if ,signals +icanon\|echo+ (logior +icanon\|echo+ +isig+)))
             (,saved (sb-alien:make-alien sb-alien:unsigned-char +termios-size+))
             (,work  (sb-alien:make-alien sb-alien:unsigned-char +termios-size+)))
        (unwind-protect
@@ -53,8 +58,8 @@
               (%tcgetattr ,g-fd ,saved)
               (dotimes (,i +termios-size+)         ; start from a copy of the live settings
                 (setf (sb-alien:deref ,work ,i) (sb-alien:deref ,saved ,i)))
-              (setf (sb-alien:deref ,work +lflag-off+)            ; clear ICANON|ECHO
-                    (logand (sb-alien:deref ,work +lflag-off+) (lognot +icanon\|echo+)))
+              (setf (sb-alien:deref ,work +lflag-off+)            ; clear ICANON|ECHO [|ISIG]
+                    (logand (sb-alien:deref ,work +lflag-off+) (lognot ,mask)))
               (setf (sb-alien:deref ,work +vtime-off+) 0          ; VTIME=0, VMIN=1:
                     (sb-alien:deref ,work +vmin-off+)  1)         ; block for one keystroke
               (%tcsetattr ,g-fd 0 ,work)           ; 0 = TCSANOW

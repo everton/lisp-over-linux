@@ -44,7 +44,9 @@
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres)))
             (lol.fb:with-graphics-console            ; KD_GRAPHICS: fbcon stops drawing
-              (with-raw-mode (0)                     ; console keys, unbuffered, no echo
+              ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord),
+              ;; not SIGINT — otherwise you cannot Accept on the framebuffer.
+              (with-raw-mode (0 nil)                 ; console keys, unbuffered, no echo, no ISIG
                 (loop
                   (draw-browser canvas xres yres)
                   (lol.fb:present-fb canvas)
