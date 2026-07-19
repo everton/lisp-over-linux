@@ -996,9 +996,11 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   rooted at CL-USER — and it *browses its own source* (registry/model/present/shell
   are all load-recorded). *Editing in place works:* a =:source= pane (your code) is
   an editable buffer; =C-c C-c= runs =accept-source= — compiles the buffer into the
-  live image AND updates the registry, pushing the old text onto =defn-versions=
-  (verified headless: edit → live redefinition → version pushed). The modifier
-  split keeps it collision-free — Backspace deletes, =SuperL-←= steps back (§4¾).
+  live image AND updates the registry, pushing the old text onto =defn-versions=.
+  *Confirmed live in the browser by the user:* edit a definition, Accept a valid
+  form → recompiled into the running image; Accept an invalid form → the error is
+  shown. The modifier split keeps it collision-free — Backspace deletes, =SuperL-←=
+  steps back (§4¾).
   Still owed: trail *tabs* + the *Spotter* (§4¾, multiple trails), and moving it
   onto =/dev/fb0= (Phase 5). /Milestone reached in part: browse the browser, edit
   it live./ Confirmed *less* work than the old plan: one accordion shell + N
