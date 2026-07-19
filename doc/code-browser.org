@@ -788,7 +788,29 @@ to =SuperL-n=).
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
 =C-c C-c= Accept, =C-x C-e= Do it, =C-c C-p= Print it, =C-c C-i= Inspect it, =M-.=
-/ =M-,= Senders / Implementors, and the text-view's own =C-a/C-e/C-k/…= editing.
+/ =M-,= jump-to-definition / Senders, and the text-view's own =C-a/C-e/C-k/…=
+editing.
+
+*Editing a definition in place — the modifier split is what prevents the
+collision.* A source pane backed by the registry (*your* code) is an *editable*
+buffer: plain keys and =Ctrl/Meta= are the editor's — *Backspace deletes*, =↵=
+inserts a newline, =↑↓= move the caret, =C-c C-c= Accepts (compiles the buffer into
+the live image, pushes the old text onto the version history). Trail navigation
+therefore lives *only* on the SuperL layer — =SuperL-←= is "back", NOT plain
+Backspace. So while you edit, Backspace deletes and =SuperL-←= steps back; they
+never fight. The rule generalises:
+
+| pane                    | plain keys + Ctrl/Meta                          | SuperL          |
+|-------------------------+-------------------------------------------------+-----------------|
+| *source* (your code)    | edit (Backspace deletes · =↵= newline · =C-c C-c= Accept) | navigate |
+| *reference* (a builtin) | read-only (scroll only)                         | navigate        |
+| *list* (class/pkg/xref) | navigate (=↑↓= select · =↵= drill · Backspace back) | navigate    |
+
+Only *your* code is editable — the "two kinds of subject" split (§2): a
+=:source= view (registry-backed) is an editable Accept buffer; a =:reference=
+view (a builtin like =mapcar=, no shipped source) stays read-only, since you
+cannot edit-and-Accept =car= anyway. In a *list* pane there is nothing to edit, so
+plain keys may navigate freely (Backspace-back is fine there).
 
 * 5. Persistence — and the kernel gap
 
@@ -972,10 +994,15 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   syntax-coloured textview for source), drill on ↵/click, pop on ⌫ / breadcrumb-
   click, =commands-for= in the status line. =sbcl --script poc/run-browser.lisp=,
   rooted at CL-USER — and it *browses its own source* (registry/model/present/shell
-  are all load-recorded). Still owed: trail *tabs* + the *Spotter* (§4¾, multiple
-  trails), Accept wired through the shell, and moving it onto =/dev/fb0= (Phase 5).
-  /Milestone reached in part: browse the browser./ Confirmed *less* work than the
-  old plan: one accordion shell + N =present= methods.
+  are all load-recorded). *Editing in place works:* a =:source= pane (your code) is
+  an editable buffer; =C-c C-c= runs =accept-source= — compiles the buffer into the
+  live image AND updates the registry, pushing the old text onto =defn-versions=
+  (verified headless: edit → live redefinition → version pushed). The modifier
+  split keeps it collision-free — Backspace deletes, =SuperL-←= steps back (§4¾).
+  Still owed: trail *tabs* + the *Spotter* (§4¾, multiple trails), and moving it
+  onto =/dev/fb0= (Phase 5). /Milestone reached in part: browse the browser, edit
+  it live./ Confirmed *less* work than the old plan: one accordion shell + N
+  =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
   generic-function and condition subjects. The generics matrix drills to the
   effective-method onion drills to source; the condition two-stack *is* the

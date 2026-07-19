@@ -26,7 +26,8 @@
                 ; :class :condition :struct :type :package :compiler-macro
   source        ; the verbatim text, comments and formatting intact
   file          ; build-time provenance (the host path — for reference only)
-  label)        ; for methods: qualifiers + specializers, to tell them apart
+  label         ; for methods: qualifiers + specializers, to tell them apart
+  versions)     ; previously-accepted source strings, most-recent first (Smalltalk Versions)
 
 (defvar *registry* (make-hash-table :test 'equal)
   "Maps a definition NAME to a list of DEFN records (most-recent first). One name
@@ -101,6 +102,33 @@
                   until (eq form :eof)
                   do (register-source form (subseq text start (file-position s)) path)))))))
   (load path))
+
+;;; ---- Accept: compile edited source into the live image + update the registry --
+
+(defun accept-source (text &optional name kind)
+  "Compile TEXT (an edited definition) into the RUNNING image and update the
+   registry: eval the form (redefining it live — the Smalltalk 'accept'), and set
+   its recorded source, pushing the previous source onto the version history. NAME
+   and KIND (from the browser pane's subject) disambiguate when the form's own head
+   is enough; the form is authoritative when it names a definition. Returns the
+   name compiled. Signals on a read/compile error (the caller reports it)."
+  (let* ((form   (read-from-string text))
+         (result (eval form)))                  ; compile/redefine in the live image
+    (multiple-value-bind (fname fkind flabel) (defn-name-and-kind form)
+      (declare (ignore flabel))
+      (let* ((the-name (or fname name))
+             (the-kind (or fkind kind))
+             (trimmed  (string-trim '(#\Newline #\Space #\Tab) text)))
+        (when the-name
+          (let* ((defns    (gethash the-name *registry*))
+                 (existing (find the-kind defns :key #'defn-kind)))
+            (if existing
+                (progn
+                  (push (defn-source existing) (defn-versions existing))
+                  (setf (defn-source existing) trimmed))
+                (push (make-defn :name the-name :kind the-kind :source trimmed)
+                      (gethash the-name *registry*)))))
+        (or the-name result)))))
 
 ;;; ---- runtime queries (what the REPL / browser ask) -----------------------
 

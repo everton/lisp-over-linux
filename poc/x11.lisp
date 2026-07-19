@@ -25,7 +25,7 @@
   (:export #:open-display #:close-display #:display-w #:display-h
            #:present #:next-event #:event-kind #:event-x #:event-y
            #:event-detail #:event-w #:event-h #:event-state
-           #:decode-key #:shift-p #:ctrl-p))
+           #:decode-key #:shift-p #:ctrl-p #:super-p))
 
 (in-package :lol.x11)
 
@@ -209,6 +209,7 @@
 
 (defun shift-p (state) (logbitp 0 state))
 (defun ctrl-p  (state) (logbitp 2 state))
+(defun super-p (state) (logbitp 6 state))   ; Mod4 (the Super/StumpWM key)
 
 (defun keysym (d keycode shift)
   "The keysym for KEYCODE at the shifted/unshifted level."

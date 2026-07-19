@@ -40,7 +40,8 @@
                (:key-press
                 (let ((key (lol.x11:decode-key d (lol.x11:event-detail e)
                                                (lol.x11:event-state e))))
-                  (when (eq :quit (browser-key key)) (setf quit t))))
+                  (when (eq :quit (browser-key key (lol.x11:event-state e)))
+                    (setf quit t))))
                (:button-press
                 (when (= 1 (lol.x11:event-detail e))
                   (browser-click (lol.x11:event-x e) (lol.x11:event-y e))))
