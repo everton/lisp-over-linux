@@ -65,16 +65,22 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
   it is 15 lines; blitting it is 20. Crisp, fast, and enough for a browser.
 - *=KD_GRAPHICS= works and is cheap* — one ioctl, and fbcon stops fighting us. It
   does *not* stop key delivery, so the existing raw-mode keyboard survives intact.
-- *The mouse is already there.* The guest's boot log shows
-  =input: ImExPS/2 Generic Explorer Mouse ... input3=, so =/dev/input/event3= is
-  live under QEMU today. =CONFIG_INPUT_EVDEV=y= is already set: no kernel change.
+- *The mouse is already there — and now read.* The guest's boot log shows
+  =input: ImExPS/2 Generic Explorer Mouse=; =CONFIG_INPUT_EVDEV=y= is already set,
+  so it is live under QEMU with no kernel change. =fb-browser.lisp= reads it: a
+  cursor tracks motion and left-click drills. Note the device is *not* a fixed
+  =eventN= and has no =mouseN= handler (=mousedev= is not loaded) — =find-mouse-device=
+  locates it by capability instead, scanning =/proc/bus/input/devices= for the block
+  whose =B: EV=- mask has EV_REL (bit 2) or EV_ABS (bit 3) set. Here that resolves
+  to =/dev/input/event2=.
 
 * Known rough edges (it is a POC)
 
 - The framebuffer path pushes a *full frame* per present (no damage tracking) and
   writes it row-by-row rather than via =mmap=. Fine for a static scene; the real
   toolkit needs dirty rectangles.
-- =run-guest.lisp= draws once and parks. It does not read the evdev mouse yet.
+- =run-guest.lisp= (the standalone POC scene) draws once and parks and does not
+  read the mouse; the shipped =fb-browser.lisp= does read it (see above).
 - Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.
 
 ** Browser shell — known gaps / TODO (=shell.lisp=, =run-browser.lisp=)

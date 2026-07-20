@@ -912,11 +912,18 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
 - *Keyboard: already solved.* =KD_GRAPHICS= stops the console *rendering*; it does
   not stop key *delivery*. The existing raw-mode termios path keeps working
   untouched — the framebuffer backend needs *no new keyboard code*.
-- *Mouse: evdev.* Confirmed =CONFIG_INPUT_EVDEV=y= is already on. Read 24-byte
-  =struct input_event= records from =/dev/input/eventN= (16-byte timeval, u16 type,
-  u16 code, s32 value); handle =EV_REL=/=REL_X=/=REL_Y= and =EV_KEY=/=BTN_LEFT=.
-  Plain binary file I/O. In QEMU add =-device usb-tablet= (absolute coordinates —
-  much easier than relative).
+- *Mouse: evdev — done* (=fb-browser.lisp=). =CONFIG_INPUT_EVDEV=y= is on. We read
+  24-byte =struct input_event= records from =/dev/input/eventN= (16-byte timeval,
+  u16 type, u16 code, s32 value), open non-blocking, and =poll(2)= keyboard (fd 0)
+  and the mouse fd together so the loop wakes on either. We handle both
+  =EV_REL=/=REL_X=/=REL_Y= (the PS/2 mouse QEMU gives us — relative) and
+  =EV_ABS=/=ABS_X=/=ABS_Y= (a =usb-tablet=, if added — absolute, 0..32767), plus
+  =EV_KEY=/=BTN_LEFT= for the click; a cursor is drawn each frame and left-click
+  calls =browser-click=. /Finding the device:/ do *not* assume =eventN= or grep the
+  Handlers line for =mouse= — =mousedev= is not loaded, so a plain PS/2 mouse shows
+  only =Handlers=eventN= with no =mouseN= token. =find-mouse-device= instead reads
+  =/proc/bus/input/devices= and picks the block whose =B: EV=- capability mask has
+  EV_REL (bit 2) or EV_ABS (bit 3) set (here: =/dev/input/event2=).
   /Real-hardware caveat:/ the laptop touchpad needs kernel options we do not
   currently have (=CONFIG_MOUSE_PS2= or i2c-HID). Adding them is a modest kernel
   change, but until then the mouse works in QEMU and on a USB mouse only — so keep
@@ -1009,16 +1016,17 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   effective-method onion drills to source; the condition two-stack *is* the
   debugger, so building it here means phase 6's debugger is mostly done. Design
   spec: [[file:../media/browser-views-design.html][media/browser-views-design.html]].
-- *Phase 5 — into the machine.* [DONE (keyboard) — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the *same*
-  shell runs full-screen on =/dev/fb0=, launched from the supervisor menu (=b)=),
-  as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input = the raw
-  console keyboard (=with-raw-mode= + =read-escape=, the line editor's) mapped to
-  the shell keys; back/quit = =C-g= (the console can't deliver SuperL). The toolkit
-  (canvas/textview/fb/shell) is baked into the image; =cozette.lolf= ships in the
-  cpio. /Verified by QMP screenshot: 233 CL-USER definitions listed on the bare
-  framebuffer — the machine browsing (and editing) its own code from its own menu,
-  no X, no host. This is the screenshot the project exists for./ Still owed: the
-  *evdev mouse* (=CONFIG_INPUT_EVDEV=y= is on; /dev/input/eventN unread) and
+- *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
+  *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
+  (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
+  =poll(2)=-multiplexed over the raw console keyboard (=with-raw-mode= + escape
+  parsing) and the evdev mouse (relative or absolute; a cursor is drawn and
+  left-click drills — see §6.3). Back/quit = =C-g= (the console can't deliver
+  SuperL). The toolkit (canvas/textview/fb/shell) is baked into the image;
+  =cozette.lolf= ships in the cpio. /Verified by QMP: CL-USER definitions listed on
+  the bare framebuffer, live edit-and-Accept round-trips, and a mouse click drilling
+  into a definition — the machine browsing (and editing) its own code from its own
+  menu, no X, no host. This is the screenshot the project exists for./ Still owed:
   PageUp/Down + wheel scroll ([[file:../poc/README.org][poc/README.org]] gaps).
 - *Phase 6 — the live system.* Debugger pane (falls out of phase 4a), the change
   set, file-out (§5.1).
