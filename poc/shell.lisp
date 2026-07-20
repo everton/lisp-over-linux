@@ -148,6 +148,25 @@
         (if ok (trail-push res)
             (setf *browser-status* (format nil "error: ~a" res)))))))
 
+(defun workspace-debug-it (pane)
+  "Eval the form before point with the debugger ARMED. We catch with HANDLER-BIND,
+   not the outer handler-case, precisely because a handler-bind handler runs BEFORE
+   the unwind — with the erroring stack still standing — so run-debugger-fb sees the
+   live restarts and backtrace, and invoking a restart from there actually transfers
+   control. An ABORT restart wraps the eval, guaranteeing a way back to the
+   workspace. (run-debugger-fb lives in fb-browser.lisp; funcall avoids a load-order
+   forward reference.)"
+  (let ((form (form-before-point (pane-tv pane))))
+    (when form
+      (restart-case
+          (handler-bind ((serious-condition
+                           (lambda (c) (funcall 'run-debugger-fb c))))
+            (let ((v (eval form)))
+              (setf *browser-status*
+                    (let ((*print-length* 40) (*print-level* 5)) (format nil "=> ~s" v)))))
+        (abort () :report "Return to the workspace"
+          (setf *browser-status* "aborted"))))))
+
 ;;; ---- drawing -------------------------------------------------------------
 
 (defun draw-item (canvas x y w item selected)
@@ -227,7 +246,7 @@
           (lol.canvas:draw-string canvas *bfont*
             (format nil "~a  SuperL-< back  q quit~@[   commands: ~a~]"
                     (cond ((workspace-pane-p cur)
-                           "C-x C-e Do it  C-c C-p Print it  C-c C-i Inspect it")
+                           "C-x C-e Do it  C-c C-p Print  C-c C-i Inspect  C-c C-d Debug")
                           ((editable-pane-p cur) "editing: C-c C-c accepts")
                           (t "up/dn move  ret drill"))
                     (and cmds (format nil "~{~a~^ · ~}" (mapcar #'command-label cmds))))
@@ -284,6 +303,7 @@
                 ((and (eq prefix :c-c) (or (and c (eql key #\i)) (eq key :tab))
                       (workspace-pane-p p))
                  (workspace-inspect-it p))
+                ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
                 ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
               nil))
            ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)

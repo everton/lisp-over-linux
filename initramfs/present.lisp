@@ -267,6 +267,7 @@
 ;;   C-x C-e   Do it       eval the form before point (result in the status line)
 ;;   C-c C-p   Print it    eval and weave the result inline, after the form
 ;;   C-c C-i   Inspect it   eval and open the value in the inspector
+;;   C-c C-d   Debug it     eval with the debugger armed (try a form that errors)
 ;;   C-g       leave
 ;; Editing is the text view's: caret, selection, syntax, auto-indent.
 

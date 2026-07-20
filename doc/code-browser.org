@@ -994,8 +994,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   (=p= runs =run-browser-fb= rooted at the workspace); a plain click now places the
   caret in any editable pane. /Verified on the framebuffer via QMP: =(+ 1 2)= Print
   it -> =3= woven inline, Do it -> status line, Inspect it -> the integer 3 open in
-  the inspector./ Still owed: Debug it (waits on the condition view) and a real
-  transcript stream binding.
+  the inspector. =C-c C-d= *Debug it* now evals with the debugger armed (see phase
+  6) — =(/ 1 0)= opens the live debugger; picking a restart flows its value back to
+  the status line./ Still owed: a real transcript stream binding.
 - *Phase 4 — the Browser: the =present= spine + the shell.* [SPINE DONE headless —
   [[file:../initramfs/present.lisp][present.lisp]]] The =present= + =commands-for= generics, the item/view/command
   structs, the affordance/disposition model, and a first set of methods (package,
@@ -1033,8 +1034,12 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   /Verified: on the host the =draw {caret,glyph-run} x {surfaces}= grid shows the
   surface abstraction's health at a glance; in the guest, =commands-for= drills to
   its matrix and to the =(subj-defn) -> (t)= primary chain on the framebuffer./
-  Still owed: the condition two-stack *is* the debugger, so building it here means
-  phase 6's debugger is mostly done. Design spec:
+  The condition two-stack *is* the debugger, so the runtime half is now built (see
+  phase 6): =restart-list= (=compute-restarts=, innermost-first) + =backtrace-frames=
+  (=sb-di=, what SBCL's own debugger walks) in [[file:../initramfs/model.lisp][model.lisp]], rendered live on the
+  framebuffer. Still owed as a *browsable subject*: the static face — =(present
+  condition)= showing the condition class DAG, signallers, handler clusters — as a
+  drillable view rather than only the live pop-up. Design spec:
   [[file:../media/browser-views-design.html][media/browser-views-design.html]].
 - *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
   *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
@@ -1052,8 +1057,21 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   machine browsing (and editing) its own code from its own menu, no X, no host. This
   is the screenshot the project exists for./ Still owed: the =M-.= keyboard jump, and
   PageUp/Down + wheel scroll ([[file:../poc/README.org][poc/README.org]] gaps).
-- *Phase 6 — the live system.* Debugger pane (falls out of phase 4a), the change
-  set, file-out (§5.1).
+- *Phase 6 — the live system.* [DEBUGGER DONE — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]
+  (=run-debugger-fb= / =draw-debugger=) + [[file:../initramfs/model.lisp][model.lisp]] + =workspace-debug-it= in
+  [[file:../poc/shell.lisp][poc/shell.lisp]]] An unhandled =serious-condition= from *Debug it* opens the live
+  debugger on the framebuffer: the condition report (multi-line), its type, the
+  *restart column* (up/dn select, ↵ or click to invoke, =C-g= aborts) and the
+  *backtrace spine* (=sb-di=, innermost first). The key is =handler-bind=, not the
+  outer =handler-case=: the handler runs *before the unwind*, with the erroring
+  stack still standing, so the restarts and backtrace are live and invoking a
+  restart genuinely transfers control. /Verified by QMP in the booted guest:
+  =(/ 1 0)= opens the debugger (=INTEGER-/-INTEGER → / → EVAL → WORKSPACE-DEBUG-IT →
+  RUN-BROWSER-FB → SUPERVISOR-MAIN → %START-LISP=); ABORT (↵ or =C-g=) returns to the
+  workspace with "aborted"; a =(with-simple-restart (retry …) (/ 1 0))= shows both
+  RETRY and ABORT, ↑/↓ move the selection, and invoking RETRY resumes — the eval
+  returns NIL, woven back as ==> NIL= in the status line./ Still owed: the change
+  set, file-out (§5.1), and frame-local inspection (=sb-di= frame variables).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

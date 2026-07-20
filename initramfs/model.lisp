@@ -357,6 +357,40 @@
   obj)
 
 ;;; ======================================================================
+;;; The condition system — the live debugger's two stacks (§3)
+;;; ======================================================================
+;;; A signal rises the HANDLER side with the stack intact; invoking a RESTART drops
+;;; the RESTART side and unwinds. compute-restarts gives the restart column (already
+;;; innermost-first, in stack order); sb-di walks the backtrace spine. This is the
+;;; data the framebuffer debugger (fb-browser.lisp) renders and acts on.
+
+(defun restart-list (&optional condition)
+  "The active restarts (innermost first — stack order), each a plist
+   (:name :report :restart). With CONDITION, only restarts associated with it (plus
+   the un-associated ones), exactly what would be offered were it unhandled."
+  (mapcar (lambda (r)
+            (list :name (restart-name r)
+                  :report (princ-to-string r)     ; the restart's report string
+                  :restart r))
+          (compute-restarts condition)))
+
+(defun backtrace-frames (&optional (count 40) (skip 0))
+  "The live call stack as a list of name strings, innermost first, via sb-di (what
+   SBCL's own debugger walks). SKIP drops the innermost frames (the debugger's own
+   machinery); COUNT caps depth. Each frame's name is best-effort — some internal
+   frames have no tidy name."
+  (let ((frames '()))
+    (do ((f (sb-di:top-frame) (sb-di:frame-down f))
+         (i 0 (1+ i)))
+        ((or (null f) (>= (length frames) count)) (nreverse frames))
+      (when (>= i skip)
+        (push (or (ignore-errors
+                    (let ((*print-length* 4) (*print-level* 3))
+                      (princ-to-string (sb-di:debug-fun-name (sb-di:frame-debug-fun f)))))
+                  "<anonymous frame>")
+              frames)))))
+
+;;; ======================================================================
 ;;; The rest of the xref wrappers (registry.lisp has senders/referrers/…)
 ;;; ======================================================================
 

@@ -230,6 +230,12 @@
 
 ;;; ---- the loop -----------------------------------------------------------
 
+;; The live I/O the running browser owns, published so the debugger (entered from
+;; *debugger-hook*, mid-loop) can draw to the same screen and read the same input
+;; without threading them through every call.
+(defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
+(defvar *fb-mouse* nil)  (defvar *fb-kbd* nil)
+
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT (default: the CL-USER
    package — the code browser; pass (subj-workspace) for the Workspace). Blocks until
@@ -243,7 +249,9 @@
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))
                 (kbd    (open-keyboard)))
-            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2) *ctrl-down* nil)
+            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2) *ctrl-down* nil
+                  *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
+                  *fb-mouse* mouse *fb-kbd* kbd)
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
@@ -265,3 +273,104 @@
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
       (format t "~&code browser: ~a~%" c) (finish-output))))
+
+;;; ---- the debugger: a condition made interactive (§3) ---------------------
+;;; Entered from *debugger-hook* with the stack STILL STANDING, so the restarts are
+;;; live and invoking one actually transfers control. It is a nested modal loop over
+;;; the same framebuffer + input the browser owns; it never returns without invoking
+;;; a restart (there is no standard debugger to fall through to as PID 1).
+
+(defvar *dbg-restart-top* 0 "screen-y of the first restart row, for click hit-testing.")
+(defparameter +dbg-row+ 17)
+
+(defun split-lines (string)
+  "STRING split on newlines into a list of lines (no trailing empty from a final \\n)."
+  (let ((lines '()) (start 0))
+    (loop for nl = (position #\Newline string :start start)
+          do (push (subseq string start (or nl (length string))) lines)
+             (if nl (setf start (1+ nl)) (return)))
+    (let ((result (nreverse lines)))
+      (if (and (cdr result) (string= "" (car (last result))))
+          (butlast result)
+          result))))
+
+(defun draw-debugger (canvas w h condition restarts backtrace sel)
+  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w 20 (lol.canvas:rgb #x5a #x1c #x1c))   ; red title
+  (lol.canvas:draw-string canvas *bfont* "DEBUGGER — an unhandled condition"
+                          10 3 (lol.canvas:rgb #xff #xd0 #xc0))
+  (let ((y 30))
+    ;; The condition's report is often multi-line (e.g. DIVISION-BY-ZERO prints the
+    ;; operation on a second line) — draw-string has no newline handling, so split
+    ;; and draw each line, or an embedded #\Newline blits as a stray glyph.
+    (dolist (line (split-lines (princ-to-string condition)))
+      (lol.canvas:draw-string canvas *bfont* line 12 y *sh-text*)
+      (incf y 17))
+    (incf y 3)
+    (lol.canvas:draw-string canvas *bfont* (format nil "type: ~(~a~)" (type-of condition))
+                            12 y *sh-dim*)
+    (incf y 30)
+    (lol.canvas:draw-string canvas *bfont*
+      "restarts  —  up/dn select, Enter invoke, C-g abort:" 12 y *sh-accent*)
+    (incf y 22)
+    (setf *dbg-restart-top* y)
+    (loop for r in restarts for i from 0 do
+      (when (= i sel)
+        (lol.canvas:fill-rect canvas 8 (- y 2) (- w 16) +dbg-row+ *sh-sel*)
+        (lol.canvas:fill-rect canvas 8 (- y 2) 2 +dbg-row+ *sh-accent*))
+      (lol.canvas:draw-string canvas *bfont*
+        (format nil "~d  ~@[[~a]  ~]~a" i (getf r :name) (getf r :report))
+        16 y (if (= i sel) *sh-text* *sh-dim*))
+      (incf y +dbg-row+))
+    (incf y 16)
+    (lol.canvas:draw-string canvas *bfont* "backtrace (the spine, innermost first):"
+                            12 y *sh-accent*)
+    (incf y 20)
+    (loop for fr in backtrace for i from 0
+          while (< y (- h 8)) do
+      (lol.canvas:draw-string canvas *bfont* (format nil "~2d  ~a" i fr) 16 y *sh-dim*)
+      (incf y 15))))
+
+(defun dbg-restart-at (y n)
+  "The restart-row index at screen-Y, or NIL. N is how many restarts there are."
+  (when (>= y *dbg-restart-top*)
+    (let ((i (floor (- y *dbg-restart-top*) +dbg-row+)))
+      (when (< i n) i))))
+
+(defun dbg-invoke (restarts i)
+  "Invoke restart I (a non-local exit — this never returns normally)."
+  (let ((r (nth i restarts)))
+    (when r (invoke-restart-interactively (getf r :restart)))))
+
+(defun dbg-abort (restarts)
+  "Invoke the ABORT restart (or the outermost), so the loop always leaves."
+  (let ((i (or (position 'abort restarts :key (lambda (r) (getf r :name)))
+               (1- (length restarts)))))
+    (when (>= i 0) (dbg-invoke restarts i))))
+
+(defun run-debugger-fb (condition)
+  "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user
+   pick a restart to invoke. Reuses the browser's live canvas + input (published in
+   *fb-*). Returns only by invoking a restart (a non-local exit out of here)."
+  (let* ((restarts (restart-list condition))
+         (backtrace (backtrace-frames 40 4))    ; skip our own hook machinery
+         (sel 0)
+         (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+    (when (null restarts) (return-from run-debugger-fb))  ; nothing to do; let it pass
+    (loop
+      (draw-debugger canvas w h condition restarts backtrace sel)
+      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
+      (lol.fb:present-fb canvas)
+      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+        (when kev (read-keyboard-evdev *fb-kbd*))
+        (when kb
+          (multiple-value-bind (key state) (fb-read-key 0)
+            (cond
+              ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G))) (dbg-abort restarts))
+              ((eq key :up)   (setf sel (max 0 (1- sel))))
+              ((eq key :down) (setf sel (min (1- (length restarts)) (1+ sel))))
+              ((member key '(:return #\Return)) (dbg-invoke restarts sel))
+              ((eq key :escape) nil))))
+        (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
+          (let ((i (dbg-restart-at *cursor-y* (length restarts))))
+            (when i (dbg-invoke restarts i))))))))
