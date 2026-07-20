@@ -186,18 +186,36 @@
                (setf clicked t)))))))
     clicked))
 
+(defparameter *cursor-bits*
+  #("K"
+    "KK"
+    "KWK"
+    "KWWK"
+    "KWWWK"
+    "KWWWWK"
+    "KWWWWWK"
+    "KWWWWWWK"
+    "KWWWWWWWK"
+    "KWWWWWWWWK"
+    "KWWWWWKKKK"
+    "KWWKKWWK"
+    "KWK KWWK"
+    "KK  KWWK"
+    "K   KWWK"
+    "    KKKK")
+  "The pointer as a tiny bitmap — K = black edge, W = white fill, space =
+   transparent. A north-west arrow: the arrowhead, its lower-left barb, and the
+   tail/stem below (a plain triangle read as 'unfinished', so draw the whole glyph).")
+
 (defun draw-cursor (canvas x y)
-  "A white arrow pointer with a black edge, tip at X,Y. Drawn in two passes — the
-   whole black silhouette first, then the white fill inset by a pixel — so no row's
-   outline can paint over the previous row's fill (which is what made the old
-   interleaved version render almost solid black)."
+  "Blit *cursor-bits* with its tip (the top-left K) at X,Y — one pixel per cell."
   (let ((white (lol.canvas:rgb #xff #xff #xff))
-        (black (lol.canvas:rgb 0 0 0))
-        (n 13))
-    (dotimes (i (1+ n))                          ; black silhouette (triangle)
-      (lol.canvas:fill-rect canvas x (+ y i) (+ i 2) 1 black))
-    (loop for i from 2 below n do                ; white fill, inset 1px for the edge
-      (lol.canvas:fill-rect canvas (1+ x) (+ y i) (- i 1) 1 white))))
+        (black (lol.canvas:rgb 0 0 0)))
+    (loop for row across *cursor-bits* for dy from 0 do
+      (loop for ch across row for dx from 0 do
+        (case ch
+          (#\K (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 black))
+          (#\W (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 white)))))))
 
 ;;; ---- the loop -----------------------------------------------------------
 
