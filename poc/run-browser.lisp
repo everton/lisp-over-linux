@@ -44,7 +44,8 @@
                     (setf quit t))))
                (:button-press
                 (when (= 1 (lol.x11:event-detail e))
-                  (browser-click (lol.x11:event-x e) (lol.x11:event-y e))))
+                  (browser-click (lol.x11:event-x e) (lol.x11:event-y e)
+                                 (lol.canvas:ctrl-p (lol.x11:event-state e)))))
                (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)))
                (t nil))))
       (unwind-protect

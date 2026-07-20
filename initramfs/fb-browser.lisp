@@ -42,19 +42,22 @@
     (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 1 timeout-ms)
     (logbitp 0 (sb-alien:deref fds 6))))
 
-(defun fbb-wait (kb-fd mouse-fd)
-  "Block until KB-FD or MOUSE-FD is readable. Return (values kb-ready mouse-ready)."
-  (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 16)))
-    (dotimes (i 16) (setf (sb-alien:deref fds i) 0))
-    (setf (sb-alien:deref fds 0) (logand kb-fd #xff)
-          (sb-alien:deref fds 4) +pollin+)
-    (when mouse-fd
-      (setf (sb-alien:deref fds 8)  (logand mouse-fd #xff)
-            (sb-alien:deref fds 12) +pollin+))
-    (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char))
-               (if mouse-fd 2 1) -1)
-    (values (logbitp 0 (sb-alien:deref fds 6))
-            (and mouse-fd (logbitp 0 (sb-alien:deref fds 14))))))
+(defun fbb-wait (kb-fd mouse-fd kev-fd)
+  "Block until KB-FD (console), MOUSE-FD, or KEV-FD (keyboard evdev) is readable.
+   Absent fds are passed NIL. Returns (values kb-ready mouse-ready kev-ready).
+   Three fixed pollfd slots; an absent slot stays zeroed (fd 0 / events 0), which
+   poll simply never reports ready — so the revents offsets never shift."
+  (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 24)))
+    (dotimes (i 24) (setf (sb-alien:deref fds i) 0))
+    (flet ((set-pfd (n fd)
+             (when fd
+               (setf (sb-alien:deref fds (* n 8))       (logand fd #xff)
+                     (sb-alien:deref fds (+ (* n 8) 4)) +pollin+))))
+      (set-pfd 0 kb-fd) (set-pfd 1 mouse-fd) (set-pfd 2 kev-fd)
+      (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 3 -1)
+      (values (logbitp 0 (sb-alien:deref fds 6))
+              (and mouse-fd (logbitp 0 (sb-alien:deref fds 14)))
+              (and kev-fd   (logbitp 0 (sb-alien:deref fds 22)))))))
 
 ;;; ---- keyboard: raw bytes -> shell keys ----------------------------------
 
@@ -89,24 +92,24 @@
 ;;; ---- mouse: evdev -> a cursor + clicks ----------------------------------
 
 (defvar *cursor-x* 0) (defvar *cursor-y* 0)
+(defvar *ctrl-down* nil "Is a Ctrl key held? Tracked from the keyboard's evdev.")
 
-(defun find-mouse-device ()
-  "The /dev/input/eventN of a pointer, from /proc/bus/input/devices: the first
-   device whose capability mask (the 'B: EV=' line, hex) has EV_REL (bit 2, a
-   mouse/touchpad) or EV_ABS (bit 3, a tablet) set. NIL if none.
+(defun scan-input-device (mask-ok-p)
+  "The /dev/input/eventN of the first device in /proc/bus/input/devices whose
+   capability mask (the 'B: EV=' line, hex) satisfies MASK-OK-P, or NIL.
 
-   We can't just grep the Handlers line for 'mouse': the mousedev module isn't
-   loaded here, so a plain PS/2 mouse shows only 'Handlers=eventN' — no 'mouseN'
-   token. The EV mask is what actually says 'this is a pointer'."
+   We read the EV mask rather than grepping Handlers for 'mouse'/'kbd': mousedev
+   isn't loaded, so a plain PS/2 mouse shows only 'Handlers=eventN' with no 'mouseN'
+   token. The EV bits are what actually classify the device."
   (ignore-errors
     (with-open-file (s "/proc/bus/input/devices" :if-does-not-exist nil)
       (when s
-        (let ((ev nil) (pointerp nil))
+        (let ((ev nil) (ok nil))
           (flet ((finish ()                       ; end of a device block
-                   (when (and ev pointerp)
-                     (return-from find-mouse-device
+                   (when (and ev ok)
+                     (return-from scan-input-device
                        (format nil "/dev/input/~a" ev)))
-                   (setf ev nil pointerp nil)))
+                   (setf ev nil ok nil)))
             (loop for line = (read-line s nil nil) do
               (cond
                 ((null line) (finish) (return))               ; EOF: flush last block
@@ -121,15 +124,41 @@
                         (end (or (position #\Space line :start p) (length line)))
                         (mask (ignore-errors
                                 (parse-integer line :start p :end end :radix 16))))
-                   (when (and mask (or (logbitp 2 mask)        ; EV_REL
-                                       (logbitp 3 mask)))      ; EV_ABS
-                     (setf pointerp t))))))))))))
+                   (when (and mask (funcall mask-ok-p mask))
+                     (setf ok t))))))))))))
 
-(defun open-mouse ()
-  (let ((path (find-mouse-device)))
-    (when path
-      (let ((fd (%fbb-open path (logior +o-rdonly+ +o-nonblock+))))
-        (and (>= fd 0) fd)))))
+(defun find-mouse-device ()
+  "A pointer: EV_REL (bit 2, mouse/touchpad) or EV_ABS (bit 3, tablet)."
+  (scan-input-device (lambda (m) (or (logbitp 2 m) (logbitp 3 m)))))
+
+(defun find-keyboard-device ()
+  "The real keyboard: EV_KEY (bit 1) and EV_REP (bit 20, autorepeat). The EV_REP
+   bit is what separates it from the Power Button (also a 'kbd' handler, EV=3)."
+  (scan-input-device (lambda (m) (and (logbitp 1 m) (logbitp 20 m)))))
+
+(defun open-evdev (path)
+  "Open an evdev node non-blocking; NIL on failure or no PATH."
+  (when path
+    (let ((fd (%fbb-open path (logior +o-rdonly+ +o-nonblock+))))
+      (and (>= fd 0) fd))))
+
+(defun open-mouse ()    (open-evdev (find-mouse-device)))
+(defun open-keyboard () (open-evdev (find-keyboard-device)))
+
+(defun read-keyboard-evdev (fd)
+  "Drain the keyboard's evdev queue, tracking Ctrl held state in *ctrl-down*.
+   Text still arrives through the cooked tty (fd 0); this fd exists only for the
+   modifier state the tty can't report — a bare Ctrl produces no byte there."
+  (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
+    (loop
+      (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
+        (when (< n 24) (return))
+        (let ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
+              (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
+              (val  (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8))))
+          (when (and (= type 1)                          ; EV_KEY
+                     (or (= code 29) (= code 97)))        ; KEY_LEFTCTRL / KEY_RIGHTCTRL
+            (setf *ctrl-down* (plusp val))))))))          ; 1 press / 2 repeat -> down, 0 -> up
 
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*; return T on a
@@ -177,8 +206,9 @@
         (trail-root (find-package :cl-user))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
-                (mouse  (open-mouse)))
-            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2))
+                (mouse  (open-mouse))
+                (kbd    (open-keyboard)))
+            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2) *ctrl-down* nil)
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
@@ -187,14 +217,16 @@
                        (draw-browser canvas xres yres)
                        (when mouse (draw-cursor canvas *cursor-x* *cursor-y*))
                        (lol.fb:present-fb canvas)
-                       (multiple-value-bind (kb ms) (fbb-wait 0 mouse)
+                       (multiple-value-bind (kb ms kev) (fbb-wait 0 mouse kbd)
+                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl before a click
                          (when kb
                            (multiple-value-bind (key state) (fb-read-key 0)
                              (when (or (eq key :eof)
                                        (eq :quit (browser-key key state)))
                                (return))))
                          (when (and mouse ms (read-mouse mouse xres yres))
-                           (browser-click *cursor-x* *cursor-y*))))))
-              (when mouse (%fbb-close mouse))))))
+                           (browser-click *cursor-x* *cursor-y* *ctrl-down*))))))
+              (when mouse (%fbb-close mouse))
+              (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
       (format t "~&code browser: ~a~%" c) (finish-output))))

@@ -215,21 +215,73 @@
          ((member key '(:backspace :left)) (trail-pop))
          (t nil))))))
 
-(defun browser-click (x y)
-  "Click: a breadcrumb bar pops to that level; an item in the current list drills.
-   Uses the geometry DRAW-BROWSER recorded (*crumb-rects*, *content-top*), so click
-   and draw can never disagree."
-  (declare (ignorable x))
+;;; ---- jump-to-definition: Ctrl-click a symbol in a source pane -------------
+
+(defun click-token (string col)
+  "The symbol-token in STRING under column COL, or NIL when COL is whitespace or a
+   delimiter. A token is a maximal run of non-delimiter characters — enough to
+   catch =foo-bar=, =*var*=, and =pkg:name= without a real reader."
+  (flet ((delim (ch) (member ch '(#\Space #\Tab #\( #\) #\' #\" #\` #\, #\;))))
+    (when (and string (<= 0 col) (< col (length string)) (not (delim (char string col))))
+      (let ((start col) (end col) (n (length string)))
+        (loop while (and (> start 0) (not (delim (char string (1- start))))) do (decf start))
+        (loop while (and (< end n) (not (delim (char string end)))) do (incf end))
+        (subseq string start end)))))
+
+(defun resolve-symbol (token)
+  "TOKEN (a raw source word) -> an EXISTING symbol, or NIL. Understands =pkg:name=
+   and =pkg::name=; otherwise tries CL-USER then CL. Never interns (so clicking a
+   typo can't pollute a package)."
+  (when (and token (plusp (length token)))
+    (let* ((tok (string-trim "#'`,@" token))
+           (c (position #\: tok)))
+      (when (plusp (length tok))
+        (if c
+            (let* ((dbl (and (< (1+ c) (length tok)) (char= (char tok (1+ c)) #\:)))
+                   (pkg (find-package (string-upcase (subseq tok 0 c))))
+                   (nm  (subseq tok (+ c (if dbl 2 1)))))
+              (and pkg (plusp (length nm)) (find-symbol (string-upcase nm) pkg)))
+            (or (find-symbol (string-upcase tok) :cl-user)
+                (find-symbol (string-upcase tok) :cl)))))))
+
+(defun jumpable-p (sym)
+  "A symbol worth jumping to: it names a callable, a variable, or a class."
+  (and (symbolp sym) sym
+       (or (fboundp sym) (boundp sym) (find-class sym nil))))
+
+(defun jump-to-definition (tv x y)
+  "Ctrl-click in a source pane: resolve the symbol under X,Y and drill into its
+   definition on a new trail level (source if we recorded it, else a reference —
+   PRESENT on a SUBJ-DEFN handles both). No-op when there's no symbol there."
+  (when (lol.textview:tv-hit-p tv x y)
+    (lol.textview:tv-click tv x y)                     ; place the caret at the click
+    (let* ((lines (lol.textview:tv-lines tv))
+           (line  (lol.textview:tv-point-line tv))
+           (col   (lol.textview:tv-point-col tv))
+           (tok   (and (< line (length lines)) (click-token (aref lines line) col)))
+           (sym   (resolve-symbol tok)))
+      (when (jumpable-p sym)
+        (setf *pending-accept* nil *browser-status* nil)
+        (trail-push (subj-defn sym))
+        t))))
+
+(defun browser-click (x y &optional ctrl)
+  "Click: a breadcrumb bar pops to that level; an item in the current list drills;
+   Ctrl-click on a symbol in a source pane jumps to its definition. Uses the
+   geometry DRAW-BROWSER recorded (*crumb-rects*, *content-top*), so click and draw
+   can never disagree."
   ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
-  (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*)))
-    (if hit
-        (trail-goto (car hit))
-        ;; else an item in the current list view (source panes have no items)
-        (let ((p (current-pane)))
-          (when (and (not (pane-tv p)) (>= y *content-top*))
-            (let* ((items (view-items (pane-view p)))
-                   (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
-              (when (< i (length items))
-                (setf (pane-sel p) i)
-                (let ((it (nth i items)))
-                  (when (item-subject it) (trail-push (item-subject it)))))))))))
+  (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*))
+        (p (current-pane)))
+    (cond
+      (hit (trail-goto (car hit)))
+      ;; source / reference pane: Ctrl-click jumps; a plain click does nothing yet
+      ((pane-tv p) (when ctrl (jump-to-definition (pane-tv p) x y)))
+      ;; else an item in the current list view
+      ((>= y *content-top*)
+       (let* ((items (view-items (pane-view p)))
+              (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
+         (when (< i (length items))
+           (setf (pane-sel p) i)
+           (let ((it (nth i items)))
+             (when (item-subject it) (trail-push (item-subject it))))))))))

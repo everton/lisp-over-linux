@@ -1020,13 +1020,17 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
   (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
   =poll(2)=-multiplexed over the raw console keyboard (=with-raw-mode= + escape
-  parsing) and the evdev mouse (relative or absolute; a cursor is drawn and
-  left-click drills — see §6.3). Back/quit = =C-g= (the console can't deliver
-  SuperL). The toolkit (canvas/textview/fb/shell) is baked into the image;
-  =cozette.lolf= ships in the cpio. /Verified by QMP: CL-USER definitions listed on
-  the bare framebuffer, live edit-and-Accept round-trips, and a mouse click drilling
-  into a definition — the machine browsing (and editing) its own code from its own
-  menu, no X, no host. This is the screenshot the project exists for./ Still owed:
+  parsing) and the evdev mouse (relative or absolute; a cursor is drawn, left-click
+  drills a list row, and *Ctrl-click on a symbol in a source pane jumps to its
+  definition* — see §6.3 and §4½. Holding Ctrl needs the keyboard's *own* evdev,
+  a third poll fd: the cooked tty reports a bare modifier as no byte at all). Back/
+  quit = =C-g= (the console can't deliver SuperL). The toolkit (canvas/textview/fb/
+  shell) is baked into the image; =cozette.lolf= ships in the cpio. /Verified by QMP:
+  CL-USER definitions listed on the bare framebuffer, live edit-and-Accept round-
+  trips, a mouse click drilling into a definition, and a Ctrl-click on =editing-repl=
+  inside =%serve-net-repl='s source jumping to =editing-repl='s own source — the
+  machine browsing (and editing) its own code from its own menu, no X, no host. This
+  is the screenshot the project exists for./ Still owed: the =M-.= keyboard jump, and
   PageUp/Down + wheel scroll ([[file:../poc/README.org][poc/README.org]] gaps).
 - *Phase 6 — the live system.* Debugger pane (falls out of phase 4a), the change
   set, file-out (§5.1).
