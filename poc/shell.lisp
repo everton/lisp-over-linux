@@ -169,7 +169,9 @@
    Returns :quit to exit. STATE is the X modifier bitmask."
   (let ((p (current-pane)))
     (cond
-      ((eq key :escape) :quit)                    ; universal escape hatch
+      ;; Esc is reserved as a future Meta prefix (Emacs-style) — it must NOT quit
+      ;; the browser. Leaving via C-g at the root (below) is the deliberate exit.
+      ((eq key :escape) nil)
       ;; C-g = back, everywhere (the console can't deliver SuperL, so Ctrl-g is the
       ;; portable "back" that also works while editing a source pane). At the root,
       ;; there is nothing to pop, so C-g leaves the browser.

@@ -5,7 +5,7 @@
 ;;;; menu. Output is lol.fb:present-fb into /dev/fb0 (under KD_GRAPHICS so fbcon
 ;;;; stops scribbling); input is BOTH the raw console keyboard AND the evdev mouse,
 ;;;; multiplexed with poll(2). It returns to the menu when you leave (C-g at the
-;;;; root, or Esc).
+;;;; root). Esc is left free for a future Meta prefix, so it does not quit.
 ;;;;
 ;;;; Keyboard: raw fd 0, signals OFF (so C-c C-c Accepts). Mouse: /dev/input/eventN
 ;;;; (the pointer, found via /proc/bus/input/devices) — relative (PS/2) or absolute
@@ -187,18 +187,23 @@
     clicked))
 
 (defun draw-cursor (canvas x y)
-  "A small white arrow with a black edge, at X,Y."
-  (let ((white (lol.canvas:rgb #xff #xff #xff)) (black (lol.canvas:rgb 0 0 0)))
-    (dotimes (i 13)
-      (let ((w (if (<= i 8) (1+ i) (max 1 (- 18 i)))))     ; grow to 9, then taper
-        (lol.canvas:fill-rect canvas (1- x) (+ y i -1) (+ w 2) 1 black)
-        (lol.canvas:fill-rect canvas x (+ y i) w 1 white)))))
+  "A white arrow pointer with a black edge, tip at X,Y. Drawn in two passes — the
+   whole black silhouette first, then the white fill inset by a pixel — so no row's
+   outline can paint over the previous row's fill (which is what made the old
+   interleaved version render almost solid black)."
+  (let ((white (lol.canvas:rgb #xff #xff #xff))
+        (black (lol.canvas:rgb 0 0 0))
+        (n 13))
+    (dotimes (i (1+ n))                          ; black silhouette (triangle)
+      (lol.canvas:fill-rect canvas x (+ y i) (+ i 2) 1 black))
+    (loop for i from 2 below n do                ; white fill, inset 1px for the edge
+      (lol.canvas:fill-rect canvas (1+ x) (+ y i) (- i 1) 1 white))))
 
 ;;; ---- the loop -----------------------------------------------------------
 
 (defun run-browser-fb ()
   "Launch the code browser full-screen on /dev/fb0, rooted at CL-USER. Blocks until
-   you leave it (C-g at the root, or Esc), then restores the text console and
+   you leave it (C-g at the root), then restores the text console and
    returns to the supervisor menu. Any error is caught so it cannot crash PID 1."
   (handler-case
       (progn
