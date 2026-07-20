@@ -65,6 +65,7 @@
           (software-type) (software-version))
   (format t "  r) run a Lisp REPL~%")
   (format t "  b) code browser (drill-down, on the framebuffer)~%")
+  (format t "  p) Lisp workspace (a scratch buffer: Do it / Print it / Inspect it)~%")
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
   (format t "  m) show memory usage~%")
@@ -105,6 +106,7 @@
                 ((eq line :eof) (sleep 1))            ; no input source: don't spin
                 ((string-equal choice "r") (run-repl))
                 ((string-equal choice "b") (run-browser-fb))
+                ((string-equal choice "p") (run-browser-fb (subj-workspace)))
                 ((string-equal choice "w")
                  (incf worker-id)
                  (format t "~&spawning worker ~a~%" worker-id)

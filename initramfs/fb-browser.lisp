@@ -72,15 +72,26 @@
       ((= c 27)
        (if (fbb-ready-p fd 20)                 ; a real ESC sequence follows?
            (let ((b1 (fbb-read-byte fd)))
-             (if (eql b1 91)                    ; '['
+             (if (eql b1 91)                    ; CSI: ESC [
                  (let ((b2 (fbb-read-byte fd)))
-                   (case b2
-                     (65 (values :up 0))    (66 (values :down 0))
-                     (67 (values :right 0)) (68 (values :left 0))
-                     (72 (values :home 0))  (70 (values :end 0))
-                     (53 (fbb-read-byte fd) (values :page-up 0))   ; ESC[5~
-                     (54 (fbb-read-byte fd) (values :page-down 0)) ; ESC[6~
-                     (t  (values :ignore 0))))
+                   (cond
+                     ((null b2) (values :ignore 0))
+                     ;; a letter final byte (arrows, Home/End as ESC[H / ESC[F)
+                     ((<= 65 b2 90)
+                      (values (case b2 (65 :up) (66 :down) (67 :right) (68 :left)
+                                       (72 :home) (70 :end) (t :ignore)) 0))
+                     ;; a numeric CSI: ESC [ <digits> ~  (Home/End/Del/PgUp/PgDn on
+                     ;; many terminals). Consume ALL digits AND the final ~, so the
+                     ;; trailing byte never leaks into the buffer as a stray char.
+                     ((<= 48 b2 57)
+                      (let ((n (- b2 48)))
+                        (loop for b = (fbb-read-byte fd)
+                              while (and b (<= 48 b 57))
+                              do (setf n (+ (* n 10) (- b 48))))  ; last read = the ~
+                        (values (case n (1 :home) (7 :home) (4 :end) (8 :end)
+                                        (3 :delete) (5 :page-up) (6 :page-down)
+                                        (t :ignore)) 0)))
+                     (t (values :ignore 0))))
                  (values :ignore 0)))
            (values :escape 0)))
       ((member c '(13 10)) (values :return 0))
@@ -219,14 +230,15 @@
 
 ;;; ---- the loop -----------------------------------------------------------
 
-(defun run-browser-fb ()
-  "Launch the code browser full-screen on /dev/fb0, rooted at CL-USER. Blocks until
-   you leave it (C-g at the root), then restores the text console and
-   returns to the supervisor menu. Any error is caught so it cannot crash PID 1."
+(defun run-browser-fb (&optional root)
+  "Launch the browser full-screen on /dev/fb0, rooted at ROOT (default: the CL-USER
+   package — the code browser; pass (subj-workspace) for the Workspace). Blocks until
+   you leave it (C-g at the root), then restores the text console and returns to the
+   supervisor menu. Any error is caught so it cannot crash PID 1."
   (handler-case
       (progn
         (unless *bfont* (setf *bfont* (lol.canvas:load-font "/cozette.lolf")))
-        (trail-root (find-package :cl-user))
+        (trail-root (or root (find-package :cl-user)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))

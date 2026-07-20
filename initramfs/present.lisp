@@ -54,6 +54,10 @@
 ;; text — no grid widget yet — so they ride the existing :reference text pane.
 (defstruct (subj-matrix (:constructor subj-matrix (name))) name)
 (defstruct (subj-onion  (:constructor subj-onion  (name tuple))) name tuple)
+;; The Workspace (§3a): a scratch buffer whose verbs eval — Do it / Print it /
+;; Inspect it — rather than Accept a whole definition. A :workspace view is an
+;; editable text pane the shell drives; the shell owns the eval, staying pure here.
+(defstruct (subj-workspace (:constructor subj-workspace ())))
 
 ;;; ---- the two generic functions ------------------------------------------
 
@@ -253,6 +257,21 @@
                                     "effective method")
                         :subject (subj-onion name (getf m :specializers))))
                      methods)))))
+
+;;; ---- the Workspace: a scratch buffer with the editor's hands (§3a) --------
+
+(defmethod present ((s subj-workspace))
+  (make-view
+   :title "workspace" :kind :workspace :subject s
+   :text ";; Workspace — a Lisp scratch buffer (not the REPL; this is the notebook).
+;;   C-x C-e   Do it       eval the form before point (result in the status line)
+;;   C-c C-p   Print it    eval and weave the result inline, after the form
+;;   C-c C-i   Inspect it   eval and open the value in the inspector
+;;   C-g       leave
+;; Editing is the text view's: caret, selection, syntax, auto-indent.
+
+(+ 1 2)
+"))
 
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 

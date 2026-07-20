@@ -983,10 +983,19 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
 - *Phase 3 — the toolkit.* [text view DONE in [[file:../poc/textview.lisp][poc/textview.lisp]]] Still owed:
   panes, lists, scrollbars, menus. The text view subsumes
   [[file:../initramfs/line-editor.lisp][line-editor.lisp]]'s buffer logic and already reuses a run-based lexer.
-- *Phase 3a — the Workspace* (§3a). The text view + the four verbs (Do it / Print
-  it / Inspect it / Debug it) + a transcript binding. Small, and it is the surface
-  everything else lands in, so it comes early. /Demo: eval a selection, weave the
-  result inline./
+- *Phase 3a — the Workspace* (§3a). [DONE — [[file:../initramfs/present.lisp][present.lisp]] (subj-workspace) +
+  [[file:../poc/shell.lisp][poc/shell.lisp]] (the verbs) + supervisor menu =p)=] A =:workspace= pane reuses the
+  editable text view, but its verbs eval the form before point instead of Accepting
+  a definition: =C-x C-e= *Do it* (value to the status line), =C-c C-p= *Print it*
+  (weave the result inline, the notebook that accretes), =C-c C-i= *Inspect it*
+  (=trail-push= the value -> the inspector pane opens in the same shell). Chords go
+  through =*pending-prefix*=; note =C-c C-i= arrives as C-c then Tab because Ctrl-I
+  *is* Tab on a tty, so the shell accepts that. Reached from the supervisor menu
+  (=p= runs =run-browser-fb= rooted at the workspace); a plain click now places the
+  caret in any editable pane. /Verified on the framebuffer via QMP: =(+ 1 2)= Print
+  it -> =3= woven inline, Do it -> status line, Inspect it -> the integer 3 open in
+  the inspector./ Still owed: Debug it (waits on the condition view) and a real
+  transcript stream binding.
 - *Phase 4 — the Browser: the =present= spine + the shell.* [SPINE DONE headless —
   [[file:../initramfs/present.lisp][present.lisp]]] The =present= + =commands-for= generics, the item/view/command
   structs, the affordance/disposition model, and a first set of methods (package,

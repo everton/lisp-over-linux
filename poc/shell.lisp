@@ -40,15 +40,20 @@
   (let ((v (present subject)))
     (make-pane
      :subject subject :view v
-     :tv (when (and (member (view-kind v) '(:source :reference)) (view-text v))
+     :tv (when (and (member (view-kind v) '(:source :reference :workspace)) (view-text v))
            (let ((tv (lol.textview:make-textview
-                      :font *bfont* :focus (eq (view-kind v) :source))))
+                      :font *bfont*
+                      :focus (member (view-kind v) '(:source :workspace)))))
              (lol.textview:tv-set-text tv (view-text v))
              tv)))))
 
 (defun editable-pane-p (pane)
   "True when PANE is your-own-code source — editable, with Accept."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :source)))
+
+(defun workspace-pane-p (pane)
+  "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
+  (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
 
 (defun trail-root (subject) (setf *trail* (list (open-pane subject))))
 (defun trail-push (subject) (setf *trail* (append *trail* (list (open-pane subject)))))
@@ -66,8 +71,82 @@
 (defparameter +row-h+ 17)
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
-(defvar *pending-accept* nil "T after the first C-c of the C-c C-c Accept chord.")
+(defvar *pending-prefix* nil
+  "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
+   (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
+   C-c C-p Print it, C-c C-i Inspect it.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
+
+;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
+
+(defun buffer-text-to-point (tv)
+  "The Workspace buffer text from the start up to the caret."
+  (let ((lines (lol.textview:tv-lines tv))
+        (pl (lol.textview:tv-point-line tv))
+        (pc (lol.textview:tv-point-col tv)))
+    (with-output-to-string (s)
+      (dotimes (i pl) (write-line (aref lines i) s))
+      (let ((cur (aref lines pl)))
+        (write-string (subseq cur 0 (min pc (length cur))) s)))))
+
+(defun form-before-point (tv)
+  "Read successive forms from the buffer start up to the caret and return the LAST
+   complete one — the sexp before point, Emacs's C-x C-e target. Comments are
+   skipped by the reader; an incomplete trailing form is ignored. NIL if none."
+  (let ((text (buffer-text-to-point tv)) (last nil) (pos 0))
+    (loop
+      (multiple-value-bind (form next)
+          (ignore-errors (read-from-string text nil :eof :start pos))
+        (when (or (null form) (eq form :eof)) (return))
+        (setf last form pos next)))
+    last))
+
+(defun ws-eval (form)
+  "Eval FORM; return (values OK RESULT-or-CONDITION). Errors are caught, never
+   thrown — a bad form must not take down the browser (nor PID 1)."
+  (handler-case (values t (eval form))
+    (serious-condition (c) (values nil c))))
+
+(defun ws-insert (tv string)
+  "Insert STRING into TV at the caret, via the editor's own keys (so layout,
+   syntax and the caret all stay consistent)."
+  (loop for ch across string do
+    (if (char= ch #\Newline)
+        (lol.textview:tv-key tv :return 0)
+        (lol.textview:tv-key tv ch 0))))
+
+(defun workspace-do-it (pane)
+  "Eval the form before point; show the value (or error) in the status line."
+  (let ((form (form-before-point (pane-tv pane))))
+    (if (null form)
+        (setf *browser-status* "Do it: no form before point")
+        (multiple-value-bind (ok res) (ws-eval form)
+          (setf *browser-status*
+                (if ok (let ((*print-length* 40) (*print-level* 5))
+                         (format nil "=> ~s" res))
+                    (format nil "error: ~a" res)))))))
+
+(defun workspace-print-it (pane)
+  "Eval the form before point and weave the printed result into the buffer, inline
+   after the form — the notebook that accretes an editable, re-runnable session."
+  (let ((form (form-before-point (pane-tv pane))))
+    (when form
+      (multiple-value-bind (ok res) (ws-eval form)
+        (ws-insert (pane-tv pane)
+                   (format nil "~%~a~%"
+                           (if ok (let ((*print-length* 40) (*print-level* 5))
+                                    (format nil "=> ~s" res))
+                               (format nil "!! ~a" res))))
+        (setf *browser-status* nil)))))
+
+(defun workspace-inspect-it (pane)
+  "Eval the form before point and open the value in the inspector (a new trail
+   level) — the landing pad that makes 'Inspect it' from anywhere land here."
+  (let ((form (form-before-point (pane-tv pane))))
+    (when form
+      (multiple-value-bind (ok res) (ws-eval form)
+        (if ok (trail-push res)
+            (setf *browser-status* (format nil "error: ~a" res)))))))
 
 ;;; ---- drawing -------------------------------------------------------------
 
@@ -147,7 +226,10 @@
           (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *sh-accent*)
           (lol.canvas:draw-string canvas *bfont*
             (format nil "~a  SuperL-< back  q quit~@[   commands: ~a~]"
-                    (if (editable-pane-p cur) "editing: C-c C-c accepts" "up/dn move  ret drill")
+                    (cond ((workspace-pane-p cur)
+                           "C-x C-e Do it  C-c C-p Print it  C-c C-i Inspect it")
+                          ((editable-pane-p cur) "editing: C-c C-c accepts")
+                          (t "up/dn move  ret drill"))
                     (and cmds (format nil "~{~a~^ · ~}" (mapcar #'command-label cmds))))
             10 (- h 18) *sh-dim*)))))
 
@@ -176,26 +258,37 @@
       ;; portable "back" that also works while editing a source pane). At the root,
       ;; there is nothing to pop, so C-g leaves the browser.
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
-       (setf *pending-accept* nil *browser-status* nil)
+       (setf *pending-prefix* nil *browser-status* nil)
        (if (cdr *trail*) (progn (trail-pop) nil) :quit))
       ;; --- SuperL layer: trail navigation, over ANY pane (never the editor's) ---
       ((lol.canvas:super-p state)
-       (setf *pending-accept* nil)
+       (setf *pending-prefix* nil)
        (case key
          (:left (trail-pop) (setf *browser-status* nil))   ; back
          (#\q :quit)
          (t nil)))
-      ;; --- editable source pane: plain/Ctrl keys are the editor's; C-c C-c Accepts ---
-      ((editable-pane-p p)
-       (cond
-         ((and (lol.canvas:ctrl-p state) (eql key #\c))
-          (if *pending-accept*
-              (progn (accept-pane p) (setf *pending-accept* nil))
-              (setf *pending-accept* t))
-          nil)
-         (t (setf *pending-accept* nil)
-            (lol.textview:tv-key (pane-tv p) key state)
-            nil)))
+      ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go
+      ;;     through *pending-prefix*: C-c then {C-c Accept | C-p Print | C-i Inspect},
+      ;;     C-x then C-e Do it. Any other key edits. ---
+      ((or (editable-pane-p p) (workspace-pane-p p))
+       (let ((c (lol.canvas:ctrl-p state)))
+         (cond
+           (*pending-prefix*
+            (let ((prefix *pending-prefix*))
+              (setf *pending-prefix* nil)
+              (cond
+                ((and (eq prefix :c-c) c (eql key #\c) (editable-pane-p p)) (accept-pane p))
+                ((and (eq prefix :c-c) c (eql key #\p) (workspace-pane-p p)) (workspace-print-it p))
+                ;; C-c C-i Inspect it: Ctrl-I *is* Tab (byte 9) on any tty, so the
+                ;; console delivers this chord as C-c then :tab — accept both.
+                ((and (eq prefix :c-c) (or (and c (eql key #\i)) (eq key :tab))
+                      (workspace-pane-p p))
+                 (workspace-inspect-it p))
+                ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
+              nil))
+           ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
+           ((and c (eql key #\x) (workspace-pane-p p)) (setf *pending-prefix* :c-x) nil)
+           (t (lol.textview:tv-key (pane-tv p) key state) nil))))
       ;; --- read-only reference pane: scroll only ---
       ((pane-tv p)
        (case key
@@ -263,7 +356,7 @@
            (tok   (and (< line (length lines)) (click-token (aref lines line) col)))
            (sym   (resolve-symbol tok)))
       (when (jumpable-p sym)
-        (setf *pending-accept* nil *browser-status* nil)
+        (setf *pending-prefix* nil *browser-status* nil)
         (trail-push (subj-defn sym))
         t))))
 
@@ -277,8 +370,14 @@
         (p (current-pane)))
     (cond
       (hit (trail-goto (car hit)))
-      ;; source / reference pane: Ctrl-click jumps; a plain click does nothing yet
-      ((pane-tv p) (when ctrl (jump-to-definition (pane-tv p) x y)))
+      ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
+      ;; in an editable pane (source or workspace), and is inert in a read-only one.
+      ((pane-tv p)
+       (cond
+         (ctrl (jump-to-definition (pane-tv p) x y))
+         ((and (or (editable-pane-p p) (workspace-pane-p p))
+               (lol.textview:tv-hit-p (pane-tv p) x y))
+          (lol.textview:tv-click (pane-tv p) x y))))
       ;; else an item in the current list view
       ((>= y *content-top*)
        (let* ((items (view-items (pane-view p)))
