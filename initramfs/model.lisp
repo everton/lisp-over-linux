@@ -162,6 +162,105 @@
          (fdefinition gf-name) (mapcar #'as-class class-names))
       (values (mapcar #'method-info methods) ok))))
 
+;;; --- Coverage: the dispatch matrix (where methods live across the classes) ---
+
+(defun specializer-tuple (method)
+  "METHOD's specializers as names, one per required parameter: a class -> its name,
+   an eql-specializer -> (EQL object)."
+  (mapcar (lambda (s) (let ((n (specializer-name s)))
+                        (if (typep n 'class) (class-name n) n)))
+          (sb-mop:method-specializers method)))
+
+(defun gf-required-arity (gf-name)
+  "How many required parameters GF-NAME dispatches over (the specializer-tuple
+   length; every method of a GF has the same)."
+  (let ((ms (and (generic-function-p gf-name)
+                 (sb-mop:generic-function-methods (fdefinition gf-name)))))
+    (if ms (length (sb-mop:method-specializers (first ms))) 0)))
+
+(defun dispatch-axes (gf-name)
+  "Per required position, the distinct specializers that appear there across all
+   methods (names), with T sorted last. A position no method specializes lists
+   just (T)."
+  (let* ((arity (gf-required-arity gf-name))
+         (tuples (mapcar #'specializer-tuple
+                         (and (generic-function-p gf-name)
+                              (sb-mop:generic-function-methods (fdefinition gf-name))))))
+    (loop for i below arity collect
+      (let ((specs (remove-duplicates (mapcar (lambda (tp) (nth i tp)) tuples)
+                                      :test #'equal)))
+        (append (sort (remove t specs) #'string-lessp :key #'princ-to-string)
+                (when (member t specs) '(t)))))))
+
+(defun active-axes (gf-name)
+  "The parameter positions some method actually specializes (a non-T specializer).
+   These are the axes worth drawing; the rest are always-T and carry no coverage."
+  (loop for ax in (dispatch-axes gf-name) for i from 0
+        when (remove t ax) collect i))
+
+(defun dispatch-matrix (gf-name)
+  "Coverage of GF-NAME across the class space (doc/code-browser.org §3). A plist:
+     :mode  :matrix (exactly 2 active axes — the grid) | :list (0 or 1) | :multi (3+)
+     :name  the GF name
+   For :matrix — :row-pos/:col-pos the two positions, :rows/:cols their specializer
+   names (T last), and :cells a row-major list of lists, each cell the method-infos
+   whose tuple matches that (row,col) exactly. For :list/:multi — :active the active
+   positions and :methods the method-infos (degrade honestly rather than fake a grid)."
+  (let ((active (active-axes gf-name)))
+    (if (= (length active) 2)
+        (destructuring-bind (ri ci) active
+          (let* ((axes (dispatch-axes gf-name))
+                 (rows (nth ri axes)) (cols (nth ci axes))
+                 (methods (methods-of gf-name)))
+            (list :mode :matrix :name gf-name :row-pos ri :col-pos ci
+                  :rows rows :cols cols
+                  ;; cells count PRIMARY methods: a 0 (a gap) means no behaviour for
+                  ;; that tuple — the real signal. Cross-cutting :around/:before/
+                  ;; :after methods are read in the onion, not here.
+                  :cells (loop for r in rows collect
+                           (loop for c in cols collect
+                             (remove-if-not
+                              (lambda (m) (and (null (getf m :qualifiers))
+                                               (let ((tp (getf m :specializers)))
+                                                 (and (equal (nth ri tp) r)
+                                                      (equal (nth ci tp) c)))))
+                              methods))))))
+        (list :mode (if (>= (length active) 3) :multi :list)
+              :name gf-name :active active :methods (methods-of gf-name)))))
+
+;;; --- Combination: the effective-method onion (what actually runs) ---------
+
+(defun spec->class (x)
+  "Resolve one specializer designator to a class for the effective-method preview:
+   a class or class-name via as-class; an (EQL object) form -> the object's class
+   (a representative — classes-only dispatch can't honour the eql itself, but this
+   shows what would run for an object of that kind)."
+  (if (and (consp x) (eq (car x) 'eql))
+      (class-of (second x))
+      (as-class x)))
+
+(defun effective-method-onion (gf-name &rest class-names)
+  "The standard-method-combination structure of a call to GF-NAME dispatching on
+   CLASS-NAMES, as a plist the onion view renders (doc/code-browser.org §3):
+     :around   most-specific-first, each wraps the next (outer -> inner)
+     :before   most-specific-first (all run, before the primary chain)
+     :primary  most-specific-first (the call-next-method chain, threaded inward)
+     :after    LEAST-specific-first (all run, after the primary chain)
+     :definitive-p  NIL when classes alone can't decide (an EQL method might apply)
+   Empty layers stay empty. This is exactly what CLOS weaves; the renderer's
+   indentation IS the call stack."
+  (when (generic-function-p gf-name)
+    (multiple-value-bind (methods ok)
+        (sb-mop:compute-applicable-methods-using-classes
+         (fdefinition gf-name) (mapcar #'spec->class class-names))
+      (flet ((qual= (m q) (equal (sb-mop:method-qualifiers m) (list q))))
+        (list :name gf-name :on (copy-list class-names)
+              :around  (mapcar #'method-info (remove-if-not (lambda (m) (qual= m :around)) methods))
+              :before  (mapcar #'method-info (remove-if-not (lambda (m) (qual= m :before)) methods))
+              :primary (mapcar #'method-info (remove-if #'sb-mop:method-qualifiers methods))
+              :after   (mapcar #'method-info (reverse (remove-if-not (lambda (m) (qual= m :after)) methods)))
+              :definitive-p ok)))))
+
 (defun show-gf (name)
   "Print a readable generic-function view (methods + specializer tuples)."
   (let ((i (gf-info name)))

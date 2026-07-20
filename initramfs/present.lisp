@@ -49,6 +49,11 @@
 ;;; readings a symbol has, disambiguated by which subject you hand to PRESENT.
 (defstruct (subj-defn (:constructor subj-defn (name &optional kind))) name kind)
 (defstruct (subj-xref (:constructor subj-xref (relation name))) relation name)
+;; The two generic-function views (§3): coverage (the dispatch matrix) and
+;; combination (the effective-method onion for one argument tuple). Both render as
+;; text — no grid widget yet — so they ride the existing :reference text pane.
+(defstruct (subj-matrix (:constructor subj-matrix (name))) name)
+(defstruct (subj-onion  (:constructor subj-onion  (name tuple))) name tuple)
 
 ;;; ---- the two generic functions ------------------------------------------
 
@@ -63,14 +68,24 @@
 ;;; ---- packages: their definitions ----------------------------------------
 
 (defmethod present ((p package))
-  (let ((items '()))
+  (let ((items '()) (seen-gfs '()))
     (maphash (lambda (name defns)
                (when (and (symbolp name) (eq (symbol-package name) p))
-                 (dolist (d defns)
-                   (push (make-item :label  (string-downcase (princ-to-string name))
-                                    :detail (string-downcase (princ-to-string (defn-kind d)))
-                                    :subject (subj-defn name (defn-kind d)))
-                         items))))
+                 (if (and (fboundp name) (typep (fdefinition name) 'generic-function))
+                     ;; a generic function is ONE entry that drills into its own view
+                     ;; (matrix + methods + source); its methods don't clutter the
+                     ;; package list. Its subject is the GF object, not a subj-defn.
+                     (unless (member name seen-gfs)
+                       (push name seen-gfs)
+                       (push (make-item :label (string-downcase (princ-to-string name))
+                                        :detail "generic function"
+                                        :subject (fdefinition name))
+                             items))
+                     (dolist (d defns)
+                       (push (make-item :label  (string-downcase (princ-to-string name))
+                                        :detail (string-downcase (princ-to-string (defn-kind d)))
+                                        :subject (subj-defn name (defn-kind d)))
+                             items)))))
              *registry*)
     (make-view :title (format nil "package ~a" (package-name p))
                :kind :list :subject p
@@ -136,18 +151,108 @@
                                              :detail (and (getf sl :readers) "has readers")))
                      (getf i :direct-slots))))))
 
-;;; ---- generic functions: methods -----------------------------------------
+;;; ---- generic functions: methods, coverage, combination ------------------
+
+(defun method-tuple-label (m)
+  "A method as its qualifiers + specializer tuple, e.g. \":around (button surface)\"."
+  (format nil "~@[~{~(~a~) ~}~](~{~(~a~)~^ ~})"
+          (getf m :qualifiers) (getf m :specializers)))
+
+(defun format-matrix (m)
+  "Render dispatch-matrix data (model.lisp) as a monospace grid / degraded list."
+  (with-output-to-string (s)
+    (ecase (getf m :mode)
+      (:matrix
+       (let* ((rows (getf m :rows)) (cols (getf m :cols)) (cells (getf m :cells))
+              (rowlab (mapcar (lambda (r) (string-downcase (princ-to-string r))) rows))
+              (collab (mapcar (lambda (c) (string-downcase (princ-to-string c))) cols))
+              (rw (reduce #'max rowlab :key #'length :initial-value 6))
+              (cw (max 3 (reduce #'max collab :key #'length :initial-value 3))))
+         (format s "dispatch matrix — ~(~a~)~%arg ~d (rows) x arg ~d (cols)~%~%"
+                 (getf m :name) (getf m :row-pos) (getf m :col-pos))
+         (format s "~va | ~{~va~^ ~}~%" rw "" (mapcan (lambda (c) (list cw c)) collab))
+         (format s "~a-+-~a~%" (make-string rw :initial-element #\-)
+                 (make-string (+ (* cw (length cols)) (max 0 (1- (length cols))))
+                              :initial-element #\-))
+         (loop for rl in rowlab for rowcells in cells do
+           (format s "~va | ~{~va~^ ~}~%" rw rl
+                   (mapcan (lambda (cell)
+                             (list cw (if cell (princ-to-string (length cell)) ".")))
+                           rowcells)))
+         (format s "~%counts are primary methods; . is a gap (no method for that~%")
+         (format s "tuple). :around / :before / :after show in the effective method.~%")))
+      (:list
+       (format s "~(~a~) dispatches on one argument — the ordered method list:~%~%"
+               (getf m :name))
+       (dolist (mi (getf m :methods)) (format s "  ~a~%" (method-tuple-label mi))))
+      (:multi
+       (format s "~(~a~) dispatches on ~d arguments — full specializer tuples:~%~%"
+               (getf m :name) (length (getf m :active)))
+       (dolist (mi (getf m :methods)) (format s "  ~a~%" (method-tuple-label mi)))))))
+
+(defun format-onion (o)
+  "Render an effective-method-onion (model.lisp) as text; indentation is the call
+   stack — :around wraps the core, which runs :before, the primary call-next-method
+   chain, then :after."
+  (with-output-to-string (s)
+    (format s "effective method — ~(~a~) (~{~(~a~)~^ ~})~%" (getf o :name) (getf o :on))
+    (format s "~a~%~%"
+            (if (getf o :definitive-p)
+                "classes fully decide this call."
+                "an eql method might also apply — classes alone can't decide."))
+    (flet ((emit (indent list &optional arrows)
+             (loop for m in list for i from 0 do
+               (format s "~a~a~a~%" (make-string indent :initial-element #\Space)
+                       (if (and arrows (plusp i)) "-> " "") (method-tuple-label m)))))
+      (let ((around (getf o :around)) (before (getf o :before))
+            (primary (getf o :primary)) (after (getf o :after)))
+        (if around
+            (progn (format s ":around   outermost first, wraps everything~%")
+                   (emit 6 around)
+                   (format s "  |  call-next-method reaches the core~%"))
+            (format s ":around   (none)~%"))
+        (format s "core~%")
+        (format s "  :before   most-specific first, all run~%")
+        (if before (emit 6 before) (format s "      (none)~%"))
+        (format s "  primary   the call-next-method chain (inward)~%")
+        (if primary (emit 6 primary t) (format s "      (NO applicable primary method)~%"))
+        (format s "  :after    least-specific first, all run~%")
+        (if after (emit 6 after) (format s "      (none)~%"))))))
+
+(defmethod present ((s subj-matrix))
+  (make-view :title (format nil "matrix ~(~a~)" (subj-matrix-name s))
+             :kind :reference :subject s
+             :text (format-matrix (dispatch-matrix (subj-matrix-name s)))))
+
+(defmethod present ((s subj-onion))
+  (make-view :title (format nil "effective ~(~a~)" (subj-onion-name s))
+             :kind :reference :subject s
+             :text (format-onion (apply #'effective-method-onion
+                                        (subj-onion-name s) (subj-onion-tuple s)))))
 
 (defmethod present ((gf generic-function))
-  (let ((name (sb-mop:generic-function-name gf)))
-    (make-view :title (format nil "generic-function ~(~a~)" name)
-               :kind :generic :subject gf
-               :items (mapcar (lambda (m)
-                                (make-item
-                                 :label (format nil "~@[~{~(~a~) ~}~](~{~(~a~)~^ ~})"
-                                                (getf m :qualifiers) (getf m :specializers))
-                                 :detail (and (getf m :source) "source")))
-                              (methods-of name)))))
+  (let* ((name (sb-mop:generic-function-name gf))
+         (methods (methods-of name)))
+    (make-view
+     :title (format nil "generic-function ~(~a~)" name)
+     :kind :generic :subject gf
+     ;; the dispatch matrix (coverage) on top; then each method — drilling one shows
+     ;; the effective method (combination) for a call matching its own tuple.
+     :items (list*
+             (make-item :label "dispatch matrix"
+                        :detail (format nil "~d method~:p" (length methods))
+                        :disposition :new-trail
+                        :subject (subj-matrix name))
+             (make-item :label "definition source"
+                        :detail "the defgeneric form"
+                        :subject (subj-defn name :generic))
+             (mapcar (lambda (m)
+                       (make-item
+                        :label (method-tuple-label m)
+                        :detail (if (getf m :source) "effective method + source"
+                                    "effective method")
+                        :subject (subj-onion name (getf m :specializers))))
+                     methods)))))
 
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 

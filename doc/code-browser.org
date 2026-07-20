@@ -1012,10 +1012,21 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   /Milestone reached in part: browse the browser, edit it live./ Confirmed *less*
   work than the old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
-  generic-function and condition subjects. The generics matrix drills to the
-  effective-method onion drills to source; the condition two-stack *is* the
-  debugger, so building it here means phase 6's debugger is mostly done. Design
-  spec: [[file:../media/browser-views-design.html][media/browser-views-design.html]].
+  generic-function and condition subjects. [GENERICS DONE — [[file:../initramfs/model.lisp][model.lisp]] +
+  [[file:../initramfs/present.lisp][present.lisp]]] A generic function is now one entry in the package list that
+  drills into its own view: the *dispatch matrix* (=dispatch-matrix=: the 2-axis
+  coverage grid, degrading honestly to a list for 1 arg / full tuples for 3+), the
+  defgeneric source, and each method — drilling a method opens the
+  *effective-method onion* (=effective-method-onion=: =:around= wrapping the core's
+  =:before= / primary =call-next-method= chain / =:after=, indentation = call
+  stack). Both render as text in the existing =:reference= pane — no grid widget
+  yet; the clickable-cell matrix (recompute the onion in place) is a later upgrade.
+  /Verified: on the host the =draw {caret,glyph-run} x {surfaces}= grid shows the
+  surface abstraction's health at a glance; in the guest, =commands-for= drills to
+  its matrix and to the =(subj-defn) -> (t)= primary chain on the framebuffer./
+  Still owed: the condition two-stack *is* the debugger, so building it here means
+  phase 6's debugger is mostly done. Design spec:
+  [[file:../media/browser-views-design.html][media/browser-views-design.html]].
 - *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
   *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
   (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
