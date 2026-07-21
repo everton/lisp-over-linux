@@ -1094,8 +1094,19 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   RUN-BROWSER-FB → SUPERVISOR-MAIN → %START-LISP=); ABORT (↵ or =C-g=) returns to the
   workspace with "aborted"; a =(with-simple-restart (retry …) (/ 1 0))= shows both
   RETRY and ABORT, ↑/↓ move the selection, and invoking RETRY resumes — the eval
-  returns NIL, woven back as ==> NIL= in the status line./ Still owed: the change
-  set, file-out (§5.1), and frame-local inspection (=sb-di= frame variables).
+  returns NIL, woven back as ==> NIL= in the status line./
+  [FRAME-LOCALS DONE — [[file:../initramfs/model.lisp][model.lisp]] + [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] Tab focuses the
+  backtrace; walking a frame shows its live locals (=sb-di= debug-vars, only the
+  =:valid= ones read, each printed shallow + clipped) in a side column — frame 0 of
+  =(/ 1 0)= reads =x = 1, y = 0=, WORKSPACE-DEBUG-IT reads its =pane=.
+  [CHANGE SET DONE — [[file:../initramfs/registry.lisp][registry.lisp]] (=changed-definitions=) + [[file:../initramfs/present.lisp][present.lisp]]
+  (=subj-change-set=) + supervisor menu =c=] Every definition Accepted this session
+  (a non-empty VERSIONS list) is a browsable list, drilling to its current source —
+  Smalltalk's Changes, entirely in-memory (no persistence needed). /Verified: two
+  re-Accepts show up as =report-memory= / =start-net-repl=, each "1 prior version",
+  drilling to the editable source./ Still owed: file-out (§5.1) — writing the change
+  set back to disk needs a persistence target (the rootfs is tmpfs), a call for the
+  user.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

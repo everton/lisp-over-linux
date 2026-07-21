@@ -59,6 +59,9 @@
 ;; Inspect it — rather than Accept a whole definition. A :workspace view is an
 ;; editable text pane the shell drives; the shell owns the eval, staying pure here.
 (defstruct (subj-workspace (:constructor subj-workspace ())))
+;; The change set (§6): the definitions Accepted (edited live) this session — a
+;; browsable list, Smalltalk's Changes. Data comes from CHANGED-DEFINITIONS.
+(defstruct (subj-change-set (:constructor subj-change-set ())))
 
 ;;; ---- the two generic functions ------------------------------------------
 
@@ -282,6 +285,24 @@
 
 (+ 1 2)
 "))
+
+(defmethod present ((s subj-change-set))
+  "The change set: every definition Accepted this session, each drilling to its
+   (now current) source. Empty until you edit — C-c C-c in a source pane Accepts."
+  (let ((changes (changed-definitions)))
+    (make-view
+     :title "change set — definitions edited this session"
+     :kind :list :subject s
+     :items (if changes
+                (mapcar (lambda (pair)
+                          (destructuring-bind (name . n) pair
+                            (make-item :label (string-downcase (princ-to-string name))
+                                       :detail (format nil "~d prior version~:p" n)
+                                       :subject (subj-defn name))))
+                        changes)
+                (list (make-item
+                       :label "(nothing edited yet)"
+                       :detail "C-c C-c in a source pane Accepts an edit"))))))
 
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 

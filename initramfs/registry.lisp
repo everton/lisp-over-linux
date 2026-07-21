@@ -216,6 +216,18 @@
 ;;; These cover our own code (xref is recorded when build.sh loads it); they will
 ;;; disappoint on built-in CL functions, which is expected.
 
+(defun changed-definitions ()
+  "The session's CHANGE SET (Smalltalk's Changes): every name whose source has been
+   Accepted — a live edit that pushed the old text onto its VERSIONS. At boot every
+   defn carries only its build-time source (no versions), so a non-empty VERSIONS is
+   exactly 'edited since boot'. Returns (NAME . VERSION-COUNT) pairs."
+  (let (out)
+    (maphash (lambda (name defns)
+               (let ((vers (reduce #'+ defns :key (lambda (d) (length (defn-versions d))))))
+                 (when (plusp vers) (push (cons name vers) out))))
+             *registry*)
+    (sort out #'string-lessp :key (lambda (p) (princ-to-string (car p))))))
+
 (defun senders (name)
   "Names of functions that CALL NAME — Smalltalk's 'senders'."
   (mapcar #'car (sb-introspect:who-calls name)))
