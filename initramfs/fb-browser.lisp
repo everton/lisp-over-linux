@@ -571,6 +571,7 @@
      ("Super-Left"         "back in the trail")
      ("Super-q"            "quit the browser"))
     ("Edit  (source / workspace)"
+     ("Tab"                "complete the symbol  (else indent)")
      ("C-c C-c"            "Accept — compile into the image")
      ("C-x C-e"            "Do it — eval, value to status")
      ("C-c C-p"            "Print it — weave result inline")

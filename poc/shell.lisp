@@ -349,6 +349,43 @@
 
 ;;; ---- input ---------------------------------------------------------------
 
+(defun editor-replace-token (tv n replacement)
+  "Delete the N chars just before point (the token being completed) and insert
+   REPLACEMENT — through the editor's own keys, so layout/syntax stay consistent."
+  (dotimes (i n) (lol.textview:tv-key tv :backspace 0))
+  (loop for ch across replacement do (lol.textview:tv-key tv ch 0)))
+
+(defun editor-complete (pane)
+  "Tab in an editable pane: complete the symbol before point via *completer* — the
+   SAME hook the REPL uses (repl.lisp's complete-symbol). Common-editor behaviour:
+   no token before point (start of line / after whitespace) -> Tab indents; exactly
+   one match -> fill it in; several -> extend to their common prefix, or, when that
+   can't grow, list them in the status line. token-start / longest-common-prefix are
+   reused from line-editor.lisp so the code editor and the REPL complete alike."
+  (let* ((tv    (pane-tv pane))
+         (line  (aref (lol.textview:tv-lines tv) (lol.textview:tv-point-line tv)))
+         (col   (lol.textview:tv-point-col tv))
+         (start (token-start line col))
+         (token (subseq line start col))
+         (cands (and (plusp (length token)) *completer* (funcall *completer* token))))
+    (cond
+      ((zerop (length token))                            ; nothing to complete: indent
+       (dotimes (i 2) (lol.textview:tv-key tv #\Space 0)))
+      ((null cands)
+       (setf *browser-status* (format nil "no completion for ~a" token)))
+      ((null (rest cands))                               ; exactly one: fill it in
+       (editor-replace-token tv (- col start) (first cands))
+       (setf *browser-status* nil))
+      (t                                                 ; several: extend, or list them
+       (let ((cp (longest-common-prefix cands)))
+         (if (> (length cp) (length token))
+             (progn (editor-replace-token tv (- col start) cp)
+                    (setf *browser-status* (format nil "~d matches" (length cands))))
+             (setf *browser-status*
+                   (let ((shown (subseq cands 0 (min 15 (length cands)))))
+                     (format nil "~{~a~^  ~}~@[  … (~d)~]"
+                             shown (and (> (length cands) 15) (length cands)))))))))))
+
 (defun accept-pane (pane)
   "Compile the edited source buffer into the live image + update the registry
    (accept-source). Sets *browser-status* to the outcome."
@@ -417,6 +454,9 @@
               nil))
            ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
            ((and c (eql key #\x) (workspace-pane-p p)) (setf *pending-prefix* :c-x) nil)
+           ;; a BARE Tab completes the symbol before point (or indents when there is
+           ;; none) — Inspect it is C-c-prefixed above, so the two never collide.
+           ((eq key :tab) (editor-complete p) nil)
            (t (lol.textview:tv-key (pane-tv p) key state) nil))))
       ;; --- read-only reference pane: scroll only ---
       ((pane-tv p)

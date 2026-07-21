@@ -796,7 +796,13 @@ cleared; =C-Home/End= jump to buffer start / end. On the bare framebuffer the co
 tty cannot report a held Shift/Ctrl any more than a bare Ctrl, so the modifier state
 is read from the keyboard's *own* evdev (=*shift-down*= / =*ctrl-down*=) and folded
 into each key; =fb-read-csi= also decodes xterm-style =ESC [ 1 ; 5 C= modified
-cursor keys, and =C-SPC= arrives as NUL.
+cursor keys, and =C-SPC= arrives as NUL. *=Tab= completes the symbol before point*
+(=editor-complete= in [[file:../poc/shell.lisp][poc/shell.lisp]]) — the common-editor behaviour, and it reuses
+the very hook the REPL uses (=*completer*= -> repl.lisp's =complete-symbol=, with
+line-editor.lisp's =token-start= / =longest-common-prefix=): one match fills in,
+several extend the common prefix or list in the status line, and Tab at whitespace
+indents. Inspect it is =C-c=-prefixed (=C-c C-i=, delivered as =C-c= then Tab since
+Ctrl-I *is* Tab), so a bare Tab and the Inspect chord never collide.
 
 *Editing a definition in place — the modifier split is what prevents the
 collision.* A source pane backed by the registry (*your* code) is an *editable*
