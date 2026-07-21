@@ -294,11 +294,15 @@
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
        (if (cdr *trail*) (progn (trail-pop) nil) :quit))
-      ;; --- SuperL layer: trail navigation, over ANY pane (never the editor's) ---
+      ;; --- SuperL layer: trail navigation + the cheatsheet, over ANY pane (never the
+      ;;     editor's). On the framebuffer Super now arrives via the keyboard's evdev
+      ;;     (folded into STATE), so it works on the bare console too — see fb-browser. ---
       ((lol.canvas:super-p state)
        (setf *pending-prefix* nil)
        (case key
          (:left (trail-pop) (setf *browser-status* nil))   ; back
+         ((#\? #\/) (when (fboundp 'run-cheatsheet-fb)      ; Super-? — every binding
+                      (funcall 'run-cheatsheet-fb)))
          (#\q :quit)
          (t nil)))
       ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go

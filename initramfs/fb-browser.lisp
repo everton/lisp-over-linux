@@ -126,6 +126,8 @@
 (defvar *shift-down* nil "Is a Shift key held? Tracked from the keyboard's evdev, so
   Shift-arrow can extend a selection — the cooked tty reports the modifier no more
   than it reports a bare Ctrl.")
+(defvar *super-down* nil "Is a Super/Meta (Windows) key held? Tracked from the
+  keyboard's evdev — the spatial layer's modifier, and what SuperL-? needs.")
 
 (defun scan-input-device (mask-ok-p)
   "The /dev/input/eventN of the first device in /proc/bus/input/devices whose
@@ -179,10 +181,11 @@
 (defun open-keyboard () (open-evdev (find-keyboard-device)))
 
 (defun read-keyboard-evdev (fd)
-  "Drain the keyboard's evdev queue, tracking Ctrl and Shift held state in
-   *ctrl-down* / *shift-down*. Text still arrives through the cooked tty (fd 0); this
-   fd exists only for the modifier state the tty can't report — a bare modifier
-   produces no byte there."
+  "Drain the keyboard's evdev queue, tracking Ctrl / Shift / Super held state in
+   *ctrl-down* / *shift-down* / *super-down*. Text still arrives through the cooked
+   tty (fd 0); this fd exists only for the modifier state the tty can't report — a
+   bare modifier produces no byte there. Super is what makes the spatial layer (and
+   its SuperL-? cheatsheet) reachable on the bare console at all."
   (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
     (loop
       (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
@@ -195,7 +198,9 @@
               ((or (= code 29) (= code 97))              ; KEY_LEFTCTRL / KEY_RIGHTCTRL
                (setf *ctrl-down* (plusp val)))
               ((or (= code 42) (= code 54))              ; KEY_LEFTSHIFT / KEY_RIGHTSHIFT
-               (setf *shift-down* (plusp val))))))))))
+               (setf *shift-down* (plusp val)))
+              ((or (= code 125) (= code 126))            ; KEY_LEFTMETA / KEY_RIGHTMETA (Super)
+               (setf *super-down* (plusp val))))))))))
 
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*. Returns
@@ -280,7 +285,7 @@
                 (mouse  (open-mouse))
                 (kbd    (open-keyboard)))
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
-                  *ctrl-down* nil *shift-down* nil
+                  *ctrl-down* nil *shift-down* nil *super-down* nil
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
                   *fb-mouse* mouse *fb-kbd* kbd)
             (unwind-protect
@@ -292,15 +297,17 @@
                        (when mouse (draw-cursor canvas *cursor-x* *cursor-y*))
                        (lol.fb:present-fb canvas)
                        (multiple-value-bind (kb ms kev) (fbb-wait 0 mouse kbd)
-                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift first
+                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift/Super first
                          (when kb
                            (multiple-value-bind (key state) (fb-read-key 0)
-                             ;; The cooked tty sends a bare ESC[A for EVERY arrow — the
-                             ;; modifier lives only in the evdev state, so fold it in
-                             ;; (Ctrl-arrow = word motion, Shift-arrow = select).
+                             ;; The cooked tty sends a bare ESC[A for EVERY arrow and no
+                             ;; byte for a held modifier — it lives only in the evdev
+                             ;; state, so fold it in (Ctrl-arrow = word, Shift = select,
+                             ;; Super = the spatial layer / SuperL-?).
                              (let ((state (logior state
                                                   (if *ctrl-down* 4 0)
-                                                  (if *shift-down* 1 0))))
+                                                  (if *shift-down* 1 0)
+                                                  (if *super-down* 64 0))))
                                (when (or (eq key :eof)
                                          (eq :quit (browser-key key state)))
                                  (return)))))
@@ -495,3 +502,82 @@
                 (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
             (cond (ri (dbg-invoke restarts ri))          ; a restart click invokes
                   (fi (setf focus :backtrace fsel fi))))))))) ; a frame click selects it
+
+;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------
+;;; The keys are deliberately NOT shown as permanent chrome — SuperL-? summons this
+;;; overlay instead. Super reaches us only through the keyboard's own evdev (the
+;;; cooked tty can't report it), same as Ctrl/Shift; the main loop folds *super-down*
+;;; into the key state, so browser-key sees (super-p state) and calls in here.
+
+(defparameter *cheatsheet*
+  '(("Navigate"
+     ("up / down"          "move the selection / caret")
+     ("Enter"              "drill into the selection")
+     ("Backspace / C-g"    "back  (C-g at the root leaves)")
+     ("PageUp / PageDown"  "page the list / source")
+     ("mouse wheel"        "scroll the pane")
+     ("q"                  "quit  (list & reference panes)"))
+    ("Spatial  (Super)"
+     ("Super-?"            "this cheatsheet")
+     ("Super-Left"         "back in the trail")
+     ("Super-q"            "quit the browser"))
+    ("Edit  (source / workspace)"
+     ("C-c C-c"            "Accept — compile into the image")
+     ("C-x C-e"            "Do it — eval, value to status")
+     ("C-c C-p"            "Print it — weave result inline")
+     ("C-c C-i"            "Inspect it — open the value")
+     ("C-c C-d"            "Debug it — eval, debugger armed"))
+    ("Motion & selection"
+     ("C-Left / C-Right"   "move by word")
+     ("M-b / M-f"          "move by word")
+     ("Shift + motion"     "extend the selection")
+     ("C-Space"            "set the mark (motion extends)")
+     ("C-a / C-e"          "line start / end")
+     ("C-Home / C-End"     "buffer start / end")
+     ("C-k"                "kill to end of line"))
+    ("Jump"
+     ("M-."                "jump to the definition at point")
+     ("Ctrl-click"        "jump to the definition clicked"))
+    ("Debugger"
+     ("0-9 / up-down"      "select a restart")
+     ("Tab"                "focus the backtrace, walk frames")
+     ("Enter / click"      "invoke the selected restart")
+     ("C-g"                "abort")))
+  "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET
+   lays it out in two columns.")
+
+(defun draw-cheatsheet (canvas w h)
+  "Render *cheatsheet* as a full-screen two-column overlay. Group titles in amber,
+   the keys in accent, the descriptions in text."
+  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w 22 *sh-hi*)
+  (lol.canvas:draw-string canvas *bfont*
+    "Keys  —  press any key or click to dismiss" 12 4 *sh-accent*)
+  (let ((col-x (vector 40 (+ (floor w 2) 20)))
+        (col-y (vector 44 44))
+        (half  (ceiling (length *cheatsheet*) 2)))
+    (loop for g in *cheatsheet* for i from 0
+          for c = (if (< i half) 0 1)
+          do (let ((x (aref col-x c)) (y (aref col-y c)))
+               (lol.canvas:draw-string canvas *bfont* (car g) x y *sh-amber*)
+               (incf y 20)
+               (dolist (row (cdr g))
+                 (lol.canvas:draw-string canvas *bfont* (first row)  (+ x 12)  y *sh-accent*)
+                 (lol.canvas:draw-string canvas *bfont* (second row) (+ x 168) y *sh-text*)
+                 (incf y 16))
+               (incf y 12)
+               (setf (aref col-y c) y)))))
+
+(defun run-cheatsheet-fb ()
+  "Draw the cheatsheet over the browser's live canvas and block until any key or
+   click dismisses it. Reuses the *fb-* I/O the browser owns (like the debugger)."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+    (when canvas
+      (draw-cheatsheet canvas w h)
+      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
+      (lol.fb:present-fb canvas)
+      (loop
+        (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+          (when kev (read-keyboard-evdev *fb-kbd*))
+          (when kb (fb-read-key 0) (return))            ; any key dismisses
+          (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h)) (return)))))))
