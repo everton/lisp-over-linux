@@ -26,6 +26,7 @@
 (defconstant +o-rdonly+   0)
 (defconstant +o-nonblock+ #x800)
 (defconstant +pollin+     1)
+(defconstant +wheel-lines+ 3 "Lines the current pane scrolls per mouse-wheel notch.")
 
 (defun fbb-read-byte (fd)
   "Read one byte from FD; NIL on EOF/error."
@@ -197,9 +198,12 @@
                (setf *shift-down* (plusp val))))))))))
 
 (defun read-mouse (fd xres yres)
-  "Drain pending 24-byte input_event records; move *cursor-x/y*; return T on a
-   left-button press. Handles EV_ABS (usb-tablet, 0..32767) and EV_REL (PS/2)."
-  (let ((clicked nil))
+  "Drain pending 24-byte input_event records; move *cursor-x/y*. Returns
+   (values CLICKED WHEEL): CLICKED is T on a left-button press; WHEEL is the summed
+   scroll notches this drain (REL_WHEEL, + = up / away from the user, - = down), 0
+   when there was none. Callers that want only the click keep working on the first
+   value. Handles EV_ABS (usb-tablet, 0..32767) and EV_REL (PS/2 + wheel)."
+  (let ((clicked nil) (wheel 0))
     (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
       (loop
         (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
@@ -217,10 +221,11 @@
               ((= type 2)                       ; EV_REL
                (case code
                  (0 (setf *cursor-x* (max 0 (min (1- xres) (+ *cursor-x* val)))))
-                 (1 (setf *cursor-y* (max 0 (min (1- yres) (+ *cursor-y* val)))))))
+                 (1 (setf *cursor-y* (max 0 (min (1- yres) (+ *cursor-y* val)))))
+                 (8 (incf wheel val))))          ; REL_WHEEL: +1 up / -1 down
               ((and (= type 1) (= code #x110) (= val 1))    ; EV_KEY BTN_LEFT press
                (setf clicked t)))))))
-    clicked))
+    (values clicked wheel)))
 
 (defparameter *cursor-bits*
   #("K"
@@ -299,8 +304,14 @@
                                (when (or (eq key :eof)
                                          (eq :quit (browser-key key state)))
                                  (return)))))
-                         (when (and mouse ms (read-mouse mouse xres yres))
-                           (browser-click *cursor-x* *cursor-y* *ctrl-down*))))))
+                         (when (and mouse ms)
+                           (multiple-value-bind (clicked wheel) (read-mouse mouse xres yres)
+                             ;; wheel first: a notch scrolls the current pane a few
+                             ;; lines (up = toward the start), point untouched.
+                             (unless (zerop wheel)
+                               (browser-scroll (* (- wheel) +wheel-lines+)))
+                             (when clicked
+                               (browser-click *cursor-x* *cursor-y* *ctrl-down*))))))))
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
