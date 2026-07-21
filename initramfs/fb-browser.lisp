@@ -456,17 +456,59 @@
                (1- (length restarts)))))
     (when (>= i 0) (dbg-invoke restarts i))))
 
+(defparameter +src-page+ 20 "Lines the frame-source viewer moves on PageUp/PageDown.")
+
+(defun run-frame-source-fb (name)
+  "M-. from the debugger: show NAME's definition source in a read-only modal OVER the
+   debugger — the erroring stack stays standing, so you look and come back. Scroll
+   with up/down, PageUp/Down, or the wheel; Esc / q / Enter returns to the debugger.
+   Reuses PRESENT (subj-defn NAME), so a recorded definition shows its source and a
+   built-in shows whatever PRESENT falls back to (or a plain 'no source' note)."
+  (let* ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
+         (view (ignore-errors (present (subj-defn name))))
+         (text (or (and view (view-text view))
+                   (format nil "(no source recorded for ~(~a~) — a built-in or anonymous frame)"
+                           name)))
+         (tv (lol.textview:make-textview :font *bfont* :focus nil)))
+    (lol.textview:tv-set-text tv text)
+    (lol.textview:tv-geometry tv 12 32 (- w 24) (- h 44))
+    (loop
+      (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+      (lol.canvas:fill-rect canvas 0 0 w 24 *sh-hi*)
+      (lol.canvas:draw-string canvas *bfont*
+        (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
+        12 5 *sh-accent*)
+      (lol.textview:tv-draw canvas tv)
+      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
+      (lol.fb:present-fb canvas)
+      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+        (when kev (read-keyboard-evdev *fb-kbd*))
+        (when kb
+          (multiple-value-bind (key state) (fb-read-key 0)
+            (declare (ignore state))
+            (case key
+              (:up        (lol.textview:tv-wheel tv -1))
+              (:down      (lol.textview:tv-wheel tv 1))
+              (:page-up   (lol.textview:tv-wheel tv (- +src-page+)))
+              (:page-down (lol.textview:tv-wheel tv +src-page+))
+              ((:escape #\q #\Q :return #\Return) (return)))))
+        (when (and *fb-mouse* ms)
+          (multiple-value-bind (clicked wheel) (read-mouse *fb-mouse* w h)
+            (declare (ignore clicked))
+            (unless (zerop wheel) (lol.textview:tv-wheel tv (* (- wheel) +wheel-lines+)))))))))
+
 (defun run-debugger-fb (condition)
   "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
    a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
    the browser's live canvas + input (published in *fb-*). Returns only by invoking a
    restart (a non-local exit out of here). Tab moves focus between the restart column
    (Enter/0-9/click invoke) and the backtrace (up-dn/click walk frames); the locals of
-   the selected frame are always shown beside it."
+   the selected frame are always shown beside it, and M-. opens the selected frame's
+   definition source in a modal viewer without unwinding the stack."
   (let* ((restarts (restart-list condition))
          (frame-objs (backtrace-frame-objects 40 4))    ; skip our own hook machinery
          (backtrace (mapcar #'frame-label frame-objs))
-         (rsel 0) (fsel 0) (focus :restarts)
+         (rsel 0) (fsel 0) (focus :restarts) (pending-meta nil)
          (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
     (when (null restarts) (return-from run-debugger-fb))  ; nothing to do; let it pass
     (loop
@@ -479,7 +521,15 @@
         (when kev (read-keyboard-evdev *fb-kbd*))
         (when kb
           (multiple-value-bind (key state) (fb-read-key 0)
+           (let ((meta (or (lol.canvas:meta-p state) pending-meta)))
+            (setf pending-meta nil)
             (cond
+              ;; M-. — view the selected frame's definition source (stack stays up).
+              ((and meta (eql key #\.))
+               (let ((name (frame-defn-name (nth fsel frame-objs))))
+                 (when name (run-frame-source-fb name))))
+              ;; Esc = the Meta prefix (sticky); it must NOT quit the debugger.
+              ((eq key :escape) (setf pending-meta t))
               ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G))) (dbg-abort restarts))
               ((eq key :tab)                      ; move focus between the two lists
                (setf focus (if (eq focus :backtrace) :restarts :backtrace)))
@@ -495,8 +545,7 @@
               ((and (characterp key) (char<= #\0 key #\9))
                (let ((i (- (char-code key) (char-code #\0))))
                  (when (< i (length restarts)) (setf rsel i))))
-              ((member key '(:return #\Return)) (dbg-invoke restarts rsel))
-              ((eq key :escape) nil))))
+              ((member key '(:return #\Return)) (dbg-invoke restarts rsel))))))
         (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
           (let ((ri (dbg-restart-at *cursor-y* (length restarts)))
                 (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
@@ -541,6 +590,7 @@
     ("Debugger"
      ("0-9 / up-down"      "select a restart")
      ("Tab"                "focus the backtrace, walk frames")
+     ("M-."                "view the selected frame's source")
      ("Enter / click"      "invoke the selected restart")
      ("C-g"                "abort")))
   "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET

@@ -392,6 +392,22 @@
           (princ-to-string (sb-di:debug-fun-name (sb-di:frame-debug-fun frame)))))
       "<anonymous frame>"))
 
+(defun frame-defn-name (frame)
+  "The definition name to OPEN for FRAME's function — the debugger's M-. target: a
+   plain symbol, or (SETF x), that we can look up; NIL for a frame with nothing to
+   jump to. A structured name — a method (…FAST-METHOD gf …), a nested (FLET f :IN g)
+   — yields its first bound, non-keyword symbol, so a method opens its generic
+   function and an flet opens the function it lives in."
+  (ignore-errors
+    (let ((name (sb-di:debug-fun-name (sb-di:frame-debug-fun frame))))
+      (cond
+        ((and name (symbolp name)) name)
+        ((and (consp name) (eq (car name) 'setf)) name)
+        ((consp name)
+         (some (lambda (x) (and (symbolp x) (not (keywordp x)) (fboundp x) x))
+               (cdr name)))
+        (t nil)))))
+
 (defun backtrace-frames (&optional (count 40) (skip 0))
   "The live call stack as a list of name strings, innermost first, via sb-di (what
    SBCL's own debugger walks). SKIP drops the innermost frames (the debugger's own

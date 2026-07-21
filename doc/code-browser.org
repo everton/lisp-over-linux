@@ -1098,7 +1098,13 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   [FRAME-LOCALS DONE — [[file:../initramfs/model.lisp][model.lisp]] + [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] Tab focuses the
   backtrace; walking a frame shows its live locals (=sb-di= debug-vars, only the
   =:valid= ones read, each printed shallow + clipped) in a side column — frame 0 of
-  =(/ 1 0)= reads =x = 1, y = 0=, WORKSPACE-DEBUG-IT reads its =pane=.
+  =(/ 1 0)= reads =x = 1, y = 0=, WORKSPACE-DEBUG-IT reads its =pane=. *=M-.= on the
+  selected frame opens its definition source* in a read-only modal (=run-frame-source-fb=,
+  =frame-defn-name=) WITHOUT unwinding — the SLIME 'v' gesture: the stack stays
+  standing, you look, and any of Esc/q/Enter returns to the debugger. It reuses
+  =present (subj-defn …)=, so our code shows its source, a built-in shows the
+  reference view (lambda list + where SBCL defines it), an anonymous frame is a no-op.
+  A method frame opens its generic function; an flet, the function it lives in.
   [CHANGE SET DONE — [[file:../initramfs/registry.lisp][registry.lisp]] (=changed-definitions=) + [[file:../initramfs/present.lisp][present.lisp]]
   (=subj-change-set=) + supervisor menu =c=] Every definition Accepted this session
   (a non-empty VERSIONS list) is a browsable list, drilling to its current source —
