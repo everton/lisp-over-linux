@@ -341,15 +341,16 @@
           (butlast result)
           result))))
 
-(defun draw-dbg-locals (canvas x0 y0 h locals)
+(defun draw-dbg-locals (canvas x0 y0 w h locals)
   "Render LOCALS (a list of (:name :value) plists from FRAME-LOCALS) as one 'name =
    value' line each, starting at X0,Y0 and stopping before the screen bottom. An
-   unavailable value is dimmed; a long or multi-line value wraps onto extra rows.
-   Shows a placeholder when the frame carries no debug variables."
+   unavailable value is dimmed; each line is clipped to the panel's right edge (W) so
+   a wide value can't run off-screen. Placeholder when the frame has no debug vars."
   (if (null locals)
       (lol.canvas:draw-string canvas *bfont* "(no locals — no debug vars here)"
                               x0 y0 *sh-dim*)
-      (let ((y y0))
+      (let ((y y0)
+            (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*)))))  ; chars that fit
         (dolist (v locals)
           (when (< y (- h 8))
             (let* ((val     (getf v :value))
@@ -359,7 +360,10 @@
                                     (if unavail "#<unavailable>" val))))
               (dolist (piece (split-lines text))
                 (when (< y (- h 8))
-                  (lol.canvas:draw-string canvas *bfont* piece x0 y color)
+                  (let ((piece (if (> (length piece) maxc)
+                                   (concatenate 'string (subseq piece 0 (1- maxc)) "…")
+                                   piece)))
+                    (lol.canvas:draw-string canvas *bfont* piece x0 y color))
                   (incf y 15)))))))))
 
 (defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus)
@@ -419,7 +423,7 @@
                                   16 fy (if (= i fsel) *sh-text* *sh-dim*))
           (incf fy +dbg-frame-row+)))
       ;; the locals of the selected frame, in the right column
-      (draw-dbg-locals canvas (+ split 8) y h locals))))
+      (draw-dbg-locals canvas (+ split 8) y w h locals))))
 
 (defun dbg-restart-at (y n)
   "The restart-row index at screen-Y, or NIL. N is how many restarts there are."

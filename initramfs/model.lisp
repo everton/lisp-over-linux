@@ -407,14 +407,22 @@
           (if (zerop id) name (format nil "~a#~d" name id))))
       "?"))
 
+(defun compact-value (s)
+  "One tidy line for the debugger's locals column: newlines/tabs -> spaces (a slot
+   holding a banner string must not blow the panel open), capped with an ellipsis."
+  (let ((s (substitute #\Space #\Newline (substitute #\Space #\Tab s))))
+    (if (> (length s) 120) (concatenate 'string (subseq s 0 117) "…") s)))
+
 (defun frame-var-value (var loc frame)
-  "VAR's value printed short, or :UNAVAILABLE when it is not live at LOC (a temp, or
-   not yet bound at this program point). Never signals — the debugger cannot afford
-   a second error while showing the first."
+  "VAR's value printed short and on one line, or :UNAVAILABLE when it is not live at
+   LOC (a temp, or not yet bound at this program point). Never signals — the debugger
+   cannot afford a second error while showing the first. Kept shallow (level 2, no
+   pretty-print) so a nested struct collapses to =#= instead of unrolling its slots."
   (if (eq (ignore-errors (sb-di:debug-var-validity var loc)) :valid)
       (or (ignore-errors
-            (let ((*print-length* 6) (*print-level* 3) (*print-circle* t))
-              (princ-to-string (sb-di:debug-var-value var frame))))
+            (let ((*print-length* 4) (*print-level* 2)
+                  (*print-circle* t) (*print-pretty* nil))
+              (compact-value (princ-to-string (sb-di:debug-var-value var frame)))))
           "#<unprintable>")
       :unavailable))
 
