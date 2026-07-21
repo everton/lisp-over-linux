@@ -894,6 +894,18 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
     side-by-side comparison (also-rans: Spleen BSD-2, the X11 "fixed" family). Dim
     and colour are *free* (palette, not font); bold is a second variant or a
     double-strike; italic is a shear or just colour.
+  - /Owed — a runtime font SIZE (increase/decrease), a separate near-term session./
+    The blitter already scales (=draw-string :scale N= blits NxN blocks; poc/canvas.lisp)
+    and the text-editor panes are already font-relative (=tv-line-height= / =tv-cw= /
+    =x-of-col= derive from =font-ch= / =font-cw=), so ~40% is free. What remains is
+    plumbing a =*font-scale*= into the font metrics (=font-cell-w/h=) and making the
+    browser CHROME font-relative — ~8 hardcoded constants (=+bar-h+=, =+row-h+=,
+    matrix/debugger row sizes, textview =pad= + =*gutter-w*=) and ~34 =draw-string=
+    calls whose x/y offsets assume 6×15 — then a =C-+= / =C--= key that bumps the
+    scale and redraws. Full plan in memory =font-scaling-plan=. *Stopgap now:*
+    =QEMU_ZOOM=fit ./build.sh --interactive= scales the whole guest display to the
+    window (gtk =zoom-to-fit=on=; or Ctrl-+ / Ctrl-- in any gtk window) — magnifies
+    pixels, not an in-app font change.
   - /Future, a SEPARATE effort:/ a TrueType/OpenType rasterizer with grayscale
     antialiasing. This is what maximises font experimentation — *any* =.ttf=/=.otf=
     at any size drops in, no conversion — which is why it is worth doing eventually;

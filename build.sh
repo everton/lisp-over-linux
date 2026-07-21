@@ -20,6 +20,9 @@
 # Flags combine in any order. Env:
 #   QEMU_WAIT=<seconds>   (default 50) how long --run waits before the screenshot.
 #   QEMU_DISPLAY=<gtk|sdl> (default gtk) the window backend for --interactive.
+#   QEMU_ZOOM=fit         (gtk only) scale the guest display to the window — drag it
+#                         bigger to magnify the small font. (Any gtk window also
+#                         zooms live with Ctrl-+ / Ctrl-- ; Ctrl-0 resets.)
 #
 # See doc/sbcl-init.org for the full explanation of every step.
 
@@ -188,6 +191,18 @@ printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
 # serial log + the QEMU monitor (toggle with Ctrl-A C; quit monitor with 'quit').
 if [ "$DO_INTERACTIVE" -eq 1 ]; then
   DISPLAY_BACKEND="${QEMU_DISPLAY:-gtk}"
+  # QEMU_ZOOM=fit lets the guest framebuffer SCALE to the window (gtk only): drag the
+  # window bigger and everything magnifies — the quick way to make the small 6x15
+  # font readable until the in-app font-scale lands (see doc/code-browser.org §6.2 /
+  # memory: font-scaling-plan). Any gtk window also zooms live with Ctrl-+ / Ctrl-- .
+  DISPLAY_OPT="$DISPLAY_BACKEND"
+  if [ "${QEMU_ZOOM:-}" = "fit" ] || [ "${QEMU_ZOOM:-}" = "on" ]; then
+    if [ "$DISPLAY_BACKEND" = "gtk" ]; then
+      DISPLAY_OPT="gtk,zoom-to-fit=on"
+    else
+      echo "note: QEMU_ZOOM=fit needs the gtk backend; sdl scales via its own window resize." >&2
+    fi
+  fi
   VARS="$MICRO/ovmf_vars_test.fd"
 
   [ -e "$OVMF_CODE" ] || { echo "ERROR: OVMF not found: $OVMF_CODE (apt install ovmf)" >&2; exit 1; }
@@ -210,7 +225,7 @@ if [ "$DO_INTERACTIVE" -eq 1 ]; then
     -drive if=pflash,format=raw,file="$VARS" \
     -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
     "${QEMU_NET[@]}" \
-    -serial mon:stdio -display "$DISPLAY_BACKEND" -no-reboot
+    -serial mon:stdio -display "$DISPLAY_OPT" -no-reboot
   exit 0
 fi
 
