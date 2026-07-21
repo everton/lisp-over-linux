@@ -1003,7 +1003,12 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   it -> =3= woven inline, Do it -> status line, Inspect it -> the integer 3 open in
   the inspector. =C-c C-d= *Debug it* now evals with the debugger armed (see phase
   6) — =(/ 1 0)= opens the live debugger; picking a restart flows its value back to
-  the status line./ Still owed: a real transcript stream binding.
+  the status line. The *transcript is now captured*: =ws-eval= binds
+  =*standard-output*= / =*trace-output*= to a string stream, so a =(format t …)= in
+  the Workspace no longer vanishes behind the framebuffer — Print it weaves the
+  printed text (then the value) into the buffer, Do it shows it in the status line.
+  /Verified: =(progn (format t "sum=~d" (+ 2 3)) :done)= Print it weaves =sum=5= then
+  ==> :DONE=; =(princ "hello world")= Do it -> status ="hello world  => 99"=./
 - *Phase 4 — the Browser: the =present= spine + the shell.* [SPINE DONE headless —
   [[file:../initramfs/present.lisp][present.lisp]]] The =present= + =commands-for= generics, the item/view/command
   structs, the affordance/disposition model, and a first set of methods (package,

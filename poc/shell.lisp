@@ -107,10 +107,16 @@
     last))
 
 (defun ws-eval (form)
-  "Eval FORM; return (values OK RESULT-or-CONDITION). Errors are caught, never
-   thrown — a bad form must not take down the browser (nor PID 1)."
-  (handler-case (values t (eval form))
-    (serious-condition (c) (values nil c))))
+  "Eval FORM; return (values OK RESULT-or-CONDITION OUTPUT). OUTPUT is whatever the
+   form printed — *standard-output* / *trace-output* are bound to a string stream so
+   a =(format t …)= in the Workspace is captured (the notebook transcript) instead of
+   vanishing behind the framebuffer. Errors are caught, never thrown — a bad form
+   must not take down the browser (nor PID 1); output printed before it still returns."
+  (let ((out (make-string-output-stream)))
+    (handler-case
+        (let ((v (let ((*standard-output* out) (*trace-output* out)) (eval form))))
+          (values t v (get-output-stream-string out)))
+      (serious-condition (c) (values nil c (get-output-stream-string out))))))
 
 (defun ws-insert (tv string)
   "Insert STRING into TV at the caret, via the editor's own keys (so layout,
@@ -120,29 +126,42 @@
         (lol.textview:tv-key tv :return 0)
         (lol.textview:tv-key tv ch 0))))
 
+(defun ws-trim-output (output)
+  "OUTPUT with a trailing newline trimmed — NIL when the form printed nothing, so a
+   caller can cleanly test 'was there a transcript?'."
+  (let ((s (string-right-trim '(#\Newline) (or output ""))))
+    (and (plusp (length s)) s)))
+
 (defun workspace-do-it (pane)
-  "Eval the form before point; show the value (or error) in the status line."
+  "Eval the form before point; show the value (or error), and note any printed
+   output, in the status line."
   (let ((form (form-before-point (pane-tv pane))))
     (if (null form)
         (setf *browser-status* "Do it: no form before point")
-        (multiple-value-bind (ok res) (ws-eval form)
-          (setf *browser-status*
-                (if ok (let ((*print-length* 40) (*print-level* 5))
-                         (format nil "=> ~s" res))
-                    (format nil "error: ~a" res)))))))
+        (multiple-value-bind (ok res out) (ws-eval form)
+          (let ((printed (ws-trim-output out)))
+            (setf *browser-status*
+                  (if ok (let ((*print-length* 40) (*print-level* 5))
+                           (format nil "~@[~a  ~]=> ~s"
+                                   (and printed (substitute #\Space #\Newline printed)) res))
+                      (format nil "~@[~a  ~]error: ~a"
+                              (and printed (substitute #\Space #\Newline printed)) res))))))))
 
 (defun workspace-print-it (pane)
-  "Eval the form before point and weave the printed result into the buffer, inline
-   after the form — the notebook that accretes an editable, re-runnable session."
+  "Eval the form before point and weave the transcript into the buffer, inline after
+   the form — the notebook that accretes an editable, re-runnable session. Anything
+   the form printed is woven first (verbatim), then the value; so is an error."
   (let ((form (form-before-point (pane-tv pane))))
     (when form
-      (multiple-value-bind (ok res) (ws-eval form)
-        (ws-insert (pane-tv pane)
-                   (format nil "~%~a~%"
-                           (if ok (let ((*print-length* 40) (*print-level* 5))
-                                    (format nil "=> ~s" res))
-                               (format nil "!! ~a" res))))
-        (setf *browser-status* nil)))))
+      (multiple-value-bind (ok res out) (ws-eval form)
+        (let ((printed (ws-trim-output out)))
+          (ws-insert (pane-tv pane)
+                     (format nil "~%~@[~a~%~]~a~%"
+                             printed
+                             (if ok (let ((*print-length* 40) (*print-level* 5))
+                                      (format nil "=> ~s" res))
+                                 (format nil "!! ~a" res))))
+          (setf *browser-status* nil))))))
 
 (defun workspace-inspect-it (pane)
   "Eval the form before point and open the value in the inspector (a new trail
