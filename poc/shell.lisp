@@ -69,6 +69,7 @@
 
 (defparameter +bar-h+ 20)
 (defparameter +row-h+ 17)
+(defparameter +list-page+ 12 "Rows a list pane moves its selection on PageUp/PageDown.")
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
 (defvar *pending-prefix* nil
@@ -326,8 +327,10 @@
       ;; --- read-only reference pane: scroll only ---
       ((pane-tv p)
        (case key
-         (:up   (lol.textview:tv-key (pane-tv p) :up 0))
-         (:down (lol.textview:tv-key (pane-tv p) :down 0))
+         (:up        (lol.textview:tv-key (pane-tv p) :up 0))
+         (:down      (lol.textview:tv-key (pane-tv p) :down 0))
+         (:page-up   (lol.textview:tv-key (pane-tv p) :page-up 0))
+         (:page-down (lol.textview:tv-key (pane-tv p) :page-down 0))
          (#\q :quit)
          (t nil)))
       ;; --- list pane: plain-key navigation (nothing to edit) ---
@@ -338,6 +341,10 @@
          ((eq key :down) (setf (pane-sel p)
                                (min (max 0 (1- (length (view-items (pane-view p)))))
                                     (1+ (pane-sel p)))))
+         ((eq key :page-up)   (setf (pane-sel p) (max 0 (- (pane-sel p) +list-page+))))
+         ((eq key :page-down) (setf (pane-sel p)
+                                    (min (max 0 (1- (length (view-items (pane-view p)))))
+                                         (+ (pane-sel p) +list-page+))))
          ((eq key :return)
           (let ((it (selected-item p)))
             (when (and it (item-subject it)) (trail-push (item-subject it)))))
@@ -402,6 +409,18 @@
   (when (lol.textview:tv-hit-p tv x y)
     (lol.textview:tv-click tv x y)                     ; place the caret at the click
     (jump-at-point tv)))
+
+(defun browser-scroll (lines)
+  "Scroll the current pane by LINES (+ down / toward the end) — the mouse wheel. A
+   text pane scrolls its viewport, leaving the caret put; a list pane moves the
+   selection instead (its scroll position is anchored to the selection, so the view
+   follows). No-op past the ends."
+  (let ((p (current-pane)))
+    (if (pane-tv p)
+        (lol.textview:tv-wheel (pane-tv p) lines)
+        (let ((n (length (view-items (pane-view p)))))
+          (when (plusp n)
+            (setf (pane-sel p) (max 0 (min (1- n) (+ (pane-sel p) lines)))))))))
 
 (defun browser-click (x y &optional ctrl)
   "Click: a breadcrumb bar pops to that level; an item in the current list drills;

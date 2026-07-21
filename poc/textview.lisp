@@ -21,6 +21,7 @@
 (defpackage :lol.textview
   (:use :cl :lol.canvas)
   (:export #:textview #:make-textview #:tv-draw #:tv-key #:tv-click #:tv-drag
+           #:tv-wheel
            #:tv-text #:tv-set-text #:tv-lines #:tv-point-line #:tv-point-col
            #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p))
 
@@ -249,6 +250,27 @@
             (tv-anchor-col tv)  (tv-point-col tv)
             (tv-mark-active tv) t)))
 
+(defun move-page (tv dir extend)
+  "Move point one screenful (visible-lines) in DIR (:up / :down) — PageUp/PageDown.
+   The column is preserved where the target line allows (clamp-point trims it), and
+   ensure-visible scrolls the view to follow. EXTEND keeps the anchor (grows the
+   selection), exactly as the arrows do."
+  (let ((n (visible-lines tv)))
+    (case dir
+      (:up   (decf (tv-point-line tv) n))
+      (:down (incf (tv-point-line tv) n))))
+  (clamp-point tv)
+  (unless extend (collapse tv))
+  (ensure-visible tv))
+
+(defun tv-wheel (tv lines)
+  "Scroll the viewport by LINES (positive = down, toward the end) WITHOUT moving
+   point — the mouse wheel. The first visible line is clamped to
+   [0, last-scrollable]; a buffer shorter than the view never scrolls."
+  (let* ((total (length (tv-lines tv)))
+         (max-first (max 0 (- total (visible-lines tv)))))
+    (setf (tv-scroll tv) (max 0 (min max-first (+ (tv-scroll tv) lines))))))
+
 ;;; ---- hit testing: pixels -> (line, col) ----------------------------------
 ;;; Monospaced today. These two functions are the ONLY place that assumes it —
 ;;; proportional metrics replace their bodies and nothing else changes.
@@ -464,6 +486,8 @@
       ((eq key :down)      (move tv :down ext)  nil)
       ((eq key :home)      (move tv :home ext)  nil)
       ((eq key :end)       (move tv :end ext)   nil)
+      ((eq key :page-up)   (move-page tv :up ext)   nil)
+      ((eq key :page-down) (move-page tv :down ext) nil)
       ((eq key :backspace) (backspace tv) (ensure-visible tv) nil)
       ((eq key :delete)    (delete-forward tv) nil)
       ((eq key :return)    (insert-newline tv) (ensure-visible tv) nil)
