@@ -213,6 +213,7 @@
                  (rows (nth ri axes)) (cols (nth ci axes))
                  (methods (methods-of gf-name)))
             (list :mode :matrix :name gf-name :row-pos ri :col-pos ci
+                  :arity (gf-required-arity gf-name)
                   :rows rows :cols cols
                   ;; cells count PRIMARY methods: a 0 (a gap) means no behaviour for
                   ;; that tuple — the real signal. Cross-cutting :around/:before/

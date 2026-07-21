@@ -206,6 +206,75 @@
                                       (min (length items) (+ (pane-top pane) rows)) (length items))
                               (- (+ x w) 90) (+ y h -14) *sh-dim*))))
 
+;;; ---- the clickable dispatch matrix (§3) ----------------------------------
+
+(defvar *matrix-cells* '()
+  "alist ((x y w h row-name col-name) …) of the dispatch grid's clickable cells,
+   rebuilt each draw so a click and the draw can never disagree (like *crumb-rects*).")
+(defparameter +mx-cell-w+ 78)
+(defparameter +mx-row-h+  18)
+
+(defun mx-short (name maxlen)
+  "A class/specializer name trimmed to MAXLEN chars for a matrix header or cell."
+  (let ((s (string-downcase (princ-to-string name))))
+    (if (> (length s) maxlen) (concatenate 'string (subseq s 0 (1- maxlen)) "…") s)))
+
+(defun draw-matrix-body (canvas pane x y w h)
+  "Render a 2-axis dispatch matrix as a clickable grid: the row/col headers are the
+   specializer classes, each cell shows how many PRIMARY methods cover that (row,col)
+   pair (a dim 0 is a real gap — the whole point of the view). A cell click drills
+   the effective-method onion for that class pair; cells are recorded in
+   *matrix-cells* so the hit-test always matches what was drawn."
+  (setf *matrix-cells* '())
+  (let* ((m     (view-data (pane-view pane)))
+         (rows  (getf m :rows))
+         (cols  (getf m :cols))
+         (cells (getf m :cells))
+         (hdr-w 130)                                        ; row-header column width
+         (x0    (+ x hdr-w))                                ; where the cell grid starts
+         (ncols (max 1 (floor (- w hdr-w) +mx-cell-w+))))   ; how many columns fit
+    ;; column headers
+    (loop for c in cols for ci from 0 below ncols
+          for cx = (+ x0 (* ci +mx-cell-w+))
+          do (lol.canvas:draw-string canvas *bfont* (mx-short c 12) (+ cx 2) y *sh-amber*))
+    (when (> (length cols) ncols)
+      (lol.canvas:draw-string canvas *bfont* (format nil "…+~a" (- (length cols) ncols))
+                              (- (+ x w) 44) y *sh-dim*))
+    ;; rows, each a header + its cells
+    (loop for r in rows for cellrow in cells for ri from 0
+          for ry = (+ y +mx-row-h+ (* ri +mx-row-h+))
+          while (< ry (- (+ y h) 4))
+          do (lol.canvas:draw-string canvas *bfont* (mx-short r 20) x ry *sh-text*)
+             (loop for cell in cellrow for c in cols for ci from 0 below ncols
+                   for cx = (+ x0 (* ci +mx-cell-w+))
+                   for n = (length cell)
+                   do (lol.canvas:draw-rect canvas cx (- ry 2) +mx-cell-w+ +mx-row-h+ *sh-rule*)
+                      (lol.canvas:draw-string canvas *bfont*
+                        (if (zerop n) "·" (princ-to-string n))
+                        (+ cx (floor +mx-cell-w+ 2) -3) ry
+                        (if (zerop n) *sh-dim* *sh-accent*))
+                      (push (list cx (- ry 2) +mx-cell-w+ +mx-row-h+ r c) *matrix-cells*)))))
+
+(defun matrix-cell-click (pane px py)
+  "A click on a dispatch-grid cell -> drill the effective-method onion for that
+   (row-class, col-class) pair, building the full argument tuple (T elsewhere) from
+   the matrix's arity and axis positions. NIL when the click missed every cell."
+  (let ((hit (find-if (lambda (cell)
+                        (destructuring-bind (cx cy cw ch r c) cell
+                          (declare (ignore r c))
+                          (and (<= cx px (+ cx cw)) (<= cy py (+ cy ch)))))
+                      *matrix-cells*)))
+    (when hit
+      (destructuring-bind (cx cy cw ch r c) hit
+        (declare (ignore cx cy cw ch))
+        (let* ((m (view-data (pane-view pane)))
+               (arity (or (getf m :arity) 2))
+               (rp (getf m :row-pos)) (cp (getf m :col-pos))
+               (tuple (loop for i below arity
+                            collect (cond ((eql i rp) r) ((eql i cp) c) (t t)))))
+          (trail-push (subj-onion (getf m :name) tuple))
+          t)))))
+
 (defun draw-crumb (canvas y w pane index)
   "A collapsed ancestor bar: subject title + what was picked inside it."
   (lol.canvas:fill-rect canvas 8 y (- w 16) +bar-h+ *sh-hi*)
@@ -238,11 +307,13 @@
       (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
       (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) *sh-accent*)
       (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) *sh-accent*)
-      (if (pane-tv cur)
-          (progn                                    ; source / reference: the textview
-            (lol.textview:tv-geometry (pane-tv cur) 12 body-y (- w 24) body-h)
-            (lol.textview:tv-draw canvas (pane-tv cur)))
-          (draw-list-body canvas cur 12 body-y (- w 24) body-h)))
+      (cond
+        ((pane-tv cur)                              ; source / reference: the textview
+         (lol.textview:tv-geometry (pane-tv cur) 12 body-y (- w 24) body-h)
+         (lol.textview:tv-draw canvas (pane-tv cur)))
+        ((eq (view-kind (pane-view cur)) :matrix)   ; the clickable dispatch grid
+         (draw-matrix-body canvas cur 12 body-y (- w 24) body-h))
+        (t (draw-list-body canvas cur 12 body-y (- w 24) body-h))))
     ;; status line
     (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
       (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *sh-hi*)
@@ -444,6 +515,9 @@
          ((and (or (editable-pane-p p) (workspace-pane-p p))
                (lol.textview:tv-hit-p (pane-tv p) x y))
           (lol.textview:tv-click (pane-tv p) x y))))
+      ;; dispatch matrix: a cell drills its effective-method onion
+      ((eq (view-kind (pane-view p)) :matrix)
+       (matrix-cell-click p x y))
       ;; else an item in the current list view
       ((>= y *content-top*)
        (let* ((items (view-items (pane-view p)))

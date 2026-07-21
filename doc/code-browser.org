@@ -1036,11 +1036,16 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   defgeneric source, and each method — drilling a method opens the
   *effective-method onion* (=effective-method-onion=: =:around= wrapping the core's
   =:before= / primary =call-next-method= chain / =:after=, indentation = call
-  stack). Both render as text in the existing =:reference= pane — no grid widget
-  yet; the clickable-cell matrix (recompute the onion in place) is a later upgrade.
-  /Verified: on the host the =draw {caret,glyph-run} x {surfaces}= grid shows the
-  surface abstraction's health at a glance; in the guest, =commands-for= drills to
-  its matrix and to the =(subj-defn) -> (t)= primary chain on the framebuffer./
+  stack). A true 2-axis matrix is now a *clickable grid* (view kind =:matrix=,
+  rendered by =draw-matrix-body= in [[file:../poc/shell.lisp][poc/shell.lisp]]): row/col headers are the
+  specializer classes, each cell shows the primary-method count (a dim =·= is a real
+  gap), and *clicking a cell drills the effective-method onion for that (row,col)
+  class pair* — the tuple built from the matrix's arity + axis positions
+  (=matrix-cell-click=). A degraded (0/1/3-axis) matrix has no grid to click and
+  stays text. The onion still renders as text in a =:reference= pane.
+  /Verified in the guest: a 3x4 =demo-op= grid shows the right counts; clicking the
+  (integer,string) cell opens its onion — primary chain =(integer string) ->
+  (number string)=, the two applicable methods most-specific-first./
   The condition two-stack *is* the debugger, so the runtime half is now built (see
   phase 6): =restart-list= (=compute-restarts=, innermost-first) + =backtrace-frames=
   (=sb-di=, what SBCL's own debugger walks) in [[file:../initramfs/model.lisp][model.lisp]], rendered live on the

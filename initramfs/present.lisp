@@ -28,9 +28,10 @@
 (defstruct view
   "What (present subject) returns — a description, never pixels."
   title
-  (kind :list)           ; :list :source :reference :class :generic :inspector
+  (kind :list)           ; :list :source :reference :class :generic :inspector :matrix
   (items '())            ; list of ITEM
   text                   ; body text for :source / :reference views
+  data                   ; structured payload for a non-text render (a :matrix grid)
   subject)               ; back-reference to the presented subject
 
 (defstruct command
@@ -224,9 +225,17 @@
         (if after (emit 6 after) (format s "      (none)~%"))))))
 
 (defmethod present ((s subj-matrix))
-  (make-view :title (format nil "matrix ~(~a~)" (subj-matrix-name s))
-             :kind :reference :subject s
-             :text (format-matrix (dispatch-matrix (subj-matrix-name s)))))
+  (let ((m (dispatch-matrix (subj-matrix-name s))))
+    ;; A true 2-axis grid becomes a CLICKABLE :matrix view — the shell renders the
+    ;; cells and a click drills the effective-method onion for that (row,col) class
+    ;; pair. A degraded (0/1/3+ axis) matrix has no grid to click, so it stays text.
+    (if (eq (getf m :mode) :matrix)
+        (make-view :title (format nil "matrix ~(~a~)" (subj-matrix-name s))
+                   :kind :matrix :subject s :data m
+                   :text (format-matrix m))          ; text kept as the fallback body
+        (make-view :title (format nil "matrix ~(~a~)" (subj-matrix-name s))
+                   :kind :reference :subject s
+                   :text (format-matrix m)))))
 
 (defmethod present ((s subj-onion))
   (make-view :title (format nil "effective ~(~a~)" (subj-onion-name s))
