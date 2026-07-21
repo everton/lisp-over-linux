@@ -1104,9 +1104,11 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   (a non-empty VERSIONS list) is a browsable list, drilling to its current source —
   Smalltalk's Changes, entirely in-memory (no persistence needed). /Verified: two
   re-Accepts show up as =report-memory= / =start-net-repl=, each "1 prior version",
-  drilling to the editable source./ Still owed: file-out (§5.1) — writing the change
-  set back to disk needs a persistence target (the rootfs is tmpfs), a call for the
-  user.
+  drilling to the editable source./ *File-out (§5.1) is deferred to its own future
+  session* — persisting the change set to disk is a separate concern: the rootfs is
+  tmpfs, so it first needs a storage-target decision (the ESP that already holds the
+  kernel + initramfs, or a separate virtio disk). The producer side is ready —
+  =changed-definitions= gives the set, each defn's =:source= is the text to write.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 
