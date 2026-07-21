@@ -64,35 +64,41 @@
 (defun fb-read-key (fd)
   "One keystroke from raw fd FD -> (values KEY STATE) for browser-key. A control
    byte becomes its letter + the Ctrl bit (so C-c C-c, C-g work); ESC[… becomes an
-   arrow/page keyword; a lone ESC -> :escape (probed with a short poll so it does
-   not block waiting for a sequence that never comes)."
+   arrow/page keyword; ESC<printable> becomes that char + the Meta bit (Alt-key, or
+   a fast Esc-then-key, so M-. jumps); a lone ESC -> :escape (probed with a short
+   poll so it does not block waiting for a sequence that never comes — and so the
+   Esc-as-Meta prefix, typed as two unhurried keystrokes, still reads as :escape)."
   (let ((c (fbb-read-byte fd)))
     (cond
       ((null c) (values :eof 0))
       ((= c 27)
        (if (fbb-ready-p fd 20)                 ; a real ESC sequence follows?
            (let ((b1 (fbb-read-byte fd)))
-             (if (eql b1 91)                    ; CSI: ESC [
-                 (let ((b2 (fbb-read-byte fd)))
-                   (cond
-                     ((null b2) (values :ignore 0))
-                     ;; a letter final byte (arrows, Home/End as ESC[H / ESC[F)
-                     ((<= 65 b2 90)
-                      (values (case b2 (65 :up) (66 :down) (67 :right) (68 :left)
-                                       (72 :home) (70 :end) (t :ignore)) 0))
-                     ;; a numeric CSI: ESC [ <digits> ~  (Home/End/Del/PgUp/PgDn on
-                     ;; many terminals). Consume ALL digits AND the final ~, so the
-                     ;; trailing byte never leaks into the buffer as a stray char.
-                     ((<= 48 b2 57)
-                      (let ((n (- b2 48)))
-                        (loop for b = (fbb-read-byte fd)
-                              while (and b (<= 48 b 57))
-                              do (setf n (+ (* n 10) (- b 48))))  ; last read = the ~
-                        (values (case n (1 :home) (7 :home) (4 :end) (8 :end)
-                                        (3 :delete) (5 :page-up) (6 :page-down)
-                                        (t :ignore)) 0)))
-                     (t (values :ignore 0))))
-                 (values :ignore 0)))
+             (cond
+               ((eql b1 91)                     ; CSI: ESC [
+                (let ((b2 (fbb-read-byte fd)))
+                  (cond
+                    ((null b2) (values :ignore 0))
+                    ;; a letter final byte (arrows, Home/End as ESC[H / ESC[F)
+                    ((<= 65 b2 90)
+                     (values (case b2 (65 :up) (66 :down) (67 :right) (68 :left)
+                                      (72 :home) (70 :end) (t :ignore)) 0))
+                    ;; a numeric CSI: ESC [ <digits> ~  (Home/End/Del/PgUp/PgDn on
+                    ;; many terminals). Consume ALL digits AND the final ~, so the
+                    ;; trailing byte never leaks into the buffer as a stray char.
+                    ((<= 48 b2 57)
+                     (let ((n (- b2 48)))
+                       (loop for b = (fbb-read-byte fd)
+                             while (and b (<= 48 b 57))
+                             do (setf n (+ (* n 10) (- b 48))))  ; last read = the ~
+                       (values (case n (1 :home) (7 :home) (4 :end) (8 :end)
+                                       (3 :delete) (5 :page-up) (6 :page-down)
+                                       (t :ignore)) 0)))
+                    (t (values :ignore 0)))))
+               ;; ESC <printable> = Meta-<char> (bit 3): Alt-key on the console, or a
+               ;; fast Esc-then-key. M-. reaches browser-key as (#\. + Meta).
+               ((and b1 (<= 33 b1 126)) (values (code-char b1) 8))
+               (t (values :ignore 0))))
            (values :escape 0)))
       ((member c '(13 10)) (values :return 0))
       ((member c '(8 127)) (values :backspace 0))
@@ -311,7 +317,8 @@
                             12 y *sh-dim*)
     (incf y 30)
     (lol.canvas:draw-string canvas *bfont*
-      "restarts  —  up/dn select, Enter invoke, C-g abort:" 12 y *sh-accent*)
+      "restarts  —  0-9 / up-dn select, Enter or click invoke, C-g abort:"
+      12 y *sh-accent*)
     (incf y 22)
     (setf *dbg-restart-top* y)
     (loop for r in restarts for i from 0 do
@@ -369,6 +376,10 @@
               ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G))) (dbg-abort restarts))
               ((eq key :up)   (setf sel (max 0 (1- sel))))
               ((eq key :down) (setf sel (min (1- (length restarts)) (1+ sel))))
+              ;; type a restart's number to select it (0-9) — the count is small
+              ((and (characterp key) (char<= #\0 key #\9))
+               (let ((i (- (char-code key) (char-code #\0))))
+                 (when (< i (length restarts)) (setf sel i))))
               ((member key '(:return #\Return)) (dbg-invoke restarts sel))
               ((eq key :escape) nil))))
         (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))

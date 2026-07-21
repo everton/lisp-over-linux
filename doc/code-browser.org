@@ -1055,13 +1055,20 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   trips, a mouse click drilling into a definition, and a Ctrl-click on =editing-repl=
   inside =%serve-net-repl='s source jumping to =editing-repl='s own source — the
   machine browsing (and editing) its own code from its own menu, no X, no host. This
-  is the screenshot the project exists for./ Still owed: the =M-.= keyboard jump, and
-  PageUp/Down + wheel scroll ([[file:../poc/README.org][poc/README.org]] gaps).
+  is the screenshot the project exists for./ =M-.= now jumps from the keyboard too:
+  Esc is the Emacs Meta prefix (=fb-read-key= decodes both a lone Esc and ESC+char
+  into a Meta bit, =lol.canvas:meta-p=), and =M-.= resolves the symbol at point via
+  the same =jump-at-point= the Ctrl-click uses. /A click landing a gutter-width to the
+  right of the pointer was a hit-test bug — =col-at-x= inverted =x-of-col= without the
+  line-number gutter that =tv-draw= added; both now fold the gutter into =*gutter-w*=,
+  so the caret lands under the arrow tip (verified: a click at column 10's pixel now
+  reads column 10, not 17)./ Still owed: PageUp/Down + wheel scroll
+  ([[file:../poc/README.org][poc/README.org]] gaps).
 - *Phase 6 — the live system.* [DEBUGGER DONE — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]
   (=run-debugger-fb= / =draw-debugger=) + [[file:../initramfs/model.lisp][model.lisp]] + =workspace-debug-it= in
   [[file:../poc/shell.lisp][poc/shell.lisp]]] An unhandled =serious-condition= from *Debug it* opens the live
   debugger on the framebuffer: the condition report (multi-line), its type, the
-  *restart column* (up/dn select, ↵ or click to invoke, =C-g= aborts) and the
+  *restart column* (0-9 or up/dn select, ↵ or click to invoke, =C-g= aborts) and the
   *backtrace spine* (=sb-di=, innermost first). The key is =handler-bind=, not the
   outer =handler-case=: the handler runs *before the unwind*, with the erroring
   stack still standing, so the restarts and backtrace are live and invoking a

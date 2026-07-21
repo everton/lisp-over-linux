@@ -75,6 +75,10 @@
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
    C-c C-p Print it, C-c C-i Inspect it.")
+(defvar *pending-meta* nil
+  "T after a lone Esc — the Emacs Meta prefix (§4¾). The next key is Meta-modified,
+   so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
+   cleared on the next keystroke.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
 
 ;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
@@ -268,11 +272,18 @@
 (defun browser-key (key state)
   "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
    Returns :quit to exit. STATE is the X modifier bitmask."
-  (let ((p (current-pane)))
+  (let ((p (current-pane))
+        ;; Meta = the Alt/Esc-prefix bit on this key, OR a sticky Esc from last time.
+        ;; Consume the sticky flag every keystroke; the Esc branch below re-arms it.
+        (meta (or (lol.canvas:meta-p state) *pending-meta*)))
+    (setf *pending-meta* nil)
     (cond
-      ;; Esc is reserved as a future Meta prefix (Emacs-style) — it must NOT quit
+      ;; M-. — jump to the definition of the symbol at point, the keyboard twin of
+      ;; Ctrl-click. Must precede the editable branch, or the "." would self-insert.
+      ((and meta (eql key #\.) (pane-tv p)) (jump-at-point (pane-tv p)))
+      ;; Esc alone = the Emacs Meta prefix (sticky for the next key); it must NOT quit
       ;; the browser. Leaving via C-g at the root (below) is the deliberate exit.
-      ((eq key :escape) nil)
+      ((eq key :escape) (setf *pending-meta* t) nil)
       ;; C-g = back, everywhere (the console can't deliver SuperL, so Ctrl-g is the
       ;; portable "back" that also works while editing a source pane). At the root,
       ;; there is nothing to pop, so C-g leaves the browser.
@@ -364,21 +375,30 @@
   (and (symbolp sym) sym
        (or (fboundp sym) (boundp sym) (find-class sym nil))))
 
+(defun jump-at-point (tv)
+  "Resolve the symbol at TV's caret and drill into its definition on a new trail
+   level (source if we recorded it, else a reference — PRESENT on a SUBJ-DEFN handles
+   both). The keyboard M-. and the Ctrl-click share this once the caret is placed.
+   Tries the caret column, then one to its left, so M-. also fires with the caret
+   resting just past a symbol. No-op when there's no jumpable symbol there."
+  (let* ((lines (lol.textview:tv-lines tv))
+         (line  (lol.textview:tv-point-line tv))
+         (col   (lol.textview:tv-point-col tv))
+         (tok   (and (< line (length lines))
+                     (let ((s (aref lines line)))
+                       (or (click-token s col)
+                           (and (> col 0) (click-token s (1- col)))))))
+         (sym   (resolve-symbol tok)))
+    (when (jumpable-p sym)
+      (setf *pending-prefix* nil *browser-status* nil)
+      (trail-push (subj-defn sym))
+      t)))
+
 (defun jump-to-definition (tv x y)
-  "Ctrl-click in a source pane: resolve the symbol under X,Y and drill into its
-   definition on a new trail level (source if we recorded it, else a reference —
-   PRESENT on a SUBJ-DEFN handles both). No-op when there's no symbol there."
+  "Ctrl-click in a source pane: place the caret at X,Y and jump (see JUMP-AT-POINT)."
   (when (lol.textview:tv-hit-p tv x y)
     (lol.textview:tv-click tv x y)                     ; place the caret at the click
-    (let* ((lines (lol.textview:tv-lines tv))
-           (line  (lol.textview:tv-point-line tv))
-           (col   (lol.textview:tv-point-col tv))
-           (tok   (and (< line (length lines)) (click-token (aref lines line) col)))
-           (sym   (resolve-symbol tok)))
-      (when (jumpable-p sym)
-        (setf *pending-prefix* nil *browser-status* nil)
-        (trail-push (subj-defn sym))
-        t))))
+    (jump-at-point tv)))
 
 (defun browser-click (x y &optional ctrl)
   "Click: a breadcrumb bar pops to that level; an item in the current list drills;

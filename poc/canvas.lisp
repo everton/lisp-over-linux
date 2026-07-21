@@ -16,17 +16,18 @@
   (:export #:canvas #:make-canvas #:canvas-w #:canvas-h #:canvas-pixels
            #:fill-rect #:draw-rect #:blit-rgba
            #:font #:load-psf #:load-font #:font-cw #:font-ch #:draw-string #:string-px
-           #:rgb #:shift-p #:ctrl-p #:super-p))
+           #:rgb #:shift-p #:ctrl-p #:meta-p #:super-p))
 
 (in-package :lol.canvas)
 
 ;;; Input modifier predicates. The "state" is a bitmask in the X11 convention
-;;; (bit 0 = Shift, bit 2 = Ctrl, bit 6 = Mod4/Super); the framebuffer keyboard
-;;; adapter synthesises the same bits, so the toolkit reads modifiers the same way
-;;; on either backend and does NOT depend on the X11 client.
-(declaim (inline shift-p ctrl-p super-p))
+;;; (bit 0 = Shift, bit 2 = Ctrl, bit 3 = Mod1/Meta/Alt, bit 6 = Mod4/Super); the
+;;; framebuffer keyboard adapter synthesises the same bits, so the toolkit reads
+;;; modifiers the same way on either backend and does NOT depend on the X11 client.
+(declaim (inline shift-p ctrl-p meta-p super-p))
 (defun shift-p (state) (logbitp 0 state))
 (defun ctrl-p  (state) (logbitp 2 state))
+(defun meta-p  (state) (logbitp 3 state))         ; Emacs Meta: Esc-prefix or Alt
 (defun super-p (state) (logbitp 6 state))
 
 (deftype pixmap () '(simple-array (unsigned-byte 32) (*)))

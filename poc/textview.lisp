@@ -211,10 +211,19 @@
 ;;; Monospaced today. These two functions are the ONLY place that assumes it —
 ;;; proportional metrics replace their bodies and nothing else changes.
 
-(defun x-of-col (tv col) (+ (tv-x tv) (tv-pad tv) (* col (tv-cw tv))))
+(defparameter *gutter-w* 40
+  "Width in pixels of the line-number gutter to the LEFT of the text. It is part of
+   a glyph's on-screen X, so both x-of-col and col-at-x count it — otherwise a click
+   lands one gutter-width (≈7 columns) to the right of the pointer (tv-draw used to
+   add it only on the draw side, so hit-testing disagreed with what you saw).")
+
+(defun x-of-col (tv col)
+  "The on-screen X of column COL — gutter included, so it is exactly what tv-draw
+   renders at and exactly what col-at-x inverts."
+  (+ (tv-x tv) (tv-pad tv) *gutter-w* (* col (tv-cw tv))))
 
 (defun col-at-x (tv line px)
-  (let* ((rel (- px (tv-x tv) (tv-pad tv)))
+  (let* ((rel (- px (tv-x tv) (tv-pad tv) *gutter-w*))
          (col (round rel (tv-cw tv))))          ; ROUND, not floor: clicking the
     (max 0 (min col (length (line-at tv line)))))) ; right half of a glyph should
                                                    ; put the caret after it
@@ -310,7 +319,7 @@
 (defparameter *cur-ln*  (rgb #x21 #x25 #x2c))
 (defparameter *scroll*  (rgb #x39 #x40 #x4a))
 
-(defun tv-draw (canvas tv &key (gutter 40))
+(defun tv-draw (canvas tv)
   (let* ((font (tv-font tv))
          (lh (tv-line-height tv))
          (x0 (tv-x tv)) (y0 (tv-y tv)) (w (tv-w tv)) (h (tv-h tv))
@@ -336,8 +345,8 @@
                  (when (and (selection-p tv) (<= sl0 li) (<= li sl1))
                    (let* ((a (if (= li sl0) sc0 0))
                           (b (if (= li sl1) sc1 (length line)))
-                          (xa (+ (x-of-col tv a) gutter))
-                          (xb (+ (x-of-col tv b) gutter)))
+                          (xa (x-of-col tv a))
+                          (xb (x-of-col tv b)))
                      ;; a selected newline shows as a sliver past end-of-line
                      (fill-rect canvas xa (- ly 2)
                                 (max 4 (- xb xa)) lh *sel*)))
@@ -350,11 +359,11 @@
                    (dolist (r runs)
                      (destructuring-bind (s e . color) r
                        (draw-string canvas font (subseq line s e)
-                                    (+ (x-of-col tv s) gutter) ly color))))
+                                    (x-of-col tv s) ly color))))
                  ;; the caret
                  (when (and (tv-focus tv) (= li (tv-point-line tv)))
                    (fill-rect canvas
-                              (+ (x-of-col tv (tv-point-col tv)) gutter) (- ly 2)
+                              (x-of-col tv (tv-point-col tv)) (- ly 2)
                               2 lh *caret*)))))
 
     ;; scrollbar — only when there is something to scroll
