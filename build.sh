@@ -44,8 +44,9 @@ INITRAMFS_DIR="$MICRO/initramfs"
 REGISTRY_SRC="$INITRAMFS_DIR/registry.lisp"
 
 # The Lisp userland, split by concern and loaded IN THIS ORDER into the image.
-# Ordering constraints: ansi before line-editor+repl (color helpers), and
-# line-editor before repl (the with-raw-mode macro).
+# Ordering constraints: ansi before line-editor+repl (color helpers); line-editor
+# before repl (the with-raw-mode macro) AND before shell (which reuses line-editor's
+# *completer* / token-start / longest-common-prefix for Tab completion in the editor).
 # The .lisp sources are baked into lisp-init by save-lisp-and-die; they are NOT
 # shipped in the cpio (only the compiled binary is).
 # The graphics toolkit (shared with the poc/ host prototype) is baked in too, so
@@ -58,12 +59,14 @@ LISP_SOURCES=(
   "$POC_DIR/canvas.lisp"             # pixel buffer + font + draw-string + modifier predicates
   "$POC_DIR/textview.lisp"           # editable text view (uses canvas)
   "$POC_DIR/fb.lisp"                 # /dev/fb0 presenter + KD_GRAPHICS (uses canvas)
-  "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview)
+  "$INITRAMFS_DIR/ansi.lisp"         # 16-color SGR helpers (used by line-editor + repl)
+  "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit (with-raw-mode, read-escape,
+                                     #   *completer* / token-start / longest-common-prefix) — before
+                                     #   shell.lisp, which reuses them for Tab completion in the editor
+  "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
-  "$INITRAMFS_DIR/ansi.lisp"         # 16-color SGR helpers (used by line-editor + repl)
-  "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit (with-raw-mode, read-escape)
   "$INITRAMFS_DIR/fb-browser.lisp"   # run-browser-fb: the code browser on /dev/fb0 (uses shell+fb+line-editor)
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
