@@ -61,6 +61,36 @@
 
 ;;; ---- keyboard: raw bytes -> shell keys ----------------------------------
 
+(defun fb-csi-mods->state (m)
+  "The xterm CSI modifier parameter (Shift=1, Alt=2, Ctrl=4, sent as m-1) mapped to
+   our state bits (Shift bit0, Meta bit3, Ctrl bit2). 0/1 -> no modifier."
+  (let ((k (if (> m 1) (1- m) 0)))
+    (logior (if (logbitp 0 k) 1 0)      ; shift
+            (if (logbitp 1 k) 8 0)      ; meta / alt
+            (if (logbitp 2 k) 4 0))))   ; ctrl
+
+(defun fb-read-csi (fd)
+  "Decode a CSI sequence whose leading ESC [ is already consumed:
+   ESC [ <n1> (';' <n2>)? <final>. A letter final is a cursor / Home / End key and n2
+   is the (xterm) modifier — so Ctrl-Right arrives as ESC [ 1 ; 5 C; a '~' final
+   selects Home/End/Del/Page by n1. All params and the final are consumed, so a
+   modified sequence never leaks its tail into the buffer. Returns (values KEY STATE)."
+  (let ((n1 0) (n2 0) (b (fbb-read-byte fd)))
+    (loop while (and b (<= 48 b 57)) do (setf n1 (+ (* n1 10) (- b 48)) b (fbb-read-byte fd)))
+    (when (eql b 59)                         ; ';' — a modifier parameter follows
+      (setf b (fbb-read-byte fd))
+      (loop while (and b (<= 48 b 57)) do (setf n2 (+ (* n2 10) (- b 48)) b (fbb-read-byte fd))))
+    (let ((state (fb-csi-mods->state n2)))
+      (cond
+        ((null b) (values :ignore 0))
+        ((<= 65 b 90)                        ; letter final: A/B/C/D + H/F
+         (values (case b (65 :up) (66 :down) (67 :right) (68 :left)
+                         (72 :home) (70 :end) (t :ignore)) state))
+        ((= b 126)                           ; '~' final: n1 selects the key
+         (values (case n1 (1 :home) (7 :home) (4 :end) (8 :end)
+                          (3 :delete) (5 :page-up) (6 :page-down) (t :ignore)) state))
+        (t (values :ignore 0))))))
+
 (defun fb-read-key (fd)
   "One keystroke from raw fd FD -> (values KEY STATE) for browser-key. A control
    byte becomes its letter + the Ctrl bit (so C-c C-c, C-g work); ESC[… becomes an
@@ -75,26 +105,7 @@
        (if (fbb-ready-p fd 20)                 ; a real ESC sequence follows?
            (let ((b1 (fbb-read-byte fd)))
              (cond
-               ((eql b1 91)                     ; CSI: ESC [
-                (let ((b2 (fbb-read-byte fd)))
-                  (cond
-                    ((null b2) (values :ignore 0))
-                    ;; a letter final byte (arrows, Home/End as ESC[H / ESC[F)
-                    ((<= 65 b2 90)
-                     (values (case b2 (65 :up) (66 :down) (67 :right) (68 :left)
-                                      (72 :home) (70 :end) (t :ignore)) 0))
-                    ;; a numeric CSI: ESC [ <digits> ~  (Home/End/Del/PgUp/PgDn on
-                    ;; many terminals). Consume ALL digits AND the final ~, so the
-                    ;; trailing byte never leaks into the buffer as a stray char.
-                    ((<= 48 b2 57)
-                     (let ((n (- b2 48)))
-                       (loop for b = (fbb-read-byte fd)
-                             while (and b (<= 48 b 57))
-                             do (setf n (+ (* n 10) (- b 48))))  ; last read = the ~
-                       (values (case n (1 :home) (7 :home) (4 :end) (8 :end)
-                                       (3 :delete) (5 :page-up) (6 :page-down)
-                                       (t :ignore)) 0)))
-                    (t (values :ignore 0)))))
+               ((eql b1 91) (fb-read-csi fd))    ; CSI: ESC [ … (arrows, Home/End, modifiers)
                ;; ESC <printable> = Meta-<char> (bit 3): Alt-key on the console, or a
                ;; fast Esc-then-key. M-. reaches browser-key as (#\. + Meta).
                ((and b1 (<= 33 b1 126)) (values (code-char b1) 8))
@@ -103,6 +114,7 @@
       ((member c '(13 10)) (values :return 0))
       ((member c '(8 127)) (values :backspace 0))
       ((= c 9)             (values :tab 0))
+      ((= c 0)             (values #\Space 4))               ; C-Space / C-@ = NUL -> C-Space
       ((<= 1 c 26)         (values (code-char (+ c 96)) 4))   ; C-a..C-z, bit 2 = Ctrl
       (t                   (values (code-char c) 0)))))
 
@@ -110,6 +122,9 @@
 
 (defvar *cursor-x* 0) (defvar *cursor-y* 0)
 (defvar *ctrl-down* nil "Is a Ctrl key held? Tracked from the keyboard's evdev.")
+(defvar *shift-down* nil "Is a Shift key held? Tracked from the keyboard's evdev, so
+  Shift-arrow can extend a selection — the cooked tty reports the modifier no more
+  than it reports a bare Ctrl.")
 
 (defun scan-input-device (mask-ok-p)
   "The /dev/input/eventN of the first device in /proc/bus/input/devices whose
@@ -163,9 +178,10 @@
 (defun open-keyboard () (open-evdev (find-keyboard-device)))
 
 (defun read-keyboard-evdev (fd)
-  "Drain the keyboard's evdev queue, tracking Ctrl held state in *ctrl-down*.
-   Text still arrives through the cooked tty (fd 0); this fd exists only for the
-   modifier state the tty can't report — a bare Ctrl produces no byte there."
+  "Drain the keyboard's evdev queue, tracking Ctrl and Shift held state in
+   *ctrl-down* / *shift-down*. Text still arrives through the cooked tty (fd 0); this
+   fd exists only for the modifier state the tty can't report — a bare modifier
+   produces no byte there."
   (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
     (loop
       (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
@@ -173,9 +189,12 @@
         (let ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
               (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
               (val  (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8))))
-          (when (and (= type 1)                          ; EV_KEY
-                     (or (= code 29) (= code 97)))        ; KEY_LEFTCTRL / KEY_RIGHTCTRL
-            (setf *ctrl-down* (plusp val))))))))          ; 1 press / 2 repeat -> down, 0 -> up
+          (when (= type 1)                               ; EV_KEY  (1 press / 2 repeat -> down)
+            (cond
+              ((or (= code 29) (= code 97))              ; KEY_LEFTCTRL / KEY_RIGHTCTRL
+               (setf *ctrl-down* (plusp val)))
+              ((or (= code 42) (= code 54))              ; KEY_LEFTSHIFT / KEY_RIGHTSHIFT
+               (setf *shift-down* (plusp val))))))))))
 
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*; return T on a
@@ -255,7 +274,8 @@
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))
                 (kbd    (open-keyboard)))
-            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2) *ctrl-down* nil
+            (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
+                  *ctrl-down* nil *shift-down* nil
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
                   *fb-mouse* mouse *fb-kbd* kbd)
             (unwind-protect
@@ -267,12 +287,18 @@
                        (when mouse (draw-cursor canvas *cursor-x* *cursor-y*))
                        (lol.fb:present-fb canvas)
                        (multiple-value-bind (kb ms kev) (fbb-wait 0 mouse kbd)
-                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl before a click
+                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift first
                          (when kb
                            (multiple-value-bind (key state) (fb-read-key 0)
-                             (when (or (eq key :eof)
-                                       (eq :quit (browser-key key state)))
-                               (return))))
+                             ;; The cooked tty sends a bare ESC[A for EVERY arrow — the
+                             ;; modifier lives only in the evdev state, so fold it in
+                             ;; (Ctrl-arrow = word motion, Shift-arrow = select).
+                             (let ((state (logior state
+                                                  (if *ctrl-down* 4 0)
+                                                  (if *shift-down* 1 0))))
+                               (when (or (eq key :eof)
+                                         (eq :quit (browser-key key state)))
+                                 (return)))))
                          (when (and mouse ms (read-mouse mouse xres yres))
                            (browser-click *cursor-x* *cursor-y* *ctrl-down*))))))
               (when mouse (%fbb-close mouse))

@@ -30,6 +30,7 @@
   (lines (vector ""))          ; simple-vector of strings, one per line
   (point-line 0) (point-col 0)
   (anchor-line 0) (anchor-col 0)   ; selection anchor; = point means no selection
+  (mark-active nil)                ; Emacs C-SPC: motion extends the region until cleared
   (scroll 0)                       ; first visible line
   (x 0) (y 0) (w 0) (h 0)          ; the rectangle we own, in pixels
   (pad 8)
@@ -78,8 +79,11 @@
         (values pl pc al ac))))
 
 (defun collapse (tv)
+  "Drop any selection AND leave Emacs mark mode — a collapsed caret has no region,
+   so a fresh click or an edit ends 'mark active' the way it ends the selection."
   (setf (tv-anchor-line tv) (tv-point-line tv)
-        (tv-anchor-col tv)  (tv-point-col tv)))
+        (tv-anchor-col tv)  (tv-point-col tv)
+        (tv-mark-active tv) nil))
 
 (defun delete-selection (tv)
   (when (selection-p tv)
@@ -206,6 +210,44 @@
   (clamp-point tv)
   (unless extend (collapse tv))
   (ensure-visible tv))
+
+(defun word-boundary-p (ch)
+  "Delimiter between words for C-arrow / M-f / M-b motion — the same split the click
+   uses, so a 'word' is a whole Lisp token (=foo-bar=, =*x*=, =pkg:name=)."
+  (member ch '(#\Space #\Tab #\( #\) #\' #\" #\` #\, #\;)))
+
+(defun move-word (tv dir extend)
+  "Move point one word in DIR (:left / :right): skip any delimiters, then skip the
+   token. At a line edge, step across it (like a single char move) so the motion
+   never wedges. EXTEND keeps the anchor (grows the selection)."
+  (let ((l (tv-point-line tv)) (c (tv-point-col tv)))
+    (ecase dir
+      (:right
+       (let ((s (line-at tv l)))
+         (if (>= c (length s))
+             (when (< l (1- (length (tv-lines tv)))) (setf l (1+ l) c 0))
+             (progn
+               (loop while (and (< c (length s)) (word-boundary-p (char s c))) do (incf c))
+               (loop while (and (< c (length s)) (not (word-boundary-p (char s c)))) do (incf c))))))
+      (:left
+       (if (<= c 0)
+           (when (> l 0) (setf l (1- l) c (length (line-at tv l))))
+           (let ((s (line-at tv l)))
+             (loop while (and (> c 0) (word-boundary-p (char s (1- c)))) do (decf c))
+             (loop while (and (> c 0) (not (word-boundary-p (char s (1- c))))) do (decf c))))))
+    (setf (tv-point-line tv) l (tv-point-col tv) c))
+  (clamp-point tv)
+  (unless extend (collapse tv))
+  (ensure-visible tv))
+
+(defun set-mark (tv)
+  "Emacs C-SPC: toggle the mark. Off->on drops an anchor at point and arms mark mode
+   (subsequent motion extends). On->off clears the region (collapse also disarms)."
+  (if (tv-mark-active tv)
+      (collapse tv)
+      (setf (tv-anchor-line tv) (tv-point-line tv)
+            (tv-anchor-col tv)  (tv-point-col tv)
+            (tv-mark-active tv) t)))
 
 ;;; ---- hit testing: pixels -> (line, col) ----------------------------------
 ;;; Monospaced today. These two functions are the ONLY place that assumes it —
@@ -379,30 +421,49 @@
 (defun tv-key (tv key state)
   "KEY is a character or a keyword (see lol.x11:decode-key). Returns :accept when
    the user asks to compile the buffer, else NIL."
-  (let ((shift (lol.canvas:shift-p state))
-        (ctrl  (lol.canvas:ctrl-p state)))
+  (let* ((shift (lol.canvas:shift-p state))
+         (ctrl  (lol.canvas:ctrl-p state))
+         (meta  (lol.canvas:meta-p state))
+         ;; motion extends the region when Shift is held OR the Emacs mark is active
+         (ext   (or shift (tv-mark-active tv))))
     (cond
-      ;; ---- Ctrl chords ----
+      ;; ---- Ctrl + a named key: word motion on the arrows (buffer ends on Home/End) ----
+      ((and ctrl (eq key :left))  (move-word tv :left ext)  nil)
+      ((and ctrl (eq key :right)) (move-word tv :right ext) nil)
+      ((and ctrl (eq key :home))  (setf (tv-point-line tv) 0 (tv-point-col tv) 0)
+                                  (unless ext (collapse tv)) (ensure-visible tv) nil)
+      ((and ctrl (eq key :end))   (setf (tv-point-line tv) (1- (length (tv-lines tv))))
+                                  (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv))))
+                                  (unless ext (collapse tv)) (ensure-visible tv) nil)
+      ;; ---- Ctrl chords (letters) ----
       ((and ctrl (characterp key))
        (case (char-downcase key)
-         (#\a (move tv :home shift))
-         (#\e (move tv :end shift))
-         (#\b (move tv :left shift))
-         (#\f (move tv :right shift))
-         (#\p (move tv :up shift))
-         (#\n (move tv :down shift))
+         (#\Space (set-mark tv))                 ; C-SPC set / clear the mark
+         (#\a (move tv :home ext))
+         (#\e (move tv :end ext))
+         (#\b (move tv :left ext))
+         (#\f (move tv :right ext))
+         (#\p (move tv :up ext))
+         (#\n (move tv :down ext))
          (#\k (kill-to-eol tv))
          (#\d (delete-forward tv))
          (t nil))
        nil)
       ((and ctrl (eq key :return)) :accept)     ; Ctrl-Enter = Accept
-      ;; ---- named keys ----
-      ((eq key :left)      (move tv :left shift)  nil)
-      ((eq key :right)     (move tv :right shift) nil)
-      ((eq key :up)        (move tv :up shift)    nil)
-      ((eq key :down)      (move tv :down shift)  nil)
-      ((eq key :home)      (move tv :home shift)  nil)
-      ((eq key :end)       (move tv :end shift)   nil)
+      ;; ---- Meta chords: M-f / M-b word motion (Emacs) ----
+      ((and meta (characterp key))
+       (case (char-downcase key)
+         (#\f (move-word tv :right ext))
+         (#\b (move-word tv :left ext))
+         (t nil))
+       nil)
+      ;; ---- named keys (Shift or an active mark extends the selection) ----
+      ((eq key :left)      (move tv :left ext)  nil)
+      ((eq key :right)     (move tv :right ext) nil)
+      ((eq key :up)        (move tv :up ext)    nil)
+      ((eq key :down)      (move tv :down ext)  nil)
+      ((eq key :home)      (move tv :home ext)  nil)
+      ((eq key :end)       (move tv :end ext)   nil)
       ((eq key :backspace) (backspace tv) (ensure-visible tv) nil)
       ((eq key :delete)    (delete-forward tv) nil)
       ((eq key :return)    (insert-newline tv) (ensure-visible tv) nil)

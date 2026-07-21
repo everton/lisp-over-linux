@@ -272,10 +272,13 @@
 (defun browser-key (key state)
   "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
    Returns :quit to exit. STATE is the X modifier bitmask."
-  (let ((p (current-pane))
-        ;; Meta = the Alt/Esc-prefix bit on this key, OR a sticky Esc from last time.
-        ;; Consume the sticky flag every keystroke; the Esc branch below re-arms it.
-        (meta (or (lol.canvas:meta-p state) *pending-meta*)))
+  (let* ((p (current-pane))
+         ;; Meta = the Alt/Esc-prefix bit on this key, OR a sticky Esc from last time.
+         ;; Consume the sticky flag every keystroke; the Esc branch below re-arms it.
+         (meta (or (lol.canvas:meta-p state) *pending-meta*))
+         ;; Fold the sticky-Esc Meta into STATE so downstream (tv-key's M-f / M-b)
+         ;; sees it too, not just the M-. branch here.
+         (state (if meta (logior state 8) state)))
     (setf *pending-meta* nil)
     (cond
       ;; M-. — jump to the definition of the symbol at point, the keyboard twin of

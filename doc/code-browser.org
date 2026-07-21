@@ -789,7 +789,14 @@ to =SuperL-n=).
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
 =C-c C-c= Accept, =C-x C-e= Do it, =C-c C-p= Print it, =C-c C-i= Inspect it, =M-.=
 / =M-,= jump-to-definition / Senders, and the text-view's own =C-a/C-e/C-k/…=
-editing.
+editing. *Emacs-native motion and selection are in* [[file:../poc/textview.lisp][poc/textview.lisp]]: =C-←/→= and
+=M-b/M-f= move by word (a whole Lisp token); *Shift + any motion* extends the
+selection; =C-SPC= sets the mark so subsequent motion grows the region until it is
+cleared; =C-Home/End= jump to buffer start / end. On the bare framebuffer the cooked
+tty cannot report a held Shift/Ctrl any more than a bare Ctrl, so the modifier state
+is read from the keyboard's *own* evdev (=*shift-down*= / =*ctrl-down*=) and folded
+into each key; =fb-read-csi= also decodes xterm-style =ESC [ 1 ; 5 C= modified
+cursor keys, and =C-SPC= arrives as NUL.
 
 *Editing a definition in place — the modifier split is what prevents the
 collision.* A source pane backed by the registry (*your* code) is an *editable*
