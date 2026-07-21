@@ -374,21 +374,64 @@
                   :restart r))
           (compute-restarts condition)))
 
+(defun backtrace-frame-objects (&optional (count 40) (skip 0))
+  "The live sb-di frame OBJECTS, innermost first — the same walk as BACKTRACE-FRAMES,
+   but returning the frames themselves so the debugger can read each one's locals.
+   SKIP drops the innermost frames (the debugger's own machinery); COUNT caps depth."
+  (let ((frames '()))
+    (do ((f (sb-di:top-frame) (sb-di:frame-down f))
+         (i 0 (1+ i)))
+        ((or (null f) (>= (length frames) count)) (nreverse frames))
+      (when (>= i skip) (push f frames)))))
+
+(defun frame-label (frame)
+  "A best-effort name string for FRAME — some internal frames have no tidy name."
+  (or (ignore-errors
+        (let ((*print-length* 4) (*print-level* 3))
+          (princ-to-string (sb-di:debug-fun-name (sb-di:frame-debug-fun frame)))))
+      "<anonymous frame>"))
+
 (defun backtrace-frames (&optional (count 40) (skip 0))
   "The live call stack as a list of name strings, innermost first, via sb-di (what
    SBCL's own debugger walks). SKIP drops the innermost frames (the debugger's own
    machinery); COUNT caps depth. Each frame's name is best-effort — some internal
    frames have no tidy name."
-  (let ((frames '()))
-    (do ((f (sb-di:top-frame) (sb-di:frame-down f))
-         (i 0 (1+ i)))
-        ((or (null f) (>= (length frames) count)) (nreverse frames))
-      (when (>= i skip)
-        (push (or (ignore-errors
-                    (let ((*print-length* 4) (*print-level* 3))
-                      (princ-to-string (sb-di:debug-fun-name (sb-di:frame-debug-fun f)))))
-                  "<anonymous frame>")
-              frames)))))
+  (mapcar #'frame-label (backtrace-frame-objects count skip)))
+
+(defun frame-var-name (var)
+  "VAR's source name, lower-cased; a non-zero id (a shadowing duplicate) is appended
+   as =name#n=, exactly as SBCL's own debugger disambiguates them."
+  (or (ignore-errors
+        (let ((name (string-downcase (symbol-name (sb-di:debug-var-symbol var))))
+              (id   (sb-di:debug-var-id var)))
+          (if (zerop id) name (format nil "~a#~d" name id))))
+      "?"))
+
+(defun frame-var-value (var loc frame)
+  "VAR's value printed short, or :UNAVAILABLE when it is not live at LOC (a temp, or
+   not yet bound at this program point). Never signals — the debugger cannot afford
+   a second error while showing the first."
+  (if (eq (ignore-errors (sb-di:debug-var-validity var loc)) :valid)
+      (or (ignore-errors
+            (let ((*print-length* 6) (*print-level* 3) (*print-circle* t))
+              (princ-to-string (sb-di:debug-var-value var frame))))
+          "#<unprintable>")
+      :unavailable))
+
+(defun frame-locals (frame)
+  "The local variables live in FRAME, as a list of (:name STRING :value STRING-or-
+   :UNAVAILABLE) — what SBCL's own debugger lists under 'l'. NIL when the frame carries
+   no debug variables (interpreted code, or compiled with too little debug info). Every
+   sb-di read is guarded: this feeds PID 1's last-resort debugger, which must not error
+   while reporting an error. (=debug-fun-debug-vars= is internal to SB-DI.)"
+  (ignore-errors
+    (let* ((fun  (sb-di:frame-debug-fun frame))
+           (loc  (sb-di:frame-code-location frame))
+           (vars (sb-di::debug-fun-debug-vars fun)))
+      (when (and vars (plusp (length vars)))
+        (loop for v across vars
+              collect (list :name (frame-var-name v)
+                            :value (frame-var-value v loc frame)))))))
 
 ;;; ======================================================================
 ;;; The rest of the xref wrappers (registry.lisp has senders/referrers/…)
