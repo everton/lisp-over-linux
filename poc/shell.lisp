@@ -68,6 +68,7 @@
   (let ((v (present subject)))
     (make-pane
      :subject subject :view v
+     :sel (max 0 (min (view-sel v) (max 0 (1- (length (view-items v))))))  ; view's preferred focus
      :tv (when (and (member (view-kind v) '(:source :reference :workspace)) (view-text v))
            (let ((tv (lol.textview:make-textview
                       :font *bfont*

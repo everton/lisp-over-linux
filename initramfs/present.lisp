@@ -34,6 +34,7 @@
   (items '())            ; list of ITEM
   text                   ; body text for :source / :reference views
   data                   ; structured payload for a non-text render (a :matrix grid)
+  (sel 0)                ; the row a list view opens focused on (default: the first)
   subject)               ; back-reference to the presented subject
 
 (defstruct command
@@ -381,6 +382,9 @@
     (make-view
      :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})" name (subj-onion-tuple s))
      :kind :list :subject s
+     ;; open focused on the PRIMARY (what actually runs) — it sits after the :around and
+     ;; :before layers, so its row index is however many of those there are.
+     :sel (+ (length (getf o :around)) (length (getf o :before)))
      :items (or (nreverse items)
                 (list (make-item :label "(no applicable primary method)"
                                  :detail (if (getf o :definitive-p) "classes decide"
