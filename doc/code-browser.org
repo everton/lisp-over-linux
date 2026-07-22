@@ -825,6 +825,20 @@ view (a builtin like =mapcar=, no shipped source) stays read-only, since you
 cannot edit-and-Accept =car= anyway. In a *list* pane there is nothing to edit, so
 plain keys may navigate freely (Backspace-back is fine there).
 
+** Naming — "environment", for now (and a future joke)
+
+We call this whole thing the *environment*. It is the word that stuck, and it has real
+Lisp-machine pedigree — Interlisp-D and Symbolics Genera both called the whole live
+thing "the environment". The Smalltalk terms, for when we revisit: the persistent live
+world is the *image* (and =save-lisp-and-die= literally writes one); the multi-pane code
+browser is the *System Browser* (Pharo's modern one is *Calypso*); the scratch buffer is
+the *Workspace* → *Playground*. Self calls its live world "the world".
+
+/Future — do not rename unprompted./ There is a joke waiting in a *space* theme: it
+plays off the Land-of-Lisp alien (=draw-alien=) and the =COLLIDE= example, which already
+lives in space (asteroid / ship / station / missile). "world" is the fallback term.
+Revisit on a naming/polish pass.
+
 * 5. Persistence — and the kernel gap
 
 Checked the config: =CONFIG_VFAT_FS=, =CONFIG_EXT4_FS=, =CONFIG_BLK_DEV_SD=,
