@@ -105,28 +105,37 @@
 
 ;;; ---- Accept: compile edited source into the live image + update the registry --
 
-(defun accept-source (text &optional name kind)
+(defun accept-source (text &optional name kind label)
   "Compile TEXT (an edited definition) into the RUNNING image and update the
    registry: eval the form (redefining it live — the Smalltalk 'accept'), and set
-   its recorded source, pushing the previous source onto the version history. NAME
-   and KIND (from the browser pane's subject) disambiguate when the form's own head
-   is enough; the form is authoritative when it names a definition. Returns the
+   its recorded source, pushing the previous source onto the version history. NAME,
+   KIND and LABEL (from the browser pane's subject) are fallbacks — the form is
+   authoritative when it names a definition; LABEL (a method's specializer label)
+   keeps Accept on the right method when the form's own head isn't enough. Returns the
    name compiled. Signals on a read/compile error (the caller reports it)."
   (let* ((form   (read-from-string text))
          (result (eval form)))                  ; compile/redefine in the live image
     (multiple-value-bind (fname fkind flabel) (defn-name-and-kind form)
-      (declare (ignore flabel))
-      (let* ((the-name (or fname name))
-             (the-kind (or fkind kind))
-             (trimmed  (string-trim '(#\Newline #\Space #\Tab) text)))
+      (let* ((the-name  (or fname name))
+             (the-kind  (or fkind kind))
+             (the-label (or flabel label))      ; a method's specializer label, else NIL
+             (trimmed   (string-trim '(#\Newline #\Space #\Tab) text)))
         (when the-name
           (let* ((defns    (gethash the-name *registry*))
-                 (existing (find the-kind defns :key #'defn-kind)))
+                 ;; a name can hold MANY methods, so a :method must match by its
+                 ;; specializer label — otherwise Accept would overwrite the source of
+                 ;; some other method of the same generic function.
+                 (existing (if (eq the-kind :method)
+                               (find-if (lambda (d)
+                                          (and (eq (defn-kind d) :method)
+                                               (equal (defn-label d) the-label)))
+                                        defns)
+                               (find the-kind defns :key #'defn-kind))))
             (if existing
                 (progn
                   (push (defn-source existing) (defn-versions existing))
                   (setf (defn-source existing) trimmed))
-                (push (make-defn :name the-name :kind the-kind :source trimmed)
+                (push (make-defn :name the-name :kind the-kind :label the-label :source trimmed)
                       (gethash the-name *registry*)))))
         (or the-name result)))))
 

@@ -568,12 +568,14 @@
 
 (defun accept-pane (pane)
   "Compile the edited source buffer into the live image + update the registry
-   (accept-source). Sets *browser-status* to the outcome."
+   (accept-source), for any editable subject — a whole definition (subj-defn) or a
+   single method (subj-method). Sets *browser-status* to the outcome."
   (let ((text (lol.textview:tv-text (pane-tv pane)))
         (subj (pane-subject pane)))
     (handler-case
-        (let ((name (accept-source text (subj-defn-name subj) (subj-defn-kind subj))))
-          (setf *browser-status* (format nil "Accepted: ~(~a~)" name)))
+        (multiple-value-bind (name kind label) (accept-target subj)
+          (let ((n (accept-source text name kind label)))
+            (setf *browser-status* (format nil "Accepted: ~(~a~)" n))))
       (serious-condition (c)
         (setf *browser-status* (format nil "Accept failed: ~a" c))))))
 

@@ -356,20 +356,34 @@
 
 (defmethod present ((m subj-method))
   "One method of a generic function, as its OWN source — the exact defmethod for this
-   specialised case (read-only: our recorded code, syntax-coloured). When the source
-   wasn't captured (a builtin or inherited method), fall back to the effective method
-   for its tuple, so a method row is never a dead end."
+   specialised case. When we captured that source it is an EDITABLE :source pane (like
+   any other definition — C-c C-c Accept recompiles just this method); when we did not
+   (a builtin or inherited method) it falls back to the read-only effective method for
+   its tuple, so a method row is never a dead end."
   (let* ((name  (subj-method-name m))
          (specs (subj-method-specializers m))
          (quals (subj-method-qualifiers m))
          (src   (method-source name quals specs))
          (title (format nil "method ~(~a~) ~@[~(~a~) ~](~{~(~a~)~^ ~})"
                         name (first quals) specs)))
-    (make-view
-     :title title :kind :reference :subject m
-     :text (or src
-               (ignore-errors (format-onion (apply #'effective-method-onion name specs)))
-               (format nil "~a~%~%(no captured source for this method)" title)))))
+    (if src
+        (make-view :title title :kind :source :subject m :text src)
+        (make-view :title title :kind :reference :subject m
+                   :text (or (ignore-errors
+                              (format-onion (apply #'effective-method-onion name specs)))
+                             (format nil "~a~%~%(no captured source for this method)" title))))))
+
+(defun accept-target (subject)
+  "The (values NAME KIND LABEL) that ACCEPT needs to file a pane's edited source back
+   into the registry — for a subj-defn or a subj-method. The edited form is still
+   authoritative (accept-source re-derives these from it); these are the fallbacks and,
+   for a method, the specializer LABEL that keeps Accept on the right method."
+  (typecase subject
+    (subj-method (values (subj-method-name subject) :method
+                         (method-source-label (subj-method-qualifiers subject)
+                                              (subj-method-specializers subject))))
+    (subj-defn   (values (subj-defn-name subject) (subj-defn-kind subject) nil))
+    (t           (values nil nil nil))))
 
 (defmethod present ((gf generic-function))
   (let* ((name (sb-mop:generic-function-name gf))

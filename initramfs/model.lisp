@@ -107,10 +107,16 @@
     (sb-mop:eql-specializer (list 'eql (sb-mop:eql-specializer-object s)))
     (t s)))
 
+(defun method-source-label (quals specs)
+  "The registry label for a method — its qualifiers then its specializer tuple, e.g.
+   \"(subj-defn)\" or \":around (widget t)\". Kept identical to the label DEFN-NAME-AND-KIND
+   records so method lookup AND Accept agree on which method a defmethod names."
+  (string-trim " " (format nil "~{~a ~}(~{~a~^ ~})" quals specs)))
+
 (defun method-source (name quals specs)
   "Try to find a method's captured source in the registry (our own methods only).
    Matches a :method DEFN whose label mentions the qualifiers + specializers."
-  (let ((label (string-trim " " (format nil "~{~a ~}(~{~a~^ ~})" quals specs))))
+  (let ((label (method-source-label quals specs)))
     (dolist (d (definitions-of name :method))
       (when (and (defn-label d) (string-equal (defn-label d) label))
         (return (defn-source d))))))
