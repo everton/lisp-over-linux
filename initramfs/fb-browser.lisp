@@ -567,8 +567,13 @@
      ("mouse wheel"        "scroll the pane")
      ("q"                  "quit  (list & reference panes)"))
     ("Spatial  (Super)"
-     ("Super-?"            "this cheatsheet")
+     ("Super-Space"        "the Spotter — find anything, opens a new tab")
+     ("Super-1 … 9"        "jump to tab N")
+     ("Super-Tab"          "cycle tabs (Shift: backwards)")
+     ("Super-Enter/click"  "open the selection in a NEW tab")
+     ("Super-w"            "close the current tab")
      ("Super-Left"         "back in the trail")
+     ("Super-?"            "this cheatsheet")
      ("Super-q"            "quit the browser"))
     ("Edit  (source / workspace)"
      ("Tab"                "complete the symbol  (else indent)")
@@ -632,3 +637,85 @@
           (when kev (read-keyboard-evdev *fb-kbd*))
           (when kb (fb-read-key 0) (return))            ; any key dismisses
           (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h)) (return)))))))
+
+;;; ---- the Spotter: SuperL-Space fuzzy finder (§4¾) -------------------------
+;;; A modal overlay over the browser's live canvas + input, like the debugger and
+;;; the cheatsheet, but LIVE: it accumulates a query string and re-filters the
+;;; candidate set (spotter-candidates / spotter-filter, present.lisp) on every
+;;; keystroke. Enter opens the selected hit in a NEW trail (new-trail, shell.lisp).
+
+(defvar *spotter-top* 0 "screen-y of the first Spotter result row, for click hit-testing.")
+(defparameter +spotter-row+ 17)
+(defparameter +spotter-cap+ 60 "Max results to rank/show — a few screenfuls.")
+
+(defun draw-spotter (canvas w h query results sel)
+  "The Spotter overlay: a header, the live query line, and the ranked result rows
+   (label + dim detail), the selection highlighted."
+  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w 24 *sh-hi*)
+  (lol.canvas:draw-string canvas *bfont*
+    "Spotter  —  type to find;  up/dn select,  Enter opens in a NEW tab,  Esc closes"
+    12 5 *sh-accent*)
+  ;; the query line
+  (lol.canvas:fill-rect canvas 8 30 (- w 16) 20 *sh-panel*)
+  (lol.canvas:draw-rect canvas 8 30 (- w 16) 20 *sh-rule*)
+  (lol.canvas:draw-string canvas *bfont* (format nil "> ~a_" query) 14 33 *sh-text*)
+  ;; the results
+  (let ((y 60))
+    (setf *spotter-top* y)
+    (if (null results)
+        (lol.canvas:draw-string canvas *bfont* "(no matches)" 16 y *sh-dim*)
+        (loop for r in results for i from 0
+              while (< y (- h 8))
+              do (when (= i sel)
+                   (lol.canvas:fill-rect canvas 8 (- y 2) (- w 16) +spotter-row+ *sh-sel*)
+                   (lol.canvas:fill-rect canvas 8 (- y 2) 2 +spotter-row+ *sh-accent*))
+                 (let ((pen (lol.canvas:draw-string canvas *bfont* (getf r :label) 16 y
+                                                     (if (= i sel) *sh-text* *sh-dim*))))
+                   (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (getf r :detail))
+                                           pen y *sh-dim*))
+                 (incf y +spotter-row+)))))
+
+(defun spotter-row-at (y n)
+  "The result-row index at screen-Y, or NIL. N is how many results there are."
+  (when (>= y *spotter-top*)
+    (let ((i (floor (- y *spotter-top*) +spotter-row+)))
+      (when (< i n) i))))
+
+(defun run-spotter-fb ()
+  "The Spotter (SuperL-Space): fuzzy-find any definition, package or surface and open
+   it in a new trail. Modal over the browser's canvas + input; live-filters on each
+   keystroke. Returns after Enter (opens the hit) or Esc (dismiss)."
+  (let* ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
+         (cands (ignore-errors (spotter-candidates)))
+         (query "")
+         (results (ignore-errors (spotter-filter query cands +spotter-cap+)))
+         (sel 0))
+    (when canvas
+      (loop
+        (draw-spotter canvas w h query results sel)
+        (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
+        (lol.fb:present-fb canvas)
+        (flet ((refilter () (setf results (ignore-errors (spotter-filter query cands +spotter-cap+))
+                                  sel 0)))
+          (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+            (when kev (read-keyboard-evdev *fb-kbd*))
+            (when kb
+              (multiple-value-bind (key state) (fb-read-key 0)
+                (declare (ignore state))
+                (cond
+                  ((eq key :escape) (return))
+                  ((member key '(:return #\Return))
+                   (let ((hit (nth sel results)))
+                     (when hit (new-trail (getf hit :subject))))
+                   (return))
+                  ((eq key :up)   (setf sel (max 0 (1- sel))))
+                  ((eq key :down) (setf sel (min (max 0 (1- (length results))) (1+ sel))))
+                  ((eq key :backspace)
+                   (when (plusp (length query))
+                     (setf query (subseq query 0 (1- (length query)))) (refilter)))
+                  ((and (characterp key) (graphic-char-p key))
+                   (setf query (concatenate 'string query (string key))) (refilter)))))
+            (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
+              (let ((i (spotter-row-at *cursor-y* (length results))))
+                (when i (new-trail (getf (nth i results) :subject)) (return))))))))))
