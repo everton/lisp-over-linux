@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Code browser — navigation flows</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1b1e24; --hi:#242931; --rule:#2e343d;
+    --text:#d6d3c8; --dim:#6b727d;
+    --teal:#7fdbca; --amber:#ff9f43; --gold:#ffcb6b; --green:#a8ff78;
+    --blue:#89ddff; --purple:#c792ea; --red:#ff6b6b;
+    --mono:ui-monospace,"Cascadia Code","SF Mono",Menlo,Consolas,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html{color-scheme:dark}
+  body{
+    margin:0; background:
+      radial-gradient(1200px 600px at 80% -10%, #1b2027 0%, transparent 60%),
+      var(--bg);
+    color:var(--text); font-family:var(--sans);
+    line-height:1.55; -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1040px; margin:0 auto; padding:48px 24px 80px}
+  code,.mono{font-family:var(--mono)}
+
+  header .eyebrow{
+    font-family:var(--mono); font-size:12px; letter-spacing:.22em;
+    text-transform:uppercase; color:var(--teal); margin:0 0 10px
+  }
+  h1{
+    font-size:clamp(28px,4.4vw,40px); line-height:1.08; margin:0 0 12px;
+    font-weight:650; letter-spacing:-.01em;
+  }
+  header p.lede{max-width:64ch; color:#b7b3a8; margin:0; font-size:17px}
+  header .sig{color:var(--teal)}
+  .filenote{margin:14px 0 0; font-family:var(--mono); font-size:12px; color:var(--dim)}
+
+  h2{
+    font-size:13px; font-family:var(--mono); letter-spacing:.16em;
+    text-transform:uppercase; color:var(--dim); font-weight:600;
+    margin:56px 0 18px; padding-bottom:8px; border-bottom:1px solid var(--rule);
+  }
+  .maph{color:var(--dim); font-size:14px; margin:0 0 16px; max-width:70ch}
+  .maph b{color:var(--text); font-weight:600}
+
+  /* ---- legend ---- */
+  .legend{display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:12px}
+  .lg{background:var(--panel); border:1px solid var(--rule); border-radius:10px; padding:14px 16px}
+  .lg .ico{font-family:var(--mono); font-size:18px; font-weight:700; margin-bottom:4px}
+  .lg h3{margin:0 0 3px; font-size:14px; font-family:var(--mono)}
+  .lg p{margin:0; font-size:13px; color:var(--dim)}
+  .lg.drill .ico,.lg.drill h3{color:var(--teal)}
+  .lg.preview .ico{color:var(--dim)} .lg.preview h3{color:#9aa0aa}
+  .lg.tab .ico,.lg.tab h3{color:var(--amber)}
+  .lg.state .ico,.lg.state h3{color:var(--green)}
+
+  /* ---- mockups ---- */
+  .screen{
+    background:linear-gradient(#0f1115,#14161a);
+    border:1px solid var(--rule); border-radius:14px; padding:18px;
+    box-shadow:0 24px 60px -30px #000;
+  }
+  .tabstrip{display:flex; gap:6px; margin-bottom:14px; font-family:var(--mono); font-size:12px; flex-wrap:wrap}
+  .tabstrip .tab{padding:4px 12px; border:1px solid var(--rule); border-top:2px solid var(--gold);
+    background:var(--hi); color:var(--teal); border-radius:5px 5px 0 0}
+  .tabstrip .tab.ws{border-top-color:var(--amber); color:var(--dim)}
+  .tabstrip .tab.grn{border-top-color:var(--green)}
+  .tabstrip .plus{padding:4px 9px; border:1px solid var(--rule); color:var(--teal); border-radius:5px}
+
+  .crumb{font-family:var(--mono); font-size:13px; color:var(--dim);
+    background:var(--hi); border:1px solid var(--rule); border-radius:7px;
+    padding:7px 12px; margin-bottom:10px}
+  .crumb b{color:var(--text); font-weight:500}
+
+  .split{display:grid; grid-template-columns:1.25fr .95fr; gap:14px; align-items:start}
+  @media(max-width:720px){.split{grid-template-columns:1fr}}
+
+  .pane{background:var(--panel); border:1px solid var(--rule); border-radius:9px; overflow:hidden}
+  .pane > .ph{font-family:var(--mono); font-size:12.5px; padding:7px 12px; background:var(--hi);
+    border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; align-items:center; gap:8px}
+  .pane.editable{border-color:#3a5a34}
+  .pane.editable > .ph{color:var(--green)}
+  .pane.readonly > .ph{color:#9aa0aa}
+  .badge{font-size:10.5px; letter-spacing:.06em; text-transform:uppercase; padding:2px 7px; border-radius:20px; font-weight:700; white-space:nowrap}
+  .badge.edit{background:#14260f; color:var(--green); border:1px solid #3a5a34}
+  .badge.ro{background:#20232a; color:var(--dim); border:1px solid var(--rule)}
+  .badge.click{background:#0e2230; color:var(--blue); border:1px solid #244457}
+
+  ul.rows{list-style:none; margin:0; padding:6px 0; font-family:var(--mono); font-size:13px}
+  ul.rows li{padding:4px 12px; display:flex; align-items:center; gap:8px; color:var(--text)}
+  ul.rows li .stripe{width:3px; height:14px; border-radius:2px; flex:0 0 auto}
+  ul.rows li.sel{background:#22322e; box-shadow:inset 3px 0 0 var(--teal)}
+  ul.rows li .det{color:var(--dim); font-size:11.5px; margin-left:auto}
+  .k-generic,.k-method{background:var(--green)} .k-source{background:var(--teal)} .k-grid{background:var(--blue)}
+
+  pre.code{margin:0; padding:11px 13px; font-family:var(--mono); font-size:12.5px; overflow-x:auto; color:var(--text)}
+  pre.code .kw{color:var(--purple)} pre.code .nm{color:var(--green)}
+  pre.code .op{color:var(--teal)} pre.code .str{color:var(--green)}
+  pre.code .num{color:var(--amber)} pre.code .cm{color:#5a6355}
+
+  .gridmini{padding:10px 12px; font-family:var(--mono); font-size:11px; overflow-x:auto}
+  .gridmini table{border-collapse:collapse}
+  .gridmini th{color:var(--blue); font-weight:500; padding:2px 8px; text-align:center}
+  .gridmini td.rh{color:var(--teal); padding:2px 8px; text-align:left}
+  .gridmini td.c{border:1px solid var(--rule); text-align:center; padding:2px 10px; color:var(--dim)}
+  .gridmini td.c.on{background:#22322e; color:var(--green)}
+  .gridmini td.c.hot{background:#0e2230; color:var(--blue); outline:1px solid var(--blue)}
+
+  .flowdown{display:flex; align-items:center; gap:10px; margin:12px 0 12px 8px; color:var(--teal); font-family:var(--mono); font-size:12.5px; flex-wrap:wrap}
+  .flowdown.click{color:var(--blue)}
+  .flowdown .arrow{font-size:18px}
+  .sidenote{display:flex; align-items:center; gap:8px; justify-content:flex-end; margin-top:8px; color:var(--dim); font-family:var(--mono); font-size:11.5px}
+  .sidenote.click{color:var(--blue)}
+
+  /* ---- reference table ---- */
+  .tbl{width:100%; overflow-x:auto}
+  table.ref{width:100%; border-collapse:collapse; font-size:13.5px; min-width:640px}
+  table.ref th,table.ref td{text-align:left; padding:10px 12px; border-bottom:1px solid var(--rule); vertical-align:top}
+  table.ref th{font-family:var(--mono); font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--dim); font-weight:600}
+  table.ref td.subj{font-family:var(--mono); color:var(--text); white-space:nowrap}
+  table.ref .pill{font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:20px; font-weight:700; white-space:nowrap}
+  .pill.edit{background:#14260f; color:var(--green); border:1px solid #3a5a34}
+  .pill.ro{background:#20232a; color:#9aa0aa; border:1px solid var(--rule)}
+  .pill.click{background:#0e2230; color:var(--blue); border:1px solid #244457}
+  table.ref td .via{color:var(--dim); font-family:var(--mono); font-size:12px}
+
+  footer{margin-top:64px; padding-top:18px; border-top:1px solid var(--rule); color:var(--dim); font-size:12.5px; font-family:var(--mono)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <p class="eyebrow">lisp-over-linux · code browser</p>
+    <h1>How you move through the code</h1>
+    <p class="lede">Two motions, and one rule. You <span class="sig">drill downward</span> to open things
+      (the accordion), and the browser <span class="sig">previews sideways</span> — read-only — to the right.
+      Anything that is <em>our</em> source you can edit where you stand; a builtin you can only read.</p>
+    <p class="filenote">media/navigation-flows.html · a static, self-contained map (open it in any browser)</p>
+  </header>
+
+  <h2>The vocabulary</h2>
+  <div class="legend">
+    <div class="lg drill"><div class="ico">▼</div><h3>drill</h3>
+      <p>Enter / click a row. Opens the target <b>below</b>, stacking the accordion. The current pane collapses to a breadcrumb.</p></div>
+    <div class="lg preview"><div class="ico">▶</div><h3>preview</h3>
+      <p>Selecting a row shows its target <b>to the right</b>, live and <b>read-only</b> — except a matrix preview, whose cells are live (see below).</p></div>
+    <div class="lg tab"><div class="ico">↗</div><h3>new tab</h3>
+      <p>Super-Space (Spotter) or Super-Enter opens the target in a <b>fresh trail</b> instead of drilling in place.</p></div>
+    <div class="lg state"><div class="ico">✎</div><h3>editable end</h3>
+      <p>A drilled pane over <b>our</b> source is editable — <code>C-c C-c</code> recompiles it live. Builtins are read-only.</p></div>
+  </div>
+
+  <h2>Path 1 — package → generic function → method</h2>
+  <div class="screen">
+    <div class="tabstrip">
+      <span class="tab">1 · gf collide ×</span>
+      <span class="tab ws">2 · workspace</span>
+      <span class="plus">+</span>
+    </div>
+    <div class="crumb">▸ package <b>common-lisp-user</b> &nbsp; <span style="color:var(--teal)">picked collide</span></div>
+    <div class="split">
+      <div class="pane readonly">
+        <div class="ph">▾ generic-function collide <span class="badge ro">list</span></div>
+        <ul class="rows">
+          <li><span class="stripe k-grid"></span>dispatch matrix<span class="det">10 methods ›</span></li>
+          <li><span class="stripe k-source"></span>definition source<span class="det">the defgeneric ›</span></li>
+          <li class="sel"><span class="stripe k-method"></span>(missile ship)<span class="det">specialised method ›</span></li>
+          <li><span class="stripe k-method"></span>(asteroid ship)<span class="det">specialised method ›</span></li>
+          <li><span class="stripe k-method"></span>(ship station)<span class="det">specialised method ›</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="pane readonly">
+          <div class="ph">method collide (missile ship) <span class="badge ro">▶ preview</span></div>
+          <pre class="code"><span class="cm">;; the selected row, previewed live — read-only</span>
+(<span class="kw">defmethod</span> <span class="nm">collide</span> ((a missile) (b ship))
+  <span class="str">"A missile finds its mark."</span>
+  (<span class="op">list</span> :destroyed (<span class="op">name</span> b)))</pre>
+        </div>
+        <div class="sidenote">▶ preview follows the selection · never edits</div>
+      </div>
+    </div>
+    <div class="flowdown"><span class="arrow">▼</span> Enter · drill the selection open below</div>
+    <div class="pane editable">
+      <div class="ph">method collide (missile ship) <span class="badge edit">✎ editable · C-c C-c accepts</span></div>
+      <pre class="code">(<span class="kw">defmethod</span> <span class="nm">collide</span> ((a missile) (b ship))
+  <span class="str">"A missile finds its mark: the ship is destroyed."</span>
+  (<span class="op">list</span> :destroyed (<span class="op">name</span> b)))</pre>
+    </div>
+  </div>
+  <p class="maph" style="margin-top:16px">Same subject, two modes: on the <b>right</b> it is a read-only <b>preview</b> (▶) that tracks the
+    selection; pressing <b>Enter</b> <b>drills</b> it open <b>below</b> (▼), and because this method is our own
+    recorded source, that pane is <b>editable</b> — including each individual method of a generic function.</p>
+
+  <h2>Path 2 — the dispatch matrix → the effective method → a layer's code</h2>
+  <p class="maph">A generic function that dispatches on two arguments has a real 2-D <b>dispatch matrix</b>. Its
+    preview is <b>live</b>: <b>click a cell</b> and you land straight on that class-pair's <b>effective method</b>
+    — no need to open the matrix first. The effective method is itself a <b>browsable list</b> of the methods
+    that run, in order, each drilling to its own editable source.</p>
+  <div class="screen">
+    <div class="tabstrip"><span class="tab grn">1 · gf collide</span><span class="plus">+</span></div>
+    <div class="split">
+      <div class="pane readonly">
+        <div class="ph">▾ generic-function collide <span class="badge ro">list</span></div>
+        <ul class="rows">
+          <li class="sel"><span class="stripe k-grid"></span>dispatch matrix<span class="det">13 methods ›</span></li>
+          <li><span class="stripe k-source"></span>definition source<span class="det">the defgeneric ›</span></li>
+          <li><span class="stripe k-method"></span>(missile ship)<span class="det">specialised method ›</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="pane readonly">
+          <div class="ph">matrix collide <span class="badge click">▶ preview · cells live</span></div>
+          <div class="gridmini">
+            <table>
+              <tr><th></th><th>asteroid</th><th>ship</th><th>station</th></tr>
+              <tr><td class="rh">asteroid</td><td class="c on">×1</td><td class="c on">×1</td><td class="c on">×1</td></tr>
+              <tr><td class="rh">missile</td><td class="c on">×1</td><td class="c hot">×1</td><td class="c on">×1</td></tr>
+              <tr><td class="rh">ship</td><td class="c on">×1</td><td class="c">·</td><td class="c on">×1</td></tr>
+              <tr><td class="rh">station</td><td class="c on">×1</td><td class="c on">×1</td><td class="c">·</td></tr>
+            </table>
+          </div>
+        </div>
+        <div class="sidenote click">▶ click the (missile ship) cell ▾</div>
+      </div>
+    </div>
+    <div class="flowdown click"><span class="arrow">▼</span> click a cell · straight to its effective method</div>
+    <div class="split">
+      <div class="pane readonly">
+        <div class="ph">▾ effective collide (missile ship) <span class="badge ro">list · in run order</span></div>
+        <ul class="rows">
+          <li><span class="stripe k-method"></span>around (missile ship)<span class="det">wraps the call</span></li>
+          <li><span class="stripe k-method"></span>before (missile ship)<span class="det">runs first</span></li>
+          <li class="sel"><span class="stripe k-method"></span>(missile ship)<span class="det">primary · call-next-method</span></li>
+          <li><span class="stripe k-method"></span>after (missile ship)<span class="det">runs last</span></li>
+        </ul>
+      </div>
+      <div>
+        <div class="pane readonly">
+          <div class="ph">method collide (missile ship) <span class="badge ro">▶ preview</span></div>
+          <pre class="code">(<span class="kw">defmethod</span> <span class="nm">collide</span> ((a missile) (b ship))
+  <span class="str">"A missile finds its mark."</span>
+  (<span class="op">list</span> :destroyed (<span class="op">name</span> b)))</pre>
+        </div>
+        <div class="sidenote">▼ Enter any layer → its editable source</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>Every subject · how it opens · where it ends</h2>
+  <div class="tbl">
+  <table class="ref">
+    <thead><tr><th>Subject</th><th>Opens as</th><th>How you reach it</th><th>End</th></tr></thead>
+    <tbody>
+      <tr><td class="subj">package</td><td>list of definitions</td><td class="via">Spotter ↗ · always a hub</td><td><span class="pill ro">navigate</span></td></tr>
+      <tr><td class="subj">generic function</td><td>matrix + method list</td><td class="via">drill from package · Spotter ↗</td><td><span class="pill ro">navigate</span></td></tr>
+      <tr><td class="subj">definition source <span style="color:var(--dim)">(ours)</span></td><td>source pane</td><td class="via">drill a defn / “definition source”</td><td><span class="pill edit">✎ editable</span></td></tr>
+      <tr><td class="subj">method source <span style="color:var(--dim)">(ours)</span></td><td>the defmethod</td><td class="via">drill a method row (GF or effective view)</td><td><span class="pill edit">✎ editable</span></td></tr>
+      <tr><td class="subj">dispatch matrix <span style="color:var(--dim)">(2-axis)</span></td><td>clickable grid</td><td class="via">drill or preview “dispatch matrix”</td><td><span class="pill click">▼ click a cell</span></td></tr>
+      <tr><td class="subj">dispatch matrix <span style="color:var(--dim)">(1-axis)</span></td><td>ordered method list</td><td class="via">the matrix of a 1-arg GF</td><td><span class="pill ro">read-only</span></td></tr>
+      <tr><td class="subj">effective method <span style="color:var(--dim)">(onion)</span></td><td>list of layers, in run order</td><td class="via">click a filled matrix cell</td><td><span class="pill ro">navigate</span></td></tr>
+      <tr><td class="subj">class</td><td>supers · subs · slots</td><td class="via">drill from package · Spotter ↗</td><td><span class="pill ro">navigate</span></td></tr>
+      <tr><td class="subj">any value</td><td>inspector (its fields)</td><td class="via">drill a slot / “Inspect”</td><td><span class="pill ro">navigate</span></td></tr>
+      <tr><td class="subj">reference <span style="color:var(--dim)">(builtin)</span></td><td>source, no edit</td><td class="via">drill a builtin definition</td><td><span class="pill ro">read-only</span></td></tr>
+      <tr><td class="subj">workspace</td><td>scratch buffer</td><td class="via">the + button · Spotter ↗</td><td><span class="pill edit">✎ editable</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <footer>lisp-over-linux · the accordion goes down, the preview goes right, and every one of our definitions —
+    down to a single method — is a place you can change.</footer>
+</div>
+</body>
+</html>

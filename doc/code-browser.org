@@ -825,6 +825,9 @@ view (a builtin like =mapcar=, no shipped source) stays read-only, since you
 cannot edit-and-Accept =car= anyway. In a *list* pane there is nothing to edit, so
 plain keys may navigate freely (Backspace-back is fine there).
 
+A static, self-contained map of these flows — the two motions, and which routes end
+read-only vs. editable — lives at [[file:../media/navigation-flows.html][media/navigation-flows.html]] (open it in any browser).
+
 ** Naming — "environment", for now (and a future joke)
 
 We call this whole thing the *environment*. It is the word that stuck, and it has real
