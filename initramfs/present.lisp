@@ -21,6 +21,8 @@
   "One selectable line in a view."
   label                  ; primary text
   detail                 ; secondary/dim text, or NIL
+  kind                   ; a Lisp-concept keyword (:function :class :macro …) — the
+                         ; shell tints the row by it (concept-color); NIL = plain text
   subject                ; what drilling opens — (present subject) — or NIL
   (disposition :in-place); :in-place | :new-trail | :beside | :replace (a HINT)
   action)                ; a thunk to run instead of drilling, or NIL
@@ -179,12 +181,13 @@
                      (unless (member name seen-gfs)
                        (push name seen-gfs)
                        (push (make-item :label (string-downcase (princ-to-string name))
-                                        :detail "generic function"
+                                        :detail "generic function" :kind :generic-function
                                         :subject (fdefinition name))
                              items))
                      (dolist (d defns)
                        (push (make-item :label  (string-downcase (princ-to-string name))
                                         :detail (string-downcase (princ-to-string (defn-kind d)))
+                                        :kind (defn-kind d)
                                         :subject (subj-defn name (defn-kind d)))
                              items)))))
              *registry*)
@@ -243,13 +246,14 @@
      ;; super- from sub-class, so no >255 arrow glyphs in the text.
      :items (append
              (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
-                                            :detail "superclass" :subject (find-class s)))
+                                            :detail "superclass" :kind :class :subject (find-class s)))
                      (getf i :supers))
              (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
-                                            :detail "subclass" :subject (find-class s)))
+                                            :detail "subclass" :kind :class :subject (find-class s)))
                      (getf i :subs))
              (mapcar (lambda (sl) (make-item :label (format nil "slot ~(~a~)" (getf sl :name))
-                                             :detail (and (getf sl :readers) "has readers")))
+                                             :detail (and (getf sl :readers) "has readers")
+                                             :kind :slot))
                      (getf i :direct-slots))))))
 
 ;;; ---- generic functions: methods, coverage, combination ------------------

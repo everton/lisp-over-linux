@@ -24,6 +24,28 @@
 (defparameter *sh-sel*    (lol.canvas:rgb #x2f #x4f #x4a))
 (defparameter *sh-amber*  (lol.canvas:rgb #xff #x9f #x43))
 
+;; per-Lisp-concept colours (the mockups' semantic scheme, media/lisp-concepts-visual.html):
+;; the browser tints each row by its KIND so a package of 350 defs reads by colour,
+;; not as a grey wall. Kinds without an entry fall back to *sh-text*.
+(defparameter *concept-colors*
+  (list :package          (lol.canvas:rgb #xff #xcb #x6b)   ; gold
+        :function         (lol.canvas:rgb #x7f #xdb #xca)   ; teal
+        :generic-function (lol.canvas:rgb #xa8 #xff #x78)   ; green
+        :method           (lol.canvas:rgb #xa8 #xff #x78)   ; green
+        :macro            (lol.canvas:rgb #xc7 #x92 #xea)   ; purple
+        :compiler-macro   (lol.canvas:rgb #xc7 #x92 #xea)   ; purple
+        :class            (lol.canvas:rgb #x89 #xdd #xff)   ; blue
+        :struct           (lol.canvas:rgb #x89 #xdd #xff)   ; blue
+        :type             (lol.canvas:rgb #x89 #xdd #xff)   ; blue
+        :condition        (lol.canvas:rgb #xff #x6b #x6b)   ; red
+        :variable         (lol.canvas:rgb #xff #x9f #x43)   ; amber
+        :constant         (lol.canvas:rgb #xff #x9f #x43))) ; amber
+
+(defun concept-color (kind)
+  "The colour for a definition KIND (:function :class :macro …), or *sh-text* when the
+   kind has no semantic colour (a slot, a plain item)."
+  (or (getf *concept-colors* kind) *sh-text*))
+
 (defvar *bfont* nil "The browser font (a lol.canvas:font), set at startup.")
 ;; The cohesive environment (§4¾): several concurrent TRAILS, shown as tabs, one
 ;; active. A trail is a list of PANEs (root first, deepest last) — one investigation,
@@ -240,16 +262,20 @@
   (when selected
     (lol.canvas:fill-rect canvas x (- y 2) w +row-h+ *sh-sel*)
     (lol.canvas:fill-rect canvas x (- y 2) 2 +row-h+ *sh-accent*))
-  (let* ((label (item-label item))
-         (pen (lol.canvas:draw-string canvas *bfont* label (+ x 8) y
-                                       (if selected *sh-accent* *sh-text*))))
-    (when (item-detail item)
-      (setf pen (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (item-detail item))
-                                         pen y *sh-dim*)))
-    (when (item-subject item)                     ; a drill affordance
-      (lol.canvas:draw-string canvas *bfont* ">"
-                              (- (+ x w) 16) y
-                              (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*)))))
+  (let* ((kc (concept-color (item-kind item)))
+         (label (item-label item)))
+    ;; a slim kind-coloured stripe + the label in the concept colour: the row now
+    ;; reads by kind (function teal, class blue, macro purple, …) at a glance.
+    (when (item-kind item)
+      (lol.canvas:fill-rect canvas (+ x 3) (- y 2) 2 +row-h+ kc))
+    (let ((pen (lol.canvas:draw-string canvas *bfont* label (+ x 8) y kc)))
+      (when (item-detail item)
+        (setf pen (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (item-detail item))
+                                           pen y *sh-dim*)))
+      (when (item-subject item)                   ; a drill affordance
+        (lol.canvas:draw-string canvas *bfont* ">"
+                                (- (+ x w) 16) y
+                                (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*))))))
 
 (defun draw-list-body (canvas pane x y w h)
   "Render a list view's items with selection + scrolling."
