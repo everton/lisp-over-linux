@@ -367,26 +367,56 @@
           (trail-push (subj-onion (getf m :name) tuple))
           t)))))
 
+(defun trail-kind-color (trail)
+  "The semantic tint for TRAIL's tab — the concept colour of what its root opens on, so
+   a Workspace tab, a package tab and a class tab each read at a glance."
+  (case (view-kind (pane-view (first trail)))
+    (:workspace *sh-amber*)
+    ((:source :reference) (concept-color :function))
+    (:matrix (concept-color :generic-function))
+    (:class (concept-color :class))
+    (:inspector (concept-color :variable))
+    (t (concept-color :package))))     ; a list root is usually a package
+
+(defvar *tab-close-rect* nil "x-range (x0 . x1) of the active tab's × close hit-box, or NIL.")
+(defvar *tab-plus-rect* nil  "x-range (x0 . x1) of the + new-tab hit-box, or NIL.")
+
 (defun draw-tabs (canvas w)
-  "The top tab strip: one tab per open trail, the active one highlighted with an
-   accent top-rule and its title in accent; each carries its SuperL-number badge.
-   Records *tab-rects* so a tab click activates the right trail. The app name sits at
-   the right when there's room."
-  (setf *tab-rects* '())
+  "The top tab strip: one tab per open trail, each with a kind-coloured stripe and its
+   SuperL-number badge; the active one is highlighted (brighter bg + accent top-rule +
+   an × close), and a + after the last tab opens a fresh Workspace. Records *tab-rects*
+   / *tab-close-rect* / *tab-plus-rect* so clicks and drawing can't disagree; the app
+   name sits at the right when there's room."
+  (setf *tab-rects* '() *tab-close-rect* nil *tab-plus-rect* nil)
   (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-bg*)
-  (let ((x 0))
+  (let ((x 0) (multi (cdr *trails*)))
     (loop for trail in *trails* for i from 0
+          for active = (= i *active*)
+          for closer = (and active multi)        ; only the active tab shows ×, if >1
           for label = (format nil " ~d ~a " (1+ i) (mx-short (trail-title trail) 16))
-          for tw = (lol.canvas:string-px *bfont* label)
-          while (< (+ x tw) (- w 8))
-          do (let ((active (= i *active*)))
+          for lw = (lol.canvas:string-px *bfont* label)
+          for tw = (+ lw (if closer 14 0))
+          while (< (+ x tw) (- w 24))             ; leave room for the + button
+          do (progn
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *sh-hi* *sh-panel*))
+               (lol.canvas:fill-rect canvas x 0 2 +bar-h+ (trail-kind-color trail))  ; kind stripe
                (when active (lol.canvas:fill-rect canvas x 0 tw 2 *sh-accent*))
                (lol.canvas:draw-rect canvas x 0 tw +bar-h+ *sh-rule*)
                (lol.canvas:draw-string canvas *bfont* label (+ x 2) 3
                                        (if active *sh-accent* *sh-dim*))
+               (when closer
+                 (let ((cx (+ x lw)))
+                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3 *sh-dim*)
+                   (setf *tab-close-rect* (cons cx (+ cx 14)))))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
                (incf x tw)))
+    ;; the + new-tab button
+    (let ((px (+ x 4)))
+      (lol.canvas:fill-rect canvas px 0 14 +bar-h+ *sh-panel*)
+      (lol.canvas:draw-rect canvas px 0 14 +bar-h+ *sh-rule*)
+      (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) 3 *sh-accent*)
+      (setf *tab-plus-rect* (cons px (+ px 14)))
+      (setf x (+ px 14)))
     ;; app name, right-aligned, if it still fits
     (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
       (when (> sx (+ x 8))
@@ -717,10 +747,16 @@
    symbol in a source pane jumps to its definition. Uses the geometry DRAW-BROWSER
    recorded (*tab-rects*, *crumb-rects*, *content-top*), so click and draw can never
    disagree."
-  ;; the tab strip owns the top +bar-h+ band. each entry is (i x0 . x1).
+  ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
+  ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
   (when (< y +bar-h+)
-    (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
-      (when tab (activate-trail (car tab))))
+    (cond
+      ((and *tab-plus-rect* (<= (car *tab-plus-rect*) x (cdr *tab-plus-rect*)))
+       (new-trail (subj-workspace)))
+      ((and *tab-close-rect* (<= (car *tab-close-rect*) x (cdr *tab-close-rect*)))
+       (close-trail))
+      (t (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
+           (when tab (activate-trail (car tab))))))
     (return-from browser-click))
   ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
   (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*))
