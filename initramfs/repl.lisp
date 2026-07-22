@@ -13,18 +13,26 @@
        (string-equal prefix string :end2 (length prefix))))
 
 (defun complete-symbol (token)
-  "Completions for the partial symbol TOKEN: symbols accessible in *package*, or
-   the symbols of a named package given a 'pkg:' (external) / 'pkg::' (all) prefix,
-   or keywords for a leading ':'. Case-insensitive; results are lowercased so they
-   read back correctly under the default upcasing readtable."
+  "Completions for the partial symbol TOKEN: symbols accessible in *package* AND package
+   names (so =lol= offers =lol.examples:= &c), the symbols of a named package given a
+   'pkg:' (external) / 'pkg::' (all) prefix, or keywords + package designators for a
+   leading ':'. Case-insensitive; results are lowercased so they read back correctly
+   under the default upcasing readtable."
   (when (plusp (length token))
     (let ((colon (position #\: token)) (names '()))
+      (flet ((match-packages (part fmt)
+               ;; every package name / nickname beginning with PART, formatted by FMT.
+               (dolist (p (list-all-packages))
+                 (dolist (pn (cons (package-name p) (package-nicknames p)))
+                   (when (prefix-ci-p part pn)
+                     (push (format nil fmt (string-downcase pn)) names))))))
       (cond
-        ((and colon (zerop colon))                       ; :keyword
+        ((and colon (zerop colon))                       ; :keyword  /  :package-designator
          (let ((part (string-left-trim ":" token)))
            (do-symbols (s (find-package :keyword))
              (when (prefix-ci-p part (symbol-name s))
-               (push (format nil ":~(~a~)" (symbol-name s)) names)))))
+               (push (format nil ":~(~a~)" (symbol-name s)) names)))
+           (match-packages part ":~a")))                 ; :lol.examples (find-package / in-package)
         (colon                                           ; pkg:sym / pkg::sym
          (let* ((dbl (and (< (1+ colon) (length token)) (char= (char token (1+ colon)) #\:)))
                 (pname (subseq token 0 colon))
@@ -38,11 +46,12 @@
                  (do-external-symbols (s pkg)
                    (when (prefix-ci-p spart (symbol-name s))
                      (push (format nil "~(~a~):~(~a~)" pname (symbol-name s)) names)))))))
-        (t                                               ; accessible in *package*
+        (t                                               ; accessible in *package* + packages
          (do-symbols (s *package*)
            (when (prefix-ci-p token (symbol-name s))
-             (push (string-downcase (symbol-name s)) names)))))
-      (sort (delete-duplicates names :test #'string=) #'string<))))
+             (push (string-downcase (symbol-name s)) names)))
+         (match-packages token "~a:")))                  ; lol.examples:  (so pkg: completes)
+      (sort (delete-duplicates names :test #'string=) #'string<)))))
 
 (setf *completer* #'complete-symbol)     ; enable <Tab> completion in the editor
 
