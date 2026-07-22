@@ -351,11 +351,40 @@
                    :kind :reference :subject s
                    :text (format-matrix m)))))
 
+(defun onion-role (m)
+  "A one-line note on WHEN a method in the combination runs, from its qualifier."
+  (case (first (getf m :qualifiers))
+    (:around "around · wraps the call")
+    (:before "before · runs first")
+    (:after  "after · runs last")
+    (t       "primary · the call-next-method chain")))
+
 (defmethod present ((s subj-onion))
-  (make-view :title (format nil "effective ~(~a~)" (subj-onion-name s))
-             :kind :reference :subject s
-             :text (format-onion (apply #'effective-method-onion
-                                        (subj-onion-name s) (subj-onion-tuple s)))))
+  "The effective method for one argument tuple, as a BROWSABLE LIST in execution order
+   (:around → :before → primary → :after). Each row drills to that method's own source
+   (subj-method — editable when it is ours), and the nav split previews it on the right,
+   so the combination and each participant's code are visible together."
+  (let* ((o    (apply #'effective-method-onion (subj-onion-name s) (subj-onion-tuple s)))
+         (name (getf o :name))
+         (items '()))
+    (flet ((add (m)
+             (push (make-item :label (method-tuple-label m)
+                              :detail (onion-role m)
+                              :kind :method
+                              :subject (subj-method name (getf m :qualifiers)
+                                                    (getf m :specializers)))
+                   items)))
+      (dolist (m (getf o :around))  (add m))
+      (dolist (m (getf o :before))  (add m))
+      (dolist (m (getf o :primary)) (add m))
+      (dolist (m (getf o :after))   (add m)))
+    (make-view
+     :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})" name (subj-onion-tuple s))
+     :kind :list :subject s
+     :items (or (nreverse items)
+                (list (make-item :label "(no applicable primary method)"
+                                 :detail (if (getf o :definitive-p) "classes decide"
+                                             "an eql method might still apply")))))))
 
 (defmethod present ((m subj-method))
   "One method of a generic function, as its OWN source — the exact defmethod for this

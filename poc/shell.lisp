@@ -781,12 +781,17 @@
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
-      ;; nav-split preview column: a click opens the previewed selection for real
-      ;; (SuperL-click in a new trail); Ctrl-click jumps within a source preview.
+      ;; nav-split preview column: a matrix preview is LIVE — clicking a cell drills its
+      ;; effective-method onion straight from here (no need to open the matrix first); a
+      ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed
+      ;; selection for real (SuperL-click in a new trail).
       ((and *split-x* (>= x *split-x*) (>= y *content-top*))
        (let ((sel (selected-item p))
              (pv *preview-pane*))
          (cond
+           ((and pv (eq (view-kind (pane-view pv)) :matrix))
+            (or (matrix-cell-click pv x y)                 ; a cell -> its onion
+                (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
            ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
            ((and sel (item-subject sel))
             (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))
