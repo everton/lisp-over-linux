@@ -25,7 +25,13 @@
 (defparameter *sh-amber*  (lol.canvas:rgb #xff #x9f #x43))
 
 (defvar *bfont* nil "The browser font (a lol.canvas:font), set at startup.")
-(defvar *trail* '() "The current trail: a list of PANEs, root first, deepest last.")
+;; The cohesive environment (§4¾): several concurrent TRAILS, shown as tabs, one
+;; active. A trail is a list of PANEs (root first, deepest last) — one investigation,
+;; or a pinned surface (Workspace, change set). *ACTIVE* indexes the focused trail;
+;; all the trail-* ops act on it. SuperL-n / SuperL-Tab switch; a spotter hit or
+;; SuperL-drill opens a NEW trail.
+(defvar *trails* '() "The open trails — a list of trails, each a list of PANEs.")
+(defvar *active* 0    "Index into *trails* of the focused trail.")
 
 (defstruct pane
   subject view
@@ -55,11 +61,38 @@
   "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
 
-(defun trail-root (subject) (setf *trail* (list (open-pane subject))))
-(defun trail-push (subject) (setf *trail* (append *trail* (list (open-pane subject)))))
-(defun trail-pop  () (when (cdr *trail*) (setf *trail* (butlast *trail*))))
-(defun trail-goto (n) (when (< n (length *trail*)) (setf *trail* (subseq *trail* 0 (1+ n)))))
-(defun current-pane () (car (last *trail*)))
+(defun current-trail () "The focused trail (its list of panes)." (nth *active* *trails*))
+(defun set-current-trail (panes) "Replace the focused trail's panes." (setf (nth *active* *trails*) panes))
+(defun current-pane () "The deepest pane of the focused trail." (car (last (current-trail))))
+
+;; --- within the active trail (drill-down accordion, unchanged semantics) ---
+(defun trail-root (subject)
+  "Start the environment at SUBJECT — one trail, made active. Additional trails come
+   from NEW-TRAIL (a spotter hit, SuperL-drill)."
+  (setf *trails* (list (list (open-pane subject))) *active* 0))
+(defun trail-push (subject) "Drill into SUBJECT in the active trail."
+  (set-current-trail (append (current-trail) (list (open-pane subject)))))
+(defun trail-pop () "Pop the active trail's deepest pane (back)."
+  (when (cdr (current-trail)) (set-current-trail (butlast (current-trail)))))
+(defun trail-goto (n) "Collapse the active trail back to level N (a breadcrumb click)."
+  (when (< n (length (current-trail))) (set-current-trail (subseq (current-trail) 0 (1+ n)))))
+
+;; --- across trails (the tab layer) ---
+(defun new-trail (subject)
+  "Open SUBJECT in a NEW trail and focus it — a spotter hit / SuperL-drill."
+  (setf *trails* (append *trails* (list (list (open-pane subject))))
+        *active* (1- (length *trails*))))
+(defun close-trail ()
+  "Close the focused trail (never the last one); focus the neighbour that slides in."
+  (when (cdr *trails*)
+    (setf *trails* (append (subseq *trails* 0 *active*) (subseq *trails* (1+ *active*)))
+          *active* (min *active* (1- (length *trails*))))))
+(defun activate-trail (n) "Focus trail N if it exists." (when (< -1 n (length *trails*)) (setf *active* n)))
+(defun cycle-trail (dir) "Focus the next (+1) / previous (-1) trail, wrapping."
+  (setf *active* (mod (+ *active* dir) (length *trails*))))
+(defun trail-title (trail)
+  "The tab label for TRAIL — the ROOT pane's view title (what the tab shows)."
+  (view-title (pane-view (first trail))))
 
 (defun selected-item (pane)
   (let ((items (view-items (pane-view pane))))
@@ -72,6 +105,7 @@
 (defparameter +list-page+ 12 "Rows a list pane moves its selection on PageUp/PageDown.")
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
+(defvar *tab-rects* '()  "alist (trail-index . (x0 . x1)) for the top tab strip, set on draw.")
 (defvar *pending-prefix* nil
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
@@ -294,6 +328,31 @@
           (trail-push (subj-onion (getf m :name) tuple))
           t)))))
 
+(defun draw-tabs (canvas w)
+  "The top tab strip: one tab per open trail, the active one highlighted with an
+   accent top-rule and its title in accent; each carries its SuperL-number badge.
+   Records *tab-rects* so a tab click activates the right trail. The app name sits at
+   the right when there's room."
+  (setf *tab-rects* '())
+  (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-bg*)
+  (let ((x 0))
+    (loop for trail in *trails* for i from 0
+          for label = (format nil " ~d ~a " (1+ i) (mx-short (trail-title trail) 16))
+          for tw = (lol.canvas:string-px *bfont* label)
+          while (< (+ x tw) (- w 8))
+          do (let ((active (= i *active*)))
+               (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *sh-hi* *sh-panel*))
+               (when active (lol.canvas:fill-rect canvas x 0 tw 2 *sh-accent*))
+               (lol.canvas:draw-rect canvas x 0 tw +bar-h+ *sh-rule*)
+               (lol.canvas:draw-string canvas *bfont* label (+ x 2) 3
+                                       (if active *sh-accent* *sh-dim*))
+               (push (cons i (cons x (+ x tw))) *tab-rects*)
+               (incf x tw)))
+    ;; app name, right-aligned, if it still fits
+    (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
+      (when (> sx (+ x 8))
+        (lol.canvas:draw-string canvas *bfont* s sx 3 *sh-dim*)))))
+
 (defun draw-crumb (canvas y w pane index)
   "A collapsed ancestor bar: subject title + what was picked inside it."
   (lol.canvas:fill-rect canvas 8 y (- w 16) +bar-h+ *sh-hi*)
@@ -309,10 +368,9 @@
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
   (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
-  ;; title strip
-  (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-hi*)
-  (lol.canvas:draw-string canvas *bfont* "lisp-over-linux · browser" 10 3 *sh-accent*)
-  (let* ((ancestors (butlast *trail*))
+  ;; the tab strip replaces the old static title bar
+  (draw-tabs canvas w)
+  (let* ((ancestors (butlast (current-trail)))
          (cur (current-pane))
          (y (+ +bar-h+ 4)))
     ;; ancestor breadcrumb bars
@@ -420,17 +478,27 @@
       ;; there is nothing to pop, so C-g leaves the browser.
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
-       (if (cdr *trail*) (progn (trail-pop) nil) :quit))
-      ;; --- SuperL layer: trail navigation + the cheatsheet, over ANY pane (never the
-      ;;     editor's). On the framebuffer Super now arrives via the keyboard's evdev
-      ;;     (folded into STATE), so it works on the bare console too — see fb-browser. ---
+       (if (cdr (current-trail)) (progn (trail-pop) nil) :quit))
+      ;; --- SuperL layer: tab navigation, the Spotter + the cheatsheet, over ANY pane
+      ;;     (never the editor's). Super arrives via the keyboard's evdev (folded into
+      ;;     STATE, bit 6), so it works on the bare console too — see fb-browser. ---
       ((lol.canvas:super-p state)
        (setf *pending-prefix* nil)
-       (case key
-         (:left (trail-pop) (setf *browser-status* nil))   ; back
-         ((#\? #\/) (when (fboundp 'run-cheatsheet-fb)      ; Super-? — every binding
-                      (funcall 'run-cheatsheet-fb)))
-         (#\q :quit)
+       (cond
+         ((eq key :left) (trail-pop) (setf *browser-status* nil) nil)          ; back in trail
+         ((eq key :tab) (cycle-trail (if (lol.canvas:shift-p state) -1 1)) nil) ; cycle tabs
+         ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
+          (activate-trail (- (char-code key) (char-code #\1))) nil)
+         ((member key '(#\w #\W)) (close-trail) nil)                           ; close this tab
+         ((eql key #\Space)                                                    ; the Spotter
+          (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)) nil)
+         ((member key '(:return #\Return))                                     ; open selection in a NEW tab
+          (let ((it (selected-item (current-pane))))
+            (when (and it (item-subject it)) (new-trail (item-subject it))))
+          nil)
+         ((member key '(#\? #\/))                                              ; Super-? — every binding
+          (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
+         ((member key '(#\q #\Q)) :quit)
          (t nil)))
       ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go
       ;;     through *pending-prefix*: C-c then {C-c Accept | C-p Print | C-i Inspect},
@@ -556,11 +624,17 @@
           (when (plusp n)
             (setf (pane-sel p) (max 0 (min (1- n) (+ (pane-sel p) lines)))))))))
 
-(defun browser-click (x y &optional ctrl)
-  "Click: a breadcrumb bar pops to that level; an item in the current list drills;
-   Ctrl-click on a symbol in a source pane jumps to its definition. Uses the
-   geometry DRAW-BROWSER recorded (*crumb-rects*, *content-top*), so click and draw
-   can never disagree."
+(defun browser-click (x y &optional ctrl super)
+  "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
+   list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
+   symbol in a source pane jumps to its definition. Uses the geometry DRAW-BROWSER
+   recorded (*tab-rects*, *crumb-rects*, *content-top*), so click and draw can never
+   disagree."
+  ;; the tab strip owns the top +bar-h+ band. each entry is (i x0 . x1).
+  (when (< y +bar-h+)
+    (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
+      (when tab (activate-trail (car tab))))
+    (return-from browser-click))
   ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
   (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*))
         (p (current-pane)))
@@ -577,11 +651,12 @@
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
-      ;; else an item in the current list view
+      ;; else an item in the current list view — SuperL-click opens it in a NEW trail
       ((>= y *content-top*)
        (let* ((items (view-items (pane-view p)))
               (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
          (when (< i (length items))
            (setf (pane-sel p) i)
            (let ((it (nth i items)))
-             (when (item-subject it) (trail-push (item-subject it))))))))))
+             (when (item-subject it)
+               (if super (new-trail (item-subject it)) (trail-push (item-subject it)))))))))))

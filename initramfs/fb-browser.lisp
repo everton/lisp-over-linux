@@ -318,7 +318,7 @@
                              (unless (zerop wheel)
                                (browser-scroll (* (- wheel) +wheel-lines+)))
                              (when clicked
-                               (browser-click *cursor-x* *cursor-y* *ctrl-down*))))))))
+                               (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*))))))))
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
