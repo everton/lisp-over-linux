@@ -322,13 +322,13 @@
 ;;; how it is rendered). Paren depth is carried ACROSS lines, so the rainbow is
 ;;; correct in a multi-line definition.
 
-(defparameter *c-text*    (rgb #xd6 #xd3 #xc8))
-(defparameter *c-string*  (rgb #xa8 #xd0 #x78))
-(defparameter *c-comment* (rgb #x5a #x63 #x55))
-(defparameter *c-keyword* (rgb #xc7 #x92 #xea))   ; :keywords AND special forms / macros — purple
-(defparameter *c-number*  (rgb #xff #x9f #x43))
-(defparameter *c-operator* (rgb #x7f #xdb #xca))  ; a form's head symbol (a call) — function teal
-(defparameter *c-defname*  (rgb #xa8 #xff #x78))  ; the name a def-form introduces — green
+(defparameter *c-text*    #$D6D3C8)
+(defparameter *c-string*  #$A8D078)
+(defparameter *c-comment* #$5A6355)
+(defparameter *c-keyword* #$C792EA)   ; :keywords AND special forms / macros — purple
+(defparameter *c-number*  #$FF9F43)
+(defparameter *c-operator* #$7FDBCA)  ; a form's head symbol (a call) — function teal
+(defparameter *c-defname*  #$A8FF78)  ; the name a def-form introduces — green
 
 (defparameter *cl-special*
   (let ((h (make-hash-table :test 'equal)))
@@ -354,8 +354,8 @@
       (setf (gethash s h) t))
     h))
 (defparameter *paren-cycle*
-  (vector (rgb #xff #xcb #x6b) (rgb #xc7 #x92 #xea)
-          (rgb #x7f #xdb #xca) (rgb #xa8 #xff #x78)))
+  (vector #$FFCB6B #$C792EA
+          #$7FDBCA #$A8FF78))
 
 (defun delimiterp (c)
   (member c '(#\Space #\Tab #\( #\) #\' #\" #\; #\` #\,)))
@@ -423,12 +423,12 @@
 
 ;;; ---- drawing -------------------------------------------------------------
 
-(defparameter *bg*      (rgb #x1b #x1e #x24))
-(defparameter *gutter*  (rgb #x4a #x52 #x4d))
-(defparameter *sel*     (rgb #x2f #x4f #x6a))
-(defparameter *caret*   (rgb #x7f #xdb #xca))
-(defparameter *cur-ln*  (rgb #x21 #x25 #x2c))
-(defparameter *scroll*  (rgb #x39 #x40 #x4a))
+(defparameter *bg*      #$1B1E24)
+(defparameter *gutter*  #$4A524D)
+(defparameter *sel*     #$2F4F6A)
+(defparameter *caret*   #$7FDBCA)
+(defparameter *cur-ln*  #$21252C)
+(defparameter *scroll*  #$39404A)
 
 (defun tv-draw (canvas tv)
   (let* ((font (tv-font tv))

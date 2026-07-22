@@ -14,32 +14,32 @@
 (in-package :cl-user)
 
 ;;; palette (the tool's own colours, from scene.lisp)
-(defparameter *sh-bg*     (lol.canvas:rgb #x14 #x16 #x1a))
-(defparameter *sh-panel*  (lol.canvas:rgb #x1b #x1e #x24))
-(defparameter *sh-hi*     (lol.canvas:rgb #x24 #x29 #x31))
-(defparameter *sh-rule*   (lol.canvas:rgb #x2e #x34 #x3d))
-(defparameter *sh-text*   (lol.canvas:rgb #xd6 #xd3 #xc8))
-(defparameter *sh-dim*    (lol.canvas:rgb #x6b #x72 #x7d))
-(defparameter *sh-accent* (lol.canvas:rgb #x7f #xdb #xca))
-(defparameter *sh-sel*    (lol.canvas:rgb #x2f #x4f #x4a))
-(defparameter *sh-amber*  (lol.canvas:rgb #xff #x9f #x43))
+(defparameter *sh-bg*     #$14161A)
+(defparameter *sh-panel*  #$1B1E24)
+(defparameter *sh-hi*     #$242931)
+(defparameter *sh-rule*   #$2E343D)
+(defparameter *sh-text*   #$D6D3C8)
+(defparameter *sh-dim*    #$6B727D)
+(defparameter *sh-accent* #$7FDBCA)
+(defparameter *sh-sel*    #$2F4F4A)
+(defparameter *sh-amber*  #$FF9F43)
 
 ;; per-Lisp-concept colours (the mockups' semantic scheme, media/lisp-concepts-visual.html):
 ;; the browser tints each row by its KIND so a package of 350 defs reads by colour,
 ;; not as a grey wall. Kinds without an entry fall back to *sh-text*.
 (defparameter *concept-colors*
-  (list :package          (lol.canvas:rgb #xff #xcb #x6b)   ; gold
-        :function         (lol.canvas:rgb #x7f #xdb #xca)   ; teal
-        :generic-function (lol.canvas:rgb #xa8 #xff #x78)   ; green
-        :method           (lol.canvas:rgb #xa8 #xff #x78)   ; green
-        :macro            (lol.canvas:rgb #xc7 #x92 #xea)   ; purple
-        :compiler-macro   (lol.canvas:rgb #xc7 #x92 #xea)   ; purple
-        :class            (lol.canvas:rgb #x89 #xdd #xff)   ; blue
-        :struct           (lol.canvas:rgb #x89 #xdd #xff)   ; blue
-        :type             (lol.canvas:rgb #x89 #xdd #xff)   ; blue
-        :condition        (lol.canvas:rgb #xff #x6b #x6b)   ; red
-        :variable         (lol.canvas:rgb #xff #x9f #x43)   ; amber
-        :constant         (lol.canvas:rgb #xff #x9f #x43))) ; amber
+  (list :package          #$FFCB6B   ; gold
+        :function         #$7FDBCA   ; teal
+        :generic-function #$A8FF78   ; green
+        :method           #$A8FF78   ; green
+        :macro            #$C792EA   ; purple
+        :compiler-macro   #$C792EA   ; purple
+        :class            #$89DDFF   ; blue
+        :struct           #$89DDFF   ; blue
+        :type             #$89DDFF   ; blue
+        :condition        #$FF6B6B   ; red
+        :variable         #$FF9F43   ; amber
+        :constant         #$FF9F43)) ; amber
 
 (defun concept-color (kind)
   "The colour for a definition KIND (:function :class :macro …), or *sh-text* when the
