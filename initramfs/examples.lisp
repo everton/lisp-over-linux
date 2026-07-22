@@ -15,11 +15,16 @@
 
 (defpackage :lol.examples
   (:use :cl)
-  (:documentation "Didactic CLOS specimens for the code browser — see COLLIDE.")
+  (:documentation "Didactic CLOS specimens for the code browser — see COLLIDE and LAUNCH.")
   (:export #:space-object #:asteroid #:ship #:station #:missile
-           #:name #:collide))
+           #:name #:collide
+           #:off-course #:steer #:launch))
 
 (in-package :lol.examples)
+
+;;; Keep full debug info: this package exists to be inspected, so every local should
+;;; stay live in the debugger (no variables optimised away at the error's PC).
+(declaim (optimize (debug 3)))
 
 ;;; ---- a little class hierarchy ------------------------------------------------
 ;;; A common base with a name, then four concrete kinds of thing in space. No method
@@ -114,6 +119,45 @@
 (defmethod collide :after ((a missile) (b ship))
   "After the hit: log the kill for the scoreboard."
   (declare (ignorable a b)))
+
+;;; ---- a rich restart menu, for exercising the debugger -----------------------
+;;; Type  (lol.examples:launch)  in the Workspace and hit Debug it (C-c C-d): the
+;;; launch drifts OFF-COURSE and signals, and the debugger's restart rail fills with
+;;; several named ways out — the whole point of the condition system. Walk the stack
+;;; (Tab, then up/down) to see STEER's and LAUNCH's locals; pick a restart to resolve.
+
+(define-condition off-course (error)
+  ((degrees :initarg :degrees :reader off-course-degrees))
+  (:documentation "Signalled when a launch drifts off its intended heading.")
+  (:report (lambda (c s)
+             (format s "Launch is off course by ~a degrees." (off-course-degrees c)))))
+
+(defun steer (degrees)
+  "Signal OFF-COURSE with a menu of restarts — this is what fills the debugger's
+   amber restart rail. Each restart returns the value STEER yields if you pick it."
+  (restart-case
+      (error 'off-course :degrees degrees)
+    (correct-course ()
+      :report "Steer back to zero and continue the launch."
+      :on-course)
+    (hold-heading ()
+      :report "Hold the current heading and continue anyway."
+      degrees)
+    (use-heading (h)
+      :report "Continue on a heading you supply."
+      :interactive (lambda () (list 90))     ; no prompt on the framebuffer — supply 90
+      h)
+    (scrub ()
+      :report "Scrub the launch."
+      :scrubbed)))
+
+(defun launch (&optional (drift 37))
+  "The demo entry point: begin a launch that drifts OFF-COURSE by DRIFT degrees, so
+   STEER signals. STEER's result is kept (rather than tail-called) so LAUNCH stays on
+   the stack — walk to its frame to see its own locals (stage, fuel)."
+  (let ((stage "ascent") (fuel 82))
+    (let ((outcome (steer drift)))          ; not a tail call: LAUNCH's frame remains
+      (list :launched stage fuel outcome))))
 
 ;;; Leave the reader back in the default package so the next module loads cleanly
 ;;; regardless of order (this file is position-independent in the build list).
