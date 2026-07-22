@@ -30,7 +30,7 @@
 (let* ((w 1000) (h 720)
        (canvas (lol.canvas:make-canvas w h))
        (d (lol.x11:open-display w h :title "lol - code browser")))
-  (trail-root (find-package :cl-user))                 ; root: all recorded definitions
+  (open-environment (find-package :cl-user))           ; browser + Workspace tabs
   (format t "~&Code browser open. up/down move · Enter drill · Backspace back · q quits.~%")
   (format t "Try: drill DRAW-ALIEN for its source, back out, drill a class, inspect a value.~%")
   (finish-output)

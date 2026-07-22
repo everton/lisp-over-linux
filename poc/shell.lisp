@@ -94,6 +94,15 @@
   "The tab label for TRAIL — the ROOT pane's view title (what the tab shows)."
   (view-title (pane-view (first trail))))
 
+(defun open-environment (root)
+  "Seed the cohesive environment (§4¾): ROOT as the first, focused tab, PLUS a
+   Workspace tab so the editor, the Workspace, and the Spotter all live together —
+   unless ROOT is itself the Workspace (no duplicate). Everything else is a
+   Super-Space / Super-drill away."
+  (trail-root root)
+  (unless (typep root 'subj-workspace) (new-trail (subj-workspace)))
+  (setf *active* 0))
+
 (defun selected-item (pane)
   (let ((items (view-items (pane-view pane))))
     (and items (< (pane-sel pane) (length items)) (nth (pane-sel pane) items))))

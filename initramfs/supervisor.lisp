@@ -64,7 +64,7 @@
           (sb-unix:unix-getpid) (lisp-implementation-version)
           (software-type) (software-version))
   (format t "  r) run a Lisp REPL~%")
-  (format t "  b) code browser (drill-down, on the framebuffer)~%")
+  (format t "  b) environment — tabbed browser + Workspace, Super-Space to find anything~%")
   (format t "  p) Lisp workspace (a scratch buffer: Do it / Print it / Inspect it)~%")
   (format t "  c) change set (definitions edited live this session)~%")
   (format t "  w) spawn a worker process~%")

@@ -279,7 +279,7 @@
   (handler-case
       (progn
         (unless *bfont* (setf *bfont* (lol.canvas:load-font "/cozette.lolf")))
-        (trail-root (or root (find-package :cl-user)))
+        (open-environment (or root (find-package :cl-user)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))
