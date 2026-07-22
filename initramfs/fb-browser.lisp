@@ -756,42 +756,81 @@
 ;;; keystroke. Enter opens the selected hit in a NEW trail (new-trail, shell.lisp).
 
 (defvar *spotter-top* 0 "screen-y of the first Spotter result row, for click hit-testing.")
+(defvar *spotter-rows* 0 "how many result rows the card is currently showing.")
+(defvar *spotter-card* nil "the Spotter card rect (x0 y0 x1 y1) for click routing, or NIL.")
 (defparameter +spotter-row+ 17)
 (defparameter +spotter-cap+ 60 "Max results to rank/show — a few screenfuls.")
 
-(defun draw-spotter (canvas w h query results sel)
-  "The Spotter overlay: a header, the live query line, and the ranked result rows
-   (label + dim detail), the selection highlighted."
-  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
-  (lol.canvas:fill-rect canvas 0 0 w 24 *sh-hi*)
-  (lol.canvas:draw-string canvas *bfont*
-    "Spotter  —  type to find;  up/dn select,  Enter opens in a NEW tab,  Esc closes"
-    12 5 *sh-accent*)
-  ;; the query line
-  (lol.canvas:fill-rect canvas 8 30 (- w 16) 20 *sh-panel*)
-  (lol.canvas:draw-rect canvas 8 30 (- w 16) 20 *sh-rule*)
-  (lol.canvas:draw-string canvas *bfont* (format nil "> ~a_" query) 14 33 *sh-text*)
-  ;; the results
-  (let ((y 60))
-    (setf *spotter-top* y)
-    (if (null results)
-        (lol.canvas:draw-string canvas *bfont* "(no matches)" 16 y *sh-dim*)
-        (loop for r in results for i from 0
-              while (< y (- h 8))
-              do (when (= i sel)
-                   (lol.canvas:fill-rect canvas 8 (- y 2) (- w 16) +spotter-row+ *sh-sel*)
-                   (lol.canvas:fill-rect canvas 8 (- y 2) 2 +spotter-row+ *sh-accent*))
-                 (let ((pen (lol.canvas:draw-string canvas *bfont* (getf r :label) 16 y
-                                                     (if (= i sel) *sh-text* *sh-dim*))))
-                   (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (getf r :detail))
-                                           pen y *sh-dim*))
-                 (incf y +spotter-row+)))))
+(defun dim-canvas (canvas factor)
+  "Darken every pixel of CANVAS to FACTOR/256 of its brightness — a cheap modal scrim
+   (the framebuffer has no alpha), so a floating panel reads as ABOVE the browser behind
+   it. Only ever called on a Spotter keystroke, so the full-buffer pass is fine."
+  (declare (type (integer 0 256) factor))
+  (let ((px (lol.canvas:canvas-pixels canvas)))
+    (declare (type (simple-array (unsigned-byte 32) (*)) px)
+             (optimize (speed 3) (safety 0)))
+    (dotimes (i (length px))
+      (let ((p (aref px i)))
+        (setf (aref px i)
+              (logior (ash (ash (* (ldb (byte 8 16) p) factor) -8) 16)
+                      (ash (ash (* (ldb (byte 8 8) p) factor) -8) 8)
+                      (ash (* (ldb (byte 8 0) p) factor) -8)))))))
 
-(defun spotter-row-at (y n)
-  "The result-row index at screen-Y, or NIL. N is how many results there are."
-  (when (>= y *spotter-top*)
+(defun draw-spotter (canvas w h query results sel)
+  "The Spotter as a floating command palette OVER the (dimmed) browser — the tabs and
+   panes stay visible behind it. A header hint, the live query line, and the ranked
+   result rows (label + dim detail) with the selection highlighted. Records *spotter-card*
+   / *spotter-top* / *spotter-rows* so a click routes to the right row or dismisses."
+  (draw-browser canvas w h)                         ; the browser, as backdrop …
+  (dim-canvas canvas 105)                            ; … dimmed, so the card floats above
+  (let* ((cw   (min 780 (- w 80)))
+         (cx   (floor (- w cw) 2))
+         (cy   (+ +bar-h+ 14))                       ; just below the tab strip
+         (maxr (max 3 (min 16 (floor (- h cy 70) +spotter-row+))))
+         (rows (max 1 (min (length results) maxr)))
+         (ch   (+ 56 (* rows +spotter-row+) 12)))
+    (setf *spotter-card* (list cx cy (+ cx cw) (+ cy ch)) *spotter-rows* rows)
+    (lol.canvas:fill-rect canvas (+ cx 5) (+ cy 6) cw ch !#080A0C)   ; drop shadow
+    (lol.canvas:fill-rect canvas cx cy cw ch *sh-panel*)             ; the card
+    (lol.canvas:fill-rect canvas cx cy cw 2 *sh-accent*)             ; accent top rule
+    (lol.canvas:draw-rect canvas cx cy cw ch *sh-rule*)
+    (lol.canvas:draw-string canvas *bfont*
+      "Spotter — type to find · Enter opens a new tab · Esc closes"
+      (+ cx 12) (+ cy 8) *sh-dim*)
+    (let ((qy (+ cy 26)))                            ; the query line
+      (lol.canvas:fill-rect canvas (+ cx 8) qy (- cw 16) 20 *sh-hi*)
+      (lol.canvas:draw-rect canvas (+ cx 8) qy (- cw 16) 20 *sh-rule*)
+      (lol.canvas:draw-string canvas *bfont* (format nil "> ~a_" query)
+                              (+ cx 14) (+ qy 3) *sh-accent*)
+      (let ((y (+ qy 30)))                           ; the results
+        (setf *spotter-top* y)
+        (if (null results)
+            (lol.canvas:draw-string canvas *bfont* "(no matches)" (+ cx 16) y *sh-dim*)
+            (loop for r in results for i from 0 while (< i rows)
+                  do (when (= i sel)
+                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) (- cw 12) +spotter-row+ *sh-sel*)
+                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) 2 +spotter-row+ *sh-accent*))
+                     (let ((pen (lol.canvas:draw-string canvas *bfont* (getf r :label) (+ cx 14) y
+                                                        (if (= i sel) *sh-text* *sh-dim*))))
+                       (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (getf r :detail))
+                                               pen y *sh-dim*))
+                     (incf y +spotter-row+)))
+        (when (> (length results) rows)              ; a count of what didn't fit
+          (lol.canvas:draw-string canvas *bfont* (format nil ".. +~d more" (- (length results) rows))
+                                  (+ cx 14) y *sh-dim*))))))
+
+(defun spotter-row-at (x y n)
+  "The VISIBLE result-row index at screen X,Y within the card, or NIL. N = result count."
+  (when (and *spotter-card* (>= y *spotter-top*)
+             (<= (first *spotter-card*) x (third *spotter-card*)))
     (let ((i (floor (- y *spotter-top*) +spotter-row+)))
-      (when (< i n) i))))
+      (when (< i (min n *spotter-rows*)) i))))
+
+(defun spotter-outside-p (x y)
+  "True when X,Y is outside the Spotter card — a click there dismisses the palette."
+  (or (null *spotter-card*)
+      (destructuring-bind (x0 y0 x1 y1) *spotter-card*
+        (not (and (<= x0 x x1) (<= y0 y y1))))))
 
 (defun run-spotter-fb ()
   "The Spotter (SuperL-Space): fuzzy-find any definition, package or surface and open
@@ -828,5 +867,6 @@
                   ((and (characterp key) (graphic-char-p key))
                    (setf query (concatenate 'string query (string key))) (refilter)))))
             (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
-              (let ((i (spotter-row-at *cursor-y* (length results))))
-                (when i (new-trail (getf (nth i results) :subject)) (return))))))))))
+              (let ((i (spotter-row-at *cursor-x* *cursor-y* (length results))))
+                (cond (i (new-trail (getf (nth i results) :subject)) (return))
+                      ((spotter-outside-p *cursor-x* *cursor-y*) (return)))))))))))  ; click-away dismisses
