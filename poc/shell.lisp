@@ -283,24 +283,41 @@
 
 ;;; ---- drawing -------------------------------------------------------------
 
+(defun item-color (item)
+  "The stripe/label colour for ITEM — its concept colour, except an effective-method row
+   (kind :method) is tinted by its run PHASE, read from the detail text, so the onion
+   reads as a waterfall: around gold, before blue, primary green, after a cool blue."
+  (let ((d (item-detail item)))
+    (or (and (eq (item-kind item) :method) (stringp d)
+             (cond ((eql 0 (search "around"  d)) !#FFCB6B)
+                   ((eql 0 (search "before"  d)) !#89DDFF)
+                   ((eql 0 (search "after"   d)) !#5A8CA0)))
+        (concept-color (item-kind item)))))
+
 (defun draw-item (canvas x y w item selected)
   (when selected
     (lol.canvas:fill-rect canvas x (- y 2) w +row-h+ *sh-sel*)
     (lol.canvas:fill-rect canvas x (- y 2) 2 +row-h+ *sh-accent*))
-  (let* ((kc (concept-color (item-kind item)))
-         (label (item-label item)))
-    ;; a slim kind-coloured stripe + the label in the concept colour: the row now
-    ;; reads by kind (function teal, class blue, macro purple, …) at a glance.
+  (let* ((kc (item-color item))
+         (label (item-label item))
+         (drill-x (- (+ x w) 16)))
+    ;; a slim kind-coloured stripe + the label in that colour: the row reads by kind
+    ;; (function teal, class blue, macro purple, an onion layer by its phase) at a glance.
     (when (item-kind item)
-      (lol.canvas:fill-rect canvas (+ x 3) (- y 2) 2 +row-h+ kc))
-    (let ((pen (lol.canvas:draw-string canvas *bfont* label (+ x 8) y kc)))
-      (when (item-detail item)
-        (setf pen (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (item-detail item))
-                                           pen y *sh-dim*)))
-      (when (item-subject item)                   ; a drill affordance
-        (lol.canvas:draw-string canvas *bfont* ">"
-                                (- (+ x w) 16) y
-                                (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*))))))
+      (lol.canvas:fill-rect canvas (+ x 3) (- y 2) 3 +row-h+ kc))
+    (lol.canvas:draw-string canvas *bfont* label (+ x 8) y kc)
+    (when (item-detail item)
+      ;; right-align the detail into its own column when it fits, else inline after the label
+      (let* ((dt (princ-to-string (item-detail item)))
+             (label-px (lol.canvas:string-px *bfont* label))
+             (rx (- drill-x (lol.canvas:string-px *bfont* dt) 8)))
+        (if (> rx (+ x 8 label-px 14))
+            (lol.canvas:draw-string canvas *bfont* dt rx y *sh-dim*)
+            (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" dt)
+                                    (+ x 8 label-px) y *sh-dim*))))
+    (when (item-subject item)                     ; » drill affordance (amber = opens elsewhere)
+      (lol.canvas:draw-string canvas *bfont* (string (code-char #xBB))
+                              drill-x y (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*)))))
 
 (defun draw-list-body (canvas pane x y w h)
   "Render a list view's items with selection + scrolling."
@@ -328,9 +345,13 @@
 (defparameter +mx-row-h+  18)
 
 (defun mx-short (name maxlen)
-  "A class/specializer name trimmed to MAXLEN chars for a matrix header or cell."
+  "A class/specializer name trimmed to MAXLEN chars for a matrix header or cell. The
+   elision is \"..\" (ASCII) — the single-glyph … is codepoint 8230, which the 8-bit font
+   would blit as a stray & (8230 & 255 = 38)."
   (let ((s (string-downcase (princ-to-string name))))
-    (if (> (length s) maxlen) (concatenate 'string (subseq s 0 (1- maxlen)) "…") s)))
+    (if (> (length s) maxlen)
+        (concatenate 'string (subseq s 0 (max 1 (- maxlen 2))) "..")
+        s)))
 
 (defun draw-matrix-body (canvas pane x y w h)
   "Render a 2-axis dispatch matrix as a clickable grid: the row/col headers are the
@@ -352,8 +373,8 @@
           do (lol.canvas:draw-string canvas *bfont* (mx-short c 12) (+ cx 2) y
                                      (concept-color :class)))
     (when (> (length cols) ncols)
-      (lol.canvas:draw-string canvas *bfont* (format nil "…+~a" (- (length cols) ncols))
-                              (- (+ x w) 44) y *sh-dim*))
+      (lol.canvas:draw-string canvas *bfont* (format nil ".. +~a" (- (length cols) ncols))
+                              (- (+ x w) 48) y *sh-dim*))
     ;; rows, each a header (teal, the dispatch axis) + its cells
     (loop with green = (concept-color :generic-function)
           for r in rows for cellrow in cells for ri from 0
@@ -363,9 +384,10 @@
              (loop for cell in cellrow for c in cols for ci from 0 below ncols
                    for cx = (+ x0 (* ci +mx-cell-w+))
                    for n = (length cell)
-                   do (when (plusp n)                                  ; a covered pair glows green
+                   do (when (plusp n)                    ; a covered pair: green-tinted, green left edge
                         (lol.canvas:fill-rect canvas (1+ cx) (- ry 1) (- +mx-cell-w+ 1)
-                                              (- +mx-row-h+ 1) *sh-sel*))
+                                              (- +mx-row-h+ 1) !#1E2A22)
+                        (lol.canvas:fill-rect canvas (1+ cx) (- ry 1) 2 (- +mx-row-h+ 1) green))
                       (lol.canvas:draw-rect canvas cx (- ry 2) +mx-cell-w+ +mx-row-h+ *sh-rule*)
                       (lol.canvas:draw-string canvas *bfont*
                         (if (zerop n) "·" (format nil "~c~d" (code-char 215) n))  ; ×N methods
@@ -393,16 +415,20 @@
           (trail-push (subj-onion (getf m :name) tuple))
           t)))))
 
-(defun trail-kind-color (trail)
-  "The semantic tint for TRAIL's tab — the concept colour of what its root opens on, so
-   a Workspace tab, a package tab and a class tab each read at a glance."
-  (case (view-kind (pane-view (first trail)))
+(defun view-kind-color (view)
+  "The semantic tint for a VIEW — the concept colour of what it opens on, so a Workspace,
+   a package, a class, a generic function each read by colour in the chrome."
+  (case (view-kind view)
     (:workspace *sh-amber*)
     ((:source :reference) (concept-color :function))
-    (:matrix (concept-color :generic-function))
+    ((:matrix :generic) (concept-color :generic-function))
     (:class (concept-color :class))
     (:inspector (concept-color :variable))
     (t (concept-color :package))))     ; a list root is usually a package
+
+(defun trail-kind-color (trail)
+  "The semantic tint for TRAIL's tab — from its ROOT view (see VIEW-KIND-COLOR)."
+  (view-kind-color (pane-view (first trail))))
 
 (defvar *tab-close-rect* nil "x-range (x0 . x1) of the active tab's × close hit-box, or NIL.")
 (defvar *tab-plus-rect* nil  "x-range (x0 . x1) of the + new-tab hit-box, or NIL.")
@@ -415,34 +441,36 @@
    name sits at the right when there's room."
   (setf *tab-rects* '() *tab-close-rect* nil *tab-plus-rect* nil)
   (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-bg*)
-  (let ((x 0) (multi (cdr *trails*)))
+  (let ((x 8) (multi (cdr *trails*)))                        ; align with the 8px gutter below
     (loop for trail in *trails* for i from 0
           for active = (= i *active*)
           for closer = (and active multi)        ; only the active tab shows ×, if >1
-          for label = (format nil " ~d ~a " (1+ i) (mx-short (trail-title trail) 16))
-          for lw = (lol.canvas:string-px *bfont* label)
+          for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
+          for title = (format nil "~a " (mx-short (trail-title trail) 16))
+          for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
           for tw = (+ lw (if closer 14 0))
-          while (< (+ x tw) (- w 24))             ; leave room for the + button
+          while (< (+ x tw) (- w 26))             ; leave room for the + button
           do (progn
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *sh-hi* *sh-panel*))
-               (lol.canvas:fill-rect canvas x 0 2 +bar-h+ (trail-kind-color trail))  ; kind stripe
-               (when active (lol.canvas:fill-rect canvas x 0 tw 2 *sh-accent*))
-               (lol.canvas:draw-rect canvas x 0 tw +bar-h+ *sh-rule*)
-               (lol.canvas:draw-string canvas *bfont* label (+ x 2) 3
-                                       (if active *sh-accent* *sh-dim*))
+               (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
+               ;; number quiet, title bright (active accent, inactive plain text)
+               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) 3 *sh-dim*)))
+                 (lol.canvas:draw-string canvas *bfont* title pen 3
+                                         (if active *sh-accent* *sh-text*)))
                (when closer
-                 (let ((cx (+ x lw)))
+                 (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
                    (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3 *sh-dim*)
                    (setf *tab-close-rect* (cons cx (+ cx 14)))))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
-               (incf x tw)))
+               (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
-    (let ((px (+ x 4)))
+    (let ((px (+ x 2)))
       (lol.canvas:fill-rect canvas px 0 14 +bar-h+ *sh-panel*)
-      (lol.canvas:draw-rect canvas px 0 14 +bar-h+ *sh-rule*)
       (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) 3 *sh-accent*)
       (setf *tab-plus-rect* (cons px (+ px 14)))
       (setf x (+ px 14)))
+    ;; a hairline seam under the whole strip
+    (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *sh-rule*)
     ;; app name, right-aligned, if it still fits
     (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
       (when (> sx (+ x 8))
@@ -511,8 +539,13 @@
       (lol.canvas:fill-rect canvas 8 y (- w 16) (- h y 24) *sh-panel*)
       (lol.canvas:draw-rect canvas 8 y (- w 16) (- h y 24) *sh-rule*)
       (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
-      (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) *sh-accent*)
-      (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) *sh-accent*)
+      (lol.canvas:fill-rect canvas 9 (+ y +bar-h+ -1) (- w 18) 1 *sh-rule*)   ; header/body seam
+      (let ((kc (view-kind-color (pane-view cur)))
+            (badge (string-downcase (symbol-name (view-kind (pane-view cur))))))
+        (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) kc)             ; title in its kind colour
+        (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) kc)
+        (lol.canvas:draw-string canvas *bfont* badge                          ; right-aligned kind badge
+                                (- (+ w -10) (lol.canvas:string-px *bfont* badge)) (+ y 3) *sh-dim*))
       (let ((is-list (and (null (pane-tv cur))
                           (not (eq (view-kind (pane-view cur)) :matrix)))))
         (cond
