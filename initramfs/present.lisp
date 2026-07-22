@@ -57,6 +57,11 @@
 ;; text — no grid widget yet — so they ride the existing :reference text pane.
 (defstruct (subj-matrix (:constructor subj-matrix (name))) name)
 (defstruct (subj-onion  (:constructor subj-onion  (name tuple))) name tuple)
+;; One method of a generic function — carries enough (name + qualifiers + specializer
+;; tuple) to find its own captured source, so a GF's method list drills to the exact
+;; defmethod for each specialised case, not to the combination.
+(defstruct (subj-method (:constructor subj-method (name qualifiers specializers)))
+  name qualifiers specializers)
 ;; The Workspace (§3a): a scratch buffer whose verbs eval — Do it / Print it /
 ;; Inspect it — rather than Accept a whole definition. A :workspace view is an
 ;; editable text pane the shell drives; the shell owns the eval, staying pure here.
@@ -127,10 +132,16 @@
     (ignore-errors
       (maphash (lambda (name defns)
                  (ignore-errors
-                   (let ((kind (and defns (defn-kind (car defns)))))
+                   (let* ((kind (and defns (defn-kind (car defns))))
+                          ;; a live generic function jumps to its GF VIEW (matrix +
+                          ;; methods), not to a source blob of all its methods.
+                          (gf   (and (ignore-errors (fboundp name))
+                                     (typep (fdefinition name) 'generic-function))))
                      (push (list :label (string-downcase (princ-to-string name))
-                                 :detail (if kind (string-downcase (symbol-name kind)) "definition")
-                                 :subject (subj-defn name))
+                                 :detail (cond (gf "generic function")
+                                               (kind (string-downcase (symbol-name kind)))
+                                               (t "definition"))
+                                 :subject (if gf (fdefinition name) (subj-defn name)))
                            out))))
                *registry*))
     (nreverse out)))
@@ -343,14 +354,31 @@
              :text (format-onion (apply #'effective-method-onion
                                         (subj-onion-name s) (subj-onion-tuple s)))))
 
+(defmethod present ((m subj-method))
+  "One method of a generic function, as its OWN source — the exact defmethod for this
+   specialised case (read-only: our recorded code, syntax-coloured). When the source
+   wasn't captured (a builtin or inherited method), fall back to the effective method
+   for its tuple, so a method row is never a dead end."
+  (let* ((name  (subj-method-name m))
+         (specs (subj-method-specializers m))
+         (quals (subj-method-qualifiers m))
+         (src   (method-source name quals specs))
+         (title (format nil "method ~(~a~) ~@[~(~a~) ~](~{~(~a~)~^ ~})"
+                        name (first quals) specs)))
+    (make-view
+     :title title :kind :reference :subject m
+     :text (or src
+               (ignore-errors (format-onion (apply #'effective-method-onion name specs)))
+               (format nil "~a~%~%(no captured source for this method)" title)))))
+
 (defmethod present ((gf generic-function))
   (let* ((name (sb-mop:generic-function-name gf))
          (methods (methods-of name)))
     (make-view
      :title (format nil "generic-function ~(~a~)" name)
      :kind :generic :subject gf
-     ;; the dispatch matrix (coverage) on top; then each method — drilling one shows
-     ;; the effective method (combination) for a call matching its own tuple.
+     ;; the dispatch matrix (coverage) on top; then each method — drilling one opens
+     ;; that method's OWN source (the defmethod for its specialised case).
      :items (list*
              (make-item :label "dispatch matrix"
                         :detail (format nil "~d method~:p" (length methods))
@@ -362,9 +390,9 @@
              (mapcar (lambda (m)
                        (make-item
                         :label (method-tuple-label m)
-                        :detail (if (getf m :source) "effective method + source"
-                                    "effective method")
-                        :subject (subj-onion name (getf m :specializers))))
+                        :detail (if (getf m :source) "specialised method" "method (no source)")
+                        :kind :method
+                        :subject (subj-method name (getf m :qualifiers) (getf m :specializers))))
                      methods)))))
 
 ;;; ---- the Workspace: a scratch buffer with the editor's hands (§3a) --------
