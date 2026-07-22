@@ -325,8 +325,34 @@
 (defparameter *c-text*    (rgb #xd6 #xd3 #xc8))
 (defparameter *c-string*  (rgb #xa8 #xd0 #x78))
 (defparameter *c-comment* (rgb #x5a #x63 #x55))
-(defparameter *c-keyword* (rgb #xc7 #x92 #xea))
+(defparameter *c-keyword* (rgb #xc7 #x92 #xea))   ; :keywords AND special forms / macros — purple
 (defparameter *c-number*  (rgb #xff #x9f #x43))
+(defparameter *c-operator* (rgb #x7f #xdb #xca))  ; a form's head symbol (a call) — function teal
+(defparameter *c-defname*  (rgb #xa8 #xff #x78))  ; the name a def-form introduces — green
+
+(defparameter *cl-special*
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (s '("defun" "defmacro" "defvar" "defparameter" "defconstant" "defmethod"
+                 "defgeneric" "defclass" "defstruct" "deftype" "defsetf" "define-condition"
+                 "define-symbol-macro" "defpackage" "in-package" "declaim" "proclaim" "declare"
+                 "lambda" "function" "quote" "let" "let*" "flet" "labels" "macrolet"
+                 "symbol-macrolet" "multiple-value-bind" "destructuring-bind" "multiple-value-call"
+                 "with-open-file" "with-output-to-string" "with-input-from-string" "with-slots"
+                 "with-accessors" "handler-case" "handler-bind" "restart-case" "restart-bind"
+                 "unwind-protect" "ignore-errors" "if" "when" "unless" "cond" "case" "ecase"
+                 "typecase" "etypecase" "ccase" "and" "or" "not" "progn" "prog1" "prog2"
+                 "block" "return" "return-from" "tagbody" "go" "catch" "throw" "eval-when"
+                 "the" "locally" "loop" "dolist" "dotimes" "do" "do*" "setf" "setq" "psetf"
+                 "push" "pushnew" "pop" "incf" "decf" "values"))
+      (setf (gethash s h) t))
+    h))
+
+(defparameter *cl-defform*
+  (let ((h (make-hash-table :test 'equal)))
+    (dolist (s '("defun" "defmacro" "defvar" "defparameter" "defconstant" "defmethod"
+                 "defgeneric" "defclass" "defstruct" "deftype" "define-condition" "defpackage"))
+      (setf (gethash s h) t))
+    h))
 (defparameter *paren-cycle*
   (vector (rgb #xff #xcb #x6b) (rgb #xc7 #x92 #xea)
           (rgb #x7f #xdb #xca) (rgb #xa8 #xff #x78)))
@@ -334,45 +360,66 @@
 (defun delimiterp (c)
   (member c '(#\Space #\Tab #\( #\) #\' #\" #\; #\` #\,)))
 
-(defun lex-line (line depth)
-  "Return (values runs new-depth), runs = list of (start end . color)."
-  (let ((runs '()) (n (length line)) (i 0))
-    (flet ((emit (s e c) (when (< s e) (push (list* s e c) runs))))
+(defun lex-line (line depth &optional in-string)
+  "Return (values runs new-depth new-in-string), runs = list of (start end . color). A
+   one-pass Lisp colouriser: comments, strings, rainbow parens, :keywords, numbers —
+   and, so code reads by shape not just as a wall of white text, the HEAD symbol of
+   every form: a special form or macro (defun, setf, loop…) in purple, any other call
+   head in teal, and the name a def-form introduces in green. HEAD is true when the
+   next token sits in operator position (just inside an open paren); DEF carries a
+   def-form's head to its name token. IN-STRING carries an unterminated string across
+   line boundaries (multi-line docstrings) so their continuation lines stay green
+   instead of being re-lexed as code — the caller threads it like DEPTH."
+  (let ((runs '()) (n (length line)) (i 0) (head nil) (def nil))
+    (flet ((emit (s e c) (when (< s e) (push (list* s e c) runs)))
+           (scan-string (from)          ; advance past a string body; return (values end closed)
+             (let ((j from))
+               (loop while (< j n) do
+                 (cond ((and (char= (char line j) #\\) (< (1+ j) n)) (incf j 2))
+                       ((char= (char line j) #\") (return-from scan-string (values (1+ j) t)))
+                       (t (incf j))))
+               (values j nil))))
+      ;; a string opened on an earlier line runs on until its closing quote
+      (when in-string
+        (multiple-value-bind (end closed) (scan-string 0)
+          (emit 0 end *c-string*) (setf i end in-string (not closed))))
       (loop while (< i n) do
         (let ((c (char line i)))
           (cond
             ((char= c #\;)                              ; comment to end of line
              (emit i n *c-comment*) (setf i n))
-            ((char= c #\")                              ; string
-             (let ((j (1+ i)))
-               (loop while (< j n) do
-                 (cond ((and (char= (char line j) #\\) (< (1+ j) n)) (incf j 2))
-                       ((char= (char line j) #\") (incf j) (return))
-                       (t (incf j))))
-               (emit i (min j n) *c-string*) (setf i j)))
+            ((char= c #\")                              ; string (may run past end of line)
+             (multiple-value-bind (end closed) (scan-string (1+ i))
+               (emit i end *c-string*) (setf i end head nil def nil in-string (not closed))))
             ((char= c #\()
              (emit i (1+ i) (aref *paren-cycle* (mod depth 4)))
-             (incf depth) (incf i))
+             (incf depth) (incf i) (setf head t))       ; next token is the operator
             ((char= c #\))
              (setf depth (max 0 (1- depth)))
              (emit i (1+ i) (aref *paren-cycle* (mod depth 4)))
-             (incf i))
+             (incf i) (setf head nil def nil))
             ((and (char= c #\:) (or (zerop i) (delimiterp (char line (1- i)))))
              (let ((j (1+ i)))
                (loop while (and (< j n) (not (delimiterp (char line j)))) do (incf j))
-               (emit i j *c-keyword*) (setf i j)))
+               (emit i j *c-keyword*) (setf i j head nil def nil)))
             ((and (digit-char-p c) (or (zerop i) (delimiterp (char line (1- i)))))
              (let ((j i))
                (loop while (and (< j n) (not (delimiterp (char line j)))) do (incf j))
-               (emit i j *c-number*) (setf i j)))
-            (t
-             (let ((j i))
-               (loop while (and (< j n)
-                                (not (member (char line j) '(#\( #\) #\" #\;))))
-                     do (incf j))
-               (emit i (max j (1+ i)) *c-text*)
-               (setf i (max j (1+ i)))))))))
-    (values (nreverse runs) depth)))
+               (emit i j *c-number*) (setf i j head nil def nil)))
+            ((delimiterp c)                             ; a lone space / ' / ` / , — no glyph run
+             (when (member c '(#\' #\` #\,)) (emit i (1+ i) *c-text*))
+             (incf i))                                  ; keep HEAD/DEF across it
+            (t                                          ; an identifier token
+             (let* ((j i))
+               (loop while (and (< j n) (not (delimiterp (char line j)))) do (incf j))
+               (let ((tok (string-downcase (subseq line i j))))
+                 (emit i j (cond (def *c-defname*)                    ; the name being defined
+                                 ((gethash tok *cl-special*) *c-keyword*) ; special form / macro
+                                 (head *c-operator*)                 ; some other call head
+                                 (t *c-text*)))
+                 (setf def (and head (gethash tok *cl-defform*)))    ; def-form: next token is its name
+                 (setf head nil i j))))))))
+    (values (nreverse runs) depth in-string)))
 
 ;;; ---- drawing -------------------------------------------------------------
 
@@ -390,12 +437,13 @@
          (pad (tv-pad tv))
          (first (tv-scroll tv))
          (last  (min (length (tv-lines tv)) (+ first (visible-lines tv))))
-         (depth 0))
+         (depth 0) (instr nil))
     (fill-rect canvas x0 y0 w h *bg*)
-    ;; paren depth must be correct at the first VISIBLE line, so lex the hidden
-    ;; prefix for its depth only. (A real editor caches this per line.)
+    ;; paren depth AND open-string state must be correct at the first VISIBLE line, so
+    ;; lex the hidden prefix for them only. (A real editor caches this per line.)
     (dotimes (i first)
-      (setf depth (nth-value 1 (lex-line (aref (tv-lines tv) i) depth))))
+      (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
+        (declare (ignore r)) (setf depth d instr s)))
 
     (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
       (loop for li from first below last
@@ -418,8 +466,8 @@
                  (draw-string canvas font (format nil "~3d" (1+ li))
                               (+ x0 pad) ly *gutter*)
                  ;; the text, run by coloured run
-                 (multiple-value-bind (runs new-depth) (lex-line line depth)
-                   (setf depth new-depth)
+                 (multiple-value-bind (runs new-depth new-instr) (lex-line line depth instr)
+                   (setf depth new-depth instr new-instr)
                    (dolist (r runs)
                      (destructuring-bind (s e . color) r
                        (draw-string canvas font (subseq line s e)
