@@ -83,25 +83,34 @@
 
 (defun load-recording (path)
   "LOAD PATH, and additionally capture each top-level form's source into
-   *REGISTRY*. The capture is a SEPARATE read pass with *READ-EVAL* off, so it
-   never runs the file's code and cannot change what LOAD does. Any capture
-   failure degrades to 'that form is not in the registry' — never to a broken
-   build. The actual (load path) at the end is byte-for-byte the old behaviour.
+   *REGISTRY*. LOAD runs FIRST so every package the file defines already exists;
+   then a SEPARATE read pass (with *READ-EVAL* off, so it runs no code) captures the
+   verbatim source. That pass tracks IN-PACKAGE — binding *PACKAGE* locally and
+   switching it on each (in-package …) — so every definition is filed under its REAL
+   package, not CL-USER (without this, an in-package file's symbols all land in
+   CL-USER and its own package browses empty). Any capture failure degrades to 'that
+   form is not in the registry' — never to a broken build.
 
    Note: the span from one form's end to the next form's end includes the blank
    lines and comments between them, so a doc-comment written above a DEFUN is
    captured WITH it — exactly where it belongs (doc/code-browser.org §2)."
+  (load path)                                    ; execute first: packages now exist
   (let ((text (ignore-errors (read-file-into-string path))))
     (when text
       (ignore-errors
         (with-input-from-string (s text)
-          (let ((*read-eval* nil))
+          (let ((*read-eval* nil) (*package* (find-package :cl-user)))
             (loop for start = (file-position s)
                   for form = (handler-case (read s nil :eof)
                                (serious-condition () :eof))   ; stop cleanly on a form we can't read
                   until (eq form :eof)
-                  do (register-source form (subseq text start (file-position s)) path)))))))
-  (load path))
+                  do (register-source form (subseq text start (file-position s)) path)
+                     ;; follow IN-PACKAGE so the NEXT forms intern in the right package
+                     (when (and (consp form) (symbolp (first form))
+                                (string= (symbol-name (first form)) "IN-PACKAGE"))
+                       (let ((p (ignore-errors (find-package (second form)))))
+                         (when p (setf *package* p))))))))))
+  (values))
 
 ;;; ---- Accept: compile edited source into the live image + update the registry --
 

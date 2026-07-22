@@ -137,12 +137,15 @@
                           ;; methods), not to a source blob of all its methods.
                           (gf   (and (ignore-errors (fboundp name))
                                      (typep (fdefinition name) 'generic-function))))
-                     (push (list :label (string-downcase (princ-to-string name))
-                                 :detail (cond (gf "generic function")
-                                               (kind (string-downcase (symbol-name kind)))
-                                               (t "definition"))
-                                 :subject (if gf (fdefinition name) (subj-defn name)))
-                           out))))
+                     ;; skip a defpackage's :package defn — the package OBJECT is
+                     ;; already a candidate (above), so this would just duplicate it.
+                     (unless (eq kind :package)
+                       (push (list :label (string-downcase (princ-to-string name))
+                                   :detail (cond (gf "generic function")
+                                                 (kind (string-downcase (symbol-name kind)))
+                                                 (t "definition"))
+                                   :subject (if gf (fdefinition name) (subj-defn name)))
+                             out)))))
                *registry*))
     (nreverse out)))
 
