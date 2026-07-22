@@ -325,26 +325,31 @@
          (hdr-w 130)                                        ; row-header column width
          (x0    (+ x hdr-w))                                ; where the cell grid starts
          (ncols (max 1 (floor (- w hdr-w) +mx-cell-w+))))   ; how many columns fit
-    ;; column headers
+    ;; column headers — specializer classes, in the class blue
     (loop for c in cols for ci from 0 below ncols
           for cx = (+ x0 (* ci +mx-cell-w+))
-          do (lol.canvas:draw-string canvas *bfont* (mx-short c 12) (+ cx 2) y *sh-amber*))
+          do (lol.canvas:draw-string canvas *bfont* (mx-short c 12) (+ cx 2) y
+                                     (concept-color :class)))
     (when (> (length cols) ncols)
       (lol.canvas:draw-string canvas *bfont* (format nil "…+~a" (- (length cols) ncols))
                               (- (+ x w) 44) y *sh-dim*))
-    ;; rows, each a header + its cells
-    (loop for r in rows for cellrow in cells for ri from 0
+    ;; rows, each a header (teal, the dispatch axis) + its cells
+    (loop with green = (concept-color :generic-function)
+          for r in rows for cellrow in cells for ri from 0
           for ry = (+ y +mx-row-h+ (* ri +mx-row-h+))
           while (< ry (- (+ y h) 4))
-          do (lol.canvas:draw-string canvas *bfont* (mx-short r 20) x ry *sh-text*)
+          do (lol.canvas:draw-string canvas *bfont* (mx-short r 20) x ry (concept-color :function))
              (loop for cell in cellrow for c in cols for ci from 0 below ncols
                    for cx = (+ x0 (* ci +mx-cell-w+))
                    for n = (length cell)
-                   do (lol.canvas:draw-rect canvas cx (- ry 2) +mx-cell-w+ +mx-row-h+ *sh-rule*)
+                   do (when (plusp n)                                  ; a covered pair glows green
+                        (lol.canvas:fill-rect canvas (1+ cx) (- ry 1) (- +mx-cell-w+ 1)
+                                              (- +mx-row-h+ 1) *sh-sel*))
+                      (lol.canvas:draw-rect canvas cx (- ry 2) +mx-cell-w+ +mx-row-h+ *sh-rule*)
                       (lol.canvas:draw-string canvas *bfont*
-                        (if (zerop n) "·" (princ-to-string n))
-                        (+ cx (floor +mx-cell-w+ 2) -3) ry
-                        (if (zerop n) *sh-dim* *sh-accent*))
+                        (if (zerop n) "·" (format nil "~c~d" (code-char 215) n))  ; ×N methods
+                        (+ cx (floor +mx-cell-w+ 2) (if (zerop n) -3 -9)) ry
+                        (if (zerop n) *sh-dim* green))
                       (push (list cx (- ry 2) +mx-cell-w+ +mx-row-h+ r c) *matrix-cells*)))))
 
 (defun matrix-cell-click (pane px py)
