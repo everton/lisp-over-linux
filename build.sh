@@ -59,6 +59,7 @@ POC_DIR="$MICRO/poc"
 LISP_SOURCES=(
   "$INITRAMFS_DIR/model.lisp"        # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
+  "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
   "$POC_DIR/canvas.lisp"             # pixel buffer + font + draw-string + modifier predicates
   "$POC_DIR/textview.lisp"           # editable text view (uses canvas)
   "$POC_DIR/fb.lisp"                 # /dev/fb0 presenter + KD_GRAPHICS (uses canvas)
