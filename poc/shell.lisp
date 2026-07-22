@@ -14,32 +14,32 @@
 (in-package :cl-user)
 
 ;;; palette (the tool's own colours, from scene.lisp)
-(defparameter *sh-bg*     #$14161A)
-(defparameter *sh-panel*  #$1B1E24)
-(defparameter *sh-hi*     #$242931)
-(defparameter *sh-rule*   #$2E343D)
-(defparameter *sh-text*   #$D6D3C8)
-(defparameter *sh-dim*    #$6B727D)
-(defparameter *sh-accent* #$7FDBCA)
-(defparameter *sh-sel*    #$2F4F4A)
-(defparameter *sh-amber*  #$FF9F43)
+(defparameter *sh-bg*     !#14161A)
+(defparameter *sh-panel*  !#1B1E24)
+(defparameter *sh-hi*     !#242931)
+(defparameter *sh-rule*   !#2E343D)
+(defparameter *sh-text*   !#D6D3C8)
+(defparameter *sh-dim*    !#6B727D)
+(defparameter *sh-accent* !#7FDBCA)
+(defparameter *sh-sel*    !#2F4F4A)
+(defparameter *sh-amber*  !#FF9F43)
 
 ;; per-Lisp-concept colours (the mockups' semantic scheme, media/lisp-concepts-visual.html):
 ;; the browser tints each row by its KIND so a package of 350 defs reads by colour,
 ;; not as a grey wall. Kinds without an entry fall back to *sh-text*.
 (defparameter *concept-colors*
-  (list :package          #$FFCB6B   ; gold
-        :function         #$7FDBCA   ; teal
-        :generic-function #$A8FF78   ; green
-        :method           #$A8FF78   ; green
-        :macro            #$C792EA   ; purple
-        :compiler-macro   #$C792EA   ; purple
-        :class            #$89DDFF   ; blue
-        :struct           #$89DDFF   ; blue
-        :type             #$89DDFF   ; blue
-        :condition        #$FF6B6B   ; red
-        :variable         #$FF9F43   ; amber
-        :constant         #$FF9F43)) ; amber
+  (list :package          !#FFCB6B   ; gold
+        :function         !#7FDBCA   ; teal
+        :generic-function !#A8FF78   ; green
+        :method           !#A8FF78   ; green
+        :macro            !#C792EA   ; purple
+        :compiler-macro   !#C792EA   ; purple
+        :class            !#89DDFF   ; blue
+        :struct           !#89DDFF   ; blue
+        :type             !#89DDFF   ; blue
+        :condition        !#FF6B6B   ; red
+        :variable         !#FF9F43   ; amber
+        :constant         !#FF9F43)) ; amber
 
 (defun concept-color (kind)
   "The colour for a definition KIND (:function :class :macro …), or *sh-text* when the

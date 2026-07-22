@@ -322,13 +322,13 @@
 ;;; how it is rendered). Paren depth is carried ACROSS lines, so the rainbow is
 ;;; correct in a multi-line definition.
 
-(defparameter *c-text*    #$D6D3C8)
-(defparameter *c-string*  #$A8D078)
-(defparameter *c-comment* #$5A6355)
-(defparameter *c-keyword* #$C792EA)   ; :keywords AND special forms / macros — purple
-(defparameter *c-number*  #$FF9F43)
-(defparameter *c-operator* #$7FDBCA)  ; a form's head symbol (a call) — function teal
-(defparameter *c-defname*  #$A8FF78)  ; the name a def-form introduces — green
+(defparameter *c-text*    !#D6D3C8)
+(defparameter *c-string*  !#A8D078)
+(defparameter *c-comment* !#5A6355)
+(defparameter *c-keyword* !#C792EA)   ; :keywords AND special forms / macros — purple
+(defparameter *c-number*  !#FF9F43)
+(defparameter *c-operator* !#7FDBCA)  ; a form's head symbol (a call) — function teal
+(defparameter *c-defname*  !#A8FF78)  ; the name a def-form introduces — green
 
 (defparameter *cl-special*
   (let ((h (make-hash-table :test 'equal)))
@@ -354,8 +354,8 @@
       (setf (gethash s h) t))
     h))
 (defparameter *paren-cycle*
-  (vector #$FFCB6B #$C792EA
-          #$7FDBCA #$A8FF78))
+  (vector !#FFCB6B !#C792EA
+          !#7FDBCA !#A8FF78))
 
 (defun delimiterp (c)
   (member c '(#\Space #\Tab #\( #\) #\' #\" #\; #\` #\,)))
@@ -423,12 +423,12 @@
 
 ;;; ---- drawing -------------------------------------------------------------
 
-(defparameter *bg*      #$1B1E24)
-(defparameter *gutter*  #$4A524D)
-(defparameter *sel*     #$2F4F6A)
-(defparameter *caret*   #$7FDBCA)
-(defparameter *cur-ln*  #$21252C)
-(defparameter *scroll*  #$39404A)
+(defparameter *bg*      !#1B1E24)
+(defparameter *gutter*  !#4A524D)
+(defparameter *sel*     !#2F4F6A)
+(defparameter *caret*   !#7FDBCA)
+(defparameter *cur-ln*  !#21252C)
+(defparameter *scroll*  !#39404A)
 
 (defun tv-draw (canvas tv)
   (let* ((font (tv-font tv))

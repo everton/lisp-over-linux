@@ -20,18 +20,24 @@
 
 (in-package :lol.canvas)
 
-;;; A CSS-style colour literal: #$RRGGBB reads as the 24-bit 0xRRGGBB pixel — exactly
-;;; what (rgb #xRR #xGG #xBB) makes (RGB has no alpha byte), just legible. Bare #RRGGBB
-;;; can't work — the reader would take #b / #3.. as its own syntax — so # + a $ marker
-;;; + six hex is as close to CSS as the reader allows. Installed on the shared readtable
-;;; (so every file loaded after canvas, and Accept's runtime read-from-string, see it).
+;;; A CSS-style colour literal: !#RRGGBB reads as the 24-bit 0xRRGGBB pixel — exactly
+;;; what (rgb #xRR #xGG #xBB) makes (RGB has no alpha byte). The #RRGGBB is kept
+;;; VERBATIM so colours are copy-pasteable straight from CSS and light up under Emacs
+;;; rainbow-mode; the leading ! is just the reader's trigger, since bare #RRGGBB can't
+;;; work (the reader claims #b / #3.. for its own syntax). ! is non-terminating, so it
+;;; can still sit inside a symbol. Installed on the shared readtable, which is saved in
+;;; the image — so every later module AND Accept's runtime read-from-string honour it.
 (eval-when (:compile-toplevel :load-toplevel :execute)
-  (set-dispatch-macro-character #\# #\$
-    (lambda (stream subchar arg)
-      (declare (ignore subchar arg))
+  (set-macro-character #\!
+    (lambda (stream ch)
+      (declare (ignore ch))
+      (let ((hash (read-char stream nil nil)))
+        (unless (eql hash #\#)
+          (error "colour literal: expected !#RRGGBB, got !~@[~a~]" hash)))
       (let ((s (make-string 6)))
         (dotimes (i 6) (setf (char s i) (read-char stream)))
-        (parse-integer s :radix 16)))))
+        (parse-integer s :radix 16)))
+    t))                                 ; non-terminating: ! may still occur inside a symbol
 
 ;;; Input modifier predicates. The "state" is a bitmask in the X11 convention
 ;;; (bit 0 = Shift, bit 2 = Ctrl, bit 3 = Mod1/Meta/Alt, bit 6 = Mod4/Super); the
