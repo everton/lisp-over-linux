@@ -424,7 +424,8 @@
       ;; column headers — teal for the signal/stack side, amber for the restart side
       (lol.canvas:draw-string canvas *bfont* "CALL STACK  ·  Tab walks · M-. source"
         frame-x top (if (eq focus :backtrace) *sh-accent* *sh-dim*))
-      (lol.canvas:draw-string canvas *bfont* "RESTARTS  ·  0-9 / Enter · invoking unwinds"
+      (lol.canvas:draw-string canvas *bfont*
+        "RESTARTS  ·  0-9 / Enter invoke · v supply a value · invoking unwinds"
         (+ split 8) top (if (eq focus :restarts) *sh-amber* *sh-dim*))
       (incf top 20)
       ;; the teal signal rail down the spine's left edge (the stack is intact)
@@ -531,6 +532,45 @@
             (declare (ignore clicked))
             (unless (zerop wheel) (lol.textview:tv-wheel tv (* (- wheel) +wheel-lines+)))))))))
 
+(defun dbg-prompt-value (name)
+  "A modal input line over the debugger for a restart that needs a value: read the Lisp
+   expression the user types (Enter accepts, Esc cancels). Returns the typed STRING, or
+   NIL if cancelled. Draws its bar over the current debugger frame (already on canvas)."
+  (let ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+    (loop
+      (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *sh-hi*)
+      (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *sh-amber*)
+      (lol.canvas:draw-string canvas *bfont*
+        (format nil "value for [~(~a~)] — an expression, Enter invokes, Esc cancels:" name)
+        12 (- h 38) *sh-amber*)
+      (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *sh-text*)
+      (lol.fb:present-fb canvas)
+      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+        (declare (ignore ms))
+        (when kev (read-keyboard-evdev *fb-kbd*))
+        (when kb
+          (multiple-value-bind (key state) (fb-read-key 0)
+            (declare (ignore state))
+            (cond
+              ((eq key :escape) (return nil))
+              ((member key '(:return #\Return)) (return buf))
+              ((member key '(:backspace #\Backspace #\Rubout))
+               (when (plusp (length buf)) (setf buf (subseq buf 0 (1- (length buf))))))
+              ((and (characterp key) (graphic-char-p key))
+               (setf buf (concatenate 'string buf (string key)))))))))))
+
+(defun dbg-invoke-with-value (restarts i)
+  "Prompt for a value and invoke restart I with it — the way to answer a restart that
+   takes an argument (USE-VALUE, our USE-HEADING, …). The typed text is READ then EVAL'd,
+   so both a literal (=120=) and an expression (=(* 2 60)=) work; a read/eval error just
+   cancels (the debugger must not error while reporting one). A non-local exit on success."
+  (let* ((r (nth i restarts))
+         (line (and r (dbg-prompt-value (getf r :name)))))
+    (when (and line (plusp (length (string-trim '(#\Space #\Tab) line))))
+      (multiple-value-bind (val ok)
+          (ignore-errors (values (eval (read-from-string line)) t))
+        (when ok (invoke-restart (getf r :restart) val))))))
+
 (defun run-debugger-fb (condition)
   "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
    a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
@@ -579,6 +619,8 @@
               ((and (characterp key) (char<= #\0 key #\9))
                (let ((i (- (char-code key) (char-code #\0))))
                  (when (< i (length restarts)) (setf rsel i))))
+              ;; v — invoke the selected restart WITH a value you type (for USE-VALUE &c)
+              ((and (characterp key) (char-equal key #\v)) (dbg-invoke-with-value restarts rsel))
               ((member key '(:return #\Return)) (dbg-invoke restarts rsel))))))
         (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
           (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
