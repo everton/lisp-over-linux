@@ -59,7 +59,8 @@
   subject view
   (sel 0)                 ; selected item index (list views)
   (top 0)                 ; first visible item (list scrolling)
-  tv)                     ; a lol.textview for :source/:reference panes, else NIL
+  tv                      ; a lol.textview for :source/:reference panes, else NIL
+  side)                   ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
 
 (defun open-pane (subject)
   "Build a PANE for SUBJECT: present it, and for text views wrap the body in a
@@ -151,6 +152,25 @@
    so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
    cleared on the next keystroke.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
+(defvar *editing-side* nil
+  "T when keyboard focus is on the current pane's editable SIDE pane (⇧↵ beside) rather
+   than the list. SuperL-o toggles it; guarded everywhere by (pane-side (current-pane)).")
+
+(defun open-beside (pane)
+  "⇧↵ on a list row: open the selected item BESIDE the list — a pinned, editable pane in
+   the right column that does NOT follow the selection (unlike the read-only preview). A
+   second ⇧↵ on the same item closes it. Focus moves to the side so you can edit at once."
+  (let ((it (selected-item pane)))
+    (when (and it (item-subject it))
+      (if (and (pane-side pane)
+               (eq (pane-subject (pane-side pane)) (item-subject it)))
+          (setf (pane-side pane) nil *editing-side* nil)      ; toggle closed
+          (setf (pane-side pane) (open-pane (item-subject it)) *editing-side* t)))))
+
+(defun toggle-side-focus ()
+  "SuperL-o: move keyboard focus between the list and its editable side pane."
+  (when (pane-side (current-pane))
+    (setf *editing-side* (not *editing-side*))))
 
 ;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
 
@@ -493,38 +513,57 @@
       (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
       (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) *sh-accent*)
       (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) *sh-accent*)
-      (if (list-pane-splittable-p cur)
-          ;; NAV SPLIT: a list on the left, a live read-only preview of the selected
-          ;; item's subject on the right — so the blank right half fills as you move.
-          (let* ((full-w (- w 24))
-                 (list-w (max 260 (floor (* full-w 42) 100)))
-                 (gap    12)
-                 (prev-x (+ 12 list-w gap))
-                 (prev-w (- w prev-x 12))
-                 (preview (preview-for (item-subject (selected-item cur)))))
-            (setf *split-x* prev-x)
-            (draw-list-body canvas cur 12 body-y list-w body-h)
-            (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *sh-rule*)
-            (if preview
-                (progn
-                  (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
-                                          prev-x (- body-y 15) *sh-dim*)
-                  (draw-pane-body canvas preview prev-x body-y prev-w body-h))
-                (lol.canvas:draw-string canvas *bfont* "(no preview)"
-                                        prev-x (+ body-y 4) *sh-dim*)))
+      (let ((is-list (and (null (pane-tv cur))
+                          (not (eq (view-kind (pane-view cur)) :matrix)))))
+        (cond
+          ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right;
+          ;; the focused half wears an accent top-rule (SuperL-o moves focus).
+          ((and is-list (pane-side cur))
+           (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
+                  (gap 12) (sx (+ 12 list-w gap)) (sw (- w sx 12)) (side (pane-side cur)))
+             (setf *split-x* sx)
+             (draw-list-body canvas cur 12 body-y list-w body-h)
+             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *sh-rule*)
+             (lol.canvas:draw-string canvas *bfont*
+               (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
+                       (if *editing-side* "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
+               sx (- body-y 15) (if *editing-side* *sh-accent* *sh-dim*))
+             ;; accent top-rule over whichever half has focus
+             (if *editing-side*
+                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *sh-accent*)
+                 (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *sh-accent*))
+             (draw-pane-body canvas side sx body-y sw body-h)))
+          ;; NAV SPLIT: list left, a live READ-ONLY preview of the selection right.
+          ((and is-list (selected-item cur) (item-subject (selected-item cur)))
+           (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
+                  (gap 12) (prev-x (+ 12 list-w gap)) (prev-w (- w prev-x 12))
+                  (preview (preview-for (item-subject (selected-item cur)))))
+             (setf *split-x* prev-x)
+             (draw-list-body canvas cur 12 body-y list-w body-h)
+             (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *sh-rule*)
+             (if preview
+                 (progn
+                   (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
+                                           prev-x (- body-y 15) *sh-dim*)
+                   (draw-pane-body canvas preview prev-x body-y prev-w body-h))
+                 (lol.canvas:draw-string canvas *bfont* "(no preview)"
+                                         prev-x (+ body-y 4) *sh-dim*))))
           ;; single pane, full width (source / matrix / a list with nothing to preview)
-          (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))
+          (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))
     ;; status line
     (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
       (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *sh-hi*)
       (if *browser-status*
           (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *sh-accent*)
           (lol.canvas:draw-string canvas *bfont*
-            (format nil "~a  SuperL-< back  q quit~@[   commands: ~a~]"
-                    (cond ((workspace-pane-p cur)
+            (format nil "~a  SuperL-< back  SuperL-q quit~@[   commands: ~a~]"
+                    (cond ((and *editing-side* (pane-side cur))
+                           "editing beside: C-c C-c accept  ·  SuperL-o back to list")
+                          ((workspace-pane-p cur)
                            "C-x C-e Do it  C-c C-p Print  C-c C-i Inspect  C-c C-d Debug")
                           ((editable-pane-p cur) "editing: C-c C-c accepts")
-                          (t "up/dn move  ret drill"))
+                          ((pane-side cur) "up/dn move  ret drill  S-ret beside  SuperL-o edit")
+                          (t "up/dn move  ret drill  S-ret beside"))
                     (and cmds (format nil "~{~a~^ · ~}" (mapcar #'command-label cmds))))
             10 (- h 18) *sh-dim*)))))
 
@@ -580,6 +619,32 @@
       (serious-condition (c)
         (setf *browser-status* (format nil "Accept failed: ~a" c))))))
 
+(defun edit-pane-key (p key state)
+  "Handle a key for an EDITABLE pane P — a source (Accept) or the Workspace (eval verbs).
+   Chords ride *pending-prefix*: C-c {C-c Accept | C-p Print | C-i Inspect | C-d Debug},
+   C-x C-e Do it; a bare Tab completes; anything else edits. Shared by the current pane
+   and the ⇧↵ side pane, and guarded so a list side (no textview) can't crash. Returns NIL."
+  (let ((c (lol.canvas:ctrl-p state)))
+    (cond
+      (*pending-prefix*
+       (let ((prefix *pending-prefix*))
+         (setf *pending-prefix* nil)
+         (cond
+           ((and (eq prefix :c-c) c (eql key #\c) (editable-pane-p p)) (accept-pane p))
+           ((and (eq prefix :c-c) c (eql key #\p) (workspace-pane-p p)) (workspace-print-it p))
+           ;; C-c C-i Inspect it: Ctrl-I *is* Tab (byte 9) on any tty, so the console
+           ;; delivers this chord as C-c then :tab — accept both.
+           ((and (eq prefix :c-c) (or (and c (eql key #\i)) (eq key :tab))
+                 (workspace-pane-p p))
+            (workspace-inspect-it p))
+           ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
+           ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
+         nil))
+      ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
+      ((and c (eql key #\x) (workspace-pane-p p)) (setf *pending-prefix* :c-x) nil)
+      ((and (eq key :tab) (pane-tv p)) (editor-complete p) nil)
+      (t (when (pane-tv p) (lol.textview:tv-key (pane-tv p) key state)) nil))))
+
 (defun browser-key (key state)
   "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
    Returns :quit to exit. STATE is the X modifier bitmask."
@@ -599,11 +664,13 @@
       ;; the browser. Leaving via C-g at the root (below) is the deliberate exit.
       ((eq key :escape) (setf *pending-meta* t) nil)
       ;; C-g = back, everywhere (the console can't deliver SuperL, so Ctrl-g is the
-      ;; portable "back" that also works while editing a source pane). At the root,
-      ;; there is nothing to pop, so C-g leaves the browser.
+      ;; portable "back" that also works while editing a source pane). At the root there
+      ;; is nothing to pop, so C-g does NOTHING — leaving the environment is SuperL-q
+      ;; only, so a stray C-g can't drop you out by accident.
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
-       (if (cdr (current-trail)) (progn (trail-pop) nil) :quit))
+       (when (cdr (current-trail)) (trail-pop))
+       nil)
       ;; --- SuperL layer: tab navigation, the Spotter + the cheatsheet, over ANY pane
       ;;     (never the editor's). Super arrives via the keyboard's evdev (folded into
       ;;     STATE, bit 6), so it works on the bare console too — see fb-browser. ---
@@ -615,6 +682,7 @@
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
           (activate-trail (- (char-code key) (char-code #\1))) nil)
          ((member key '(#\w #\W)) (close-trail) nil)                           ; close this tab
+         ((member key '(#\o #\O)) (toggle-side-focus) nil)                     ; focus list <-> side
          ((eql key #\Space)                                                    ; the Spotter
           (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)) nil)
          ((member key '(:return #\Return))                                     ; open selection in a NEW tab
@@ -625,32 +693,13 @@
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) :quit)
          (t nil)))
+      ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
+      ;;     SuperL-o (above) hands focus back to the list. ---
+      ((and *editing-side* (pane-side p)) (edit-pane-key (pane-side p) key state))
       ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go
       ;;     through *pending-prefix*: C-c then {C-c Accept | C-p Print | C-i Inspect},
       ;;     C-x then C-e Do it. Any other key edits. ---
-      ((or (editable-pane-p p) (workspace-pane-p p))
-       (let ((c (lol.canvas:ctrl-p state)))
-         (cond
-           (*pending-prefix*
-            (let ((prefix *pending-prefix*))
-              (setf *pending-prefix* nil)
-              (cond
-                ((and (eq prefix :c-c) c (eql key #\c) (editable-pane-p p)) (accept-pane p))
-                ((and (eq prefix :c-c) c (eql key #\p) (workspace-pane-p p)) (workspace-print-it p))
-                ;; C-c C-i Inspect it: Ctrl-I *is* Tab (byte 9) on any tty, so the
-                ;; console delivers this chord as C-c then :tab — accept both.
-                ((and (eq prefix :c-c) (or (and c (eql key #\i)) (eq key :tab))
-                      (workspace-pane-p p))
-                 (workspace-inspect-it p))
-                ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
-                ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
-              nil))
-           ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
-           ((and c (eql key #\x) (workspace-pane-p p)) (setf *pending-prefix* :c-x) nil)
-           ;; a BARE Tab completes the symbol before point (or indents when there is
-           ;; none) — Inspect it is C-c-prefixed above, so the two never collide.
-           ((eq key :tab) (editor-complete p) nil)
-           (t (lol.textview:tv-key (pane-tv p) key state) nil))))
+      ((or (editable-pane-p p) (workspace-pane-p p)) (edit-pane-key p key state))
       ;; --- read-only reference pane: scroll only ---
       ((pane-tv p)
        (case key
@@ -673,8 +722,10 @@
                                     (min (max 0 (1- (length (view-items (pane-view p)))))
                                          (+ (pane-sel p) +list-page+))))
          ((eq key :return)
-          (let ((it (selected-item p)))
-            (when (and it (item-subject it)) (trail-push (item-subject it)))))
+          (if (lol.canvas:shift-p state)
+              (open-beside p)                            ; ⇧↵ — open BESIDE (editable split)
+              (let ((it (selected-item p)))              ; ↵ — drill in place
+                (when (and it (item-subject it)) (trail-push (item-subject it))))))
          ((member key '(:backspace :left)) (trail-pop))
          (t nil))))))
 
@@ -787,17 +838,27 @@
       ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed
       ;; selection for real (SuperL-click in a new trail).
       ((and *split-x* (>= x *split-x*) (>= y *content-top*))
-       (let ((sel (selected-item p))
-             (pv *preview-pane*))
-         (cond
-           ((and pv (eq (view-kind (pane-view pv)) :matrix))
-            (or (matrix-cell-click pv x y)                 ; a cell -> its onion
-                (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
-           ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
-           ((and sel (item-subject sel))
-            (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))
-      ;; else an item in the current list view — SuperL-click opens it in a NEW trail
+       (cond
+         ;; ⇧↵ editable side pane: a click focuses it and places the caret (Ctrl jumps).
+         ((pane-side p)
+          (setf *editing-side* t)
+          (let ((tv (pane-tv (pane-side p))))
+            (when (and tv (lol.textview:tv-hit-p tv x y))
+              (if ctrl (jump-to-definition tv x y) (lol.textview:tv-click tv x y)))))
+         (t
+          (let ((sel (selected-item p))
+                (pv *preview-pane*))
+            (cond
+              ((and pv (eq (view-kind (pane-view pv)) :matrix))
+               (or (matrix-cell-click pv x y)               ; a cell -> its onion
+                   (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
+              ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
+              ((and sel (item-subject sel))
+               (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))))
+      ;; else an item in the current list view — SuperL-click opens it in a NEW trail; a
+      ;; plain click here also returns focus to the list (away from any side pane).
       ((>= y *content-top*)
+       (setf *editing-side* nil)
        (let* ((items (view-items (pane-view p)))
               (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
          (when (< i (length items))
