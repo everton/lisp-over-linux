@@ -136,6 +136,10 @@
 (defparameter +list-page+ 12 "Rows a list pane moves its selection on PageUp/PageDown.")
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
+(defvar *split-x* nil    "left screen-x of the nav-split preview column when a list pane is
+   split, else NIL. Clicks at x >= this land in the read-only preview, not the list.")
+(defvar *preview-pane* nil    "cached read-only pane rendered in the nav-split right column.")
+(defvar *preview-subject* nil "the subject *PREVIEW-PANE* was built for (EQ-compared).")
 (defvar *tab-rects* '()  "alist (trail-index . (x0 . x1)) for the top tab strip, set on draw.")
 (defvar *pending-prefix* nil
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
@@ -400,8 +404,42 @@
                                 (- w 8 (lol.canvas:string-px *bfont* s)) (+ y 3) *sh-accent*))))
   (push (cons index y) *crumb-rects*))
 
+(defun preview-for (subject)
+  "The cached read-only PANE for SUBJECT (the nav-split right column), rebuilt only
+   when the selection moves to a different subject. NIL for a nil subject. The preview
+   is never focused — it is a look, not an edit surface; drilling (Enter) is what opens
+   a real editable pane."
+  (when subject
+    (unless (eq subject *preview-subject*)
+      (setf *preview-subject* subject
+            *preview-pane* (ignore-errors (open-pane subject)))
+      (let ((tv (and *preview-pane* (pane-tv *preview-pane*))))
+        (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
+    *preview-pane*))
+
+(defun draw-pane-body (canvas pane x y w h)
+  "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
+   into the rect. The one place that knows how each view kind paints, so the expanded
+   pane and the nav-split preview stay identical."
+  (cond
+    ((pane-tv pane)
+     (lol.textview:tv-geometry (pane-tv pane) x y w h)
+     (lol.textview:tv-draw canvas (pane-tv pane)))
+    ((eq (view-kind (pane-view pane)) :matrix)
+     (draw-matrix-body canvas pane x y w h))
+    (t (draw-list-body canvas pane x y w h))))
+
+(defun list-pane-splittable-p (pane)
+  "True when PANE is a plain list whose selection has something to preview — the
+   condition for the nav split (a list on the left, its selection previewed right)."
+  (and (null (pane-tv pane))
+       (not (eq (view-kind (pane-view pane)) :matrix))
+       (let ((sel (selected-item pane)))
+         (and sel (item-subject sel)))))
+
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
+  (setf *split-x* nil)
   (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
   ;; the tab strip replaces the old static title bar
   (draw-tabs canvas w)
@@ -419,13 +457,27 @@
       (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
       (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) *sh-accent*)
       (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) *sh-accent*)
-      (cond
-        ((pane-tv cur)                              ; source / reference: the textview
-         (lol.textview:tv-geometry (pane-tv cur) 12 body-y (- w 24) body-h)
-         (lol.textview:tv-draw canvas (pane-tv cur)))
-        ((eq (view-kind (pane-view cur)) :matrix)   ; the clickable dispatch grid
-         (draw-matrix-body canvas cur 12 body-y (- w 24) body-h))
-        (t (draw-list-body canvas cur 12 body-y (- w 24) body-h))))
+      (if (list-pane-splittable-p cur)
+          ;; NAV SPLIT: a list on the left, a live read-only preview of the selected
+          ;; item's subject on the right — so the blank right half fills as you move.
+          (let* ((full-w (- w 24))
+                 (list-w (max 260 (floor (* full-w 42) 100)))
+                 (gap    12)
+                 (prev-x (+ 12 list-w gap))
+                 (prev-w (- w prev-x 12))
+                 (preview (preview-for (item-subject (selected-item cur)))))
+            (setf *split-x* prev-x)
+            (draw-list-body canvas cur 12 body-y list-w body-h)
+            (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *sh-rule*)
+            (if preview
+                (progn
+                  (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
+                                          prev-x (- body-y 15) *sh-dim*)
+                  (draw-pane-body canvas preview prev-x body-y prev-w body-h))
+                (lol.canvas:draw-string canvas *bfont* "(no preview)"
+                                        prev-x (+ body-y 4) *sh-dim*)))
+          ;; single pane, full width (source / matrix / a list with nothing to preview)
+          (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))
     ;; status line
     (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
       (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *sh-hi*)
@@ -686,6 +738,15 @@
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
+      ;; nav-split preview column: a click opens the previewed selection for real
+      ;; (SuperL-click in a new trail); Ctrl-click jumps within a source preview.
+      ((and *split-x* (>= x *split-x*) (>= y *content-top*))
+       (let ((sel (selected-item p))
+             (pv *preview-pane*))
+         (cond
+           ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
+           ((and sel (item-subject sel))
+            (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))
       ;; else an item in the current list view — SuperL-click opens it in a NEW trail
       ((>= y *content-top*)
        (let* ((items (view-items (pane-view p)))
