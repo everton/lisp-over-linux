@@ -425,7 +425,7 @@
       (lol.canvas:draw-string canvas *bfont* "CALL STACK  ·  Tab walks · M-. source"
         frame-x top (if (eq focus :backtrace) *sh-accent* *sh-dim*))
       (lol.canvas:draw-string canvas *bfont*
-        "RESTARTS  ·  0-9 / Enter invoke · v supply a value · invoking unwinds"
+        "RESTARTS  ·  0-9 · Enter invoke (asks if it needs a value) · invoking unwinds"
         (+ split 8) top (if (eq focus :restarts) *sh-amber* *sh-dim*))
       (incf top 20)
       ;; the teal signal rail down the spine's left edge (the stack is intact)
@@ -571,6 +571,30 @@
           (ignore-errors (values (eval (read-from-string line)) t))
         (when ok (invoke-restart (getf r :restart) val))))))
 
+(defun restart-wants-value-p (r-plist)
+  "True when invoking this restart needs a value the user must type: its function takes a
+   required argument AND it carries no :interactive supplier of its own (so Enter can't
+   get the value any other way). Reads SBCL's internal restart accessors — the same kind
+   of introspection the rest of this debugger already leans on — guarded so a probe that
+   fails just means 'don't auto-prompt'."
+  (let ((r (getf r-plist :restart)))
+    (and r
+         (ignore-errors (not (sb-kernel::restart-interactive-function r)))
+         (ignore-errors
+           (let ((ll (sb-introspect:function-lambda-list (sb-kernel::restart-function r))))
+             (and (consp ll) (not (member (first ll) lambda-list-keywords))))))))
+
+(defun dbg-enter (restarts i)
+  "Invoke restart I the way it asks to be invoked: if it needs a value and offers no
+   :interactive supplier, prompt for one (so plain Enter Just Works for USE-VALUE-style
+   restarts); otherwise invoke it interactively — its own :interactive, or no arguments
+   for the many restarts that take none. A non-local exit on success."
+  (let ((r (nth i restarts)))
+    (when r
+      (if (restart-wants-value-p r)
+          (dbg-invoke-with-value restarts i)
+          (invoke-restart-interactively (getf r :restart))))))
+
 (defun run-debugger-fb (condition)
   "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
    a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
@@ -619,13 +643,14 @@
               ((and (characterp key) (char<= #\0 key #\9))
                (let ((i (- (char-code key) (char-code #\0))))
                  (when (< i (length restarts)) (setf rsel i))))
-              ;; v — invoke the selected restart WITH a value you type (for USE-VALUE &c)
+              ;; v — force a value even when Enter wouldn't ask (override an :interactive
+              ;; default, or supply args to any restart)
               ((and (characterp key) (char-equal key #\v)) (dbg-invoke-with-value restarts rsel))
-              ((member key '(:return #\Return)) (dbg-invoke restarts rsel))))))
+              ((member key '(:return #\Return)) (dbg-enter restarts rsel))))))
         (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
           (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
                 (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
-            (cond (ri (dbg-invoke restarts ri))          ; a restart click invokes
+            (cond (ri (dbg-enter restarts ri))           ; a restart click invokes (asks if needed)
                   (fi (setf focus :backtrace fsel fi))))))))) ; a frame click selects it
 
 ;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------

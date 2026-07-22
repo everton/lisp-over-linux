@@ -144,8 +144,9 @@
       :report "Hold the current heading and continue anyway."
       degrees)
     (use-heading (h)
+      ;; no :interactive supplier on purpose — it takes a required value, so the
+      ;; debugger's Enter detects that and prompts you for the heading.
       :report "Continue on a heading you supply."
-      :interactive (lambda () (list 90))     ; no prompt on the framebuffer — supply 90
       h)
     (scrub ()
       :report "Scrub the launch."
