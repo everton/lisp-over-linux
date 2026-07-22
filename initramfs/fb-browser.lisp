@@ -373,68 +373,102 @@
                     (lol.canvas:draw-string canvas *bfont* piece x0 y color))
                   (incf y 15)))))))))
 
+;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
+(defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
+(defparameter *dbg-title-bg* !#5A1C1C "the alarm-red title band.")
+(defparameter *dbg-title-fg* !#FFD0C0 "text on the title band.")
+(defparameter +dbg-locals-h+ 132 "height of the bottom locals strip.")
+(defvar *dbg-restart-x0* 0 "left edge of the clickable restart rail (set at draw).")
+(defvar *dbg-restart-x1* 0 "right edge of the clickable restart rail (set at draw).")
+
+(defun dbg-fit (s px)
+  "Trim S to fit PX pixels of the browser font (…-elided)."
+  (let ((maxc (max 1 (floor px (lol.canvas:font-cw *bfont*)))))
+    (if (> (length s) maxc) (concatenate 'string (subseq s 0 (1- maxc)) "…") s)))
+
+(defun draw-dbg-rail (canvas x y0 y1 color)
+  "A dashed vertical rail from Y0 to Y1 — the signal's path up the standing spine."
+  (loop for yy from y0 below y1 by 6 do (lol.canvas:fill-rect canvas x yy 2 3 color)))
+
 (defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus)
-  "Paint the debugger: the condition, the restart column (RSEL selected), and — below
-   — a two-column split of the backtrace spine (FSEL selected) beside the locals of
-   that frame. FOCUS (:restarts or :backtrace) says which list the arrows drive; it
-   only changes which column reads as active."
+  "Paint the debugger as the two-sided spine of §3: the CONDITION is the header; the
+   CALL STACK runs down the centre with a teal rail hugging its left (the signal rose
+   here and NOTHING unwound — every frame still stands) and the innermost frame marked
+   !; the RESTARTS stand in an amber rail on the right (invoking one is the unwind).
+   The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
+   :backtrace) says which rail the arrows drive."
   (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
-  (lol.canvas:fill-rect canvas 0 0 w 20 (lol.canvas:rgb #x5a #x1c #x1c))   ; red title
-  (lol.canvas:draw-string canvas *bfont* "DEBUGGER — an unhandled condition"
-                          10 3 (lol.canvas:rgb #xff #xd0 #xc0))
-  (let ((y 30))
-    ;; The condition's report is often multi-line (e.g. DIVISION-BY-ZERO prints the
-    ;; operation on a second line) — draw-string has no newline handling, so split
-    ;; and draw each line, or an embedded #\Newline blits as a stray glyph.
+  (lol.canvas:fill-rect canvas 0 0 w 24 *dbg-title-bg*)
+  (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
+                          10 5 *dbg-title-fg*)
+  (let ((y 34))
+    ;; --- the header: what was signalled ---
+    (lol.canvas:draw-string canvas *bfont* (format nil "~(~a~)" (type-of condition))
+                            12 y *dbg-red*)
+    (incf y 18)
+    ;; the report is often multi-line (draw-string has no newline handling): split it.
     (dolist (line (split-lines (princ-to-string condition)))
-      (lol.canvas:draw-string canvas *bfont* line 12 y *sh-text*)
-      (incf y 17))
-    (incf y 3)
-    (lol.canvas:draw-string canvas *bfont* (format nil "type: ~(~a~)" (type-of condition))
-                            12 y *sh-dim*)
-    (incf y 30)
-    ;; --- the restart column (the primary action; Enter/click invokes) ---
+      (lol.canvas:draw-string canvas *bfont* (dbg-fit line (- w 24)) 12 y *sh-text*)
+      (incf y 16))
+    (incf y 2)
     (lol.canvas:draw-string canvas *bfont*
-      "restarts  —  0-9 / up-dn select, Enter or click invoke, C-g abort:"
-      12 y (if (eq focus :restarts) *sh-accent* *sh-dim*))
-    (incf y 22)
-    (setf *dbg-restart-top* y)
-    (loop for r in restarts for i from 0 do
-      (when (= i rsel)
-        (lol.canvas:fill-rect canvas 8 (- y 2) (- w 16) +dbg-row+ *sh-sel*)
-        (lol.canvas:fill-rect canvas 8 (- y 2) 2 +dbg-row+ *sh-accent*))
-      (lol.canvas:draw-string canvas *bfont*
-        (format nil "~d  ~@[[~a]  ~]~a" i (getf r :name) (getf r :report))
-        16 y (if (= i rsel) *sh-text* *sh-dim*))
-      (incf y +dbg-row+))
-    (incf y 16)
-    ;; --- the lower split: backtrace (left) | locals of the selected frame (right) ---
-    (let ((split (floor w 2)))
-      (lol.canvas:draw-string canvas *bfont*
-        "backtrace  —  Tab focuses, up-dn walks frames:"
-        12 y (if (eq focus :backtrace) *sh-accent* *sh-dim*))
-      (lol.canvas:draw-string canvas *bfont* (format nil "locals of frame ~d:" fsel)
-                              (+ split 8) y *sh-accent*)
-      (incf y 20)
-      (setf *dbg-frame-top* y *dbg-frame-x0* 8 *dbg-frame-x1* (- split 8))
-      ;; the frame column — selectable; the selected row is brighter when it has focus
-      (let ((fy y))
-        (loop for fr in backtrace for i from 0
-              while (< fy (- h 8)) do
+      "no handler claimed it — caught here with the whole stack still standing."
+      12 y *sh-dim*)
+    (incf y 26)
+    ;; --- the triptych ---
+    (let* ((split   (floor (* w 52) 100))
+           (rail-x  28)
+           (frame-x 46)
+           (top     y)
+           (bottom  (- h +dbg-locals-h+ 6)))
+      ;; column headers — teal for the signal/stack side, amber for the restart side
+      (lol.canvas:draw-string canvas *bfont* "CALL STACK  ·  Tab walks · M-. source"
+        frame-x top (if (eq focus :backtrace) *sh-accent* *sh-dim*))
+      (lol.canvas:draw-string canvas *bfont* "RESTARTS  ·  0-9 / Enter · invoking unwinds"
+        (+ split 8) top (if (eq focus :restarts) *sh-amber* *sh-dim*))
+      (incf top 20)
+      ;; the teal signal rail down the spine's left edge (the stack is intact)
+      (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
+                     *sh-accent*)
+      ;; --- centre: the call stack; frame 0 (innermost) is where it was signalled ---
+      (setf *dbg-frame-top* top *dbg-frame-x0* (- frame-x 6) *dbg-frame-x1* (- split 12))
+      (let ((fy top))
+        (loop for fr in backtrace for i from 0 while (< fy bottom) do
           (when (= i fsel)
-            (lol.canvas:fill-rect canvas 8 (- fy 2) (- split 16) +dbg-frame-row+
+            (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) (- split frame-x 6) +dbg-frame-row+
                                   (if (eq focus :backtrace) *sh-sel* *sh-hi*))
             (when (eq focus :backtrace)
-              (lol.canvas:fill-rect canvas 8 (- fy 2) 2 +dbg-frame-row+ *sh-accent*)))
-          (lol.canvas:draw-string canvas *bfont* (format nil "~2d  ~a" i fr)
-                                  16 fy (if (= i fsel) *sh-text* *sh-dim*))
+              (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) 2 +dbg-frame-row+ *sh-accent*)))
+          (when (zerop i)                                    ; the signal frame
+            (lol.canvas:draw-string canvas *bfont* "!" (- frame-x 16) fy *sh-amber*))
+          (lol.canvas:draw-string canvas *bfont*
+            (dbg-fit (format nil "~2d ~a" i fr) (- split frame-x 12))
+            frame-x fy (if (= i fsel) *sh-text* *sh-dim*))
           (incf fy +dbg-frame-row+)))
-      ;; the locals of the selected frame, in the right column
-      (draw-dbg-locals canvas (+ split 8) y w h locals))))
+      ;; --- right: the restart rail (amber — invoking is the unwind) ---
+      (setf *dbg-restart-top* top *dbg-restart-x0* split *dbg-restart-x1* (- w 8))
+      (let ((ry top))
+        (loop for r in restarts for i from 0 while (< ry bottom) do
+          (when (= i rsel)
+            (lol.canvas:fill-rect canvas split (- ry 2) (- w split 8) +dbg-row+ *sh-sel*)
+            (lol.canvas:fill-rect canvas split (- ry 2) 2 +dbg-row+ *sh-amber*))
+          (lol.canvas:draw-string canvas *bfont*
+            (dbg-fit (format nil "~d  ~@[[~(~a~)]  ~]~a" i (getf r :name) (getf r :report))
+                     (- w split 16))
+            (+ split 10) ry (if (= i rsel) *sh-text* *sh-dim*))
+          (incf ry +dbg-row+)))
+      ;; --- bottom strip: the locals of the selected frame ---
+      (let ((ly (- h +dbg-locals-h+)))
+        (lol.canvas:fill-rect canvas 0 ly w 1 *sh-rule*)
+        (lol.canvas:draw-string canvas *bfont*
+          (dbg-fit (format nil "locals of frame ~d  ·  ~a" fsel (nth fsel backtrace)) (- w 24))
+          12 (+ ly 7) *sh-accent*)
+        (draw-dbg-locals canvas 12 (+ ly 28) w h locals)))))
 
-(defun dbg-restart-at (y n)
-  "The restart-row index at screen-Y, or NIL. N is how many restarts there are."
-  (when (>= y *dbg-restart-top*)
+(defun dbg-restart-at (x y n)
+  "The restart-row index at screen X,Y — only within the restart rail (its right
+   column), so a click in the stack never invokes a restart. NIL otherwise."
+  (when (and (>= y *dbg-restart-top*) (<= *dbg-restart-x0* x *dbg-restart-x1*))
     (let ((i (floor (- y *dbg-restart-top*) +dbg-row+)))
       (when (< i n) i))))
 
@@ -547,7 +581,7 @@
                  (when (< i (length restarts)) (setf rsel i))))
               ((member key '(:return #\Return)) (dbg-invoke restarts rsel))))))
         (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
-          (let ((ri (dbg-restart-at *cursor-y* (length restarts)))
+          (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
                 (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
             (cond (ri (dbg-invoke restarts ri))          ; a restart click invokes
                   (fi (setf focus :backtrace fsel fi))))))))) ; a frame click selects it
