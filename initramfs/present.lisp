@@ -63,6 +63,99 @@
 ;; browsable list, Smalltalk's Changes. Data comes from CHANGED-DEFINITIONS.
 (defstruct (subj-change-set (:constructor subj-change-set ())))
 
+;;; ---- the Spotter: fuzzy-find anything, open it in a trail (§4¾) -----------
+;;; Pure data + ranking; the shell owns the overlay and the open-in-new-trail. A
+;;; candidate is a plist (:label :detail :subject) — the same shape a list item
+;;; carries, so opening one is just (present (getf c :subject)).
+
+(defun subsequence-match-p (query label)
+  "True when every character of QUERY appears in LABEL in order (case-insensitive) —
+   the fuzzy-finder rule. An empty QUERY matches anything."
+  (let ((qi 0) (ql (length query)))
+    (when (zerop ql) (return-from subsequence-match-p t))
+    (loop for ch across label do
+      (when (char-equal ch (char query qi))
+        (incf qi)
+        (when (= qi ql) (return-from subsequence-match-p t))))
+    nil))
+
+(defun word-boundary-char-p (label i)
+  "True when position I in LABEL begins a word — index 0, or just past a delimiter.
+   (=make-TextView=, =lol.CANVAS=: the capitals here are word starts.)"
+  (or (= i 0)
+      (member (char label (1- i)) '(#\- #\: #\/ #\. #\Space #\_ #\*))))
+
+(defun word-boundary-match-p (query label)
+  "A subsequence match whose FIRST character lands on a word boundary — a stronger
+   fuzzy hit than a mid-word one (e.g. =tv= -> make-TextView). Case-insensitive."
+  (when (zerop (length query)) (return-from word-boundary-match-p t))
+  (loop for i from 0 below (length label)
+        when (and (char-equal (char label i) (char query 0))
+                  (word-boundary-char-p label i)
+                  (subsequence-match-p (subseq query 1) (subseq label (1+ i))))
+          do (return-from word-boundary-match-p t))
+  nil)
+
+(defun spotter-score (query label)
+  "A rank key for LABEL vs QUERY, lower = better, or NIL when there is no match:
+   0 exact, 1 prefix, 2 word-boundary subsequence, 3 plain subsequence."
+  (let ((q (string-downcase query)) (l (string-downcase label)))
+    (cond
+      ((string= q l) 0)
+      ((and (<= (length q) (length l)) (string= q (subseq l 0 (length q)))) 1)
+      ((word-boundary-match-p query label) 2)
+      ((subsequence-match-p query label) 3)
+      (t nil))))
+
+(defun spotter-candidates ()
+  "A fresh list of everything the Spotter can jump to — each a plist
+   (:label STRING :detail STRING :subject SUBJECT): the named surfaces (Workspace,
+   change set), every package, and every recorded definition (deduped by name, its
+   newest kind as the detail). Every row is guarded, since this feeds a live finder
+   in PID 1 and one malformed entry must not break the list."
+  (let ((out '()))
+    (ignore-errors
+      (push (list :label "workspace"  :detail "surface" :subject (subj-workspace))  out)
+      (push (list :label "change set" :detail "surface" :subject (subj-change-set)) out))
+    (dolist (p (ignore-errors (list-all-packages)))
+      (ignore-errors
+        (push (list :label (string-downcase (package-name p))
+                    :detail "package" :subject p)
+              out)))
+    (ignore-errors
+      (maphash (lambda (name defns)
+                 (ignore-errors
+                   (let ((kind (and defns (defn-kind (car defns)))))
+                     (push (list :label (string-downcase (princ-to-string name))
+                                 :detail (if kind (string-downcase (symbol-name kind)) "definition")
+                                 :subject (subj-defn name))
+                           out))))
+               *registry*))
+    (nreverse out)))
+
+(defun spotter-filter (query candidates &optional (limit 200))
+  "The CANDIDATES matching QUERY, best-first, capped at LIMIT. Match is a
+   case-insensitive subsequence; rank is exact > prefix > word-boundary > plain, ties
+   broken by shorter label then alphabetically. An empty QUERY returns all, sorted
+   alphabetically (also capped)."
+  (if (zerop (length query))
+      (let ((sorted (sort (copy-list candidates) #'string-lessp
+                          :key (lambda (c) (getf c :label)))))
+        (if (> (length sorted) limit) (subseq sorted 0 limit) sorted))
+      (let ((scored '()))
+        (dolist (c candidates)
+          (let ((s (spotter-score query (getf c :label))))
+            (when s (push (cons s c) scored))))
+        (let* ((ranked (sort scored
+                             (lambda (a b)
+                               (let ((sa (car a)) (sb (car b))
+                                     (la (getf (cdr a) :label)) (lb (getf (cdr b) :label)))
+                                 (cond ((/= sa sb) (< sa sb))
+                                       ((/= (length la) (length lb)) (< (length la) (length lb)))
+                                       (t (string-lessp la lb)))))))
+               (result (mapcar #'cdr ranked)))
+          (if (> (length result) limit) (subseq result 0 limit) result)))))
+
 ;;; ---- the two generic functions ------------------------------------------
 
 (defgeneric present (subject)
