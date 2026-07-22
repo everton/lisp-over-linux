@@ -362,16 +362,20 @@
           (when (< y (- h 8))
             (let* ((val     (getf v :value))
                    (unavail (eq val :unavailable))
-                   (color   (if unavail *sh-dim* *sh-text*))
-                   (text    (format nil "~a = ~a" (getf v :name)
-                                    (if unavail "#<unavailable>" val))))
-              (dolist (piece (split-lines text))
-                (when (< y (- h 8))
-                  (let ((piece (if (> (length piece) maxc)
-                                   (concatenate 'string (subseq piece 0 (1- maxc)) "…")
-                                   piece)))
-                    (lol.canvas:draw-string canvas *bfont* piece x0 y color))
-                  (incf y 15)))))))))
+                   (name    (princ-to-string (getf v :name)))
+                   (vstr    (if unavail "#<unavailable>" (princ-to-string val)))
+                   (full    (format nil "~a = ~a" name vstr)))
+              ;; name in teal, value in text (whole line dim when unavailable); a line that
+              ;; overruns is clipped with ".." (the … glyph would blit as a stray &).
+              (if (> (length full) maxc)
+                  (lol.canvas:draw-string canvas *bfont*
+                    (concatenate 'string (subseq full 0 (max 1 (- maxc 2))) "..")
+                    x0 y (if unavail *sh-dim* *sh-text*))
+                  (let ((pen (lol.canvas:draw-string canvas *bfont* name x0 y
+                                                     (if unavail *sh-dim* *sh-accent*))))
+                    (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
+                                            (if unavail *sh-dim* *sh-text*))))
+              (incf y 15)))))))
 
 ;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
 (defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
@@ -384,11 +388,11 @@
 (defun dbg-fit (s px)
   "Trim S to fit PX pixels of the browser font (…-elided)."
   (let ((maxc (max 1 (floor px (lol.canvas:font-cw *bfont*)))))
-    (if (> (length s) maxc) (concatenate 'string (subseq s 0 (1- maxc)) "…") s)))
+    (if (> (length s) maxc) (concatenate 'string (subseq s 0 (max 1 (- maxc 2))) "..") s)))
 
 (defun draw-dbg-rail (canvas x y0 y1 color)
-  "A dashed vertical rail from Y0 to Y1 — the signal's path up the standing spine."
-  (loop for yy from y0 below y1 by 6 do (lol.canvas:fill-rect canvas x yy 2 3 color)))
+  "A SOLID vertical rail from Y0 to Y1 — a stack side that stands, drawn whole (not dashed)."
+  (lol.canvas:fill-rect canvas x y0 2 (max 0 (- y1 y0)) color))
 
 (defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus)
   "Paint the debugger as the two-sided spine of §3: the CONDITION is the header; the
@@ -401,11 +405,11 @@
   (lol.canvas:fill-rect canvas 0 0 w 24 *dbg-title-bg*)
   (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
                           10 5 *dbg-title-fg*)
-  (let ((y 34))
-    ;; --- the header: what was signalled ---
+  (let ((y 36))
+    ;; --- the header: what was signalled (the condition class is the headline) ---
     (lol.canvas:draw-string canvas *bfont* (format nil "~(~a~)" (type-of condition))
-                            12 y *dbg-red*)
-    (incf y 18)
+                            12 y *dbg-red* :scale 2)
+    (incf y 32)
     ;; the report is often multi-line (draw-string has no newline handling): split it.
     (dolist (line (split-lines (princ-to-string condition)))
       (lol.canvas:draw-string canvas *bfont* (dbg-fit line (- w 24)) 12 y *sh-text*)
@@ -421,16 +425,22 @@
            (frame-x 46)
            (top     y)
            (bottom  (- h +dbg-locals-h+ 6)))
-      ;; column headers — teal for the signal/stack side, amber for the restart side
-      (lol.canvas:draw-string canvas *bfont* "CALL STACK  ·  Tab walks · M-. source"
-        frame-x top (if (eq focus :backtrace) *sh-accent* *sh-dim*))
-      (lol.canvas:draw-string canvas *bfont*
-        "RESTARTS  ·  0-9 · Enter invoke (asks if it needs a value) · invoking unwinds"
-        (+ split 8) top (if (eq focus :restarts) *sh-amber* *sh-dim*))
+      ;; column headers — the section title bright in its side colour, the key-hint dim
+      (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
+                                         (if (eq focus :backtrace) *sh-accent* *sh-dim*))))
+        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *sh-dim*))
+      (let ((pen (lol.canvas:draw-string canvas *bfont* "RESTARTS" (+ split 8) top
+                                         (if (eq focus :restarts) *sh-amber* *sh-dim*))))
+        (lol.canvas:draw-string canvas *bfont* "  ·  0-9 · Enter (asks for a value) · unwinds"
+                                pen top *sh-dim*))
       (incf top 20)
-      ;; the teal signal rail down the spine's left edge (the stack is intact)
+      ;; a rule divides the two sides; a SOLID teal signal rail (the stack stands) faces a
+      ;; mirrored dim-amber restart rail (the unwind) — §3's two forces, left and right.
+      (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *sh-rule*)
       (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
                      *sh-accent*)
+      (draw-dbg-rail canvas split top (min bottom (+ top (* +dbg-row+ (length restarts))))
+                     !#8A5A28)
       ;; --- centre: the call stack; frame 0 (innermost) is where it was signalled ---
       (setf *dbg-frame-top* top *dbg-frame-x0* (- frame-x 6) *dbg-frame-x1* (- split 12))
       (let ((fy top))
