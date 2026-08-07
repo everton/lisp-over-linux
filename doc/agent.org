@@ -1,0 +1,899 @@
+#+TITLE: The Agent — an LLM client native to the Lisp machine
+#+STARTUP: showall
+
+Status: *PLAN ONLY — nothing implemented.* Parent docs:
+[[file:networking.org][networking.org]] (the TCP layer this stands on) ·
+[[file:code-browser.org][code-browser.org]] (the environment it plugs into) ·
+[[file:sbcl-init.org][sbcl-init.org]] (the Lisp userland) ·
+[[file:kernel-config.org][kernel-config.org]] (options the later phases need).
+
+The question that started this: /what would it take to run the Claude CLI inside
+the distro?/ The audit answer is in §0.1 — it is *possible*, and smaller than it
+sounds. But answering it turned up a better question, and this doc is about that
+one: what would it mean for this machine to have an *agent of its own* — one
+that lives in the image, reasons about the running system through the
+introspection layer we already built, and can be reached from the REPL, from the
+browser, and from inside the debugger.
+
+* 0. The fork in the road: three ways to have Claude in this machine
+
+All three were checked against the actual tree and the actual binary, not
+assumed. The measurements are in the Appendix.
+
+** 0.1 Option A — run the =claude= CLI in the guest
+
+The surprise: the CLI is *not* a Node application. The installed binary is a
+single Bun-compiled executable, and its only external dependencies are the
+glibc family:
+
+#+begin_src
+  290 MB  ELF 64-bit LSB executable, x86-64, dynamically linked
+          interpreter /lib64/ld-linux-x86-64.so.2
+          librt.so.1  libc.so.6  libpthread.so.0  libdl.so.2  libm.so.6
+#+end_src
+
+We *already ship* =ld-linux-x86-64.so.2=, =libc.so.6= and =libm.so.6= for SBCL
+(=initramfs.sbcl.list=). So the userland delta is three stub libraries and one
+very large file. The kernel is in better shape than expected too: =EPOLL=,
+=EVENTFD=, =TIMERFD=, =SIGNALFD=, =FUTEX=, =AIO=, =MEMBARRIER=,
+=POSIX_TIMERS=, =UNIX98_PTYS= and even =IO_URING= are all already =y=, and
+nothing (no =SECCOMP=, no LSM) will block Bun's JIT mappings.
+
+What it would still cost:
+
+| Gap                          | Why it bites                                                  |
+|------------------------------+---------------------------------------------------------------|
+| =# CONFIG_RTC_CLASS not set= | guest clock starts at epoch 0 → *every TLS handshake fails*   |
+| no default route             | =dhcp.lisp= leaves off-subnet routing to a later stage (§2c)   |
+| no DNS                       | glibc =getaddrinfo= dlopens =libnss_{files,dns}.so.2=          |
+| RAM-only rootfs              | 290 MB into a tmpfs, on =-m 2048=, plus Bun's own RSS          |
+| terminal                     | full-screen Ink TUI wants raw mode + a real terminal          |
+| no shell, no =git=           | its Bash tool spawns =/bin/bash=; we have neither             |
+| =# CONFIG_INOTIFY_USER=      | file watching fails                                           |
+
+The last row of that table is the real objection, and it is not technical. To
+make the CLI *useful* we would import a POSIX userland — a shell, coreutils,
+git — into a distro whose entire premise is that *Lisp is the userland*. We
+would be running an agent that reasons about our machine by reading files that
+do not exist in it (the source is in the registry, not on disk — see
+[[file:code-browser.org][code-browser.org]] §0.1) and by shelling out to
+commands we deliberately do not have.
+
+** 0.2 Option B — a native client, written in Lisp
+
+Speak HTTP to =api.anthropic.com= from the image, in the same spirit as
+=net.lisp= speaking =SIOCSIFADDR= instead of shelling out to =ifconfig=. The
+cost is concentrated in one place: *TLS*. Everything else (HTTP/1.1, JSON, SSE
+framing, the Messages protocol, the tool loop) is ordinary, testable,
+dependency-free Lisp.
+
+The payoff is §2: an agent whose tools are =senders= and =show-class= and
+=accept-source= rather than =grep= and =sed=, whose answers are *objects* the
+browser can drill into, and which can be invoked from inside the debugger on a
+live condition.
+
+** 0.3 Option C — a host-side broker
+
+Not a third destination: it is *Option B's first phase*, and it is why this
+plan is not blocked behind a crypto project. =host-client/= already exists as
+"the deliberate opposite of =initramfs/=" — host tools that are never shipped
+in the image. Put a small TLS-terminating broker there, listening on =:4006=
+(chosen to sit next to the network REPL's =:4005=). The guest speaks plain HTTP
+to it; the broker holds the API key, does the handshake, and parses nothing.
+
+This buys the entire client — protocol, tools, UI, streaming — with no crypto
+in the guest.
+
+** 0.4 The ordering question: finish the network layer first
+
+Tempting to make the broker cover *everything* the guest cannot yet do: TLS,
+DNS, and the missing off-subnet route (by pointing the guest at SLIRP's
+=10.0.2.2=). That is a mistake, for a reason that only shows up off the
+workbench: *=10.0.2.2= does not exist on real hardware.* A broker addressed that
+way works in QEMU and nowhere else — and this is a distro whose point is a
+laptop that boots from a USB stick.
+
+There is also a subsystem argument. [[file:networking.org][networking.org]] §2c
+already names exactly what is missing — an off-subnet default route
+(=SIOCADDRT= / =struct rtentry=) and DNS — and step 5 of its staged bring-up
+plan already lists them as the next thing. §5 of that doc already decided *for*
+a hand-rolled Lisp DNS client and *against* dragging in glibc NSS. So this is
+not new design work; it is a documented, half-finished subsystem with a named
+next step. An agent that depends on a *finished* network layer is a better
+dependency than one that depends on scaffolding erected to avoid finishing it.
+
+Doing §2c first also shrinks the broker to a single honest job — *TLS
+termination and nothing else*. The guest resolves the hostname and routes the
+packets itself; the one thing it cannot do is the handshake, and that is
+precisely what the broker is for. When Phase 3 lands, deleting the broker
+changes the stream constructor, not the network path.
+
+And it hands us the clock for free: with outbound UDP working, *SNTP* is ~60
+lines in the same idiom as =dhcp.lisp=, which takes =CONFIG_RTC_CLASS= and a
+kernel rebuild off the critical path for certificate validity (§9.2 stage 3).
+Trading a kernel dependency for a userland one is the same trade this project
+makes everywhere else. It is worth naming the weakness out loud, though:
+bootstrapping a *trust* decision from unauthenticated NTP is a genuine
+chicken-and-egg, universally accepted and still worth an RTC eventually.
+
+What finishing the network layer does *not* buy: it does not get us to
+=api.anthropic.com=, which is HTTPS-only. TLS stays the long pole either way.
+This is about making the dependency chain honest and shortening Phase 3 — not
+about reaching Anthropic sooner.
+
+*=> Decision: Option B, on a completed network layer, staged through Option C.*
+Two tracks (§12). The *network* track closes =networking.org= §2c — default
+route, Lisp DNS, SNTP, a plain-HTTP client — and is independently useful and
+independently testable with no agent code at all. The *agent* track builds the
+client, the tool surface and the three doorways against the broker. They are
+independent until they meet at TLS, so they can be interleaved; the agent's
+protocol work is pure Lisp and can be tested against a broker on loopback while
+the network work proceeds. Option A stays documented here as the road not taken;
+if we ever want it, the Appendix is the shopping list.
+
+* 1. The one-paragraph essence
+
+An LLM client is four layers stacked on the socket we already have: a *transport*
+(HTTP/1.1, then TLS), a *wire format* (JSON in, JSON or SSE out), a *protocol*
+(the Messages API and its tool-use loop), and a *tool surface* (what the model is
+allowed to do). The first three are generic and are the same work anybody does.
+The fourth is the only one that can be specific to this machine — and here it is
+almost *free*, because =registry.lisp=, =model.lisp= and =present.lisp= already
+implement every capability an agent would want, as ordinary functions. The tool
+layer is a schema wrapper over code that exists. That asymmetry is the whole
+argument for building this rather than importing it.
+
+* 2. Why a native client is the coherent choice, not merely the purer one
+
+** 2.1 The agent is inside the machine it reasons about
+
+A conventional coding agent works at arm's length: it reads text files, runs
+processes, parses their output, and never touches the running program. Here
+there /is/ no arm's length. =(source-of 'draw-alien)= returns the definition;
+=(senders 'read-fb-geometry)= returns the callers from SBCL's own xref database;
+=(show-inspect obj)= returns the live object's slots — of an object that is
+running, right now, in the same heap. The agent does not read a snapshot of the
+system. It queries the system.
+
+This is exactly the difference the browser plan already made between an
+"Emacs-shaped" and a "Smalltalk-shaped" tool, applied one level up.
+
+** 2.2 The tool surface already exists
+
+Every row here is an implemented function, today:
+
+| Tool (as the model sees it) | Lisp behind it                              | From          |
+|-----------------------------+---------------------------------------------+---------------|
+| =lisp-apropos=              | =spotter-candidates= + =spotter-filter=     | present.lisp  |
+| =lisp-source=               | =source-of= / =definitions-of=              | registry.lisp |
+| =lisp-senders=              | =senders= / =referrers= / =macro-users=     | registry.lisp |
+| =lisp-specializers=         | =specializers-of= / =methods-on-class=      | registry.lisp |
+| =lisp-describe-class=       | =class-info= (supers, subs, slots, CPL)     | model.lisp    |
+| =lisp-describe-gf=          | =gf-info= / =methods-of= / =dispatch-matrix=| model.lisp    |
+| =lisp-applicable=           | =applicable-methods= / =effective-method-onion= | model.lisp |
+| =lisp-map=                  | =categorize=                                | model.lisp    |
+| =lisp-inspect=              | =inspect-fields=                            | model.lisp    |
+| =lisp-backtrace=            | =backtrace-frames= / =frame-locals=         | model.lisp    |
+| =lisp-eval=                 | =eval= in a chosen package (gated, §7.2)    | —             |
+| =lisp-accept=               | =accept-source= — *compile into the image*  | registry.lisp |
+
+So the implementation of the tool layer is a table of JSON schemas and a
+dispatcher — a couple of hundred lines — not a new subsystem. The capability is
+already built and already exercised by the browser.
+
+Two things about that list are worth saying out loud:
+
+- =lisp-senders= is *not* =grep=. It is the compiler's cross-reference database.
+  It knows that =foo= calls =bar= even when the call is macro-generated and the
+  string "bar" never appears at the call site. An agent given this instead of a
+  text search is strictly better informed.
+- =lisp-accept= is a *write*. =accept-source= compiles a new top-level form into
+  the running image and records it, and =changed-definitions= already tracks the
+  resulting change set. The agent's edits land in the same place your edits do.
+  There is no file to write, no build to run, no reload — which is precisely why
+  the loop can be fast enough to be conversational.
+
+** 2.3 An answer should be an object, not a paragraph
+
+If the reply is a string, everything downstream is string handling. If the reply
+is a CLOS object that participates in =present= / =commands-for=, then a message
+is *drillable* the same way a class or a method is: a symbol the model mentions
+becomes a row you can press Enter on to open the definition; a proposed
+definition becomes an item with an =Accept= command on it; a tool call becomes a
+node showing what was asked and what came back. The =present= protocol (§4½ of
+the browser plan) was designed exactly for "give me a view of this subject with
+drillable items and declarative commands", and a conversation is a subject like
+any other.
+
+The same argument applies to the JSON layer, which is why §5 makes JSON objects
+a class rather than a hash table.
+
+** 2.4 It is the same didactic bargain as everything else here
+
+We wrote a DHCP client instead of shipping =dhclient=, a line editor instead of
+linking readline, and a font renderer instead of using a toolkit. Writing an
+HTTP/JSON/SSE client — and eventually a TLS 1.3 client — is the same trade,
+made for the same reason, in a domain (cryptographic protocol implementation)
+that is genuinely worth understanding from the inside. It is also the last
+big /protocol/ on the list: after TLS, this machine can talk to anything.
+
+* 3. The layers, and what each one costs
+
+| Layer               | Status                | Rough size | Notes                                       |
+|---------------------+-----------------------+------------+---------------------------------------------|
+| TCP sockets         | *DONE*                | —          | =sb-bsd-sockets=, baked in by =build.sh=    |
+| HTTP/1.1 client     | to write              | ~200 lines | request build, chunked + =content-length=   |
+| JSON reader/printer | to write              | ~300 lines | §5                                          |
+| SSE framing         | to write              | ~80 lines  | =event:= / =data:= lines, blank-line frames |
+| Messages protocol   | to write              | ~250 lines | request shaping, block types, tool loop     |
+| Tool surface        | *mostly done*         | ~200 lines | schemas + dispatch over existing functions  |
+| Conversation model  | to write              | ~250 lines | CLOS objects + =present= methods (§6)       |
+| REPL doorway        | to write              | ~80 lines  | §8.2 — the =?= prefix, works over the net REPL |
+| "Ask it" verb       | to write              | ~60 lines  | §8.1 — =C-c C-a= + one =commands-for= entry |
+| Conversation surface| to write              | ~400 lines | §8.3 — a Workspace variant + streaming (§8.7) |
+| Approval            | *free*                | ~30 lines  | §8.4 — =restart-case=; the rail already exists |
+| Modes + indicators  | to write              | ~120 lines | §8.9 — two special variables, three indicators |
+| Debugger doorway    | to write              | ~150 lines | §8.8 — a restart + an accept-and-retry      |
+| TLS 1.3 client      | *Phase 3 sub-project* | ~1500 lines| §9 — the only genuinely hard part           |
+
+Everything above the TLS row is the agent track (A0–A2, §12) and needs *no
+kernel change at all*. The network track (§10) needs none either.
+
+* 4. The broker — everything except the crypto
+
+** 4.1 Shape
+
+#+begin_src
+  guest (SBCL)                                   somewhere reachable
+  ┌───────────────────────────┐        ┌──────────────────────────────┐
+  │ agent.lisp                │        │ host-client/lol-agent-broker │
+  │   http.lisp ── plain TCP ─┼───────►│   TLS + the API key          │──► api.anthropic.com
+  │   json.lisp               │  :4006 │   transcript log             │
+  │   dns.lisp ── resolves ───┼──┐     └──────────────────────────────┘
+  │   route  ── off-subnet ───┼──┘  (the guest reaches the broker by NAME)
+  └───────────────────────────┘
+#+end_src
+
+The broker is deliberately dumb: accept a connection, read one framed request,
+open TLS to the real endpoint, add =x-api-key= and =anthropic-version=, and pipe
+bytes back. It parses nothing. That matters — if the broker understood the
+protocol, the guest-side protocol code would not be getting tested.
+
+Note what it does *not* do: DNS, and covering for a missing route. Once §2c is
+closed the guest resolves the broker's name and routes to it on its own, which
+is what lets the same image work under QEMU *and* on the laptop (§0.4).
+
+** 4.2 Three things this buys
+
+1. *The key never enters the image.* A =save-lisp-and-die= image is a frozen
+   heap; a key that is in the heap at save time is in the artifact forever.
+   Keeping it host-side removes that whole class of mistake during development
+   (§11 covers the eventual answer for real hardware).
+2. *No crypto in the guest, yet.* The 1500-line sub-project of §9 is deferred
+   without deferring anything that depends on it.
+3. *Transcript persistence for free.* The broker can log every exchange
+   host-side, which gives us =--resume=-shaped behaviour without first solving
+   guest-side storage — a decision we have explicitly deferred (file-out
+   persistence).
+
+** 4.3 Direction of travel
+
+Note that this is the *mirror image* of what =host-client/= does today: the REPL
+client is host → guest, the broker is guest → host. Under QEMU SLIRP that
+direction needs no configuration at all (the host is simply =10.0.2.2= from
+inside, no =hostfwd= required) — but see §0.4 for why we do not *address* it
+that way.
+
+* 5. JSON, and one decision that earns its keep
+
+The mapping is where a JSON library either fits its host language or fights it.
+Proposed:
+
+| JSON       | Lisp                                   | Why                                        |
+|------------+----------------------------------------+--------------------------------------------|
+| object     | a =json-object= *instance* (ordered alist inside) | so =present= can dispatch on it     |
+| array      | =simple-vector=                        | distinguishable from a list at a glance    |
+| string     | =string=                               |                                            |
+| number     | =integer= / =double-float=             |                                            |
+| =true=     | =t=                                    |                                            |
+| =false=    | =:false=                               | never =nil= — =nil= is ambiguous three ways |
+| =null=     | =:null=                                | ditto                                      |
+
+The one decision worth defending is making objects a *class* instead of a hash
+table or a plist. It costs a little ergonomics at the call site (an accessor
+instead of =gethash=) and buys this: =(present response)= browses an API reply.
+Every =content= block, every =usage= object, every error body becomes a
+navigable tree in the same UI as everything else, for free, the moment you
+write one =present= method. On a machine whose central idea is "everything is
+inspectable", a JSON blob that is opaque would be a foreign body.
+
+Order preservation is required, not cosmetic: request bodies must serialise
+deterministically or prompt caching silently stops working.
+
+* 6. The conversation as a live object
+
+#+begin_src lisp
+  (defclass conversation ()
+    ((messages   :initform '())     ; newest last; each a MESSAGE
+     (model      :initform "claude-opus-5")
+     (tools      :initform *default-tools*)
+     (policy     :initform :ask)    ; :read-only | :ask | :allow   (§7.2)
+     (usage      :initform nil)     ; running token totals
+     (transport  :initarg :transport)))
+
+  (defclass message () ((role) (blocks)))   ; blocks: TEXT / THINKING / TOOL-USE / TOOL-RESULT
+#+end_src
+
+Consequences of it being an object rather than a transcript string:
+
+- The tool loop is a method on it, so the same conversation can be driven from
+  the REPL, from a browser tab, or from the debugger without any of them owning
+  it.
+- =present= methods on =conversation=, =message= and each block type give the
+  browser its view with no bespoke rendering code (§8.3).
+- Several conversations coexist. The debugger's "ask about this condition" gets
+  its own, seeded with the backtrace, and does not disturb the one in your tab.
+- It is inspectable *with the tools it is using* — =(show-inspect conv)= works,
+  which is either delightful or vertiginous depending on the hour.
+
+The protocol shape to honour (this is the part people get wrong): on a
+=stop_reason= of =tool_use=, append the assistant's *entire* content — thinking
+blocks included, unmodified — then reply with a single user message carrying one
+=tool_result= per =tool_use=, each keyed by its =tool_use_id=. Dropping or
+editing blocks breaks the turn.
+
+* 7. The tool surface — the interesting part
+
+** 7.1 What the model is told
+
+Not "here is the source of the system" — the image is far too large for that,
+and dumping it would waste the fact that we have a *semantic index*. Instead a
+short system prompt describing what this machine is (SBCL as PID 1, no shell, no
+files, the registry owns the source) plus the tool table from §2.2, and let it
+navigate. =lisp-apropos= then =lisp-source= then =lisp-senders= is the same
+motion a coding agent makes with glob/read/grep, except every step is exact.
+
+A nice consequence of the change set: after =lisp-accept=, a follow-up
+=lisp-source= returns the *new* text, because the registry now holds it. The
+agent's view of the system updates the instant the system does.
+
+** 7.2 Gating writes
+
+Two tools can change the world: =lisp-eval= and =lisp-accept=. The policy slot
+on the conversation is the control — the *authority* dial of the two in §8.9,
+and independent of the *initiative* one:
+
+| Policy       | Behaviour                                                       |
+|--------------+-----------------------------------------------------------------|
+| =:read-only= | write tools are not offered at all                              |
+| =:ask=       | each call becomes a pending object you approve or deny (default) |
+| =:allow=     | run it                                                          |
+
+The approval UI should not be new. The debugger already renders a *restart
+rail* — a list of named choices, keyboard- and click-selectable, one of which
+can prompt for a value (=dbg-invoke-with-value=). A pending tool call is exactly
+that shape: /Allow · Deny · Edit the form first/. Reusing the rail keeps one
+interaction idiom for "the system is asking you to decide something", which is a
+better outcome than a second bespoke prompt.
+
+A denial is not an error — it goes back as a =tool_result= saying the user
+declined, and the model adapts. That is the designed path, and it is why the
+=:ask= policy does not make the loop useless.
+
+* 8. How you talk to it
+
+This is the section that decides whether the agent feels native or bolted on, so
+it starts with a constraint rather than a feature list.
+
+** 8.0 The constraint: no fifth idiom
+
+Everything you can already do in this environment is one of four moves:
+
+1. *evaluate a form* — the REPL, =C-x C-e= /Do it/, =C-c C-p= /Print it/
+2. *drill into a subject* — =Enter=, =Super-Space= (Spotter), =M-.=, =present=
+3. *choose from what is offered* — the debugger's restart rail, a command menu
+4. *accept a change* — =C-c C-c=, landing in the change set
+
+=> *Rule: the agent must express itself entirely in those four moves.* Anything
+that needs a fifth — a chat pane with a text box at the bottom, a modal approval
+dialog, an "agent mode" you enter and leave — is a foreign body, no matter how
+familiar it looks from other tools. This rule is falsifiable: every proposal
+below is checked against it, and §8.10 lists what it rejects. §8.9 refines the
+rule where it was too blunt: ambient *state* is not modal capture.
+
+The reward for obeying it is not aesthetic. It is that almost none of the
+interaction has to be *written* — it already exists.
+
+** 8.1 "Ask it" — the sixth verb
+
+The cheatsheet already teaches a verb set, and it is the Smalltalk one:
+
+#+begin_src
+  C-c C-c   Accept     — compile into the image
+  C-x C-e   Do it      — eval, value to status
+  C-c C-p   Print it   — weave result inline
+  C-c C-i   Inspect it — open the value
+  C-c C-d   Debug it   — eval, debugger armed
+#+end_src
+
+The natural way to add an agent to *this* environment is not to add an
+application. It is to add a verb:
+
+#+begin_src
+  C-c C-a   Ask it     — ask about the selection
+#+end_src
+
+Semantics follow the others exactly — they all act on the selection, or on the
+thing the pane is presenting when there is no selection:
+
+| Selection            | What gets asked                                              |
+|----------------------+--------------------------------------------------------------|
+| a form               | that form is the subject ("what does this do / why is it wrong") |
+| prose                | that text is the question, the pane's subject is the context |
+| nothing              | the pane's subject is both                                   |
+
+That last row is the important one, and it is the thing a terminal agent can
+never have. *You are always already somewhere.* Standing in =draw-alien= and
+pressing =C-c C-a= means "about =draw-alien=" without typing its name, because
+the environment knows where you are and =present= already models it as a
+subject. The question shrinks from a paragraph of orientation to a few words —
+and the tool surface (§7) means the agent can widen the context itself by
+calling =lisp-senders= if it needs to.
+
+Every subject also gains an /Ask/ entry from =commands-for=, with
+=:surfaces '(:menu :halo :key)= and =:key "C-c C-a"= — so it appears in the
+halo and the menu automatically, on classes, methods, xref results, matrix
+cells, everything, with no per-subject work.
+
+** 8.2 The REPL: one character
+
+=editing-repl= already reads a line, already accumulates until a form is
+complete (the dim =...>= continuation prompt), and already accepts a
+*non-form command* — =:quit=. So the precedent for "this line is not a form"
+exists. Two entries, no new machinery:
+
+#+begin_src
+  lisp> ?why does draw-alien flip the rows?      ; prose — no quotes, no parens
+  lisp> (ask "…")                                ; the function, for composing
+#+end_src
+
+The =?= test happens before =read= is attempted, so it costs one character
+comparison. For anything longer than a line, reuse the mechanism that is already
+there: a bare =?= on its own line enters prose mode with the same =...>=
+continuation prompt until a blank line ends it. The REPL already knows how to
+say "keep typing, I do not have the whole thing yet" — prose is just a second
+reason for it to say so.
+
+Then the Lisp part matters:
+
+- =(ask …)= *returns the conversation object*, so the REPL's own history
+  variables hold it. =(present *)= opens the exchange in the browser;
+  =(show-inspect *)= inspects it.
+- A bare =?follow-up= continues =*conversation*= (a special variable in the
+  spirit of =*package*=); =(ask :new "…")= starts a fresh one.
+- Streaming text goes to =*standard-output*= with =ansi.lisp= colours; each tool
+  call prints as one dim line, so you can watch it work.
+
+Because this rides on the ordinary REPL, it works *unchanged over the network
+REPL* — the agent is reachable from a host terminal on day one, before any
+pixel work exists. That makes §8.2 the first thing to build.
+
+** 8.3 A conversation is a Workspace, not a chat pane
+
+The Workspace is already a subject (=subj-workspace=), already a Spotter entry,
+already an editable surface where every verb works. A conversation should be
+*that same surface* with interleaved authorship: your prose, the model's prose,
+and forms — where the forms are live.
+
+This is the whole argument for not building a chat pane. In a chat pane, a code
+suggestion is text in a bubble that you copy somewhere useful. In a Workspace,
+the model's proposed definition is *already in an editable buffer where
+=C-c C-c= means "compile it into the image"*. The most important action in the
+entire interaction — accepting a change — requires no new code, no bespoke
+"apply" button, and lands in the same change set as your own edits.
+
+Rendering is =present= methods, one per block type: text blocks as text, a
+symbol the model names as a *drillable row* (=Enter= opens it, =Super-Enter=
+opens it beside), a proposed definition as a source item carrying /Accept/, a
+tool call as a collapsed provenance row (§8.6). Conversations join =workspace=
+and =change set= in =spotter-candidates=' list of named surfaces, so
+=Super-Space= finds the one you had going.
+
+** 8.4 Approval is a condition, not a dialog
+
+The agent's write tools need consent (§7.2). The obvious move is an approval
+popup. The *native* move is to signal a condition:
+
+#+begin_src lisp
+  (restart-case (signal 'tool-approval-request :call call)
+    (allow () …) (deny (reason) …) (edit (form) …))
+#+end_src
+
+Everything then falls out of machinery that already exists and is already
+debugged:
+
+| Where you are      | What you see                                                    |
+|--------------------+-----------------------------------------------------------------|
+| the graphical env  | the *restart rail* — the same rows, digits, =Enter=, =C-g= as the debugger |
+| the REPL           | the ordinary debugger, printing the same restarts               |
+| a script or a test | =handler-bind= chooses =allow= — policy with no extra API        |
+
+=dbg-invoke-with-value= already exists for restarts that need an argument, so
+/Edit the form first/ and /Deny with a reason/ need no new interaction either.
+And a denial is not an error: it goes back as a =tool_result= saying the user
+declined, and the model adapts — which is why =:ask= being the default does not
+make the loop tiresome.
+
+One mechanism, three surfaces, zero new UI. This is the strongest single piece
+of evidence that the agent belongs in this environment rather than beside it.
+
+** 8.5 It can show you things
+
+Because it is inside the environment, "let me show you" can be literal. A
+=browse= tool lets the model ask the shell to =present= a subject: the answer to
+/where is this used?/ is not a list of names in prose, it is the senders view,
+open, live, and drillable.
+
+The consent rule is *open beside, never steal focus* — the ⇧↵ split already
+exists for exactly this, and an agent that reaches over and changes what you are
+looking at would be the one place this design could become obnoxious.
+
+** 8.6 "How do you know that?" should be one keystroke
+
+Every factual claim the agent makes about this system came from a tool call, and
+every tool call has a subject that the browser can already show. So render tool
+calls as collapsed rows in the conversation, and make =Enter= on one drill into
+*the actual subject* — the same view you would have reached by hand.
+
+On a machine whose entire thesis is that a running system should be inspectable,
+an oracle you have to take on faith would be off-key. Here, verifying it is the
+same motion as browsing.
+
+** 8.7 Ask and keep working
+
+One CPU (=NR_CPUS=1=) and a slow remote oracle: blocking the environment on a
+reply would be the most unnatural thing we could do.
+
+- Asking never blocks. You keep browsing; the conversation tab fills in behind
+  you. The tab's agent dot carries working / ready (§8.9) — the stripe keeps
+  meaning /kind/.
+- Deltas arrive faster than the framebuffer should redraw: append as they come,
+  redraw on a budget (~15 Hz) and always on block boundaries.
+- =:sb-thread= is present in our SBCL (2.6.6), so a reader thread is available —
+  but with one CPU there is nothing to win, and a non-blocking read polled from
+  the existing event loop keeps the UI single-threaded and the failure modes
+  boring. Prefer that.
+- =C-g= cancels the turn, because =C-g= already means "get me out of this"
+  everywhere else.
+
+** 8.8 The debugger — where all of it converges
+
+=run-debugger-fb= already draws a condition, a restart rail, a backtrace and
+frame locals, and =model.lisp= exposes each as data (=restart-list=,
+=backtrace-frames=, =frame-locals=, =frame-defn-name=). Add one row to the rail:
+
+#+begin_example
+  ASK   — explain this, and propose a fix
+#+end_example
+
+Note what this is *not*: it is not a chat window that opens on an error. It is
+one more restart, selected the way you select any restart. The agent is not a
+feature bolted onto the debugger; it is one of the options the condition offers.
+
+Invoking it seeds a conversation with the condition's report, the backtrace, the
+locals of the selected frame, and — via =frame-defn-name= → =source-of= — the
+*source of the failing definition*, which exists because the image owns it. The
+explanation streams into the right rail.
+
+If the reply proposes a replacement, it arrives as a source item with /Accept/
+on it (§8.3), and accepting does two things in order: =accept-source= compiles
+it into the image, then the *pre-existing* restart is invoked to retry. Fix a
+bug from inside the debugger and resume the computation that hit it, with the
+fix recorded in the change set.
+
+Two honest caveats. Retry is only offered when the condition actually provides a
+resuming restart — =abort= and =continue= are not the same thing, and the rail
+must not pretend otherwise. And this is the highest-stakes place to let a model
+write code, which is exactly why =:ask= is the default and why the diff is shown
+before it is accepted.
+
+** 8.9 Modes — because there are two actors now
+
+An earlier draft of this doc said flatly that the agent never speaks unbidden,
+and rejected "an agent mode you enter and leave". That was too broad, and it
+conflated two different things.
+
+*Modal capture* — a mode that changes what your keystrokes mean, a place you
+enter where the normal interaction stops working — is what §8.0 rejects, and
+still does. *Ambient state* — something that changes what the environment may
+do *without being asked* — is a different animal, and Lisp environments are full
+of it: =*package*=, =*print-base*=, a read-only buffer. Nobody experiences those
+as modal, because they never intercept a keystroke; they are simply true, and
+they are shown.
+
+=> *The test:* if it changes what your keys do, reject it. If it changes what the
+environment may do unasked, it must exist — *and it must be visible.*
+
+Visibility is the load-bearing half. This environment hides its chrome
+deliberately: the cheatsheet is a =Super-?= overlay precisely so the keys are not
+permanent furniture. But an agent changes the premise. Until now there was one
+actor in the room. Now there can be two, and *you must always be able to see
+whether the other one can act, and what it is allowed to touch.* That is the
+first thing in this project that genuinely earns permanent pixels.
+
+*** Two dials, not one
+
+Initiative and authority are orthogonal, and collapsing them into a single
+on/off switch is the classic mistake — an agent can be proactive but powerless
+(it notices, you accept), or reactive but dangerous (you ask, it rewrites).
+
+- *Initiative* — =:off= · =:reacting= · =:interacting=
+- *Authority* — =:read-only= · =:ask= · =:allow=  (the §7.2 policy dial)
+
+|                  | =:read-only=                         | =:ask=                                  | =:allow=                     |
+|------------------+--------------------------------------+-----------------------------------------+------------------------------|
+| =:reacting=      | an oracle — the safest useful default | the normal working mode                 | "just do it"                 |
+| =:interacting=   | an observer that may offer opinions   | *pairing* — it notices, proposes, you accept | delegated autonomy      |
+
+=:off= is a real state, not a degenerate one: no sockets, no tokens, the verb
+inert. It is the honest state on a machine with no broker reachable, and the one
+you want before handing someone the laptop.
+
+*** Local modes are dynamic bindings
+
+This is what makes the mode system native rather than a settings screen. A local
+mode here is not a per-pane configuration field — it is a *special variable with
+a dynamic extent*:
+
+#+begin_src lisp
+  (defvar *agent-initiative* :reacting)
+  (defvar *agent-authority*  :ask)
+
+  ;; a pane that pairs with you, scoped exactly to its own event loop
+  (let ((*agent-initiative* :interacting))
+    (run-workspace-tab …))
+#+end_src
+
+Scope is well defined, it nests correctly, a spawned task either inherits it or
+rebinds it explicitly, and a script can bind both for its own extent the way it
+binds =*package*=. "Local mode" is not a feature we implement; it is a
+consequence of using the language properly. And =(setf …)= is already how you
+change things around here.
+
+*** The indicators
+
+Constrained by the visual grammar that exists, not invented alongside it. All
+three draw their colours from the semantic palette — no ad-hoc values.
+
+| Scope    | Indicator                                                                 |
+|----------+---------------------------------------------------------------------------|
+| global   | *the alien* — greyed when =:off=, calm when =:reacting=, awake when =:interacting= |
+| per tab  | a small dot beside the tab's kind stripe: hollow =:reacting=, filled =:interacting=, pulsing = working (§8.7) |
+| the REPL | the prompt — the environment's status line since forever, and where every Lisp already shows =*package*= |
+
+Drawn: [[file:../media/agent-indicator-design.html][media/agent-indicator-design.html]]
+(open locally) — the strip at true =draw-tabs= metrics, the glyph, the prompt, and
+the whole 1280×800 frame. Two findings from drawing it rather than describing it:
+
+- *The colours need no new palette entries.* Authority maps onto meanings the
+  shell already carries: teal =*sh-accent*= = safe, amber =*sh-amber*= = "a
+  restart wants you", red =*dbg-red*= = "a condition, look here". Deliberately
+  *not* the green of =:method= — the agent is not a kind of definition, and
+  stealing a semantic colour would be a lie.
+- *The alien cannot be the sprite.* =alien.rgba= is 256×150; the bar is 20px. The
+  presence light needs a new *16×16 glyph* (~32 bytes, authored like the font
+  blob was). Worth knowing before it is promised.
+
+In the terminal the same grammar survives with no pixels: =ansi.lisp= honours only
+the 16 ANSI colours (fbcon ignores =38;5;n= and truecolor), so the prompt mark
+maps to SGR 90 / 96 / 93 / 91 — dim, cyan, yellow, red — keeping the meanings.
+
+The alien is the nice one: the project already owns that mascot, it is already
+painted on this machine, and using it as the presence light costs no new chrome
+at all. It also quietly sets up the space-themed naming idea we have parked.
+
+Note the deliberate restraint on the tab strip: the stripe keeps meaning *kind*.
+Overloading one channel with two meanings is how a legible UI stops being one.
+
+*** Changing modes needs no new idiom
+
+The agent's state is a *subject*. =Super-Space= → "agent" presents it, and
+=commands-for= supplies the mode commands — exactly how =workspace= and
+=change set= already appear in =spotter-candidates=. From the REPL it is a
+variable, so you set it. There is no preferences screen, because this
+environment does not have one and should not grow one for this.
+
+*** The cost has to be on screen
+
+=:interacting= means the agent looks without being asked, which means tokens are
+spent with no keystroke of yours. An environment that can spend money while you
+read owes you a visible meter — the usage footer of §8.3 is not a nicety once
+initiative exists, and a rate/budget ceiling on unprompted work belongs with it.
+This is a second, independent reason the indicator has to be permanent.
+
+** 8.10 What we are deliberately not building
+
+| Not this                                   | Because                                              |
+|--------------------------------------------+------------------------------------------------------|
+| a chat tab with an input box at the bottom | a fifth idiom (§8.0); the Workspace already is one   |
+| a modal approval dialog                    | the restart rail already does this, better (§8.4)    |
+| a mode that captures input                 | §8.9 — ambient state yes, modal capture no           |
+| a persistent sidebar / assistant panel     | the *indicators* of §8.9 are the whole chrome budget |
+| suggestions while =:reacting=              | in that mode, pull never push — and the mode is visible |
+| a preferences screen                       | modes are variables and a subject (§8.9)             |
+| a second completion mechanism              | =Tab= completion belongs to the editor, not the oracle |
+
+The middle rows are the refinement worth keeping straight: the agent staying
+quiet is no longer a global promise, it is *what =:reacting= means* — and
+because the mode is on screen, the promise is one you can check rather than one
+you have to trust.
+
+* 9. Phase 3 — TLS 1.3 in Lisp
+
+The sub-project that removes the broker. Deliberately last: everything above is
+useful without it, and nothing above changes when it lands (=http.lisp= gets a
+stream that is encrypted instead of one that is not).
+
+** 9.1 Scope it as a client profile, not "TLS"
+
+We are one client talking to one endpoint. That removes most of the standard:
+no server side, no session resumption, no 0-RTT, no renegotiation, no TLS 1.2
+fallback, one cipher suite, one key-exchange group.
+
+| Piece                        | Choice                          | Why                                             |
+|------------------------------+---------------------------------+-------------------------------------------------|
+| Version                      | TLS 1.3 only                    | one handshake, and it is the simpler one        |
+| AEAD                         | =TLS_CHACHA20_POLY1305_SHA256=  | pure integer math; AES-GCM wants carryless mult |
+| Key exchange                 | X25519                          | one curve, well-specified, RFC test vectors     |
+| Hash / KDF                   | SHA-256, HMAC, HKDF             | ~150 lines together                             |
+| Cert signature verification  | RSA PKCS#1 v1.5 *and* ECDSA P-256 | we do not get to choose the server's cert      |
+
+Primitive by primitive: SHA-256 (~100), HMAC+HKDF (~60), ChaCha20 (~80),
+Poly1305 (~80), X25519 (~150), record layer + handshake state machine
+(~400–600), ASN.1/DER + X.509 (~300), signature verification (~100). Call it
+1500 lines — the same order as the code browser, and far more testable, because
+every primitive ships with published test vectors. That is the strongest thing
+about this sub-project: unlike UI work, you can be *certain* each piece is right
+before assembling them.
+
+One pleasant asymmetry: RSA verification is nearly free — SBCL has bignums, so
+=(mod (expt s 65537) n)= /is/ the operation. ECDSA P-256 needs real field
+arithmetic and is the bigger of the two.
+
+** 9.2 Trust, in three honest stages
+
+Encryption without authentication is not security; a plan that quietly skips
+certificate verification is worse than one that says where it is.
+
+1. *Encrypted, unauthenticated.* Handshake completes, no chain check. Proves the
+   record layer and the key schedule. *Lab only* — never on real hardware, and
+   the banner should say so out loud.
+2. *Pinned.* Ship the SHA-256 of the endpoint's intermediate SPKI and require a
+   match. Real security against a real threat model, small code, no X.509
+   parsing. Fails when the certificate rotates — which is a feature: it fails
+   closed and loudly.
+3. *Chain verification.* DER parsing, signature check up to a shipped root
+   bundle, name matching, validity dates. This is where =RTC_CLASS= finally
+   becomes non-optional, because "is this certificate expired" needs a clock.
+
+Stage 2 is a legitimate resting place for a long time.
+
+* 10. The network track — closing networking.org §2c
+
+Per §0.4 this comes *first*, and it is a subsystem completion rather than
+groundwork for the agent: it is what =networking.org= has had marked "(later)"
+since the DHCP client landed, and every piece is independently testable with no
+agent code in the image.
+
+| Piece            | Why                              | Cost            | Idiom it follows          |
+|------------------+----------------------------------+-----------------+---------------------------|
+| default route    | reaching anything off-subnet     | ~40 lines FFI   | the =SIOCSIF*= calls in =net.lisp= |
+| DNS client       | names instead of IP literals     | ~150 lines      | =dhcp.lisp= (build/send/parse) |
+| SNTP client      | a real clock → cert validity     | ~60 lines       | =dhcp.lisp=, UDP again    |
+| plain-HTTP =GET= | proves the whole outbound path   | reuses =http.lisp= | —                      |
+
+Three things worth noticing:
+
+- *No NSS.* A native client does not need glibc's resolver machinery. A DNS
+  query is a UDP datagram and a response parser — no dlopen, no
+  =/etc/nsswitch.conf=, no =libnss_*.so.2= in the cpio. Option A could not have
+  taken that shortcut; =networking.org= §5 already made this call.
+- *DHCP already did the discovery.* =dhcp.lisp= parses and stashes =*gateway*=
+  and =*dns*= from the lease. Both new clients have their inputs waiting.
+- *SNTP replaces a kernel rebuild.* =RTC_CLASS= stops being a blocker for §9.2
+  stage 3 — desirable, but not on the critical path. See §0.4 for the honest
+  caveat about trusting an unauthenticated time source.
+
+This also finally puts implementations underneath
+[[file:background/learn-networking.org][learn-networking.org]] — its chapters on
+default gateways (§5) and NAT (§7) are currently theory with nothing in the
+image that exercises them.
+
+* 11. Secrets, and what can go wrong
+
+- *Never bake the key.* =save-lisp-and-die= freezes the heap; a key present at
+  save time ships in =lisp-init= permanently. The broker sidesteps this (it
+  holds the key). For Phase 3 the key must arrive at *runtime* — read from a file in
+  the ESP, typed at the supervisor menu, or fetched over the network REPL — and
+  live only in a special variable.
+- *Prompt injection is a live concern here.* The model reads =source-of= output,
+  which is content from the image. If it can also =accept-source=, then anything
+  that can write a definition can influence the agent. Right now that is only
+  you — but it is the reason the =:ask= policy is the default rather than a
+  setting people are expected to relax.
+- *Streaming into a framebuffer* has no backpressure story. If redraw cannot
+  keep up, drop frames, never deltas.
+- *A conversation dies at power-off.* The image is frozen at build time; runtime
+  state is not persistent. The broker's transcript log covers development; a
+  guest-side answer waits on the same storage decision as file-out persistence.
+- *Token cost is invisible unless we show it.* Hence the usage footer — the
+  system prompt plus a few =lisp-source= calls is not free, and an agent that
+  browses the image can browse a lot of it.
+
+* 12. Phases — two tracks that meet at TLS
+
+*Network track* (§10 — closes =networking.org= §2c; no agent code involved):
+
+| Phase | Ships                                                        | Kernel work |
+|-------+--------------------------------------------------------------+-------------|
+| N1    | off-subnet default route via the leased gateway              | none        |
+| N2    | DNS client in Lisp; names resolve                            | none        |
+| N3    | SNTP client; the guest knows what time it is                 | none        |
+| N4    | plain-HTTP =GET= end to end — the outbound path is proven    | none        |
+
+*Agent track* (§4–§8 — pure Lisp, testable against a broker on loopback;
+§8.2 first, since it works over the network REPL with no pixels involved):
+
+| Phase | Ships                                                                  | Kernel work |
+|-------+------------------------------------------------------------------------+-------------|
+| A0    | =json.lisp=, =http.lisp=, SSE, Messages protocol, =(ask "…")= in the REPL | none      |
+| A1    | tool surface + gating; conversation objects + =present=; browser tab; Spotter "ask" | none |
+| A2    | the debugger doorway (§8.8): ASK restart, propose → accept → retry       | none        |
+
+*They meet:*
+
+| Phase | Ships                                                              | Kernel work |
+|-------+--------------------------------------------------------------------+-------------|
+| 3     | TLS 1.3 client (§9) — the broker is deleted                        | =RTC_CLASS= optional (N3 covers it) |
+| 4     | on-image transcript persistence (blocked on the storage decision)   | maybe       |
+
+The tracks are independent, so they can run in either order or interleave. N4 is
+the /the machine can reach the outside world on its own/ milestone; A0 is the
+/prove the protocol/ one — a completion printed on the framebuffer console; A2
+is the /this could not have been the CLI/ one.
+
+* 13. Open questions
+
+- *Name.* "The agent" is descriptive and fine for now. If the environment ever
+  takes the space-themed naming joke, this is the piece that most wants a name
+  of its own — it is the only part of the machine that talks back.
+- *Where does the system prompt live?* Baked into the image (versioned with the
+  code, invisible at runtime) or a definition in the registry (browsable,
+  editable, and part of the change set — much more in keeping with everything
+  else here). Leaning strongly to the second.
+- *Does the agent get its own package?* Probably =LOL-AGENT=, so =lisp-apropos=
+  can be told to skip it and the agent does not spend its context reading
+  itself.
+- *One tool call at a time, or parallel?* The API can request several per turn.
+  Serial is simpler and, on one CPU, loses nothing.
+- *Should =lisp-eval= exist at all?* It subsumes every other tool, which makes
+  the schema honest but the gating carry all the weight. An alternative is to
+  drop it and force the agent through the typed tools — slower, but every action
+  is then a named, reviewable thing rather than an arbitrary form.
+
+* Appendix — measurements taken for this doc
+
+Against this machine and this tree, 2026-08-06:
+
+| Fact                                   | Value                                                          |
+|----------------------------------------+----------------------------------------------------------------|
+| =claude= binary                        | 290,728,968 bytes, ELF x86-64, dynamically linked               |
+| its shared libraries                   | =librt libc libpthread libdl libm= + =ld-linux-x86-64.so.2=     |
+| already in our cpio                    | =ld-linux-x86-64.so.2=, =libc.so.6=, =libm.so.6=                |
+| =initramfs.cpio= today                 | 44 MB (=lisp-init= is 40 MB)                                    |
+| QEMU memory                            | =-m 2048=                                                       |
+| SBCL                                   | 2.6.6.74, =:sb-thread= present                                  |
+| kernel: on                             | =NET INET VIRTIO_NET PACKET UNIX EPOLL EVENTFD TIMERFD SIGNALFD FUTEX AIO MEMBARRIER POSIX_TIMERS TMPFS UNIX98_PTYS IO_URING BINFMT_ELF= |
+| kernel: off                            | =RTC_CLASS INOTIFY_USER HIGH_RES_TIMERS SMP (NR_CPUS=1) SECCOMP MODULES VIRTIO_BLK EXT4_FS NET_9P= |
+| SLIRP addresses                        | guest =10.0.2.15=, host/gw =10.0.2.2=, DNS =10.0.2.3=           |
+| routing state                          | on-subnet only — =dhcp.lisp= defers the default route to §2c    |

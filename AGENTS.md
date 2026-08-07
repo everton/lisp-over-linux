@@ -18,6 +18,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/fonts.org` | Orientation guide: how our pure-Lisp renderer turns a character into pixels (PSF bitmap → `draw-string` → screen), and how to change the font/size. Companion to `framebuffer.org`. |
 | `doc/line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI). |
 | `doc/networking.org` | Networking: kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets`, static IP/DHCP, the TCP REPL. Wired path working; DNS/Wi-Fi ahead. |
+| `doc/agent.org` | **PLAN.** An LLM client written in Lisp and living in the image: HTTP/JSON/SSE over the existing sockets, `registry.lisp`/`model.lisp`/`present.lisp` as its tool surface, doorways from the REPL / a browser tab / the debugger, and TLS 1.3 from scratch as a late sub-project. Also records why we are *not* running the `claude` CLI in the guest. |
 | `doc/background/background.org` | General firmware/CPU/hardware theory (UEFI handoff, x86 modes, USB-HID, multicore). "Not project rationale." |
 | `doc/background/learn-networking.org` | From-scratch networking tutorial with a progress tracker + deep links into the code. |
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |

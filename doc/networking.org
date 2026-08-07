@@ -15,7 +15,10 @@ raw-forwarding client (=host-client/lol-repl-client.c=) so
 arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified
 against QEMU SLIRP: eth0 leases =10.0.2.15= (gw =10.0.2.2=, dns =10.0.2.3=), and
 the host client gives a live editing REPL — =(+ 40 2)= → =42=. *Still ahead:* an
-off-subnet default route + DNS (§2c), and Wi-Fi for real hardware (§7). It is the
+off-subnet default route + DNS (§2c) — now *scheduled*, as the network track
+(N1–N4) of [[file:agent.org][agent.org]] §10/§12, which also adds an SNTP client
+and a plain-HTTP =GET= to close the outbound path — and Wi-Fi for real
+hardware (§7). It is the
 single biggest subsystem we have taken
 on, because — unlike the framebuffer alien (pure userland) or the bigger console
 font (pure kernel) — networking straddles *BOTH* the kernel and userland at once.
@@ -114,7 +117,7 @@ A NIC with no address can't talk.
   the gateway/DNS (=*gateway*= / =*dns*=) for §2c. Verified against QEMU SLIRP:
   eth0 gets =10.0.2.15=, gw =10.0.2.2=, dns =10.0.2.3= from the ACK.
 
-** (c) name resolution + off-subnet routing — DNS (next)
+** (c) name resolution + off-subnet routing — DNS (next, and now scheduled)
 DHCP already hands us the gateway and DNS server (=*gateway*= / =*dns*=). Applying
 IP+mask gives an *on-link route* for the whole subnet, which is enough to reach
 everything in QEMU SLIRP's =10.0.2.0/24= (gateway =10.0.2.2=, DNS =10.0.2.3=). Two
@@ -122,6 +125,25 @@ things remain for the *outbound* world: an *off-subnet default route* via the
 leased gateway (=SIOCADDRT= / =struct rtentry=), and *DNS* itself — =getaddrinfo=
 via glibc would drag in NSS plugin files, so cleaner to write a minimal
 DNS-over-UDP query in Lisp (sending to =*dns*=), or just use raw IPs at first.
+
+*This is now the network track of [[file:agent.org][agent.org]]* (§10, phases
+N1–N4), which schedules it and adds two more pieces for the same reason:
+
+| N1 | off-subnet default route | =SIOCADDRT= / =struct rtentry= | ~40 lines, the =SIOCSIF*= idiom above |
+| N2 | DNS client               | UDP query + response parser    | ~150 lines, the =dhcp.lisp= idiom     |
+| N3 | SNTP client              | the guest learns the time      | ~60 lines, UDP again                  |
+| N4 | plain-HTTP =GET=         | proves the whole outbound path | reuses the agent's =http.lisp=        |
+
+Why N3 belongs here rather than in the kernel: =CONFIG_RTC_CLASS= is *not set*,
+so the guest boots at epoch 0 — which breaks TLS certificate validity checks
+later. Setting the clock over the network keeps that out of the kernel and off
+the critical path, in the same spirit as doing DHCP in Lisp rather than shipping
+=dhclient=. (An RTC is still worth having eventually: trusting an unauthenticated
+time source to bootstrap a trust decision is a real, if universally accepted,
+weakness.)
+
+Note also that both remaining pieces already have their *inputs* — =dhcp.lisp=
+parses and stashes =*gateway*= and =*dns*= from the lease.
 
 * 3. The staged bring-up plan (prove each layer before the next)
 
@@ -140,8 +162,9 @@ DNS-over-UDP query in Lisp (sending to =*dns*=), or just use raw IPs at first.
 4. *DHCP* — *DONE.* =dhcp.lisp= does a real DISCOVER/REQUEST handshake at boot
    (=configure-eth0=), so =eth0= gets =10.0.2.15= dynamically instead of a hard
    coded address; gateway/DNS are parsed and stashed. Verified against QEMU SLIRP.
-5. *(later)* off-subnet default route + DNS (§2c), then real-hardware Ethernet,
-   then — much later — Wi-Fi (§7).
+5. *(next)* off-subnet default route + DNS + SNTP + a plain-HTTP client (§2c) —
+   scheduled as [[file:agent.org][agent.org]]'s network track. Then real-hardware
+   Ethernet, then — much later — Wi-Fi (§7).
 
 * 4. QEMU test wiring (for build.sh --run)
 
@@ -329,3 +352,5 @@ resolver vs raw IPs), and the whole of Wi-Fi (§7).
     contrib must be baked in.
   - [[file:line-editing.org][line-editing.org]] — same FFI-to-shipped-libc pattern (termios) that the
     static-IP ioctls and raw sockets would use.
+  - [[file:agent.org][agent.org]] — the first consumer of the *outbound* path: an LLM client living
+    in the image. Its §10/§12 network track is what finally closes §2c.
