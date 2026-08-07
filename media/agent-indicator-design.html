@@ -1,0 +1,630 @@
+<style>
+  :root {
+    color-scheme: dark;
+    --ground:   #14161a;   /* *sh-bg*    */
+    --surface:  #1b1e24;   /* *sh-panel* */
+    --surface2: #21252c;
+    --raise:    #242931;   /* *sh-hi*    */
+    --hair:     #2e343d;   /* *sh-rule*  */
+    --hair2:    #3a414b;
+    --ink:      #d6d3c8;   /* *sh-text*  */
+    --ink-mid:  #9aa0a8;
+    --ink-dim:  #6b727d;   /* *sh-dim*   */
+    --teal:     #7fdbca;   /* *sh-accent* — generic / function / SAFE   */
+    --blue:     #89ddff;   /* class */
+    --green:    #a8ff78;   /* method */
+    --purple:   #c792ea;   /* macro */
+    --gold:     #ffcb6b;   /* package */
+    --red:      #ff6b6b;   /* *dbg-red* — condition / DANGER */
+    --amber:    #ff9f43;   /* *sh-amber* — variable / ATTENTION */
+    --sel:      #2f4f4a;   /* *sh-sel* */
+    --mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-weight: 350;
+    line-height: 1.65;
+    margin: 0;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 4rem 1.5rem 6rem; }
+  code, .mono, pre { font-family: var(--mono); }
+  code { color: var(--teal); font-size: 0.88em; }
+
+  header.doc { margin-bottom: 3.5rem; }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--ink-dim); margin-bottom: 1.1rem;
+  }
+  h1 {
+    font-family: var(--mono);
+    font-weight: 700; font-size: clamp(1.7rem, 4vw, 2.7rem);
+    line-height: 1.12; letter-spacing: -0.02em; text-wrap: balance;
+    margin: 0 0 1.1rem;
+  }
+  h1 .t { color: var(--teal); }
+  h1 .r { color: var(--amber); }
+  .lede { font-size: 1.08rem; color: var(--ink-mid); max-width: 68ch; }
+  .lede strong { color: var(--ink); font-weight: 500; }
+
+  section { margin-top: 4rem; }
+  .kicker { display: flex; align-items: baseline; gap: 0.9rem; margin-bottom: 0.4rem; }
+  .kicker .num {
+    font-family: var(--mono); font-size: 0.8rem; color: var(--ink-dim);
+    border: 1px solid var(--hair2); border-radius: 999px; padding: 0.05rem 0.6rem;
+  }
+  h2 {
+    font-family: var(--mono); font-weight: 700;
+    font-size: clamp(1.25rem, 2.6vw, 1.6rem); letter-spacing: -0.01em;
+    margin: 0 0 0.7rem;
+  }
+  h3 {
+    font-family: var(--mono); font-weight: 600; font-size: 0.95rem;
+    color: var(--ink-mid); margin: 2.2rem 0 0.8rem;
+    letter-spacing: 0.02em;
+  }
+  p { max-width: 72ch; }
+  .note { color: var(--ink-mid); font-size: 0.94rem; }
+  .caption {
+    font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim);
+    letter-spacing: 0.04em; margin-top: 0.55rem;
+  }
+
+  .panel {
+    background: var(--surface); border: 1px solid var(--hair);
+    border-radius: 10px; padding: 1.6rem; margin: 1.4rem 0;
+  }
+  .panel.flush { padding: 1.6rem 1.6rem 1.1rem; }
+
+  table { border-collapse: collapse; width: 100%; margin: 1.2rem 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--hair); vertical-align: middle; }
+  th { font-family: var(--mono); font-size: 0.74rem; letter-spacing: 0.1em;
+       text-transform: uppercase; color: var(--ink-dim); font-weight: 500; }
+  td.mono { font-family: var(--mono); font-size: 0.84rem; }
+
+  /* ============ the framebuffer mock ============
+     True metrics: 6px advance, 15px line box, 20px bar (+bar-h+),
+     8px gutter, 6px inter-tab gap, 2px kind stripe. Scaled up for reading. */
+  .fbscale { transform-origin: top left; }
+  .s3 { transform: scale(3); }
+  .s3r { transform: scale(3) translateX(-936px); }   /* show the right end of the bar */
+  .s2 { transform: scale(2); }
+  .s08 { transform: scale(0.8); }
+  .holder { overflow: hidden; }
+  .h3 { height: 66px; }      /* 22 * 3 */
+  .h2 { height: 44px; }
+  .frame { height: 648px; }  /* 810 * .8 */
+
+  .fb {
+    position: relative;
+    background: var(--ground);
+    font-family: var(--mono);
+    font-size: 10px;          /* 0.6 advance -> 6px cells */
+    line-height: 15px;
+    letter-spacing: 0;
+    width: 1264px;            /* 1280 - a hair, so the mock never clips */
+    height: 20px;
+    -webkit-font-smoothing: none;
+    font-smooth: never;
+  }
+  .fb.full { height: 800px; }
+  .fb * { position: absolute; white-space: pre; }
+  .bar   { left: 0; top: 0; height: 20px; }
+  .tab   { top: 0; height: 20px; background: var(--surface); }
+  .tab.on{ background: var(--raise); }
+  .stripe{ top: 0; height: 2px; }
+  .txt   { top: 3px; height: 15px; }
+  .seam  { left: 0; top: 19px; height: 1px; width: 1264px; background: var(--hair); }
+
+  /* the agent dot: 5x5, sits inside the tab's leading space */
+  .dot   { top: 8px; width: 5px; height: 5px; box-sizing: border-box; }
+  .dot.hollow { border: 1px solid currentColor; }
+  .dot.filled { background: currentColor; }
+  .dot.work   { background: currentColor; animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .25 } }
+
+  .dim   { color: var(--ink-dim); }
+  .text  { color: var(--ink); }
+  .acc   { color: var(--teal); }
+  .amb   { color: var(--amber); }
+  .red   { color: var(--red); }
+
+  /* ============ the legend matrix ============ */
+  .matrix { display: grid; grid-template-columns: 8.5rem repeat(3, 1fr); gap: 1px;
+            background: var(--hair); border: 1px solid var(--hair); border-radius: 8px; overflow: hidden; }
+  .matrix > div { background: var(--surface); padding: 0.85rem 1rem; }
+  .matrix .hd { background: var(--surface2); font-family: var(--mono);
+                font-size: 0.74rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-dim); }
+  .cell { display: flex; align-items: center; gap: 0.7rem; }
+  .cell .lbl { font-size: 0.86rem; color: var(--ink-mid); }
+  .swatch { position: relative; width: 5px; height: 5px; box-sizing: border-box; flex: 0 0 5px;
+            transform: scale(2.6); transform-origin: center; margin: 0 0.5rem; }
+  .swatch.hollow { border: 1px solid currentColor; }
+  .swatch.filled { background: currentColor; }
+
+  /* ============ the alien glyph ============ */
+  .alienrow { display: flex; align-items: flex-end; gap: 3rem; flex-wrap: wrap; }
+  .alienbox { text-align: center; }
+  .alienbox .cap { font-family: var(--mono); font-size: 0.72rem; color: var(--ink-dim); margin-top: 0.6rem; }
+
+  /* ============ the terminal mock ============ */
+  .term {
+    background: #000; border: 1px solid var(--hair); border-radius: 8px;
+    font-family: var(--mono); font-size: 0.9rem; line-height: 1.75;
+    padding: 1.1rem 1.3rem; margin: 1.2rem 0; white-space: pre;
+    overflow-x: auto;
+  }
+  .term .c96 { color: #4ce6e6; font-weight: 700; }   /* bright cyan  */
+  .term .c93 { color: #ffd75f; font-weight: 700; }   /* bright yellow*/
+  .term .c91 { color: #ff5f5f; font-weight: 700; }   /* bright red   */
+  .term .c90 { color: #7a7a7a; }                     /* dim gray     */
+  .term .c92 { color: #5fff5f; font-weight: 700; }   /* bright green */
+  .term .w   { color: #d0d0d0; }
+
+  ul.tight { max-width: 72ch; }
+  ul.tight li { margin: 0.35rem 0; }
+  .rule { height: 1px; background: var(--hair); margin: 3.5rem 0 0; border: 0; }
+  .foot { margin-top: 1.4rem; font-size: 0.86rem; color: var(--ink-dim); max-width: 72ch; }
+  strong.k { color: var(--ink); font-weight: 600; }
+</style>
+
+<div class="wrap">
+
+<header class="doc">
+  <div class="eyebrow">lisp-over-linux · design mock · doc/agent.org §8.9</div>
+  <h1>The agent <span class="t">indicator</span><br>— <span class="r">who else is in the room</span></h1>
+  <p class="lede">
+    Once the environment can act on its own, <strong>you must always be able to see
+    whether it may, and what it is allowed to touch.</strong> This is the only thing in
+    the project that earns permanent chrome. Three surfaces carry it — the tab strip,
+    the presence light, and the REPL prompt — using one grammar and
+    <strong>no new palette entries</strong>.
+  </p>
+</header>
+
+<section>
+  <div class="kicker"><span class="num">1</span><h2>One grammar, two channels</h2></div>
+  <p>
+    Two orthogonal dials (§8.9), so two orthogonal visual channels. <strong class="k">Shape
+    carries initiative</strong> — absent, hollow, filled. <strong class="k">Colour carries
+    authority</strong> — and every colour already means this in the existing semantic
+    palette, so nothing new has to be learned or invented.
+  </p>
+
+  <div class="panel">
+    <div class="matrix">
+      <div class="hd"></div>
+      <div class="hd">:read-only</div>
+      <div class="hd">:ask</div>
+      <div class="hd">:allow</div>
+
+      <div class="hd" style="display:flex;align-items:center">:off</div>
+      <div class="cell" style="grid-column: 2 / span 3; color: var(--hair)">
+        <span class="swatch"></span>
+        <span class="lbl">nothing there — no sockets, no tokens, the verb inert</span>
+      </div>
+
+      <div class="hd" style="display:flex;align-items:center">:reacting</div>
+      <div class="cell" style="color: var(--teal)">
+        <span class="swatch hollow"></span><span class="lbl">an oracle</span>
+      </div>
+      <div class="cell" style="color: var(--amber)">
+        <span class="swatch hollow"></span><span class="lbl">normal working mode</span>
+      </div>
+      <div class="cell" style="color: var(--red)">
+        <span class="swatch hollow"></span><span class="lbl">“just do it”</span>
+      </div>
+
+      <div class="hd" style="display:flex;align-items:center">:interacting</div>
+      <div class="cell" style="color: var(--teal)">
+        <span class="swatch filled"></span><span class="lbl">observer, may offer</span>
+      </div>
+      <div class="cell" style="color: var(--amber)">
+        <span class="swatch filled"></span><span class="lbl">pairing</span>
+      </div>
+      <div class="cell" style="color: var(--red)">
+        <span class="swatch filled"></span><span class="lbl">delegated autonomy</span>
+      </div>
+    </div>
+    <div class="caption">5 × 5 px, shown at 2.6×. A pulsing fill = a turn in flight (§8.7).</div>
+  </div>
+
+  <table>
+    <tr><th>Channel</th><th>Value</th><th>Means</th><th>Why that colour already</th></tr>
+    <tr><td class="mono">shape</td><td class="mono">absent</td><td>:off</td><td>absence is the strongest “not here” there is</td></tr>
+    <tr><td class="mono">shape</td><td class="mono">hollow</td><td>:reacting</td><td>an outline: present, waiting</td></tr>
+    <tr><td class="mono">shape</td><td class="mono">filled</td><td>:interacting</td><td>solid: it may move on its own</td></tr>
+    <tr><td class="mono">colour</td><td class="mono" style="color:var(--teal)">#7FDBCA</td><td>:read-only</td><td><code>*sh-accent*</code> — the safe/among-friends colour of the whole shell</td></tr>
+    <tr><td class="mono">colour</td><td class="mono" style="color:var(--amber)">#FF9F43</td><td>:ask</td><td><code>*sh-amber*</code> — already “a restart wants your attention”</td></tr>
+    <tr><td class="mono">colour</td><td class="mono" style="color:var(--red)">#FF6B6B</td><td>:allow</td><td><code>*dbg-red*</code> — already “a condition; look here”</td></tr>
+  </table>
+</section>
+
+<section>
+  <div class="kicker"><span class="num">2</span><h2>The tab strip</h2></div>
+  <p>
+    True <code>draw-tabs</code> metrics: a 20 px bar, 8 px gutter, 6 px between tabs, a 2 px
+    kind stripe on top of each, <code>" N · "</code> dim then the title, <code>×</code> on the
+    active tab, <code>+</code> for a new Workspace, the app name right-aligned. The dot goes
+    in the <strong class="k">leading space of the number</strong> — 5 px of already-blank
+    pixels at <code>x+2</code>. Nothing moves; nothing is displaced.
+  </p>
+
+  <h3>a · everything quiet — global :reacting, no tab deviates</h3>
+  <div class="panel flush">
+    <div class="holder h3"><div class="fbscale s3"><div class="fb">
+      <div class="bar" style="width:1264px;background:var(--ground)"></div>
+
+      <div class="tab on" style="left:8px;width:110px"></div>
+      <div class="stripe" style="left:8px;width:110px;background:var(--gold)"></div>
+      <div class="txt dim" style="left:10px"> 1 · </div>
+      <div class="txt acc" style="left:40px">lol.canvas </div>
+      <div class="txt dim" style="left:104px">×</div>
+
+      <div class="tab" style="left:124px;width:60px"></div>
+      <div class="stripe" style="left:124px;width:60px;background:var(--blue)"></div>
+      <div class="txt dim" style="left:126px"> 2 · </div>
+      <div class="txt text" style="left:156px">pane </div>
+
+      <div class="tab" style="left:190px;width:90px"></div>
+      <div class="stripe" style="left:190px;width:90px;background:var(--ink-dim)"></div>
+      <div class="txt dim" style="left:192px"> 3 · </div>
+      <div class="txt text" style="left:222px">workspace </div>
+
+      <div class="tab" style="left:288px;width:14px"></div>
+      <div class="txt acc" style="left:292px">+</div>
+
+      <div class="txt dim" style="left:1166px">lisp-over-linux</div>
+      <div class="seam"></div>
+    </div></div></div>
+    <div class="caption">3×, left end of the bar · no dots — the strip stays calm when nothing deviates from the default</div>
+  </div>
+
+  <h3>b · one tab raised to :interacting / :ask — you are pairing in the Workspace</h3>
+  <div class="panel flush">
+    <div class="holder h3"><div class="fbscale s3"><div class="fb">
+      <div class="bar" style="width:1264px;background:var(--ground)"></div>
+
+      <div class="tab" style="left:8px;width:96px"></div>
+      <div class="stripe" style="left:8px;width:96px;background:var(--gold)"></div>
+      <div class="txt dim" style="left:10px"> 1 · </div>
+      <div class="txt text" style="left:40px">lol.canvas </div>
+
+      <div class="tab" style="left:110px;width:60px"></div>
+      <div class="stripe" style="left:110px;width:60px;background:var(--blue)"></div>
+      <div class="txt dim" style="left:112px"> 2 · </div>
+      <div class="txt text" style="left:142px">pane </div>
+
+      <div class="tab on" style="left:176px;width:104px"></div>
+      <div class="stripe" style="left:176px;width:104px;background:var(--ink-dim)"></div>
+      <div class="dot filled amb" style="left:178px"></div>
+      <div class="txt dim" style="left:178px"> 3 · </div>
+      <div class="txt acc" style="left:208px">workspace </div>
+      <div class="txt dim" style="left:266px">×</div>
+
+      <div class="tab" style="left:288px;width:14px"></div>
+      <div class="txt acc" style="left:292px">+</div>
+
+      <div class="txt dim" style="left:1166px">lisp-over-linux</div>
+      <div class="seam"></div>
+    </div></div></div>
+    <div class="caption">3×, left end of the bar · a filled amber dot: this surface may act on its own, and every change is gated</div>
+  </div>
+
+  <h3>c · a turn in flight on a tab you are not looking at</h3>
+  <div class="panel flush">
+    <div class="holder h3"><div class="fbscale s3"><div class="fb">
+      <div class="bar" style="width:1264px;background:var(--ground)"></div>
+
+      <div class="tab on" style="left:8px;width:110px"></div>
+      <div class="stripe" style="left:8px;width:110px;background:var(--gold)"></div>
+      <div class="txt dim" style="left:10px"> 1 · </div>
+      <div class="txt acc" style="left:40px">lol.canvas </div>
+      <div class="txt dim" style="left:104px">×</div>
+
+      <div class="tab" style="left:124px;width:126px"></div>
+      <div class="stripe" style="left:124px;width:126px;background:var(--teal)"></div>
+      <div class="dot work amb" style="left:126px"></div>
+      <div class="txt dim" style="left:126px"> 2 · </div>
+      <div class="txt text" style="left:156px">why does draw-… </div>
+
+      <div class="tab" style="left:256px;width:90px"></div>
+      <div class="stripe" style="left:256px;width:90px;background:var(--ink-dim)"></div>
+      <div class="txt dim" style="left:258px"> 3 · </div>
+      <div class="txt text" style="left:288px">workspace </div>
+
+      <div class="tab" style="left:354px;width:14px"></div>
+      <div class="txt acc" style="left:358px">+</div>
+
+      <div class="txt dim" style="left:1166px">lisp-over-linux</div>
+      <div class="seam"></div>
+    </div></div></div>
+    <div class="caption">3×, left end of the bar · the dot pulses on tab 2 while you keep reading tab 1 — asking never blocks (§8.7)</div>
+  </div>
+
+  <p class="note">
+    <strong class="k">The quiet rule.</strong> A dot on every tab, always, would be noise —
+    and this environment hides its cheatsheet behind <code>Super-?</code> precisely to avoid
+    that. So a tab shows a dot only when it <em>deviates from the global default</em> or is
+    <em>working</em>. The global light below is what tells you the agent exists at all.
+  </p>
+</section>
+
+<section>
+  <div class="kicker"><span class="num">3</span><h2>The presence light</h2></div>
+  <p>
+    The right end of the tab strip already holds the app name — the “this is the
+    environment” slot. That is where the global state belongs, and the project already owns
+    the perfect mark for it. <strong class="k">Not the 256 × 150 sprite</strong>: at that size
+    it would swallow the bar. A new <strong class="k">16 × 16 glyph</strong>, ~32 bytes,
+    hand-authored the same way the font blob was.
+  </p>
+
+  <div class="panel">
+    <div class="alienrow">
+      <div class="alienbox">
+        <svg width="112" height="112" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-label="alien glyph, off">
+          <g fill="#2e343d">
+            <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+            <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+            <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+            <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+            <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+            <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+            <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+            <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+          </g>
+        </svg>
+        <div class="cap">:off — #2E343D</div>
+      </div>
+
+      <div class="alienbox">
+        <svg width="112" height="112" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-label="alien glyph, reacting">
+          <g fill="#6b727d">
+            <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+            <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+            <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+            <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+            <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+            <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+            <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+            <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+          </g>
+        </svg>
+        <div class="cap">:reacting — #6B727D</div>
+      </div>
+
+      <div class="alienbox">
+        <svg width="112" height="112" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-label="alien glyph, interacting, ask">
+          <g fill="#ff9f43">
+            <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+            <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+            <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+            <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+            <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+            <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+            <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+            <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+          </g>
+        </svg>
+        <div class="cap">:interacting / :ask — #FF9F43</div>
+      </div>
+
+      <div class="alienbox">
+        <svg width="112" height="112" viewBox="0 0 16 16" shape-rendering="crispEdges" aria-label="alien glyph, interacting, allow">
+          <g fill="#ff6b6b">
+            <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+            <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+            <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+            <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+            <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+            <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+            <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+            <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+          </g>
+        </svg>
+        <div class="cap">:interacting / :allow — #FF6B6B</div>
+      </div>
+    </div>
+    <div class="caption">7× · the eyes are holes, so the glyph reads at 16 px without anti-aliasing</div>
+  </div>
+
+  <p>
+    Same grammar as the dot, one level up: <strong class="k">the alien’s colour is the
+    authority you have granted</strong>, so a glance from across the room tells you whether
+    this machine can change itself right now. Note it deliberately does <em>not</em> use the
+    green of <code>:method</code>/<code>:generic-function</code> — the agent is not a kind of
+    definition, and stealing a semantic colour would be a lie.
+  </p>
+
+  <h3>in place, at the right end of the strip</h3>
+  <div class="panel flush">
+    <div class="holder h3"><div class="fbscale s3r"><div class="fb">
+      <div class="bar" style="width:1264px;background:var(--ground)"></div>
+      <div class="tab on" style="left:8px;width:96px"></div>
+      <div class="stripe" style="left:8px;width:96px;background:var(--gold)"></div>
+      <div class="txt dim" style="left:10px"> 1 · </div>
+      <div class="txt acc" style="left:40px">lol.canvas </div>
+      <div class="tab" style="left:112px;width:14px"></div>
+      <div class="txt acc" style="left:116px">+</div>
+
+      <svg style="position:absolute;left:1142px;top:2px" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+        <g fill="#ff9f43">
+          <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+          <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+          <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+          <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+          <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+          <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+          <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+          <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+        </g>
+      </svg>
+      <div class="txt dim" style="left:1166px">lisp-over-linux</div>
+      <div class="seam"></div>
+    </div></div></div>
+    <div class="caption">3×, <em>right</em> end of the same bar · 16 px fits the 20 px bar with 2 px of air above and below</div>
+  </div>
+</section>
+
+<section>
+  <div class="kicker"><span class="num">4</span><h2>The REPL prompt</h2></div>
+  <p>
+    Every Lisp shows <code>*package*</code> in the prompt; this environment should show
+    <code>*agent-initiative*</code> the same way. One leading mark, then the prompt — so the
+    grammar survives on a surface with no pixels at all, including
+    <strong class="k">over the network REPL</strong>.
+  </p>
+  <p class="note">
+    Hard constraint from <code>ansi.lisp</code>: fbcon honours only the 16 ANSI colours — no
+    <code>38;5;n</code>, no truecolor. So the palette maps to SGR codes rather than hexes,
+    and the mapping keeps the meanings intact.
+  </p>
+
+  <div class="term"><span class="c90">                                    </span>
+<span class="w">  </span><span class="c96">lisp&gt;</span><span class="w"> (+ 40 2)</span>
+<span class="c92">  =&gt;</span><span class="w"> 42</span>
+
+<span class="c90">  ·</span> <span class="c96">lisp&gt;</span><span class="w"> ?why does draw-alien flip the rows?</span>
+<span class="c90">        the framebuffer is top-down but the sprite …</span>
+
+<span class="c93">  •</span> <span class="c96">lisp&gt;</span><span class="w"> </span>
+<span class="c91">  •</span> <span class="c96">lisp&gt;</span><span class="w"> </span></div>
+
+  <table>
+    <tr><th>Prompt</th><th>State</th><th>SGR</th><th>Sits beside</th></tr>
+    <tr><td class="mono">&nbsp;&nbsp;<span class="acc">lisp&gt;</span></td><td>:off</td><td class="mono">—</td><td>nothing at all — absence is the signal</td></tr>
+    <tr><td class="mono"><span class="dim">·</span> <span class="acc">lisp&gt;</span></td><td>:reacting</td><td class="mono">90 dim gray</td><td><code>col-cont</code> — the continuation prompt</td></tr>
+    <tr><td class="mono"><span class="acc">•</span> <span class="acc">lisp&gt;</span></td><td>:interacting :read-only</td><td class="mono">96 bright cyan</td><td><code>col-prompt</code></td></tr>
+    <tr><td class="mono"><span class="amb">•</span> <span class="acc">lisp&gt;</span></td><td>:interacting :ask</td><td class="mono">93 bright yellow</td><td>—</td></tr>
+    <tr><td class="mono"><span class="red">•</span> <span class="acc">lisp&gt;</span></td><td>:interacting :allow</td><td class="mono">91 bright red</td><td><code>col-error</code></td></tr>
+  </table>
+
+  <p class="note">
+    <code>·</code> is <code>#xB7</code>, already proven in this font stack — <code>draw-tabs</code>
+    uses it as the tab separator. <code>•</code> is the one glyph that needs checking against
+    the console font; <code>*</code> is the ASCII fallback, and the shape grammar
+    (absent / outline / solid) survives the substitution.
+  </p>
+</section>
+
+<section>
+  <div class="kicker"><span class="num">5</span><h2>All of it, at 1280 × 800</h2></div>
+  <p>
+    The whole environment with the agent paired in a Workspace and a question in flight on
+    tab 2. Everything the indicator adds is in the top 20 px and the bottom 18 px.
+  </p>
+
+  <div class="panel flush">
+    <div class="holder frame"><div class="fbscale s08"><div class="fb full">
+      <!-- tab strip -->
+      <div class="bar" style="width:1264px;background:var(--ground)"></div>
+      <div class="tab" style="left:8px;width:96px"></div>
+      <div class="stripe" style="left:8px;width:96px;background:var(--gold)"></div>
+      <div class="txt dim" style="left:10px"> 1 · </div>
+      <div class="txt text" style="left:40px">lol.canvas </div>
+
+      <div class="tab" style="left:110px;width:126px"></div>
+      <div class="stripe" style="left:110px;width:126px;background:var(--teal)"></div>
+      <div class="dot work amb" style="left:112px"></div>
+      <div class="txt dim" style="left:112px"> 2 · </div>
+      <div class="txt text" style="left:142px">why does draw-… </div>
+
+      <div class="tab on" style="left:242px;width:104px"></div>
+      <div class="stripe" style="left:242px;width:104px;background:var(--ink-dim)"></div>
+      <div class="dot filled amb" style="left:244px"></div>
+      <div class="txt dim" style="left:244px"> 3 · </div>
+      <div class="txt acc" style="left:274px">workspace </div>
+      <div class="txt dim" style="left:332px">×</div>
+
+      <div class="tab" style="left:354px;width:14px"></div>
+      <div class="txt acc" style="left:358px">+</div>
+
+      <svg style="position:absolute;left:1142px;top:2px" width="16" height="16" viewBox="0 0 16 16" shape-rendering="crispEdges">
+        <g fill="#ff9f43">
+          <rect x="6" y="1" width="4" height="1"/><rect x="4" y="2" width="8" height="1"/>
+          <rect x="3" y="3" width="10" height="1"/><rect x="2" y="4" width="12" height="2"/>
+          <rect x="2" y="6" width="2" height="2"/><rect x="6" y="6" width="4" height="2"/>
+          <rect x="12" y="6" width="2" height="2"/><rect x="2" y="8" width="12" height="2"/>
+          <rect x="3" y="10" width="10" height="1"/><rect x="4" y="11" width="8" height="1"/>
+          <rect x="3" y="12" width="2" height="1"/><rect x="6" y="12" width="4" height="1"/>
+          <rect x="11" y="12" width="2" height="1"/><rect x="2" y="13" width="2" height="1"/>
+          <rect x="7" y="13" width="2" height="1"/><rect x="12" y="13" width="2" height="1"/>
+        </g>
+      </svg>
+      <div class="txt dim" style="left:1166px">lisp-over-linux</div>
+      <div class="seam"></div>
+
+      <!-- crumb -->
+      <div style="left:8px;top:24px;width:1248px;height:20px;background:var(--raise)"></div>
+      <div class="txt dim" style="left:18px;top:27px">workspace</div>
+
+      <!-- body -->
+      <div style="left:9px;top:48px;width:1246px;height:20px;background:var(--raise)"></div>
+      <div class="txt acc" style="left:19px;top:51px">a conversation, in a Workspace</div>
+      <div style="left:9px;top:67px;width:1246px;height:1px;background:var(--hair)"></div>
+      <div style="left:9px;top:68px;width:1246px;height:706px;background:var(--surface)"></div>
+
+      <div class="txt dim"  style="left:19px;top:78px">you</div>
+      <div class="txt text" style="left:19px;top:93px">?why does draw-alien flip the rows?</div>
+
+      <div class="txt amb"  style="left:19px;top:123px">agent</div>
+      <div class="txt text" style="left:19px;top:138px">The sprite is stored top-down and /dev/fb0 is too, but read-fb-geometry</div>
+      <div class="txt text" style="left:19px;top:153px">reports a stride in bytes while draw-rgba indexes in pixels. The flip</div>
+      <div class="txt text" style="left:19px;top:168px">cancels that mismatch. It would be clearer to fix the stride.</div>
+
+      <div class="txt dim"  style="left:19px;top:198px">  ▸ lisp-source  draw-alien</div>
+      <div class="txt dim"  style="left:19px;top:213px">  ▸ lisp-senders read-fb-geometry        3 callers</div>
+
+      <div class="txt text" style="left:19px;top:243px">Proposed:</div>
+      <div style="left:19px;top:258px;width:800px;height:75px;background:var(--ground)"></div>
+      <div style="left:19px;top:258px;width:2px;height:75px;background:var(--green)"></div>
+      <div class="txt acc"  style="left:31px;top:261px">(defun draw-alien (canvas x y)</div>
+      <div class="txt text" style="left:31px;top:276px">  (let ((stride (/ (fb-stride) (fb-bytes-per-pixel))))</div>
+      <div class="txt text" style="left:31px;top:291px">    (draw-rgba canvas *alien* x y :stride stride)))</div>
+      <div class="txt dim"  style="left:31px;top:312px">C-c C-c  Accept — compile into the image</div>
+
+      <!-- status line -->
+      <div class="txt acc"  style="left:10px;top:782px">workspace · :interacting :ask</div>
+      <div class="txt dim"  style="left:960px;top:782px">↑ 14.2k  ↓ 3.1k   ·   2 tools   ·   $0.11</div>
+      <div style="left:0px;top:775px;width:1264px;height:1px;background:var(--hair)"></div>
+    </div></div></div>
+    <div class="caption">0.8× of 1280 × 800 · the dot on tab 3 and the alien agree; the meter is the second reason the light is permanent</div>
+  </div>
+</section>
+
+<section>
+  <div class="kicker"><span class="num">6</span><h2>What it costs</h2></div>
+  <table>
+    <tr><th>Piece</th><th>Cost</th><th>Notes</th></tr>
+    <tr><td>the dot</td><td class="mono">2 fill-rects</td><td>in <code>draw-tabs</code>, inside the number’s leading space — no reflow</td></tr>
+    <tr><td>the alien glyph</td><td class="mono">16 × 16, ~32 bytes</td><td><strong>a new asset to author</strong> — the 256 × 150 sprite cannot be used here</td></tr>
+    <tr><td>the prompt mark</td><td class="mono">~6 lines</td><td>one <code>format</code> in <code>editing-repl</code>; works over the network REPL</td></tr>
+    <tr><td>the usage meter</td><td class="mono">1 draw-string</td><td>the status line already exists (<code>*browser-status*</code>)</td></tr>
+    <tr><td>the state itself</td><td class="mono">2 defvars</td><td><code>*agent-initiative*</code> / <code>*agent-authority*</code> — local modes are dynamic bindings</td></tr>
+    <tr><td>new palette entries</td><td class="mono">0</td><td>every colour already carries this meaning</td></tr>
+  </table>
+
+  <p class="foot">
+    Open questions the mock does not settle: whether the alien should also carry
+    <em>working</em> (a blink) or leave that to the tab dots alone; whether
+    <code>:off</code> should hide the glyph entirely rather than grey it (hiding is honest,
+    greying tells you the capability exists and is switched off — probably the latter);
+    and the exact 16 × 16 pixels, which are a starting point, not a decision.
+  </p>
+</section>
+
+<hr class="rule">
+<p class="foot">
+  Companion to <span class="mono">doc/agent.org</span> §8.9. Palette values are read from
+  <span class="mono">poc/shell.lisp</span>; strip metrics from <span class="mono">draw-tabs</span>;
+  SGR codes from <span class="mono">initramfs/ansi.lisp</span>.
+</p>
+
+</div>
