@@ -26,7 +26,8 @@ a color into a pixel's slot and it appears on the next scanout — no API, just 
 memory write.
 
 Two numbers define the layout:
-- *bpp* — bytes per pixel (you: 4).
+- *bpp* — BITS per pixel (you: 32, i.e. 4 bytes). The name is bits, which is why
+  the formula below divides by 8; sysfs calls it =bits_per_pixel= for that reason.
 - *pitch* / *stride* — bytes from the start of one row to the start of the next
   (usually width*bpp, but may be padded for alignment, so it is its OWN number).
 
@@ -225,4 +226,85 @@ Dependencies:
 This is the clean contrast with the font question (section 7): bigger fonts = a
 KERNEL change; drawing an image = USERLAND only.
 
-See: =draw-alien= / =read-fb-geometry= in =initramfs/supervisor.lisp=.
+See: =draw-alien= / =read-fb-geometry= in =initramfs/framebuffer.lisp=
+(=supervisor.lisp= only calls them: from =print-menu=, and from the =a)= key).
+
+* 9. Full-screen: =present-fb= and KD_GRAPHICS
+
+Sections 5–8 were written when the alien was the only thing we painted. The code
+browser ([[file:code-browser.org][code-browser.org]]) is now the *main* consumer of /dev/fb0, and it added two
+things worth recording here.
+
+** 9.1 =present-fb= — =draw-alien= generalised
+
+=lol.fb:present-fb= ([[file:../poc/fb.lisp][poc/fb.lisp]]) blits a whole *canvas* instead of one sprite,
+but the mechanism is unchanged: read the geometry from sysfs, then, per row,
+=file-position= to =(y0+y)*stride + x0*4= and =write-sequence= the row. Its own
+header says so — "the same file-position + write-sequence path draw-alien
+already uses — proven to work on this machine". Same 32bpp bail-out, same
+never-assume-stride rule. =lol.fb:fb-geometry= is =read-fb-geometry= under
+another name, in the POC's package.
+
+The difference from =draw-alien= is what it does NOT do: no read-modify-write.
+The alien needs to read the background back to honour its alpha cutout (§8.4);
+a full-screen canvas *owns* every pixel it covers, so it just overwrites.
+
+*Row at a time, not pixel at a time* — deliberately. Each =write-sequence= is
+one =write(2)=; the row buffer is built in ordinary Lisp memory first. A
+1280x800 repaint is 800 syscalls, not 1,024,000.
+
+** 9.2 The pixel format lines up for free
+
+The canvas stores one =(unsigned-byte 32)= per pixel as =#x00RRGGBB=. On x86
+(little-endian) that word sits in memory as the bytes =B,G,R,00= — which *is*
+BGRX, exactly what efifb scans out (§8.5). No conversion, no swizzle table: the
+in-memory representation the renderer wants and the one the panel wants are the
+same bytes. That is not luck, it is why =#x00RRGGBB= was chosen.
+
+** 9.3 KD_GRAPHICS — telling fbcon to stand down
+
+§8 solved fbcon sharing the framebuffer by *ordering*: repaint the alien after
+the menu, every cycle. A full-screen app cannot win that way — fbcon's cursor
+blink and any stray =printk= would crawl across the picture.
+
+The real fix is =ioctl(KDSETMODE, KD_GRAPHICS)= on =/dev/tty0=, wrapped as
+=lol.fb:with-graphics-console=. It tells the kernel console to *stop rendering*.
+Two properties make it the right tool:
+
+- It stops fbcon *drawing*, not the tty *delivering keys* — so the existing
+  raw-mode keyboard path needed no changes at all.
+- The macro restores =KD_TEXT= in an =unwind-protect=. Non-negotiable: leave the
+  VT in graphics mode and you are staring at a dead console with no way back.
+
+Note this is the console-blanking counterpart of everything in §4: §4 turns
+fbcon *on* so text appears; §9.3 turns it off so it does not vandalise our
+pixels. Both are the same shared-resource problem seen from opposite ends.
+
+Used by =run-browser-fb= ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) around its whole event loop, and by
+=poc/run-guest.lisp=.
+
+** 9.4 TODO (near future): make the blit a real memcpy
+
+=present-fb= currently *unpacks each pixel by hand* ([[file:../poc/fb.lisp][fb.lisp]], the =dotimes (x w)=
+body): it masks and shifts the 32-bit canvas word into four =(unsigned-byte 8)=
+slots of a row buffer, one pixel at a time, before writing the row.
+
+Per §9.2 this copy is *semantically a no-op* — source and destination bytes are
+already identical. It exists only because SBCL will not let you view an
+=(unsigned-byte 32)= array as an =(unsigned-byte 8)= array without going through
+=sb-alien= (or a displaced-array trick). So we pay a per-pixel mask/shift/store
+loop to move bytes to where they already were.
+
+The fix, when full-screen repaints start to feel slow:
+
+1. =mmap= /dev/fb0 via =sb-alien= (§5 already flags mmap as the fast path; we
+   have the FFI — it is what =reboot(2)=, =ioctl=, and =poll= already use).
+2. Keep the canvas as 32-bit words and copy word-wise. Each aligned 64-bit store
+   carries *two pixels* (pixels are densely packed 4-byte cells; nothing is
+   padded to word size).
+3. That also drops the syscall per row to zero — stores go straight to the
+   mapped MMIO region.
+
+Not urgent: the row-at-a-time path is fast enough for the browser today, and it
+is a great deal less code. Filed here so the reason for the ugly inner loop is
+on the record, and so the optimisation is not re-derived from scratch later.
