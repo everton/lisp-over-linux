@@ -6,17 +6,20 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #22). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #23). A C preinit mounts
 /proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
-interactive console menu: (r) Lisp REPL, (w) spawn a worker, (a) draw the
-Land-of-Lisp alien to the framebuffer, (s) power off.
+interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
+list; as of now: (r) Lisp REPL, (b) the pixel environment — tabbed browser +
+Workspace, (p) Lisp workspace, (c) change set, (w) spawn a worker, (a) draw the
+Land-of-Lisp alien, (m) memory usage, (t) toggle the network REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
-(Terminus 16x32, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7); tag #21 = IPv4
-networking + QEMU virtio-net (kernel half only — =eth0= appears, see
-[[file:networking.org][networking.org]] and =show-net-interfaces=); tag #22 = dropped legacy BSD PTYs
-(/dev declutter; Unix98 PTYs stay). See =* The supervisor= / "Two findings".
+(Terminus 16x32 — *since reverted*, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7);
+tag #21 = IPv4 networking + QEMU virtio-net (kernel half; the userland half has
+since landed too — see [[file:networking.org][networking.org]]); tag #22 = dropped legacy BSD PTYs
+(/dev declutter; Unix98 PTYs stay); tag #23 = rebased onto Linux 7.1.3.
+See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
 
@@ -31,7 +34,7 @@ initramfs — the exact thing static linking let us avoid before.
 SBCL here is a *built source tree*, version 2.6.6.74-c36b941e3 (reached via the
 gitignored =./sbcl= symlink -> =sources/sbcl=):
   - runtime:  ./sbcl/src/runtime/sbcl        (2.2 MB, ELF, dynamically linked)
-  - core:     ./sbcl/output/sbcl.core        (36 MB Lisp heap image)
+  - core:     ./sbcl/output/sbcl.core        (~35 MB Lisp heap image)
   - contribs: ./sbcl/contrib/...             (NOT needed for a minimal init)
 
 Runtime shared-library dependencies (from =ldd=) — the ONLY external pieces:
@@ -52,14 +55,16 @@ Crucial runtime behaviour:
 * The approach we followed
 
 1. *Standalone image.* =save-lisp-and-die :executable t= bakes the core INTO a
-   single ~36 MB executable (/sbin/lisp). No separate .core file to manage.
+   single executable (/sbin/lisp) — ~40 MB at tag #23, and it grows with the
+   Lisp world since it *is* the heap (see "What 'a frozen heap' actually means"
+   below). No separate .core file to manage.
 2. *Ship glibc.* Copy the 3 glibc pieces (loader + libc + libm) into the
    initramfs at the exact paths the binary expects.
 3. *C preinit.* A tiny musl-static C =/init= mounts /proc /sys /dev /tmp and then
    =execv=s /sbin/lisp (so /proc exists before SBCL looks for its core; PID 1 is
    replaced in place, staying PID 1).
 4. *Separate initrd.* The kernel embeds NO initramfs (=CONFIG_INITRAMFS_SOURCE=""=);
-   the ~38 MB cpio is a SECOND file the EFISTUB loads via =initrd== on the
+   the ~43 MB cpio is a SECOND file the EFISTUB loads via =initrd== on the
    built-in cmdline. Keeps the kernel small and lets us iterate on the Lisp world
    without ever rebuilding the kernel.
 
@@ -110,25 +115,43 @@ The sections below spell out what build.sh does, for reference.
 
 * The supervisor (didactic, not production)
 
-The Lisp userland is split by concern across a few small modules, loaded in this
-order (the only ordering constraint is the =with-raw-mode= macro: line-editor
-before repl) and all baked into one image by =save-lisp-and-die=. =registry.lisp=
-is loaded FIRST, with a plain =load=, because it defines =load-recording= — the
-loader used for every module below (it loads them identically AND captures each
-one's verbatim source into the image; see [[file:code-browser.org][code-browser.org]] §2):
+The Lisp userland is split by concern across a number of small modules, all baked
+into one image by =save-lisp-and-die=. =registry.lisp= is loaded FIRST, with a
+plain =load=, because it defines =load-recording= — the loader used for every
+module below (it loads them identically AND captures each one's verbatim source
+into the image; see [[file:code-browser.org][code-browser.org]] §2).
 
-  | =registry.lisp=    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
-  | =model.lisp=       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
-  | =present.lisp=     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless) |
-  | (=poc/= toolkit)   | =canvas=, =textview=, =fb=, =shell= — the pixel toolkit baked in too, so the browser can run on =/dev/fb0= |
-  | =fb-browser.lisp=  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option) |
-  | =process.lisp=     | =worker-main=, =spawn-worker=, =power-off=                 |
-  | =framebuffer.lisp= | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
-  | =line-editor.lisp= | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
-  | =repl.lisp=        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
-  | =net.lisp=         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
-  | =dhcp.lisp=        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
-  | =supervisor.lisp=  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
+*The load order is data, not prose*: it is the =LISP_SOURCES= array in
+[[file:../build.sh::LISP_SOURCES][build.sh → LISP_SOURCES]], and that array is the truth. Reproduced here in order:
+
+  | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
+  | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
+  | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless) |
+  | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
+  | [[file:../poc/canvas.lisp][=poc/canvas.lisp=]]  | the pixel buffer + font + =draw-string= ([[file:fonts.org][fonts.org]])       |
+  | [[file:../poc/textview.lisp][=poc/textview.lisp=]] | the editable text view (uses canvas)                    |
+  | [[file:../poc/fb.lisp][=poc/fb.lisp=]]      | the =/dev/fb0= presenter + =KD_GRAPHICS= ([[file:framebuffer.org][framebuffer.org]] §9) |
+  | [[file:../initramfs/ansi.lisp][=ansi.lisp=]]        | 16-colour SGR helpers (used by line-editor + repl)        |
+  | [[file:../initramfs/line-editor.lisp][=line-editor.lisp=]] | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
+  | [[file:../poc/shell.lisp][=poc/shell.lisp=]]   | the drill-down accordion shell (present + canvas + textview + line-editor) |
+  | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
+  | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
+  | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
+  | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option) |
+  | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
+  | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
+  | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
+  | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
+
+Ordering constraints, so you know which moves are safe: =line-editor= must precede
+=repl= and =shell= (both use its =with-raw-mode= macro at load time); =canvas=
+precedes =textview=/=fb=/=shell=; =model= precedes =present=; =net= precedes
+=dhcp=; and =supervisor= is last because it is the entry point. Everything else
+is grouped for readability rather than forced.
+
+Note that the =poc/= toolkit is not a copy — =build.sh= loads those files
+*straight out of =poc/=*, the same sources =sbcl --script poc/run-host.lisp= runs
+on the dev host. One implementation, two backends ([[file:../poc/README.org][poc/README.org]]).
 
 The network REPL starts *ON at boot* and can be toggled off from the menu (=t=).
 It serves the full line editor over the socket; a host-side raw-forwarding client
@@ -144,10 +167,17 @@ One executable, two roles chosen by argv: no args => interactive SUPERVISOR menu
 dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
 =worker-main=, =spawn-worker=.
 
-The supervisor is an interactive menu read from the console:
+The supervisor is an interactive menu read from the console ([[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp →
+print-menu]] prints it, and the =cond= right below it dispatches):
   r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
+  b) the environment              -> the tabbed pixel browser + Workspace on /dev/fb0
+                                     (=run-browser-fb=, [[file:code-browser.org][code-browser.org]])
+  p) Lisp workspace               -> a scratch buffer: Do it / Print it / Inspect it
+  c) change set                   -> definitions edited live this session
   w) spawn a worker process       -> fork+exec another /sbin/lisp as a worker
   a) draw the Land-of-Lisp alien  -> blit a sprite to /dev/fb0 (see framebuffer.org §8)
+  m) show memory usage            -> =report-memory= ([[file:../initramfs/meminfo.lisp][meminfo.lisp]])
+  t) network REPL on TCP :4005    -> toggle the listener ([[file:networking.org][networking.org]] §6a)
   s) shut down (power off)        -> sync + reboot(2)
 
 How each piece works:
@@ -217,27 +247,72 @@ Key bits learned while writing it:
     framebuffer: [[file:background/background.org][background.org]] §5, with the handoff itself in §3.)
 
 ** Building the SBCL image (what build.sh stage 2 runs)
+
+=build.sh= does not keep this script on disk — it *generates* one into a temp file
+(=mktemp=, removed by a =trap=), emitting one =(load-recording …)= line per entry
+of =LISP_SOURCES=, then feeds it to the SBCL in =./sbcl=. The shape of what it
+generates:
+
 #+begin_src sh :results output
-  cat > /tmp/build-sup.lisp <<'LISP'
+  cat > "$BUILD_LISP" <<'LISP'
   (require :sb-bsd-sockets)                     ; baked into the heap (needs SBCL_HOME)
-  (require :sb-introspect)                       ; who-calls &c, also frozen in
+  (require :sb-introspect)                      ; who-calls &c, also frozen in
   (load ".../initramfs/registry.lisp")          ; defines load-recording (plain load)
-  (load-recording ".../initramfs/process.lisp") ; the modules: loaded AND source-captured
-  (load-recording ".../initramfs/framebuffer.lisp")
-  (load-recording ".../initramfs/line-editor.lisp")
-  (load-recording ".../initramfs/repl.lisp")
-  (load-recording ".../initramfs/net.lisp")
-  (load-recording ".../initramfs/dhcp.lisp")
+  ;; …then one (load-recording "…") per module, in LISP_SOURCES order — see the
+  ;; table above; the list is generated, so it never drifts from build.sh.
+  (load-recording ".../initramfs/model.lisp")
+  ;;  …
   (load-recording ".../initramfs/supervisor.lisp")
-  (sb-ext:save-lisp-and-die "/home/everton/lisp-over-linux/initramfs/lisp-init"
+  (sb-ext:save-lisp-and-die ".../initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP
   cd ./sbcl
   SBCL_HOME=$PWD/obj/sbcl-home \
   ./src/runtime/sbcl --core output/sbcl.core --no-userinit --no-sysinit \
-       --non-interactive --load /tmp/build-sup.lisp
+       --non-interactive --load "$BUILD_LISP"
 #+end_src
 (=--no-userinit --no-sysinit= so a personal ~/.sbclrc/quicklisp can't interfere.)
+
+Both =require= calls matter and both must come *before* the modules: =net.lisp=
+names the =sb-bsd-sockets= package at load time, and =registry.lisp='s =senders=
+wrapper names =sb-introspect='s. =SBCL_HOME= is what lets =require= find the
+contrib fasls in the built tree ([[file:../sbcl/obj/sbcl-home][=sbcl/obj/sbcl-home=]]); after
+=save-lisp-and-die= they are frozen into the heap and neither the fasls nor
+=SBCL_HOME= exist at runtime.
+
+** What "a frozen heap" actually means
+
+The phrase turns up all over these docs as if it were a known term. It is worth
+one paragraph, because it is the single fact that most shapes how this project is
+built.
+
+A running Lisp is a *heap*: one graph of live objects — every package, symbol,
+function object, class, and global — reachable from a set of roots.
+=save-lisp-and-die= does the obvious brutal thing: it runs a full GC, then writes
+*that entire graph, verbatim*, out to a file, and exits. Starting the resulting
+image is not "loading a program"; it is *mapping the graph back into memory and
+resuming*. There is no initialisation phase, no =main=, no re-loading of
+anything — the world simply picks up where it was frozen, with =:toplevel= as the
+one function it calls on the way in.
+
+Three consequences that explain many decisions here:
+
+- *Anything you want must be present before you save.* =require=, Quicklisp, and
+  =load= all need machinery (and files) that will not exist in the initramfs, so
+  every dependency is baked in at build time — hence both =require= lines above,
+  hence [[file:networking.org][networking.org]]'s insistence on pulling =sb-bsd-sockets= in early.
+- *But the image is not read-only.* This is the part that surprises people:
+  "frozen" describes the *file*, not the *running system*. =eval= and =compile=
+  are still there, because they were part of the graph too. That is precisely why
+  the code browser can compile an edited definition straight into the live image
+  ([[file:code-browser.org][code-browser.org]]) — it needs no fasl, no compiler on disk, no source tree.
+- *It is why the binary is ~40 MB.* You are shipping a heap, not a program.
+  Equally, it is why startup is effectively instant: nothing is being loaded.
+
+The rest of that graph is also why [[file:../initramfs/registry.lisp][=registry.lisp=]]'s trick works at all —
+=load-recording= stuffs each definition's *source text* into the heap on the way
+past, so the frozen world carries its own source and can show it back to you with
+no files present.
 
 * The C preinit
 
@@ -286,14 +361,70 @@ root, which is why we use it instead of =find | cpio=:
   nod  /dev/null    0666 0 0 c 1 3
   nod  /dev/tty     0666 0 0 c 5 0
   # --- the C preinit is /init ---
-  file /init      /home/everton/lisp-over-linux/initramfs/preinit   0755 0 0
+  file /init      initramfs/preinit   0755 0 0
   # --- the SBCL standalone image ---
-  file /sbin/lisp /home/everton/lisp-over-linux/initramfs/lisp-init 0755 0 0
+  file /sbin/lisp initramfs/lisp-init 0755 0 0
   # --- glibc runtime the SBCL binary needs (paths matter) ---
   file /lib64/ld-linux-x86-64.so.2         /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 0755 0 0
   file /usr/lib/x86_64-linux-gnu/libc.so.6 /usr/lib/x86_64-linux-gnu/libc.so.6            0755 0 0
   file /usr/lib/x86_64-linux-gnu/libm.so.6 /usr/lib/x86_64-linux-gnu/libm.so.6            0755 0 0
 #+end_src
+
+(The =file= source paths are *relative to the project root* — =build.sh= runs
+=gen_init_cpio= from there. Never write an absolute =$HOME= path here; it would
+make the repo unbuildable for anyone else.)
+
+** Reading those =nod= lines — what a device node is
+
+The three =nod= lines are the least self-explanatory thing in the file, so:
+
+#+begin_src text
+  nod  /dev/console 0600 0 0 c 5 1
+       └─ path      └─ mode
+                         └─ uid, gid
+                                └─ type: 'c' = character, 'b' = block
+                                    └─ major   └─ minor
+#+end_src
+
+A *device node* is a file that is not storage — it is a *name for a driver*.
+Opening it connects you to kernel code rather than to bytes on a disk. The two
+numbers are how the kernel decides *which* code:
+
+- the *major* number selects the *driver* — 5 is what =devices.txt= calls
+  "Alternate TTY devices", 1 is the "Memory devices" driver that owns
+  =/dev/null=, =/dev/zero= and friends;
+- the *minor* number selects *which thing that driver manages* — major 5 minor 1
+  is the system console; minor 0 is =/dev/tty=, "the terminal my process happens
+  to be attached to"; and major 1 minor 3 is =/dev/null=.
+
+So =c 5 1= reads as *"a character device, handled by driver 5, unit 1"* —
+i.e. =/dev/console=. The numbers are not ours to invent: they are fixed by Linux
+and listed in [[file:../linux/Documentation/admin-guide/devices.txt][=Documentation/admin-guide/devices.txt=]]. Get one wrong and you do
+not get an error, you get a file that talks to the wrong driver.
+
+*Character vs block* is the other letter. A character device is a *stream* — you
+read and write bytes in order, as with a terminal. A block device is *randomly
+addressable* in fixed-size blocks and sits behind the kernel's buffer cache, as a
+disk does. =/dev/fb0= is a character device even though it behaves like an array
+of memory — see [[file:framebuffer.org][framebuffer.org]] §5½ for why that is the right classification.
+
+** Why both static nodes *and* devtmpfs
+
+It looks redundant: we hand-write three nodes here, and then [[file:../initramfs/preinit.c][=preinit.c=]] mounts
+=devtmpfs= on =/dev=, which populates it with *every* device the kernel knows —
+including a =console=, a =null= and a =tty=. Why do both?
+
+*Because of ordering.* The static nodes exist in the cpio the instant the kernel
+unpacks it, which is *before any of our code runs*. The kernel opens =/dev/console=
+as PID 1's stdin/stdout/stderr at exec time; =preinit= then wants =perror= to go
+somewhere real if a mount fails. Both of those happen *before* the =devtmpfs=
+mount that would have created those nodes. Without the static three, the earliest
+failures would be invisible — the classic silent boot.
+
+After the mount, devtmpfs's own nodes shadow ours and everything else in =/dev=
+(=/dev/fb0=, =/dev/input/event*=, =/dev/tty0=) appears without us listing a
+thing. The static set is a *bootstrap*, deliberately minimal: exactly the three
+nodes needed to survive the window before =/dev= is real.
 
 * Separate-initrd kernel config (one-time)
 
@@ -318,7 +449,7 @@ The cpio is built by hand (build.sh stage 3):
 
 ESP/USB layout — TWO files (the point of the separate initrd):
   \EFI\BOOT\BOOTX64.EFI   small kernel (no embedded initramfs)
-  \initramfs.cpio         the 38 MB SBCL world (loaded by EFISTUB at boot)
+  \initramfs.cpio         the ~43 MB SBCL world (loaded by EFISTUB at boot)
 
 * Boot it / put it on the USB
 
@@ -448,6 +579,8 @@ Cost: ~1 MB of files + a terminfo entry + a devpts mount. NO kernel rebuild
     of concerns: PID 1 stays a dumb, unkillable supervisor; the REPL/debugger lives
     where a crash is survivable. Relates to the Swank/SLynk idea above, which also
     moves the rich REPL off the PID-1 console.
+* Toolchain currency (both external trees)
+
 Both halves of the toolchain are *current and verified*. The image is built
 against SBCL =2.6.6= (the latest stable line, June 2026) on the Linux =7.1.3=
 kernel (latest stable) — each baked in at build time by whatever the gitignored

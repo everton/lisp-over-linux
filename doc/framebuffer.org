@@ -114,6 +114,22 @@ Mode parameters are not guesswork:
 - color channel offsets (which byte is R/G/B): =ioctl(FBIOGET_VSCREENINFO)=
   (sysfs does not expose them; efifb is commonly 32bpp BGRX = bytes [B,G,R,pad]).
 
+*What sysfs is*, since we read it as if the model were obvious. =/sys= is a
+*virtual filesystem* — no disk behind it — that exposes the kernel's internal
+*device model* as a directory tree. Every device the kernel knows about gets a
+directory; every tunable or readable property of that device becomes a *file*
+inside it, holding a short line of ASCII. Reading such a file calls a kernel
+function that formats the answer on the spot (the same "synthesised, nothing
+holds these bytes" idea as =/proc/meminfo= — and the exact opposite of
+=/dev/fb0=, per §5½).
+
+That is why =read-fb-geometry= is so plain: to ask the kernel how big the screen
+is, we =open= a file and parse the number in it. No library, no ioctl, no
+struct layout to get right. =/sys/class/graphics/= is the "graphics" *class* —
+the kernel groups devices by what they *are* as well as by where they are plugged
+in — and =fb0= is our one framebuffer in it. The ioctl above exists only for the
+handful of fields (pixel channel offsets) sysfs never got around to exporting.
+
 SBCL can do all of this — plain binary file I/O on /dev/fb0, or =sb-alien= mmap,
 the same FFI it already uses for =reboot(2)=. So the Lisp machine is not limited
 to text; it can paint the screen. (No extra kernel option needed — FB is already
@@ -400,6 +416,30 @@ The canvas stores one =(unsigned-byte 32)= per pixel as =#x00RRGGBB=. On x86
 BGRX, exactly what efifb scans out (§8.5). No conversion, no swizzle table: the
 in-memory representation the renderer wants and the one the panel wants are the
 same bytes. That is not luck, it is why =#x00RRGGBB= was chosen.
+
+*The little-endian step, spelled out*, because the whole trick hinges on it and
+we have so far only asserted it. Endianness is the answer to: when a multi-byte
+number is stored, which end goes at the lowest address? *Little-endian* — x86,
+ARM in practice — puts the *least significant byte first*. So the 32-bit value
+=#x00RRGGBB=, whose bytes from most to least significant are =00, RR, GG, BB=,
+lands in memory *reversed*:
+
+#+begin_src
+  the value:            #x00RRGGBB
+  significance:          00 RR GG BB      (most significant -> least)
+  in memory (x86):       BB GG RR 00      (lowest address -> highest)
+  what efifb wants:      B  G  R  X       = BGRX
+                         ^^^^^^^^^^^ identical
+#+end_src
+
+Two things follow. First, the pad byte lands *last* in memory precisely because
+it is the *top* byte of the value — which is why the constant is written
+=#x00RRGGBB= and not =#xRRGGBB00=. Second, this is a *portability assumption*,
+not a law: on a big-endian machine the same word would sit as =00,RR,GG,BB= and
+every colour would come out wrong. We are an x86-only project, so we take it —
+but it is an assumption worth knowing you have made. ([[file:../poc/x11.lisp][=poc/x11.lisp=]] is where
+byte order stops being free: the X11 protocol carries an explicit byte-order flag,
+and it declares =l= for little-endian.)
 
 ** 9.3 KD_GRAPHICS — telling fbcon to stand down
 

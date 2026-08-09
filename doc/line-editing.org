@@ -42,6 +42,49 @@ already present. No new native library, no new file.
 direct =sb-alien tcsetattr= binding is the cleaner path here — no contrib fasl.)
 Always restore the saved termios on exit with =unwind-protect=.
 
+* Aside: what an =ioctl= actually is
+
+=tcsetattr= is not really its own syscall — glibc implements it as an *ioctl*.
+This project leans on ioctls repeatedly and never stops to say what one is, so:
+
+=read= and =write= move a *stream of bytes*. Plenty of what you need from a device
+is not a stream at all — "set the baud rate", "give this interface an IP", "stop
+rendering the console". Rather than invent a syscall per question, Unix has one
+catch-all door:
+
+#+begin_src c
+  int ioctl(int fd, unsigned long request, void *argp);
+#+end_src
+
+- =fd= — *which* device (an open file descriptor, so the usual permission rules
+  already apply);
+- =request= — a magic number *naming the operation*;
+- =argp= — a pointer to a struct that carries arguments in, results out, or both.
+
+The request number is not arbitrary: it packs a direction (read/write/both), the
+size of the struct, a "magic" letter claiming a namespace for the subsystem, and
+an ordinal within it — that is what the kernel's =_IOR= / =_IOW= / =_IOWR= macros
+build. Every device family then defines its own set, which is why these constants
+look unrelated and why you must get each one exactly right:
+
+| constant                 | value      | what it does                    | where we use it |
+|--------------------------+------------+---------------------------------+-----------------|
+| =TCSETS= (via =tcsetattr=)| =0x5402=  | set terminal attributes         | raw mode, here  |
+| =SIOCSIFADDR=            | =0x8916=   | set an interface's address      | [[file:../initramfs/net.lisp::defconstant +siocsifaddr+][net.lisp]]        |
+| =SIOCSIFFLAGS=           | =0x8914=   | bring an interface up/down      | [[file:../initramfs/net.lisp::defconstant +siocsifflags+][net.lisp]]        |
+| =KDSETMODE=              | =0x4B3A=   | console text ↔ graphics mode    | [[file:../poc/fb.lisp::defconstant +kdsetmode+][fb.lisp]]         |
+| =FBIOGET_VSCREENINFO=    | =0x4600=   | read framebuffer pixel format   | [[file:framebuffer.org][framebuffer.org]] §5 |
+
+The important consequence for us: an ioctl is *the same three-argument FFI call
+every time*. Bind it once with =sb-alien= and every one of those knobs is
+reachable — which is exactly why this project needs no =stty=, no =ip=, no
+=fbset=, no =setfont=. There is no userland to shell out to, and none is
+required. The cost is that the kernel does no type-checking on your behalf: pass
+a wrongly-laid-out struct and you get =EINVAL= at best, silence at worst.
+
+See also [[file:networking.org][networking.org]] §2 (the interface ioctls in anger) and [[file:framebuffer.org][framebuffer.org]]
+§9.3 (=KDSETMODE=, with the =unwind-protect= that keeps you from a dead console).
+
 * What makes it render: fbcon speaks ANSI/VT
 
 The Linux framebuffer console is itself a *terminal emulator*: it interprets a
