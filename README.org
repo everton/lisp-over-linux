@@ -16,6 +16,34 @@ the latest./
 
 This is a learning project: prefer reading the =.org= docs below over guessing.
 
+* The environment: a code browser the image draws for itself
+
+Past the REPL, the image grows a *graphical environment* — a pixel-native,
+Smalltalk/Pharo-style *code browser*, drawn straight onto =/dev/fb0= by the same
+Lisp it is showing you. There is no X server, no toolkit, no GPU driver: every
+glyph, rule and highlight below was rasterised in Common Lisp and pushed to the
+panel as bytes. What you are looking at is the running system displaying — and
+editing — its own source.
+
+[[./media/screenshots/browser-2026-08-09.png]]
+
+/The code browser running as PID 1 on the bare framebuffer (=b= from the
+supervisor menu): the =COMMON-LISP-USER= package on the left, kind-coloured and
+319 definitions deep, with the selected function's syntax-highlighted source
+beside it./
+
+A few of the affordances, without turning this into a manual: *tabs* across the
+top, each holding an independent navigation *trail*; a *drill-down accordion* —
+press ↵ on anything and the next pane opens on it, =Super-←= steps back; =Super-Space=
+summons the *Spotter* to find any definition, package or object; a source pane is
+*live* — edit it and =C-c C-c= compiles the definition back into the running image;
+and an error opens a real *debugger* with restarts, an =sb-di= backtrace and frame
+locals.
+
+The full design and the phase-by-phase state live in [[file:doc/code-browser.org][code-browser.org]]; the
+host-runnable prototype (same toolkit, in a window on your desktop, from a plain
+=sbcl=) is [[file:poc/README.org][poc/README.org]].
+
 * What is in this repo (and what is NOT)
 
 Tracked here: the *sources and docs* — the C preinit, the Lisp supervisor, the
@@ -114,7 +142,9 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:doc/micro-distro.org][micro-distro.org]]  | The base EFISTUB boot chain, USB creation, real-hardware boot. |
 | [[file:doc/sbcl-init.org][sbcl-init.org]]     | SBCL as PID 1: the preinit shim, the supervisor, the build. |
 | [[file:doc/kernel-config.org][kernel-config.org]] | Every kernel option we enable and why (single source of truth). |
-| [[file:doc/framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. |
+| [[file:doc/framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. Also: why there is no GPU driver here. |
+| [[file:doc/code-browser.org][code-browser.org]]  | *The active major effort.* The pixel-native, Smalltalk-style code browser: the =present= drill-down protocol, the accordion shell, trails/tabs/Spotter, live editing, the debugger. Design + phase tracker. |
+| [[file:doc/fonts.org][fonts.org]]         | How a character becomes pixels in our own renderer (bitmap glyph → =draw-string=), and how to change the font or its size. |
 | [[file:doc/background/background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
 | [[file:doc/background/learn-networking.org][learn-networking.org]] | From-scratch networking tutorial (progress tracker + code links). |
 | [[file:doc/line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |
@@ -129,6 +159,10 @@ Nothing in the project needs editing — only the symlink moves.
   deps.sh                  fetch/link/update the ./linux and ./sbcl trees
   kernel/                  pinned .config snapshots (config-<version>)
   initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
+  poc/                     the code browser's pixel toolkit — canvas, text view, X11 client,
+                           the accordion shell, the Cozette font blob. Host-runnable from a
+                           plain sbcl, AND baked into the image (build.sh loads it in place)
+  media/                   screenshots (archived per date) + the HTML design mock-ups
   host-client/             HOST-side tools (NOT in the image): the network-REPL client
   iso_root/                build output: BOOTX64.EFI + initramfs.cpio (gitignored)
   README.org               this file (the only .org in the root)
@@ -156,13 +190,26 @@ Third-party components you obtain/build separately keep their own licenses:
 | Linux kernel | GPLv2 | fetched by =deps.sh= from kernel.org; never redistributed here |
 | musl libc | MIT | statically linked into =preinit= (you build it) |
 | SBCL | public domain + BSD-style | the runtime your image embeds (you build it) |
+| GNU C Library (glibc) | *LGPL-2.1-or-later* | copied *verbatim into the initramfs* — the SBCL binary is dynamically linked, so =ld-linux-x86-64.so.2=, =libc.so.6= and =libm.so.6= are taken from your host and shipped (see =initramfs/initramfs.sbcl.list=) |
+| Cozette (font) | MIT | *committed here* as =poc/cozette.lolf= (our 6×15 blob, regenerated from the upstream BDF) with the upstream license beside it in =poc/cozette-LICENSE.txt=; it also ships inside the image |
 
-*Important if you ever distribute a bootable image/USB:* that image contains the
-compiled kernel (=bzImage=), which IS GPLv2. To comply you must make the
-*corresponding kernel source* available (it is unmodified upstream
-linux-7.1.3 from kernel.org) together with the exact =.config= used — which we
-already keep under =kernel/=. Your MIT userland, merely aggregated alongside the
-kernel on the medium, is unaffected.
+*Important if you ever distribute a bootable image/USB.* Two obligations come
+along for the ride, and neither affects your own MIT code:
+
+- *The kernel (GPLv2).* The image contains the compiled =bzImage=. To comply you
+  must make the *corresponding kernel source* available (it is unmodified upstream
+  linux-7.1.3 from kernel.org) together with the exact =.config= used — which we
+  already keep under =kernel/=.
+- *glibc (LGPL-2.1+).* The image also carries the glibc loader and libc/libm as
+  unmodified binaries. The LGPL asks that you say which version you shipped, pass
+  its license text along, and make its source obtainable — and that the user be
+  able to *relink* against a modified glibc, which here is satisfied by the fact
+  that SBCL is dynamically linked and the =.so= files are ordinary replaceable
+  files in the initramfs.
+
+Everything else is aggregation: your MIT userland merely sits alongside these on
+the medium and is unaffected. (This is a plain-English summary of what the
+licenses cover, not legal advice — read them if you intend to ship.)
 
 ** Artwork
 

@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
 #
-# refresh-screenshot.sh — regenerate media/screenshot.png (the README shot).
+# refresh-screenshot.sh — regenerate the README screenshots.
 #
-# The README shows a *driven* REPL session on the framebuffer console: the
-# supervisor menu, then 'r' into the Lisp REPL, then a few colored forms, with
-# the Land-of-Lisp alien blitted into the top-right corner. This script boots
-# the built image HEADLESS in QEMU and reproduces that session automatically,
-# then screenshots it — no human at the keyboard.
+# TWO demos, same machinery, selected by --mode:
 #
-#   ./refresh-screenshot.sh              refresh userland, boot, drive, screenshot
-#   ./refresh-screenshot.sh --no-build   use the CURRENT iso_root as-is (no rebuild)
+#   repl    (default)  the framebuffer CONSOLE: the supervisor menu, then 'r'
+#                      into the Lisp REPL, a few colored forms, and the
+#                      Land-of-Lisp alien in the top-right corner.
+#                      -> media/screenshots/screenshot-<date>.png
+#   browser            the pixel ENVIRONMENT: 'b' from the menu launches the
+#                      code browser full-screen on /dev/fb0 under KD_GRAPHICS
+#                      (fbcon stops drawing; every pixel is ours).
+#                      -> media/screenshots/browser-<date>.png
+#
+# Both boot the built image HEADLESS in QEMU and drive it with no human at the
+# keyboard.
+#
+#   ./refresh-screenshot.sh                    the REPL shot (default)
+#   ./refresh-screenshot.sh --mode browser     the code-browser shot
+#   ./refresh-screenshot.sh --no-build         use the CURRENT iso_root as-is
 #
 # HOW IT WORKS (two channels into one QEMU boot):
 #   * The framebuffer console (what the screendump captures) is driven purely by
@@ -25,9 +34,11 @@
 # By default it DOES refresh the userland (fast ./build.sh) so the shot matches
 # the current Lisp sources; pass --no-build to skip that.
 #
-# To change WHAT the demo types, edit the FORMS list in the Python driver below.
+# To change WHAT the repl demo types, edit the FORMS list in the Python driver
+# below; for the browser demo, edit BROWSER_KEYS.
 #
-# See doc/sbcl-init.org / doc/framebuffer.org for the surrounding machinery.
+# See doc/sbcl-init.org / doc/framebuffer.org (§9 for KD_GRAPHICS) and
+# doc/code-browser.org for the surrounding machinery.
 
 set -euo pipefail
 
@@ -37,7 +48,6 @@ ISO_ROOT="$MICRO/iso_root"
 # media/screenshot.png (what the README links) is a symlink to the latest — so
 # the project's visual evolution is browsable over time. See the memory note.
 SHOTS="$MICRO/media/screenshots"
-LINK="$MICRO/media/screenshot.png"
 
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
@@ -46,13 +56,23 @@ say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 
 # ---- args ------------------------------------------------------------------
 DO_BUILD=1
-for arg in "$@"; do
-  case "$arg" in
+MODE=repl
+while [ $# -gt 0 ]; do
+  case "$1" in
     --no-build) DO_BUILD=0 ;;
-    -h|--help)  sed -n '3,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) echo "unknown option: $arg" >&2; exit 1 ;;
+    --mode)     shift; MODE="${1:-}" ;;
+    --mode=*)   MODE="${1#*=}" ;;
+    --browser)  MODE=browser ;;          # shorthand
+    -h|--help)  sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
+  shift
 done
+case "$MODE" in
+  repl)    BASENAME=screenshot; LINK="$MICRO/media/screenshot.png" ;;
+  browser) BASENAME=browser;    LINK="$MICRO/media/browser.png" ;;
+  *) echo "unknown --mode: $MODE (expected 'repl' or 'browser')" >&2; exit 1 ;;
+esac
 
 # ---- preflight -------------------------------------------------------------
 command -v qemu-system-x86_64 >/dev/null || { echo "ERROR: qemu-system-x86_64 not found" >&2; exit 1; }
@@ -91,12 +111,13 @@ qemu-system-x86_64 -machine q35 -m 2048 \
 QPID=$!
 
 # ---- 3. drive the console REPL over QMP send-key, then screendump -----------
-say "Driving the REPL over QMP send-key"
-QMP_SOCK="$QMP" PPM_OUT="$PPM" python3 - <<'PY'
+say "Driving the guest over QMP send-key (mode: $MODE)"
+QMP_SOCK="$QMP" PPM_OUT="$PPM" MODE="$MODE" python3 - <<'PY'
 import socket, json, time, sys, os
 
-QMP = os.environ["QMP_SOCK"]
-PPM = os.environ["PPM_OUT"]
+QMP  = os.environ["QMP_SOCK"]
+PPM  = os.environ["PPM_OUT"]
+MODE = os.environ.get("MODE", "repl")
 
 # The literal forms typed into the console REPL, in order. EDIT HERE to change
 # what the screenshot demonstrates. Kept stable across font versions so the shots
@@ -114,6 +135,17 @@ FORMS = [
     "      collect (format nil \"~r\" n))",
     "(draw-alien :announce t)",
 ]
+
+# The browser demo, as QMP QKeyCodes sent one at a time after 'b' has launched
+# the environment. EMPTY on purpose: the DEFAULT view is already the best
+# picture. Rooted at CL-USER, the browser opens the package list (kind-coloured
+# rows, 319 definitions) in the left pane with the SELECTED definition's
+# syntax-highlighted source beside it — tabs on top, commands in the status bar.
+# That fills the screen; drilling with ["down","down","ret"] lands on whatever
+# short function happens to be second in the list and leaves most of the canvas
+# empty. EDIT HERE to change the shot; each key repaints the whole canvas.
+# 'esc' is deliberately NOT sent; we want to end INSIDE the browser.
+BROWSER_KEYS = []
 
 # --- char -> QMP QKeyCode(s). Shifted chars send a [shift, key] chord. -------
 PLAIN = {' ': 'spc', '-': 'minus', "'": 'apostrophe', ';': 'semicolon'}
@@ -221,16 +253,30 @@ print("guest REPL up, kernel console quieted", flush=True)
 time.sleep(6)
 
 q = Qmp(QMP)
-print("connected to QMP; driving the console REPL...", flush=True)
+print("connected to QMP; driving mode=%s..." % MODE, flush=True)
 
-# menu: choose 'r' to enter the REPL (cooked read-line -> needs Enter)
-q.key('r'); time.sleep(0.2); q.ret(); time.sleep(1.5)
+if MODE == "repl":
+    # menu: choose 'r' to enter the REPL (cooked read-line -> needs Enter)
+    q.key('r'); time.sleep(0.2); q.ret(); time.sleep(1.5)
 
-# each Enter triggers eval + a colored result line
-for form in FORMS:
-    type_str(q, form); time.sleep(0.3); q.ret(); time.sleep(1.5)
+    # each Enter triggers eval + a colored result line
+    for form in FORMS:
+        type_str(q, form); time.sleep(0.3); q.ret(); time.sleep(1.5)
 
-time.sleep(1.0)                            # let the last redraw + alien settle
+    time.sleep(1.0)                        # let the last redraw + alien settle
+else:
+    # menu: 'b' launches run-browser-fb. The menu read is still COOKED, so it
+    # needs the Enter; from then on the browser owns the keyboard in raw mode
+    # and single keycodes are what it wants.
+    q.key('b'); time.sleep(0.2); q.ret()
+    # Give it time to load the font, build the canvas, open evdev, and paint the
+    # first full-screen frame. This is much slower than a REPL prompt: it is a
+    # 1280x800 canvas rendered pixel by pixel in Lisp.
+    time.sleep(8.0)
+    for k in BROWSER_KEYS:
+        q.cmd("send-key", keys=[{"type": "qcode", "data": k}])
+        time.sleep(1.2)                    # each keypress repaints the whole canvas
+    time.sleep(2.0)                        # let the final frame settle
 print("screendump:", q.cmd("screendump", filename=PPM), flush=True)
 time.sleep(1.0)
 print("done", flush=True)
@@ -268,19 +314,23 @@ PY
 # ---- 5. install: archive under today's date, repoint the symlink -----------
 mkdir -p "$SHOTS"
 STAMP="$(date +%F)"                       # e.g. 2026-07-07 (ISO date)
-DATED="$SHOTS/screenshot-$STAMP.png"
+DATED="$SHOTS/$BASENAME-$STAMP.png"
 cp "$PNG" "$DATED"
-ln -sfn "screenshots/screenshot-$STAMP.png" "$LINK"   # relative -> portable
+ln -sfn "screenshots/$BASENAME-$STAMP.png" "$LINK"   # relative -> portable
 
 # Point the README's inline image at the real dated PNG. GitHub does NOT follow
 # repo symlinks when rendering images, so linking media/screenshot.png (a symlink)
 # would break on github.com — we reference the concrete file and keep it current.
+# Each mode owns its own link line, matched on the basename it writes.
 README="$MICRO/README.org"
 if [ -f "$README" ]; then
-  sed -i -E "s#\[\[\./media/screenshot[^]]*\.png\]\]#[[./media/screenshots/screenshot-$STAMP.png]]#" "$README"
+  sed -i -E "s#\[\[\./media/screenshots/$BASENAME-[^]]*\.png\]\]#[[./media/screenshots/$BASENAME-$STAMP.png]]#" "$README"
+  # first run of a mode: the README may still point at the pre-archive path
+  [ "$MODE" = repl ] && \
+    sed -i -E "s#\[\[\./media/screenshot\.png\]\]#[[./media/screenshots/screenshot-$STAMP.png]]#" "$README"
 fi
 
 say "Wrote $DATED ($(stat -c%s "$DATED") bytes)"
-echo "  media/screenshot.png -> $(readlink "$LINK")   (local convenience symlink)"
-echo "  README.org image link -> media/screenshots/screenshot-$STAMP.png"
-echo "  review it, then: git add media/screenshots media/screenshot.png README.org && git commit"
+echo "  $(basename "$LINK") -> $(readlink "$LINK")   (local convenience symlink)"
+echo "  README.org image link -> media/screenshots/$BASENAME-$STAMP.png"
+echo "  review it, then: git add media/screenshots media/*.png README.org && git commit"
