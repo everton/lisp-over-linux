@@ -18,6 +18,8 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/fonts.org` | Orientation guide: how our pure-Lisp renderer turns a character into pixels (PSF bitmap → `draw-string` → screen), and how to change the font/size. Companion to `framebuffer.org`. |
 | `doc/line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI). |
 | `doc/networking.org` | Networking: kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets`, static IP/DHCP, the TCP REPL. Wired path working; DNS/Wi-Fi ahead. |
+| `doc/code-browser.org` | **The active major effort.** Full design + phase tracker for the Smalltalk/Pharo-style code browser: the `present` drill-down protocol, the accordion shell, trails/tabs/Spotter, the debugger. The longest doc here and the best maintained — treat its phase list as truth. |
+| `doc/fonts.org` | How our pure-Lisp renderer turns a character into pixels (PSF/`.lolf` bitmap → `draw-string`), and how to change the font or its size. |
 | `doc/agent.org` | **PLAN.** An LLM client written in Lisp and living in the image: HTTP/JSON/SSE over the existing sockets, `registry.lisp`/`model.lisp`/`present.lisp` as its tool surface, doorways from the REPL / a browser tab / the debugger, and TLS 1.3 from scratch as a late sub-project. Also records why we are *not* running the `claude` CLI in the guest. |
 | `doc/background/background.org` | General firmware/CPU/hardware theory (UEFI handoff, x86 modes, USB-HID, multicore). "Not project rationale." |
 | `doc/background/learn-networking.org` | From-scratch networking tutorial with a progress tracker + deep links into the code. |
@@ -28,6 +30,16 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `initramfs/registry.lisp` | The definition registry: `load-recording` captures every module's source INTO the image, so the running system can show its own code (`source-of`, `show-source`, `senders`). Phase 0 of the code browser — see `doc/code-browser.org`. |
 | `initramfs/model.lisp` | The code browser's MODEL layer (Phase 1): CLOS introspection via `sb-mop` — class DAG (`show-class`), GF/method graph (`show-gf`, `applicable-methods`), `categorize`, object inspector (`show-inspect`). Headless/REPL-driven. |
 | `initramfs/present.lisp` | The drill-down `present`/`commands-for` protocol + affordance model (code browser §4½). `(present subject)`→a view of drillable items; `(commands-for subject)`→declarative commands (menu/halo/palette/key). Headless; `(show-view subject)` demos it. |
+| `initramfs/fb-browser.lisp` | The code browser **on the bare framebuffer** as PID 1 (menu `b`): `poc/shell.lisp`'s shell rendered via `present-fb` under `KD_GRAPHICS`, keyboard + evdev mouse multiplexed with `poll(2)`, the Spotter overlay, and the live debugger (`run-debugger-fb`). |
+| `initramfs/framebuffer.lisp` | `/dev/fb0` basics: read the live geometry from sysfs (`read-fb-geometry`) and blit the Land-of-Lisp alien (`draw-alien`). See `doc/framebuffer.org`. |
+| `initramfs/line-editor.lisp` | "Poor man's readline" in pure Lisp: raw-mode termios via FFI, history, completion. See `doc/line-editing.org`. |
+| `initramfs/repl.lisp` | The `r)` menu action: the read-eval-print loop driven by the line editor, with `<Tab>` symbol completion. Every read/eval guarded so a bad form cannot kill PID 1. |
+| `initramfs/ansi.lisp` | ANSI SGR colour, restricted to the 16 classic colours — the kernel VT renders no more than that. Used by the REPL and line editor. |
+| `initramfs/net.lisp` | Bring `eth0` up from Lisp (`SIOCSIFADDR`/`SIOCSIFFLAGS` ioctls via FFI) and serve the REPL over TCP on :4005. |
+| `initramfs/dhcp.lisp` | A real DHCP handshake (DISCOVER/OFFER/REQUEST/ACK) in pure Lisp, then configure `eth0` from the lease. |
+| `initramfs/process.lisp` | Process lifecycle for the supervisor: spawn a throwaway worker, and power off via `reboot(2)` through libc FFI. |
+| `initramfs/meminfo.lisp` | The `m)` menu action: RAM accounting in honest layers — Lisp heap, process RSS, the kernel's own resident image, the whole machine. |
+| `initramfs/examples.lisp` | A gallery of CLOS specimens that exist purely to be *looked at* in the browser — chiefly `COLLIDE`, a genuinely 2-argument generic whose dispatch matrix is a real grid with real gaps. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
 | `poc/` | Prototype for the code browser's pixel UI (pure-Lisp X11 client + framebuffer, a text view). Host-runnable; see `poc/README.org` and `doc/code-browser.org`. |
 | `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client. The deliberate opposite of `initramfs/`. |
@@ -67,7 +79,7 @@ If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
   doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
-- Kernel build tags are `#NN` (currently **#22**). Always say which tag a claim
+- Kernel build tags are `#NN` (currently **#23**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
   them via those names, never an absolute/`$HOME` path. `build.sh` derives its own
@@ -91,13 +103,32 @@ protocol in a tiled, keyboard-first shell. Progress:
    source: `(show-source 'draw-alien)`, `(senders 'read-fb-geometry)`.
 2. **Phase 1 — the CLOS/model layer** — *DONE* (`initramfs/model.lisp`): class DAG,
    GF/method graph, `applicable-methods`, `categorize`, object inspector. Headless.
-3. **Phase 4 spine — the `present` protocol** — *DONE headless* (`initramfs/present.lisp`):
-   `present`/`commands-for` generics + affordance model; drill-down works in the
-   booted guest. Still owed: the tiled shell (pixels) and Accept-through-shell.
-4. **Phase 2/3 UI toolkit** — *prototyped* in `poc/` (X11 client, `/dev/fb0`
-   backend, an editable text view). Host-runnable.
-5. **Next:** the Workspace, then the tiled shell that renders `present` (Phase 4).
-   See the Phases section of `doc/code-browser.org`.
+3. **Phase 2/3 UI toolkit** — *DONE* in `poc/` (pure-Lisp X11 client, `/dev/fb0`
+   backend, an editable syntax-colouring text view). Host-runnable. Still owed
+   from phase 3: generic panes/lists/scrollbars/menus as reusable widgets.
+4. **Phase 3a — the Workspace** — *DONE* (`initramfs/present.lisp` +
+   `poc/shell.lisp`, supervisor menu `p`): Do it / Print it / Inspect it /
+   Debug it, with the printed transcript woven back into the buffer.
+5. **Phase 4 — the `present` spine + the accordion shell** — *DONE*
+   (`initramfs/present.lisp` + `poc/shell.lisp`): drill-down accordion, breadcrumbs,
+   list/source/matrix views, and **live editing** (`C-c C-c` compiles a definition
+   into the running image and updates the registry). Trail **tabs** and the
+   **Spotter** (§4¾) have landed too — `poc/shell.lisp:draw-tabs`,
+   `initramfs/fb-browser.lisp:draw-spotter`.
+6. **Phase 4a — the Lisp-native views** — *generics DONE* (dispatch matrix,
+   clickable cells, effective-method onion). Still owed: the condition subject's
+   *static* face as a browsable view (the live debugger already exists).
+7. **Phase 5 — into the machine** — *DONE* (`initramfs/fb-browser.lisp`): the same
+   shell full-screen on `/dev/fb0` as PID 1 (menu `b`), keyboard **and** evdev
+   mouse via `poll(2)`, `M-.`/Ctrl-click jump-to-definition. Still owed:
+   PageUp/Down + wheel scroll.
+8. **Phase 6 — the live system** — *DONE*: the framebuffer debugger (restarts +
+   `sb-di` backtrace + frame locals + `M-.` on a frame), and the **change set**
+   (menu `c`). *File-out is deferred* to its own future session — it needs a
+   storage-target decision first (the rootfs is tmpfs).
+9. **Next:** phase 3's remaining widgets, phase 4a's condition view, and the
+   phase 5 scrolling gaps. Phase 7 (Morphic) is open horizon.
+   See the Phases section of `doc/code-browser.org` — that doc is the truth here.
 
 ## Known design facts (don't re-derive these)
 
@@ -107,4 +138,7 @@ protocol in a tiled, keyboard-first shell. Progress:
 - Real UEFI has no VGA text mode → need `FB_EFI` + `FRAMEBUFFER_CONSOLE`, or the screen is blank.
 - PID 1 must never return, or the kernel panics.
 - A saved SBCL image is a **frozen heap**: install libraries *before* `save-lisp-and-die`, not at runtime. No Quicklisp/`require` at runtime (no contrib fasls, no network).
-- **Networking is entirely OFF** (`CONFIG_NET` unset) — see `kernel-config.org`.
+- **Networking is ON** since tag #21: `CONFIG_NET=y` + `INET` + `virtio-net`, and
+  the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
+  Older notes claiming `CONFIG_NET` is unset are stale — see `kernel-config.org`
+  and `doc/networking.org`.

@@ -1065,7 +1065,13 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   form → recompiled into the running image; Accept an invalid form → the error is
   shown. The modifier split keeps it collision-free — Backspace deletes, =SuperL-←=
   steps back (§4¾).
-  Still owed: trail *tabs* + the *Spotter* (§4¾, multiple trails).
+  [TABS + SPOTTER DONE — =draw-tabs= in [[file:../poc/shell.lisp][poc/shell.lisp]], =draw-spotter= /
+  =spotter-row-at= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]], candidates from =spotter-candidates= /
+  =spotter-filter= in [[file:../initramfs/present.lisp][present.lisp]]] §4¾'s multiple trails are real: a tab strip
+  across the top (=1 • package common-lisp-user=, =2 • workspace=, =+= for a new
+  trail), and the Spotter as a floating palette over the dimmed browser — type to
+  filter ranked results, ↵ opens the pick in a trail, Esc dismisses. Clicks route
+  through =*spotter-card*= to the right row.
   /Milestone reached in part: browse the browser, edit it live./ Confirmed *less*
   work than the old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the

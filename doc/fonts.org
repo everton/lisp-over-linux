@@ -21,8 +21,17 @@ We are deliberately NOT doing that yet; see §7 and [[file:code-browser.org][cod
 
 * 1. What a bitmap glyph physically is
 
-One glyph is a small rectangle of bits: *1 = ink, 0 = background*. Our font is
-*8 pixels wide × 16 tall*. Eight bits fit in one byte, so:
+One glyph is a small rectangle of bits: *1 = ink, 0 = background*.
+
+Throughout §1–§4 we use *8 pixels wide × 16 tall* as the worked example, because
+8 is exactly one byte and that makes every number below fall out cleanly. It is
+also a real font — =CONFIG_FONT_8x16= is what the *kernel console* draws with
+(see [[file:kernel-config.org][kernel-config.org]]). But it is *not* what our own renderer ships: the browser
+uses *Cozette, 6 × 15*, in our own =.lolf= blob (§7). Nothing in the mechanism
+changes — a 6-wide glyph still stores one byte per row and simply ignores the low
+2 bits. Read §1–§4 with 8×16 in your head, then §7 for what is actually loaded.
+
+Eight bits fit in one byte, so, for the 8×16 example:
 
 - each *row* of a glyph is *one byte* (8 horizontal pixels), and
 - each *glyph* is *16 bytes* (16 rows), and
