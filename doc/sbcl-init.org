@@ -47,7 +47,9 @@ pthread/dl libraries to copy. No libzstd => this core is uncompressed.)
 
 Crucial runtime behaviour:
   - A standalone =:executable= image finds its embedded core by reading
-    */proc/self/exe* (confirmed: the string is in the runtime binary).
+    */proc/self/exe* — that is [[file:../sbcl/src/runtime/linux-os.c::os_get_runtime_executable_path][=os_get_runtime_executable_path=]] in
+    [[file:../sbcl/src/runtime/linux-os.c][=sbcl/src/runtime/linux-os.c=]], which literally =readlink=s that path; the
+    core is then located and mapped by [[file:../sbcl/src/runtime/coreparse.c][=coreparse.c=]].
     => /proc MUST be mounted before SBCL starts, or it can't find its core.
   - SBCL uses threads (futex), mmaps a large dynamic space (~1 GB reserved,
     lazily committed) => give the VM/host enough RAM (>= ~1-2 GB).
@@ -288,8 +290,9 @@ built.
 
 A running Lisp is a *heap*: one graph of live objects — every package, symbol,
 function object, class, and global — reachable from a set of roots.
-=save-lisp-and-die= does the obvious brutal thing: it runs a full GC, then writes
-*that entire graph, verbatim*, out to a file, and exits. Starting the resulting
+[[file:../sbcl/src/code/save.lisp::defun save-lisp-and-die][=save-lisp-and-die=]] ([[file:../sbcl/src/code/save.lisp][=sbcl/src/code/save.lisp=]]) does the obvious brutal
+thing: it runs a full GC, then writes *that entire graph, verbatim*, out to a
+file, and exits. Reading it back is [[file:../sbcl/src/runtime/coreparse.c][=coreparse.c=]] on the C side. Starting the resulting
 image is not "loading a program"; it is *mapping the graph back into memory and
 resuming*. There is no initialisation phase, no =main=, no re-loading of
 anything — the world simply picks up where it was frozen, with =:toplevel= as the
@@ -316,7 +319,7 @@ no files present.
 
 * The C preinit
 
-=initramfs/preinit.c=:
+[[file:../initramfs/preinit.c][=initramfs/preinit.c=]] — the whole file, ~40 lines:
 #+begin_src c :tangle initramfs/preinit.c
   /* Preinit: PID 1 entry. Mount the basics so SBCL can find /proc/self/exe,
    * then become SBCL via execv (process stays PID 1). */

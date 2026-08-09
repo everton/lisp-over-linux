@@ -25,6 +25,10 @@ whole line and only hands it to the program on Enter; it handles backspace for
 you but NOTHING else. Arrow keys, history recall, word movement — the program
 never even sees those keystrokes.
 
+That behaviour is real code you can read: [[file:../linux/drivers/tty/n_tty.c][=drivers/tty/n_tty.c=]], and specifically
+[[file:../linux/drivers/tty/n_tty.c::static bool n_tty_receive_char_canon][=n_tty_receive_char_canon=]] — the per-character path taken when =ICANON= is set,
+which is where "hold it until a line terminator arrives" actually lives.
+
 To do real editing you must switch the TTY to *raw mode* (disable canonical +
 echo) so you receive *each keystroke as it is pressed*, including the escape
 sequences arrows send (=ESC [ C=, =ESC [ D=, ...). You then echo and redraw the
@@ -160,8 +164,11 @@ spirit.
 
 - *cl-readline* — it is a BINDING to GNU readline, i.e. the native library we are
   avoiding. Wrong tool here.
-- *Swank/SLY network REPL* — gives full editing from your editor, but needs a TCP
-  stack we do not have (networking is OFF, see [[file:kernel-config.org][kernel-config.org]]).
+- *Swank/SLY network REPL* — gives full editing from your editor. (When this was
+  written networking was off, so it was ruled out outright; since tag #21 we
+  *do* have TCP and a network REPL of our own — see [[file:networking.org][networking.org]]. Swank itself
+  remains out of scope: it is a large dependency to bake into the image, and the
+  point of this exercise was to learn termios, not to import an editor protocol.)
 
 * Recommendation
 
@@ -180,25 +187,28 @@ Lisp plus two FFI declarations, and =build.sh= bakes every module into the image
 
 ** The three pieces
 
-1. *Raw mode* — =with-raw-mode= flips the TTY out of canonical line-buffering and
+1. *Raw mode* — [[file:../initramfs/line-editor.lisp::defmacro with-raw-mode][=with-raw-mode=]] flips the TTY out of canonical line-buffering and
    echo so we see every keystroke. It is the project's *second* use of the
    "FFI into the libc we already ship" trick (the first is =reboot(2)= in
-   =power-off=): two =sb-alien:define-alien-routine= bindings, =%tcgetattr= /
-   =%tcsetattr=. We treat =struct termios= as a 60-byte blob and patch only what
+   [[file:../initramfs/process.lisp::defun power-off][=power-off=]]): two [[file:../sbcl/src/code/target-alieneval.lisp::defmacro define-alien-routine][=sb-alien:define-alien-routine=]] bindings, =%tcgetattr= /
+   =%tcsetattr=. (That macro is itself readable Lisp — it expands into a
+   =%alien-funcall= with the argument types you declared; SBCL's alien layer is
+   [[file:../sbcl/src/code/target-alieneval.lisp][=sbcl/src/code/target-alieneval.lisp=]], and its syscall wrappers are in
+   [[file:../sbcl/src/code/unix.lisp][=sbcl/src/code/unix.lisp=]].) We treat =struct termios= as a 60-byte blob and patch only what
    we need — clear =ICANON|ECHO= (=0x0A=) in =c_lflag='s low byte, set
    =c_cc[VMIN]=1= / =c_cc[VTIME]=0= so =read()= returns one keystroke at a time.
    The struct offsets are documented inline. =unwind-protect= restores the saved
    settings on *every* exit (return, error, Ctrl-C), so a crash never leaves the
    console in raw mode. We deliberately *keep ISIG enabled* so Ctrl-C still
    interrupts a runaway eval the normal way.
-2. *Rendering* — =refresh-line= redraws the whole line on every edit with three
+2. *Rendering* — [[file:../initramfs/line-editor.lisp::defun refresh-line][=refresh-line=]] redraws the whole line on every edit with three
    escapes the fbcon terminal already understands: =\r= (column 0), =\e[K=
    (clear to EOL), =\e[<n>G= (absolute column for the cursor). One uniform redraw
    covers insert, delete, cursor move and history. Single-line only (no wrap
    handling yet).
-3. *Editing logic* (pure Lisp) — =read-line-edited= keeps a =line= string +
+3. *Editing logic* (pure Lisp) — [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] keeps a =line= string +
    =point=, rebuilding the string on each edit (lines are short; clarity beats a
-   gap buffer). =read-escape= parses arrow / Home / End / Delete sequences
+   gap buffer). [[file:../initramfs/line-editor.lisp::defun read-escape][=read-escape=]] parses arrow / Home / End / Delete sequences
    (=ESC [ …=, the numeric =ESC [ n ~= forms, and =ESC O H/F=). History is a
    plain list in =*repl-history*=.
 

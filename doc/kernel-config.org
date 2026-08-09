@@ -9,10 +9,12 @@ This file is the *single source of truth* for which kernel features the micro
 distro turns on, and — more importantly — *why each one is there*. It is meant
 to be read top-to-bottom by someone (re)building the kernel from scratch.
 
-Kernel: =linux-7.1.3=, config at =~/lisp-over-linux/linux/.config=.
+Kernel: =linux-7.1.3=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
+tracked copy is [[file:../kernel/config-7.1.3][=kernel/config-7.1.3=]]).
 Current tag: *#23* (rebased the config onto Linux 7.1.3; built on top of #22 =
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
-16x32 fbcon font, #19 = CONFIG_PCI + USB/HID).
+16x32 fbcon font — *since reverted*, see the Display table and
+[[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
 ~780 options are set in total; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
@@ -52,10 +54,11 @@ grep -cE '^CONFIG_IPV6=y' .config       # expect 0 (deliberately off, see below)
 | =CONFIG_CMDLINE=           | str   | Baked-in kernel cmdline (see below) — EFISTUB fallback boot has no args |
 
 Baked cmdline (=CONFIG_CMDLINE_BOOL=y=, no override):
-="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio fbcon=font:TER16x32"=.
-=initrd== loads the separate initramfs; =fbcon=font:= selects the big console
-font (see Display table); the =console== pair drives both serial (QEMU markers)
-and the fb console.
+="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio"=.
+=initrd== loads the separate initramfs; the =console== pair drives both serial
+(QEMU markers) and the fb console. (A =fbcon=font:TER16x32= parameter was here in
+tag #20 and was dropped again when we reverted to the 8x16 font — Display table
+below, [[file:framebuffer.org][framebuffer.org]] §7.)
 
 Note: =CONFIG_INITRAMFS_SOURCE=""= is why =build.sh= rebuilds in seconds —
 changing the Lisp does not need a kernel rebuild. The initramfs is passed as
@@ -71,20 +74,37 @@ from x86 in 5.1); =BINFMT_MISC= is off.
 | Option                       | State | Role                                                       |
 |------------------------------+-------+------------------------------------------------------------|
 | =CONFIG_FB=                  | y     | Framebuffer core                                          |
+| =CONFIG_FB_CORE=             | y     | The fbdev core proper (auto-selected by =FB=)             |
+| =CONFIG_FB_DEVICE=           | y     | Creates the =/dev/fb0= *character device* — what our Lisp writes to |
 | =CONFIG_FB_EFI=              | y     | Use the framebuffer UEFI hands us (efifb)                 |
+| =CONFIG_SYSFB=               | y     | Registers the firmware framebuffer efifb then claims      |
 | =CONFIG_FRAMEBUFFER_CONSOLE= | y     | Draw the text console onto that framebuffer (fbcon)       |
 | =CONFIG_VT=                  | y     | Virtual terminal layer                                    |
 | =CONFIG_VT_CONSOLE=          | y     | Console on the VT                                         |
 | =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                     |
 | =CONFIG_UNIX98_PTYS=         | y     | Modern PTYs (=/dev/ptmx= + =/dev/pts/=); legacy pool is OFF |
 | =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                  |
-| =CONFIG_FONT_TER16x32=       | y     | Terminus 16x32 — the readable big font (selected on cmdline) |
-| =CONFIG_FONT_8x16=           | y     | Default 8x16 font, kept as fallback                      |
+| =CONFIG_FONT_8x16=           | y     | *The font in use* — 160x50 on the 1280x800 panel          |
+| =CONFIG_FONT_8x8=            | y     | Second built-in font (defconfig default, unused)          |
+| =CONFIG_FONT_TER16x32=       | *n*   | Terminus 16x32 — enabled in #20, *reverted* (see below)   |
 
-The console font is selected at boot via =fbcon=font:TER16x32= in
-=CONFIG_CMDLINE= (see the Boot table). On the 1280x800 panel that turns the
-console from 160x50 (8x16) into a far more legible 80x25. See
-[[file:framebuffer.org][framebuffer.org]] section 7.
+=CONFIG_FB_DEVICE= is the one that is easy to overlook: =FB= gives the kernel a
+framebuffer, but =FB_DEVICE= is what exposes it to *userland* as =/dev/fb0=.
+Without it fbcon would still paint the console and the screen would look fine —
+and every one of our Lisp drawing routines would fail with "no such file".
+
+*Font: back to the 8x16 default.* Tag #20 compiled in Terminus 16x32 and selected
+it with =fbcon=font:TER16x32= on the cmdline; both were later undone. Bigger
+glyphs meant 80x25 instead of 160x50, and mainline fbcon has *no scrollback*, so
+the halved screen cost us multi-line output permanently. The extra rows/columns
+matter more than glyph size. Full reasoning and how to redo it:
+[[file:framebuffer.org][framebuffer.org]] §7.
+
+Kernel source for this subsystem, if you want to read it:
+[[file:../linux/drivers/video/fbdev/efifb.c][linux → drivers/video/fbdev/efifb.c]] (the dumb driver),
+[[file:../linux/drivers/video/fbdev/core/fb_chrdev.c][linux → drivers/video/fbdev/core/fb_chrdev.c]] (the =/dev/fb0= read/write/mmap
+entry points) and [[file:../linux/drivers/video/fbdev/core/fbcon.c][linux → drivers/video/fbdev/core/fbcon.c]] (glyph → pixels, with the
+actual bit-stamping in [[file:../linux/drivers/video/fbdev/core/bitblit.c][bitblit.c]]).
 
 Why it matters: real UEFI has *no legacy VGA text mode*. Without efifb+fbcon
 the laptop screen stays blank even though the kernel is running fine. This was
@@ -113,18 +133,33 @@ gap was invisible — until a real laptop needed USB (xHCI is a PCI device) for
 its keyboard, AND ACPI needed PCI config-space operation regions for =_S5=
 (power-off). Enabling PCI fixed BOTH the dead keyboard and the power-off halt.
 
+In the tree, the chain a keypress travels: [[file:../linux/drivers/usb/host/xhci.c][=drivers/usb/host/xhci.c=]] (the USB
+3.x host controller, the PCI device that made =CONFIG_PCI= mandatory) →
+[[file:../linux/drivers/hid/usbhid/hid-core.c][=drivers/hid/usbhid/hid-core.c=]] (turn USB HID reports into HID events) →
+[[file:../linux/drivers/hid/hid-input.c][=drivers/hid/hid-input.c=]] (HID → input subsystem key codes) →
+[[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], which is what creates =/dev/input/event*= — the same
+nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the browser's mouse and Ctrl detection
+([[file:code-browser.org][code-browser.org]] §6.3). The PS/2 path used under QEMU is
+[[file:../linux/drivers/input/keyboard/atkbd.c][=drivers/input/keyboard/atkbd.c=]] on top of =serio=.
+
 * 4. Platform & power
 
 | Option        | State | Role                                                          |
 |---------------+-------+---------------------------------------------------------------|
 | =CONFIG_ACPI= | y     | Power-off (=reboot(RB_POWER_OFF)= -> =_S5=); depends on PCI    |
 
+The path from our Lisp to the machine actually stopping: [[file:../initramfs/process.lisp::defun power-off][=power-off=]] FFI-calls
+=reboot(2)=, which lands in [[file:../linux/kernel/reboot.c][=kernel/reboot.c=]]; for =RB_POWER_OFF= that ends in
+ACPI's =_S5= handling in [[file:../linux/drivers/acpi/sleep.c][=drivers/acpi/sleep.c=]]. This is why the option depends
+on PCI: evaluating =_S5= needs ACPI operation regions that address PCI config
+space, so with =CONFIG_PCI= off the shutdown silently halted instead.
+
 * 5. Filesystems & userland glue
 
 | Option              | State | Role                                                       |
 |---------------------+-------+------------------------------------------------------------|
 | =CONFIG_DEVTMPFS=   | y     | Auto-populated =/dev= (=/dev/console=, =/dev/null= …)       |
-| =CONFIG_TMPFS=      | y     | The size-capped =/tmp= that =preinit.c= mounts             |
+| =CONFIG_TMPFS=      | y     | The size-capped =/tmp= that [[file:../initramfs/preinit.c][=preinit.c=]] mounts                  |
 | =CONFIG_FUTEX=      | y     | Fast userspace mutexes (threads in SBCL/glibc)             |
 | =CONFIG_MULTIUSER=  | y     | uid/gid model glibc assumes                                |
 | =CONFIG_PRINTK=     | y     | Kernel log messages                                       |
@@ -154,16 +189,27 @@ Everything here is built-in (=y=), never a module: we ship no modules and have n
 | =CONFIG_VIRTIO_PCI=  | y     | Virtio-over-PCI transport                                     |
 | =CONFIG_VIRTIO_NET=  | y     | The QEMU paravirtual NIC driver — binds =[1af4:1000]= as eth0 |
 
+Where each of these lives in the tree: the socket layer every =sb-bsd-sockets=
+call enters through is [[file:../linux/net/socket.c][=net/socket.c=]]; IPv4 registers itself in
+[[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]] and the interface-configuration ioctls of
+[[file:networking.org][networking.org]] §2b land in [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]]; the virtio
+core that =VIRTIO_PCI= plugs drivers into is [[file:../linux/drivers/virtio/virtio.c][=drivers/virtio/virtio.c=]].
+
 Verified (tag #21): under QEMU =-device virtio-net-pci= the NIC enumerates on PCI
-(=pci 0000:00:02.0: [1af4:1000] ... class 0x020000=), =virtio_net= binds it, and
-the supervisor's =show-net-interfaces= diagnostic lists =eth0 (down)= at boot
-(=down= = no IP/link yet — that is Stage 2, a userland job). The QEMU SLIRP wiring
-(=-netdev user,...hostfwd...=) lives in =build.sh= (=QEMU_NET=) and [[file:networking.org][networking.org]] §4.
+(=pci 0000:00:02.0: [1af4:1000] ... class 0x020000=), and =virtio_net=
+([[file:../linux/drivers/net/virtio_net.c][linux → drivers/net/virtio_net.c]]) binds it. At that tag the supervisor's
+=show-net-interfaces= diagnostic listed =eth0 (down)= — no IP yet, because
+addressing is a userland job. The QEMU SLIRP wiring (=-netdev user,...hostfwd...=)
+lives in [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]] and [[file:networking.org][networking.org]] §4.
+
+*The userland half has since landed too* — =sb-bsd-sockets= is baked into the
+image, [[file:../initramfs/dhcp.lisp::defun configure-eth0][dhcp.lisp → configure-eth0]] leases an address at boot via a real
+DISCOVER/REQUEST handshake, and [[file:../initramfs/net.lisp::defun start-net-repl][net.lisp → start-net-repl]] serves a REPL on
+TCP :4005. So the whole wired path is working end to end; see [[file:networking.org][networking.org]].
 
 What is still OFF on the kernel side: real-hardware NIC drivers (=CONFIG_E1000=,
 =CONFIG_R8169=, …), all Wi-Fi (=CFG80211=/=MAC80211= + firmware + WPA), and IPv6
-(see below). The userland half (=sb-bsd-sockets= baked into the image, an IP via
-ioctl, a first packet) is not done yet — [[file:networking.org][networking.org]] §2–3.
+(see below).
 
 * Deliberately OFF (and what it would take to turn on)
 
@@ -214,7 +260,10 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   power-off. Fixed dead laptop keyboard AND the power-off halt (one root cause).
 - =#20= bigger fbcon font: =CONFIG_FONTS= + =CONFIG_FONT_TER16x32= and
   =fbcon=font:TER16x32= on the cmdline (default 8x16 was too small on the
-  laptop). Incremental rebuild ~27 s on 8 cores.
+  laptop). Incremental rebuild ~27 s on 8 cores. *Later REVERTED* — both the
+  symbol and the cmdline parameter are gone again; 16x32 halves the console to
+  80x25 and mainline fbcon has no scrollback, so the lost rows cost more than
+  the bigger glyphs bought. =CONFIG_FONTS=y= stayed. See [[file:framebuffer.org][framebuffer.org]] §7.
 - =#21= IPv4 networking + QEMU virtio-net: =CONFIG_NET= + =INET= + =UNIX= +
   =PACKET= + =NETDEVICES= + =VIRTIO=/=VIRTIO_PCI=/=VIRTIO_NET=; =CONFIG_IPV6= held
   OFF on purpose. Kernel half only — eth0 appears (down). Userland (sb-bsd-sockets,

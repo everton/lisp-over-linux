@@ -67,6 +67,15 @@ framebuffer the firmware already set up*. It inherits the mode, cannot change
 resolution, does zero acceleration — but it is tiny and works on virtually any
 UEFI machine. Right trade-off for a minimal distro.
 
+The whole driver is [[file:../linux/drivers/video/fbdev/efifb.c][=drivers/video/fbdev/efifb.c=]] — 607 lines, and worth
+reading once. [[file:../linux/drivers/video/fbdev/efifb.c::static int efifb_probe][=efifb_probe=]] is the part that matters: it takes the width,
+height, pitch and physical address the firmware left in =screen_info=
+(=si->lfb_width=, =si->lfb_linelength=, =__screen_info_lfb_base=), maps that
+address into kernel space — normally =ioremap_wc=, write-combining, per §5½,
+with =ioremap=/=memremap= fallbacks when the EFI memory map asks for different
+attributes — and registers the result. Nothing in the file programs the display
+controller, because there is nothing efifb could set.
+
 * 4. fbcon — turning printk/format into pixels
 
 A framebuffer only knows pixels; the kernel speaks characters (printk, tty, SBCL
@@ -75,6 +84,14 @@ ROM reimplemented in software*. It carries a built-in bitmap font; when the
 console says "put 'A' at row 5 col 12" it looks up the glyph bitmap and writes
 its pixels into the framebuffer (using the offset math above, scaled by the font
 cell size). It does in the CPU what the VGA card did in hardware.
+
+In the tree: [[file:../linux/drivers/video/fbdev/core/fbcon.c][=core/fbcon.c=]] is the console driver itself (the part that knows
+about rows, columns, the cursor and scrolling), and it delegates the actual
+glyph-stamping to [[file:../linux/drivers/video/fbdev/core/bitblit.c::static void bit_putcs][=core/bitblit.c='s =bit_putcs=]] — "put a string of characters",
+the routine that walks a run of glyph bitmaps and writes their pixels out. That
+is the kernel's version of what [[file:fonts.org][fonts.org]] describes our own renderer doing in
+Lisp; comparing the two is a good way to see that nothing magic is happening on
+either side.
 
 The full stack the "Supervisor up" banner travels through:
 
@@ -106,6 +123,14 @@ Because we have =CONFIG_FB= + =CONFIG_FB_DEVICE= + devtmpfs, the raw framebuffer
 is the device file */dev/fb0*. That file IS the pixel memory. Use it via:
 - *seek + write*: lseek to =y*pitch + x*bpp=, write the pixel bytes; or
 - *mmap*: map it into your address space and store directly (the fast path).
+
+Both doors are implemented in one short file, [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c][=core/fb_chrdev.c=]] — it is the
+code that makes =/dev/fb0= a file at all. Its [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static const struct file_operations fb_fops][=fb_fops=]] table is worth a look,
+because it is exactly the "doorway, not translator" claim of §5½ in source form:
+[[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static ssize_t fb_write][=fb_write=]] bounds-checks your offset and copies your bytes into the mapped
+framebuffer, [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static ssize_t fb_read][=fb_read=]] copies them back out, and [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static int fb_mmap][=fb_mmap=]] hands the pages
+straight to your process. No transformation in any of the three. The
+device-registration side lives next door in [[file:../linux/drivers/video/fbdev/core/fbmem.c][=core/fbmem.c=]].
 
 Mode parameters are not guesswork:
 - =/sys/class/graphics/fb0/virtual_size=   -> "WxH"
@@ -351,9 +376,9 @@ How it is wired up:
    (We pre-generate rather than convert in =build.sh= so the build needs no
    ImageMagick and no network. Both =alien.rgba= and the source PNG live in
    =initramfs/=.)
-2. *Read the framebuffer geometry at runtime* from sysfs — =read-fb-geometry=
-   parses =virtual_size= ("W,H"), =stride=, =bits_per_pixel=. We do NOT assume
-   pitch = width*bpp; we read =stride=.
+2. *Read the framebuffer geometry at runtime* from sysfs —
+   [[file:../initramfs/framebuffer.lisp::defun read-fb-geometry][=read-fb-geometry=]] parses =virtual_size= ("W,H"), =stride=,
+   =bits_per_pixel=. We do NOT assume pitch = width*bpp; we read =stride=.
 3. *Place it top-right*: =x0 = max(0, xres - 256 - margin)=, =y0 = margin=
    (margin 16). Height is clamped to the screen.
 4. *Blit row by row into /dev/fb0* (=draw-alien=, opened =:direction :io=):
@@ -382,8 +407,8 @@ Dependencies:
 This is the clean contrast with the font question (section 7): bigger fonts = a
 KERNEL change; drawing an image = USERLAND only.
 
-See: =draw-alien= / =read-fb-geometry= in =initramfs/framebuffer.lisp=
-(=supervisor.lisp= only calls them: from =print-menu=, and from the =a)= key).
+See: [[file:../initramfs/framebuffer.lisp::defun draw-alien][=draw-alien=]] / [[file:../initramfs/framebuffer.lisp::defun read-fb-geometry][=read-fb-geometry=]] in [[file:../initramfs/framebuffer.lisp][=initramfs/framebuffer.lisp=]]
+([[file:../initramfs/supervisor.lisp][=supervisor.lisp=]] only calls them: from =print-menu=, and from the =a)= key).
 
 * 9. Full-screen: =present-fb= and KD_GRAPHICS
 
@@ -448,7 +473,10 @@ the menu, every cycle. A full-screen app cannot win that way — fbcon's cursor
 blink and any stray =printk= would crawl across the picture.
 
 The real fix is =ioctl(KDSETMODE, KD_GRAPHICS)= on =/dev/tty0=, wrapped as
-=lol.fb:with-graphics-console=. It tells the kernel console to *stop rendering*.
+[[file:../poc/fb.lisp::defmacro with-graphics-console][=lol.fb:with-graphics-console=]]. It tells the kernel console to *stop rendering*.
+The kernel side is [[file:../linux/drivers/tty/vt/vt_ioctl.c::case KDSETMODE][=drivers/tty/vt/vt_ioctl.c=, =case KDSETMODE=]] — it sets the
+VT's mode and, for =KD_GRAPHICS=, stops the console from touching the
+framebuffer. (What an ioctl is, if that is new: [[file:line-editing.org][line-editing.org]].)
 Two properties make it the right tool:
 
 - It stops fbcon *drawing*, not the tty *delivering keys* — so the existing

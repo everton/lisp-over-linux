@@ -1,9 +1,10 @@
-#+TITLE: Networking — bringing a network layer to the SBCL micro-distro (PLANNING)
+#+TITLE: Networking — bringing a network layer to the SBCL micro-distro
 #+STARTUP: showall
 
 Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
-[[file:kernel-config.org][kernel-config.org]] (the "Deliberately OFF → Networking" section) · Lisp side:
-[[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that would open the sockets).
+[[file:kernel-config.org][kernel-config.org]] §7 (Networking — it moved out of "Deliberately OFF" in tag #21) ·
+Lisp side: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that opens the sockets) ·
+from-scratch tutorial with deep code links: [[file:background/learn-networking.org][background/learn-networking.org]].
 
 *STATUS: WIRED PATH WORKING end-to-end in QEMU.* Kernel half DONE (tag #21:
 =CONFIG_NET= + =INET= + =virtio-net=). Userland half DONE: =sb-bsd-sockets= is
@@ -102,18 +103,26 @@ time, given =SBCL_HOME=.)
 
 ** (b) an IP address — static, then DHCP — both *DONE*
 A NIC with no address can't talk.
-- *Static* (=bring-up-interface=, =net.lisp=): assigns address + mask and brings
-  the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS= ioctls on a
-  throwaway UDP socket — the classic =ifconfig= path as =sb-alien= calls (no
-  =ifconfig=/=ip= binary). Kept as the fallback if DHCP gets no answer.
-- *DHCP* (=dhcp.lisp=): a real *DISCOVER → OFFER → REQUEST → ACK* conversation,
+- *Static* ([[file:../initramfs/net.lisp::defun bring-up-interface][=bring-up-interface=]], [[file:../initramfs/net.lisp][=net.lisp=]]): assigns address + mask and
+  brings the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS=
+  ioctls on a throwaway UDP socket — the classic =ifconfig= path as =sb-alien=
+  calls (no =ifconfig=/=ip= binary). Kept as the fallback if DHCP gets no answer.
+  ([[file:line-editing.org][line-editing.org]] explains what an ioctl is, if the shape is unfamiliar.) The
+  kernel end of these is [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]], which is
+  where =SIOCSIFADDR= actually lands; sockets themselves enter through
+  [[file:../linux/net/socket.c][=net/socket.c=]] and IPv4 is registered in [[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]].
+- *DHCP* ([[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]): a real *DISCOVER → OFFER → REQUEST → ACK* conversation,
   ~a hundred lines of pure Lisp on a =sb-bsd-sockets= UDP socket. The BOOTP packet
   and option parsing are built/parsed by hand. Two tricks make it work with NO IP
   yet, over an ordinary socket (no =AF_PACKET=): *SO_BINDTODEVICE* ties the socket
   to =eth0= so the broadcast leaves the right NIC with no routing entry, and we set
   the DHCP *broadcast flag* so the server broadcasts its replies to
   =255.255.255.255:68= (receivable) instead of unicasting to an address we do not
-  have. =configure-eth0= runs it at boot, applies the leased IP+mask, and stashes
+  have. The pieces by name: [[file:../initramfs/dhcp.lisp::defun build-dhcp][=build-dhcp=]] / [[file:../initramfs/dhcp.lisp::defun parse-dhcp][=parse-dhcp=]] (the BOOTP packet and
+  its options, by hand), [[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]] (one send/await-reply round with retries),
+  [[file:../initramfs/dhcp.lisp::defun dhcp-acquire][=dhcp-acquire=]] (the four-message conversation), and [[file:../initramfs/dhcp.lisp::defun interface-mac][=interface-mac=]] (our own
+  hardware address, via =SIOCGIFHWADDR=).
+  [[file:../initramfs/dhcp.lisp::defun configure-eth0][=configure-eth0=]] runs it at boot, applies the leased IP+mask, and stashes
   the gateway/DNS (=*gateway*= / =*dns*=) for §2c. Verified against QEMU SLIRP:
   eth0 gets =10.0.2.15=, gw =10.0.2.2=, dns =10.0.2.3= from the ACK.
 
@@ -170,10 +179,11 @@ parses and stashes =*gateway*= and =*dns*= from the lease.
 
 User-mode networking needs no root and no host bridge — ideal for our setup:
 
+This is now live in [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]], forwarding the REPL port:
+
 #+begin_src sh
-  # add to the qemu line in build.sh --run:
-  -netdev user,id=net0,hostfwd=tcp::5555-:23 \
-  -device virtio-net-pci,netdev=net0
+  QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
+            -device virtio-net-pci,netdev=net0)
 #+end_src
 
 =user= (SLIRP) gives the guest =10.0.2.15=, gateway =10.0.2.2=, DNS =10.0.2.3=,
@@ -202,8 +212,9 @@ implemented* (=net.lisp=); (b) remains planning:
 A listening socket whose stream is bound to =*standard-input*= / =*standard-output*=
 turns the REPL into a network REPL. How it actually ships:
 
-- *ON at boot; a menu toggle.* =start-net-repl= / =stop-net-repl= /
-  =toggle-net-repl= manage a background accept thread; =supervisor-main= starts it
+- *ON at boot; a menu toggle.* [[file:../initramfs/net.lisp::defun start-net-repl][=start-net-repl=]] / [[file:../initramfs/net.lisp::defun stop-net-repl][=stop-net-repl=]] /
+  [[file:../initramfs/net.lisp::defun toggle-net-repl][=toggle-net-repl=]] manage a background accept thread (the loop itself is
+  [[file:../initramfs/net.lisp::defun %serve-net-repl][=%serve-net-repl=]]); =supervisor-main= starts it
   at boot, and the menu's =t= toggles it, showing =[RUNNING]= / =[stopped]=. (It is
   remote root — see the warning below — but acceptable here because the only wire
   that reaches it is the trusted QEMU =hostfwd=.) =stop-net-repl= must =shutdown=
@@ -213,8 +224,8 @@ turns the REPL into a network REPL. How it actually ships:
 - *It serves the FULL line editor*, not =plain-repl=. The earlier worry was "a
   socket peer is not a terminal we can put in raw mode" — true, but it does not
   have to be: a tiny *host-side raw-forwarding client*
-  (=host-client/lol-repl-client.c=, ~120 lines, any libc) puts the *host* terminal
-  in raw mode and forwards keystrokes byte-by-byte, so =read-line-edited= receives
+  ([[file:../host-client/lol-repl-client.c][=host-client/lol-repl-client.c=]], ~120 lines, any libc) puts the *host* terminal
+  in raw mode and forwards keystrokes byte-by-byte, so [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] receives
   escapes and drives history/editing remotely; the redraw escapes go back to the
   client. So we get full editing over a bare socket *with no PTY on the guest*
   (this is the design worked out in the discussion behind §6 — the client owns
@@ -342,12 +353,14 @@ machine that is actually useful.
 - Can this SBCL =require :sb-bsd-sockets= at build time? → *yes*, with
   =SBCL_HOME=$SBCL/obj/sbcl-home= so the contrib fasl resolves (=build.sh=).
 
-Still open for the *next* stages: DHCP (vs hard-coded static), DNS (tiny Lisp
-resolver vs raw IPs), and the whole of Wi-Fi (§7).
+- DHCP vs a hard-coded static address? → *DHCP* ([[file:../initramfs/dhcp.lisp][dhcp.lisp]]), with the static
+  =bring-up-interface= path kept as the fallback when no server answers.
+
+Still open for the *next* stages: the off-subnet default route, DNS (tiny Lisp
+resolver vs raw IPs), SNTP, and the whole of Wi-Fi (§7).
 
 * See also
-  - [[file:kernel-config.org][kernel-config.org]] — the "Deliberately OFF → Networking" section (will move
-    here / become "ON" when implemented).
+  - [[file:kernel-config.org][kernel-config.org]] §7 — the networking options, all =y= since tag #21.
   - [[file:sbcl-init.org][sbcl-init.org]] — the supervisor + the frozen-heap build where the socket
     contrib must be baked in.
   - [[file:line-editing.org][line-editing.org]] — same FFI-to-shipped-libc pattern (termios) that the

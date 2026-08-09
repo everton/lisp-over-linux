@@ -8,7 +8,8 @@ Deep-dive: [[file:framebuffer.org][framebuffer.org]] — the framebuffer/console
 Background: [[file:background/background.org][background.org]] — the firmware/CPU/hardware concepts this boot
 chain rests on (UEFI handoff, x86 modes, USB-HID, multicore). Theory, not
 project rationale — read it to go one level deeper.
-Roadmap: [[file:networking.org][networking.org]] — bringing a network layer (planning only, next up).
+Networking: [[file:networking.org][networking.org]] — the network layer (wired path working: virtio-net,
+DHCP, a REPL over TCP).
 
 * Goal
 
@@ -59,15 +60,22 @@ These are the bugs that made the first attempt "not boot". All are fixed below.
 6. (Debug-quality-of-life, not fatal) =CONFIG_SERIAL_8250_CONSOLE= was off, so
    =console=ttyS0= produced nothing — made headless QEMU debugging blind.
 
-* Layout / artifacts (in ~/lisp-over-linux)
+* Layout / artifacts (in the project root)
 
-  initramfs/init.c              tiny PID 1 (source)
-  initramfs/init               static ELF, built from init.c
-  initramfs/initramfs.list     gen_init_cpio description (nodes + /init)
+*Read this as the BASE variant's layout — a historical snapshot.* The banner-init
+files below (=init.c=, =init=, =initramfs.list=) are the ones this document builds
+and they are *no longer in the repo*: the SBCL build replaced them with
+[[file:../initramfs/preinit.c][=preinit.c=]] and [[file:../initramfs/initramfs.sbcl.list][=initramfs.sbcl.list=]] ([[file:sbcl-init.org][sbcl-init.org]]). They are kept in the text
+because the base variant is the thing worth understanding first — reconstruct
+them from the listings below if you want to build it.
+
+  initramfs/init.c              tiny PID 1 (source)            [base variant]
+  initramfs/init                static ELF, built from init.c  [base variant]
+  initramfs/initramfs.list      gen_init_cpio description (nodes + /init) [base variant]
   iso_root/efi/boot/bootx64.efi == the kernel bzImage (EFISTUB)  <-- the bootable file
-  ovmf_vars_test.fd            writable copy of OVMF NVRAM for QEMU tests
-  serial.log / screen.png      last test capture
-  ~/lisp-over-linux/linux/        kernel source tree
+  ovmf_vars_test.fd             writable copy of OVMF NVRAM for QEMU tests
+  serial.log / screen.png       last test capture
+  ./linux/                      kernel source tree (gitignored symlink)
 
 * Prerequisites (host packages)
 
