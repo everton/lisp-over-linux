@@ -119,6 +119,62 @@ the same FFI it already uses for =reboot(2)=. So the Lisp machine is not limited
 to text; it can paint the screen. (No extra kernel option needed — FB is already
 on; drawing is PURE USERLAND.)
 
+* 5½. A memory area, or a file? — what =/dev/fb0= actually is
+
+§1 says the framebuffer is *memory*; §5 says it is a *file*. Both are true, and
+the ambiguity trips people up, so: a quick note on which is which.
+
+*It is a character device, not a synthesised file.* Compare =/proc/meminfo=:
+nothing anywhere holds those bytes: the kernel *generates* them, freshly
+formatted, each time you read. =/dev/fb0= is the opposite. The bytes genuinely
+exist, in hardware, whether or not anyone opens the file. The file is a *handle
+on real storage*, the way =/dev/sda= is.
+
+*The kernel is a doorway, not a translator.* Byte /N/ of the file is byte /N/ of
+the framebuffer. No format conversion, no offset remapping, no bookkeeping in
+between. That is precisely why one line of arithmetic (§1's
+=y*pitch + x*(bpp/8)=) is the whole subsystem: there is no second coordinate
+system to translate into.
+
+*"Byte-addressed" is not about word size.* Every byte has its own address; 64-bit
+describes how much the CPU moves per instruction and how wide a pointer is —
+*not* the granularity of memory. Pixels are densely packed 4-byte cells, so a
+64-bit word spans exactly *two* pixels. Nothing is padded out to word size.
+
+Two things that *are* padding, and are easy to confuse with that:
+
+- *The =X= byte inside each pixel* (the =pad= in BGR*X*). A colour needs 3 bytes;
+  the fourth exists so a pixel is a power of two, making the address a *shift*
+  instead of a multiply-by-3. A hypothetical 24bpp framebuffer would have pixels
+  straddling word boundaries — which is exactly why our code bails out unless
+  =bpp = 32=.
+- *Stride padding at the end of each row* (§1's warning that pitch may exceed
+  =width*bpp/8=). That is a scanout alignment property of the hardware, nothing
+  to do with the CPU.
+
+*Where the memory physically is.* Usually *not* ordinary system RAM: it is VRAM
+sitting behind a PCI BAR, or "stolen" system RAM that the GPU owns — either way
+mapped into the CPU's physical address space by the firmware. That is *MMIO*:
+the same =mov= instruction, but the address decodes to a device rather than to a
+DIMM. Two consequences we actually feel:
+
+- Writes are slower than RAM writes and behave differently under caching, which
+  is why the kernel maps it write-combining (=ioremap_wc=).
+- Each =write(2)= additionally costs a *syscall*. That is the whole reason
+  [[file:../initramfs/framebuffer.lisp::defun draw-alien][=draw-alien=]] and [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] build an entire row in a plain Lisp array and
+  issue *one* =write-sequence= per row: 150 syscalls for the alien, not 38,400.
+
+*Two doors onto the same memory*, then — and the unit differs between them:
+
+| door             | you index by | using       |
+|------------------+--------------+-------------|
+| file I/O (§5)    | *bytes*      | =stride=    |
+| =mmap= (§5, §9.4)| *words*      | =stride/4=  |
+
+Same memory, two granularities. That is why this document insists on writing
+=bpp/8= rather than leaving the unit implicit — the =/8= is the only thing
+keeping the two readings apart.
+
 * 6. Limits: efifb vs DRM/KMS
 
 | capability            | efifb (what we have)        | DRM/KMS (real GPU driver)   |
@@ -132,6 +188,90 @@ on; drawing is PURE USERLAND.)
 efifb is the lowest-common-denominator that always works. Acceleration, a
 window system, or changing resolution would mean the real DRM/KMS driver for the
 laptop's chip — much bigger, against this project's spirit.
+
+* 6½. No GPU — what we give up, and what a real driver would cost
+
+§6's table says *what* efifb cannot do. Now that the code browser
+([[file:code-browser.org][code-browser.org]]) paints the entire screen rather than one alien in a corner,
+it is worth being concrete about *which of our own code* is paying for that, and
+about what the alternative would actually involve. This section does not change
+the verdict in §6 — it makes both sides of it honest.
+
+** (a) What we have today that would benefit
+
+Every item here is real code in this repo, not generic GPU marketing.
+
+- *Full-screen repaint is a CPU copy.* [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] renders a 1280×800 canvas in
+  Lisp and pushes it with *800 =write(2)= calls per frame* (§9.1). With a GPU we
+  would not push anything: the canvas would already live in a GPU buffer, and
+  "presenting" would be a *page flip* — telling the display controller to scan
+  out a different address. A pointer swap instead of 4 MB of copying.
+- *The §9.4 memcpy TODO exists only because we hand bytes to the kernel.* We
+  unpack each 32-bit canvas word into four byte slots to satisfy the file-I/O
+  interface, a copy that §9.2 shows is semantically a no-op. A DRM *dumb buffer*
+  is mapped straight into our address space, so the renderer would draw *into*
+  the scanout memory and the copy would vanish rather than be optimised.
+- *No vsync, no double buffering → tearing.* This is the honest current
+  limitation. We write directly into the memory being scanned out, so a repaint
+  can be caught halfway by the display controller and the panel shows the top of
+  the new frame above the bottom of the old one. DRM/KMS's answer is a page flip
+  *scheduled on vblank*: the flip takes effect between refreshes, so a frame is
+  never half-visible. There is no way to get that with efifb — there is no vblank
+  event to wait on.
+- *Resolution is whatever the firmware chose.* §6 already records that efifb
+  cannot modeset; the consequences are that we cannot change resolution, drive a
+  second monitor, or rotate the panel. The browser simply reads =virtual_size=
+  and adapts.
+- *Font scaling and any future TrueType path are pure CPU rasterisation.*
+  [[file:fonts.org][fonts.org]] §7's Path C (outline fonts) means rasterising glyphs in Lisp; a GPU
+  would normally cache glyphs in a texture atlas and composite them. Today every
+  glyph is stamped bit by bit by [[file:../poc/canvas.lisp::defun draw-string][=draw-string=]].
+
+** (b) What shipping a real driver would require
+
+The card in this laptop is =00:02.0 [8086:8a52] Intel Iris Plus Graphics G7=
+(Ice Lake-LP), driver *=i915=*. Four layers, mirroring the Wi-Fi analysis in
+[[file:networking.org][networking.org]] §7:
+
+- *Kernel side*, all =y= since we ship no modules: =CONFIG_DRM= plus the vendor
+  driver (=CONFIG_DRM_I915=), and =CONFIG_DRM_FBDEV_EMULATION= to keep a working
+  text console on top of it — without that we would trade our console away for
+  the GPU.
+- *Firmware blobs.* Modern Intel graphics will not fully come up without them,
+  and for Ice Lake =i915= asks for three: =i915/icl_dmc_ver1_09.bin= (display
+  microcontroller — the part that owns power states), =i915/icl_guc_70.1.1.bin=
+  and =i915/icl_huc_9.0.0.bin= (graphics/HEVC microcontrollers). Proprietary,
+  binary-only, from =linux-firmware=. The distinction is the same one §7 of
+  networking.org draws for Wi-Fi: *the driver is in-tree GPL, the firmware is the
+  proprietary part, and firmware is data, not code.* The rule this project
+  already adopted applies unchanged — *fetch at pack time, never commit*, which
+  keeps the repo MIT and source-only. =CONFIG_EXTRA_FIRMWARE= is the alternative
+  that bakes the blob into the bzImage and likewise never touches git.
+- *Userland gets much heavier.* DRM is not =seek= + =write= on a device file; it
+  is an *ioctl/GEM* API. The minimum path to a pixel is
+  =DRM_IOCTL_MODE_CREATE_DUMB= → =DRM_IOCTL_MODE_MAP_DUMB= → =mmap= →
+  =DRM_IOCTL_MODE_ADDFB= → =DRM_IOCTL_MODE_SETCRTC=, and then
+  =DRM_IOCTL_MODE_PAGE_FLIP= per frame, plus reading connectors and encoders to
+  find out what to set the mode *to*. All of it is doable in =sb-alien= — it is
+  the same FFI that already drives =reboot(2)=, =ioctl=, =poll= and =KDSETMODE= —
+  but it is a genuine subsystem to write and debug, not an afternoon.
+- *Size, honestly.* In this tree =drivers/gpu/drm/i915= is *14 MB of source,
+  418,079 lines* of =.c= and =.h=. Our entire project — every Lisp module, the C
+  preinit, all the shell — is *7,222 lines*. The driver is roughly *58×* the
+  whole thing we are building. By contrast [[file:../linux/drivers/video/fbdev/efifb.c][=efifb.c=]] is *607 lines*: that ratio,
+  ~690:1, is the trade-off §6's table summarises in one word.
+
+** Verdict (unchanged)
+
+efifb remains right for this project. We are not rendering video or running a
+compositor; we repaint a text-dense browser on keystrokes, and a CPU-drawn
+1280×800 frame is fast enough today (§9.4 says as much). The cost of the
+alternative is not "a config option" but a 418k-line driver, three proprietary
+blobs that would have to be fetched rather than committed, and an ioctl-based
+graphics stack to write in Lisp — for benefits (page flips, vsync, modesetting,
+acceleration) that a browser bound by keypresses barely notices. The one genuine
+loss we accept in exchange is *tearing*, and that is worth stating plainly rather
+than pretending direct scanout writes are free.
 
 * 7. Increasing the fbcon font size — *REVERTED to the default 8x16*
 
