@@ -16,8 +16,15 @@
 # Both boot the built image HEADLESS in QEMU and drive it with no human at the
 # keyboard.
 #
+#   scene NAME         one CONCEPT illustration for doc/code-browser.org: the
+#                      module index, the dispatch matrix, the live debugger,
+#                      the Workspace, the Spotter.
+#                      -> media/screenshots/<name>-<date>.png
+#
 #   ./refresh-screenshot.sh                    the REPL shot (default)
 #   ./refresh-screenshot.sh --mode browser     the code-browser shot
+#   ./refresh-screenshot.sh --scene matrix     one doc illustration
+#   ./refresh-screenshot.sh --scenes           list the scene names
 #   ./refresh-screenshot.sh --no-build         use the CURRENT iso_root as-is
 #
 # HOW IT WORKS (two channels into one QEMU boot):
@@ -57,12 +64,22 @@ say() { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
 # ---- args ------------------------------------------------------------------
 DO_BUILD=1
 MODE=repl
+SCENE=""
+# The named SCENES (--scene NAME) are the concept illustrations embedded in
+# doc/code-browser.org. Each is defined in the Python driver below as a menu key
+# plus a deterministic key sequence; they are reproducible because the browser's
+# lists are alphabetical and its default selection is row 0. Keep this list and
+# the SCENES dict in the driver in step.
+SCENE_NAMES="modules matrix debugger workspace spotter"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
     --mode)     shift; MODE="${1:-}" ;;
     --mode=*)   MODE="${1#*=}" ;;
     --browser)  MODE=browser ;;          # shorthand
+    --scene)    shift; MODE=scene; SCENE="${1:-}" ;;
+    --scene=*)  MODE=scene; SCENE="${1#*=}" ;;
+    --scenes)   echo "$SCENE_NAMES" | tr ' ' '\n'; exit 0 ;;
     -h|--help)  sed -n '3,32p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 1 ;;
   esac
@@ -71,7 +88,13 @@ done
 case "$MODE" in
   repl)    BASENAME=screenshot; LINK="$MICRO/media/screenshot.png" ;;
   browser) BASENAME=browser;    LINK="$MICRO/media/browser.png" ;;
-  *) echo "unknown --mode: $MODE (expected 'repl' or 'browser')" >&2; exit 1 ;;
+  scene)
+    case " $SCENE_NAMES " in
+      *" $SCENE "*) : ;;
+      *) echo "unknown --scene: '$SCENE' (try --scenes)" >&2; exit 1 ;;
+    esac
+    BASENAME="$SCENE"; LINK="$MICRO/media/$SCENE.png" ;;
+  *) echo "unknown --mode: $MODE (expected 'repl', 'browser' or 'scene')" >&2; exit 1 ;;
 esac
 
 # ---- preflight -------------------------------------------------------------
@@ -112,12 +135,13 @@ QPID=$!
 
 # ---- 3. drive the console REPL over QMP send-key, then screendump -----------
 say "Driving the guest over QMP send-key (mode: $MODE)"
-QMP_SOCK="$QMP" PPM_OUT="$PPM" MODE="$MODE" python3 - <<'PY'
+QMP_SOCK="$QMP" PPM_OUT="$PPM" MODE="$MODE" SCENE="$SCENE" python3 - <<'PY'
 import socket, json, time, sys, os
 
-QMP  = os.environ["QMP_SOCK"]
-PPM  = os.environ["PPM_OUT"]
-MODE = os.environ.get("MODE", "repl")
+QMP   = os.environ["QMP_SOCK"]
+PPM   = os.environ["PPM_OUT"]
+MODE  = os.environ.get("MODE", "repl")
+SCENE = os.environ.get("SCENE", "")
 
 # The literal forms typed into the console REPL, in order. EDIT HERE to change
 # what the screenshot demonstrates. Kept stable across font versions so the shots
@@ -147,12 +171,50 @@ FORMS = [
 # 'esc' is deliberately NOT sent; we want to end INSIDE the browser.
 BROWSER_KEYS = []
 
+# --- the named SCENES: the concept illustrations in doc/code-browser.org -----
+# Each is (menu-key, [steps]). A step is one of:
+#   ("k",  qcode)      a single key
+#   ("c",  [qcodes])   a chord, e.g. ("c", ["ctrl","c"])
+#   ("h",  (mod,key))  press key while mod is HELD (see Qmp.hold)
+#   ("m",  (x,y))      left-click at absolute x,y (see Qmp.click)
+#   ("t",  "text")     type a literal string
+#   ("w",  seconds)    extra dwell
+# These are deterministic because every browser list is sorted alphabetically and
+# a fresh pane opens with row 0 selected — so "down N times" always lands in the
+# same place. If you add a definition to examples.lisp, re-check 'matrix'.
+#
+# NOT a scene: the effective-method onion. A :matrix pane has no keyboard cell
+# cursor (matrix-cell-click in poc/shell.lisp is the only way in), so it needs a
+# scripted mouse click — and Qmp.click could not land one. The slam-to-corner
+# origin works, but the follow-up move never takes effect, most likely because
+# the ~32 PS/2 packets of the slam overflow QEMU's queue and later events are
+# dropped. Try stepping the cursor in small increments if you pick this up.
+SCENES = {
+    # the module index (§4⅔): the table of contents, first module previewed beside
+    "modules":   ("l", []),
+    # the Workspace (§3a): a scratch buffer whose verbs eval
+    "workspace": ("p", []),
+    # the dispatch matrix (§4a) for COLLIDE, the 2-axis showcase in examples.lisp:
+    #   modules -> examples (4th) -> collide (3rd) -> "dispatch matrix" (row 0)
+    "matrix":    ("l", [("k","down"),("k","down"),("k","down"),("k","ret"),
+                        ("k","down"),("k","down"),("k","ret"),
+                        ("w",1.0),("k","ret")]),
+    # the live debugger (phase 6): Workspace -> a form that errors -> Debug it
+    "debugger":  ("p", [("w",1.0),("t","(/ 1 0)"),("w",0.8),
+                        ("c",["ctrl","c"]),("c",["ctrl","d"]),("w",2.0)]),
+    # the Spotter (§4¾): the floating palette over the dimmed browser. Super must
+    # be HELD (see Qmp.hold) — a send-key chord releases it too fast to survive
+    # the evdev-modifier / cooked-tty split.
+    "spotter":   ("b", [("w",1.0),("h",("meta_l","spc")),("w",1.5),("t","coll")]),
+}
+
 # --- char -> QMP QKeyCode(s). Shifted chars send a [shift, key] chord. -------
-PLAIN = {' ': 'spc', '-': 'minus', "'": 'apostrophe', ';': 'semicolon'}
+PLAIN = {' ': 'spc', '-': 'minus', "'": 'apostrophe', ';': 'semicolon',
+         '/': 'slash', '.': 'dot', ',': 'comma'}
 for c in "abcdefghijklmnopqrstuvwxyz0123456789":
     PLAIN[c] = c
 SHIFT = {'(': '9', ')': '0', '+': 'equal', ':': 'semicolon', '"': 'apostrophe',
-         '*': '8', '_': 'minus', '~': 'grave_accent'}
+         '*': '8', '_': 'minus', '~': 'grave_accent', '?': 'slash'}
 
 def keys_for(ch):
     if ch in PLAIN: return [PLAIN[ch]]
@@ -182,6 +244,41 @@ class Qmp:
         self.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in keys_for(ch)])
     def ret(self):
         self.cmd("send-key", keys=[{"type": "qcode", "data": "ret"}])
+    def ev(self, *events):
+        self.cmd("input-send-event", events=list(events))
+    def hold(self, mod, key):
+        """Press KEY while MOD is genuinely held down.
+
+        send-key auto-releases the whole chord immediately, which is too fast for
+        the browser: it reads modifiers from the raw evdev KEYBOARD but the
+        character from the cooked tty (fb-browser.lisp's poll loop refreshes
+        Ctrl/Shift/Super first, then reads the byte). If the modifier is already
+        released by the time the byte is read, the chord is lost — which is
+        exactly how a Super-Space came back as a plain space. So hold it."""
+        k = lambda d, s: {"type": "key", "data": {"down": d,
+                                                  "key": {"type": "qcode", "data": s}}}
+        self.ev(k(True, mod)); time.sleep(0.2)
+        self.ev(k(True, key)); time.sleep(0.1); self.ev(k(False, key)); time.sleep(0.2)
+        self.ev(k(False, mod))
+    def click(self, x, y):
+        """Left-click at absolute (X, Y).
+
+        The guest's PS/2 mouse is RELATIVE, and the browser accumulates deltas
+        into its own *cursor-x*/*cursor-y* (clamped to the screen). So we first
+        slam to the top-left corner with a huge negative delta — which the clamp
+        turns into a known origin of (0,0) — and only then move by exactly (x,y).
+        That makes the click independent of wherever the cursor happened to be."""
+        rel = lambda a, v: {"type": "rel", "data": {"axis": a, "value": v}}
+        btn = lambda d: {"type": "btn", "data": {"down": d, "button": "left"}}
+        # The dwell after the slam is NOT cosmetic. Queued relative deltas are
+        # summed before the browser clamps them, so slam and move sent close
+        # together become one -4000+x motion that still clamps to 0 — the cursor
+        # never leaves the corner. Give the guest time to consume the slam (it
+        # repaints the whole 1280x800 canvas in Lisp per event) so the clamp has
+        # actually happened before the second move is queued.
+        self.ev(rel("x", -4000), rel("y", -4000)); time.sleep(2.0)
+        self.ev(rel("x", x), rel("y", y));         time.sleep(2.0)
+        self.ev(btn(True)); time.sleep(0.12); self.ev(btn(False))
 
 def type_str(q, s, cps=0.05):
     for ch in s:
@@ -265,17 +362,34 @@ if MODE == "repl":
 
     time.sleep(1.0)                        # let the last redraw + alien settle
 else:
-    # menu: 'b' launches run-browser-fb. The menu read is still COOKED, so it
-    # needs the Enter; from then on the browser owns the keyboard in raw mode
-    # and single keycodes are what it wants.
-    q.key('b'); time.sleep(0.2); q.ret()
+    # menu: a single letter launches run-browser-fb rooted somewhere ('b' the
+    # CL-USER package, 'l' the module index, 'p' the Workspace). The menu read is
+    # still COOKED, so it needs the Enter; from then on the browser owns the
+    # keyboard in raw mode and single keycodes are what it wants.
+    menu_key, steps = ('b', [("k", k) for k in BROWSER_KEYS])
+    if MODE == "scene":
+        menu_key, steps = SCENES[SCENE]
+    q.key(menu_key); time.sleep(0.2); q.ret()
     # Give it time to load the font, build the canvas, open evdev, and paint the
     # first full-screen frame. This is much slower than a REPL prompt: it is a
     # 1280x800 canvas rendered pixel by pixel in Lisp.
     time.sleep(8.0)
-    for k in BROWSER_KEYS:
-        q.cmd("send-key", keys=[{"type": "qcode", "data": k}])
-        time.sleep(1.2)                    # each keypress repaints the whole canvas
+    for kind, arg in steps:
+        if kind == "k":
+            q.cmd("send-key", keys=[{"type": "qcode", "data": arg}])
+            time.sleep(1.2)                # each keypress repaints the whole canvas
+        elif kind == "c":
+            q.cmd("send-key", keys=[{"type": "qcode", "data": k} for k in arg])
+            time.sleep(1.2)
+        elif kind == "h":
+            q.hold(arg[0], arg[1]); time.sleep(1.2)
+        elif kind == "m":
+            q.click(arg[0], arg[1]); time.sleep(1.2)
+        elif kind == "t":
+            type_str(q, arg, cps=0.08)
+            time.sleep(0.5)
+        elif kind == "w":
+            time.sleep(arg)
     time.sleep(2.0)                        # let the final frame settle
 print("screendump:", q.cmd("screendump", filename=PPM), flush=True)
 time.sleep(1.0)
@@ -323,11 +437,22 @@ ln -sfn "screenshots/$BASENAME-$STAMP.png" "$LINK"   # relative -> portable
 # would break on github.com — we reference the concrete file and keep it current.
 # Each mode owns its own link line, matched on the basename it writes.
 README="$MICRO/README.org"
-if [ -f "$README" ]; then
+if [ -f "$README" ] && [ "$MODE" != scene ]; then
   sed -i -E "s#\[\[\./media/screenshots/$BASENAME-[^]]*\.png\]\]#[[./media/screenshots/$BASENAME-$STAMP.png]]#" "$README"
   # first run of a mode: the README may still point at the pre-archive path
   [ "$MODE" = repl ] && \
     sed -i -E "s#\[\[\./media/screenshot\.png\]\]#[[./media/screenshots/screenshot-$STAMP.png]]#" "$README"
+fi
+
+# doc/code-browser.org embeds these shots too (the scenes, plus the 'browser' one
+# it reuses for the accordion). It lives in doc/, so its links are one level up
+# (../media/...). Run this for EVERY mode, not just scenes: otherwise a --mode
+# browser refresh would update the README and silently leave the doc pointing at
+# a dated file that no longer exists. Same rule as the README — reference the
+# concrete dated file, never the symlink, so it renders on github.com.
+CB="$MICRO/doc/code-browser.org"
+if [ -f "$CB" ]; then
+  sed -i -E "s#\[\[file:\.\./media/screenshots/$BASENAME-[^]]*\.png\]\]#[[file:../media/screenshots/$BASENAME-$STAMP.png]]#" "$CB"
 fi
 
 say "Wrote $DATED ($(stat -c%s "$DATED") bytes)"

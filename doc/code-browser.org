@@ -1,12 +1,24 @@
 #+TITLE: The Code Browser — a Smalltalk browser that is honest about Lisp
 #+STARTUP: showall
 
-Status: *PLAN ONLY — nothing implemented.* Parent docs:
+Status: *LARGELY IMPLEMENTED AND RUNNING.* Phases 0, 1, 2, 3a, 4, 4a (generics),
+5 and 6 are done: the browser runs full-screen on =/dev/fb0= as PID 1 (=b= at the
+supervisor menu), browses and *edits* its own source, and carries a live
+debugger. Still owed: phase 3's remaining widgets, phase 4a's static condition
+view, and phase 5's scrolling gaps — §8 tracks all of it per phase and is the
+authoritative status.
+
+/(This line read "PLAN ONLY — nothing implemented" until 2026-08-09, long after
+the fact. The §8 phase list was kept current throughout; the header was not.
+Screenshots below are captured from the running system — see =refresh-screenshot.sh=.)/
+
+Parent docs:
 [[file:sbcl-init.org][sbcl-init.org]] (the Lisp userland) ·
 [[file:framebuffer.org][framebuffer.org]] (pixels) ·
 [[file:line-editing.org][line-editing.org]] (the editor toolkit) ·
 [[file:networking.org][networking.org]] (the TCP REPL) ·
-[[file:kernel-config.org][kernel-config.org]] (options we would need).
+[[file:kernel-config.org][kernel-config.org]] (the options it needs) ·
+[[file:background/learn-clos.org][background/learn-clos.org]] (the CLOS/MOP background this doc assumes).
 
 The goal: navigate, understand and *change* the running system from inside
 itself — the thing a Smalltalk/Pharo browser gives you — without pretending
@@ -429,6 +441,34 @@ The class-shaped remainder: the superclass chain becomes the *class precedence
 list*; the subclass tree (=sb-mop:class-direct-subclasses=) is a *DAG*, not a
 tree — multiple inheritance. The renderer must handle a DAG.
 
+*Built, and it looks like this.* =COLLIDE= in [[file:../initramfs/examples.lisp][=examples.lisp=]] dispatches on both
+arguments, so its coverage really is a grid — rows and columns are the
+specializer classes, each cell holds the primary-method count, and a dim =·= is a
+genuine gap where nobody wrote a rule:
+
+[[file:../media/screenshots/matrix-2026-08-10.png]]
+
+/The dispatch matrix for =collide=. Reproduce with
+=./refresh-screenshot.sh --scene matrix=./
+
+Clicking a filled cell drills the *effective-method onion* for that class pair —
+the =:around= / =:before= / primary / =:after= layers, indented so the
+indentation is the call stack. The =(missile ship)= pair carries the full trio
+precisely so this view has something to show.
+
+/No screenshot of the onion here, and the reason is itself worth recording: a
+=:matrix= pane has no keyboard cell cursor — =matrix-cell-click= in [[file:../poc/shell.lisp][=poc/shell.lisp=]]
+is the *only* way into a cell — so capturing it needs a scripted mouse click, and
+that is the one gesture the QMP harness could not land. The guest's PS/2 mouse is
+relative, and driving it to an absolute pixel means slamming to a corner to
+establish an origin and then moving by a delta; the second move never took
+effect, most likely because the ~32 packets of the slam overflow QEMU's PS/2
+queue and later events are dropped. Fixable by stepping the cursor in small
+increments; not yet done. Until then the design mock
+[[file:../media/browser-views-design.html][media/browser-views-design.html]] shows the intended drill (matrix → effective
+method → source), and =(effective-method-onion 'collide 'missile 'ship)= prints
+it from any REPL./
+
 ** And "categories", which Lisp does not have
 
 Smalltalk's method categories (=accessing=, =printing=, =private=) are just
@@ -441,6 +481,8 @@ Default them intelligently rather than leaving them empty:
 - *by file* — and note that in this project *the files already are the
   categories*: =process=, =framebuffer=, =meminfo=, =ansi=, =line-editor=,
   =repl=, =net=, =dhcp=, =supervisor=. This is the best default we have.
+  [DONE — this is exactly what §4⅔'s module index surfaces, via
+  =categorize :file=, whose default scheme it has always been.]
 - *by export status* — external vs internal ≈ public vs private.
 - *user-assigned* — settable from the browser, recorded in the change log. Which
   gives Smalltalk's protocols back, exactly, and by the same mechanism it always
@@ -493,6 +535,28 @@ restart column is =compute-restarts= (already innermost-first, in stack order);
 the handler side's *effect* comes free the moment a condition is unhandled,
 because that is the debugger. Static side: =who-calls= + a registry source scan.
 
+*Built — the live half.* Evaluating =(/ 1 0)= in the Workspace with =C-c C-d=
+(Debug it) opens it on the framebuffer: the condition report, the =sb-di= call
+stack innermost-first on the left, the selectable restart column on the right,
+and the selected frame's locals in a strip along the bottom. The stack is *still
+standing* — this is =handler-bind=, not =handler-case= — so invoking a restart
+genuinely transfers control rather than unwinding first:
+
+[[file:../media/screenshots/debugger-2026-08-10.png]]
+
+/The live debugger on =(/ 1 0)=. Note the whole chain is visible —
+=INTEGER-/-INTEGER → / → EVAL → WORKSPACE-DEBUG-IT → RUN-BROWSER-FB →
+SUPERVISOR-MAIN → %START-LISP= — i.e. all the way down to PID 1's own entry
+point. =./refresh-screenshot.sh --scene debugger=./
+
+Frame 0's locals read =#<unavailable>= in that shot, and honestly so: it is
+SBCL's own compiled =INTEGER-/-INTEGER=, built without the debug info that would
+keep them live. Our own frames do better — [[file:../initramfs/examples.lisp][=examples.lisp=]] carries a
+=(declaim (optimize (debug 3)))= precisely so the specimens you are meant to
+inspect keep every local readable.
+
+The *static* face above is the part still owed (phase 4a).
+
 * 3a. The Workspace — a scratch buffer with the editor's hands
 
 Smalltalk's Workspace, and the piece that makes the browser a place you *work*
@@ -516,6 +580,13 @@ And it is the landing pad for the whole browser: "Inspect it" from the dispatch
 matrix or a restart in the condition view drops its value here. Cheap to build —
 the text view we already have, plus four commands and a transcript stream binding
 for =*standard-output*= during a Do-it.
+
+*Built* — =p= at the supervisor menu. The buffer opens on its own cheatsheet, and
+the four verbs sit in the status bar:
+
+[[file:../media/screenshots/workspace-2026-08-10.png]]
+
+/The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
 * 4. The browser itself
 
@@ -598,6 +669,19 @@ a click's consequence behind a tab). It is not *interactive* — it does not let
 next panel while its parent collapses to a *breadcrumb bar* you can click to
 re-expand (collapsing the rest). The bars are simultaneously the breadcrumb and
 the drill path.
+
+*Built.* At the root (=b= at the supervisor menu) the accordion is one expanded
+list with the selected definition's source shown beside it:
+
+[[file:../media/screenshots/browser-2026-08-09.png]]
+
+/The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it./
+
+Drill a few levels and the parents collapse into stacked breadcrumb bars. The
+matrix shot in §3 shows three of them stacked above the expanded pane —
+=modules=, =module examples.lisp=, =generic-function collide= — each labelled on
+the right with *what was picked from it* (=picked examples=, =picked collide=,
+=picked dispatch matrix=), so the bar is the breadcrumb and the choice at once.
 
 The entire thing is *one generic function and one data rule*:
 
@@ -727,6 +811,11 @@ Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that ga
   helper that takes a predicate, so the package and module views cannot drift
   apart in look, sort order or tinting — the predicate is their only difference.
 
+[[file:../media/screenshots/modules-2026-08-10.png]]
+
+/The module index (=l= at the supervisor menu): 17 modules with their definition
+counts, the selected one previewed beside. =--scene modules=./
+
 /Verified in the booted guest over the net REPL: 17 modules, 440 definition
 records; =(subj-module :dhcp)= lists =build-dhcp=, =parse-dhcp=, =dhcp-acquire=,
 =configure-eth0=, =*gateway*=, =+siocgifhwaddr+= … correctly kinded; and the
@@ -776,6 +865,17 @@ and "opening" a hit is just =(present hit)=. It never destroys your place — it
 offers *new trail* (default; the current trail is untouched), *beside* (both
 visible), or *replace* (you're done here). Plus a *recents* list to hop back.
 This is Pharo's Spotter / GT's search / a browser omnibar / Emacs =M-x=.
+
+*Built* — =Super-Space=, a floating palette over the dimmed browser. Typing
+filters the whole candidate set (every recorded definition, every package, every
+module, plus the named surfaces) by fuzzy *subsequence*, ranked exact > prefix >
+word-boundary > plain:
+
+[[file:../media/screenshots/spotter-2026-08-10.png]]
+
+/The Spotter on "coll" — =collide= ranked first, ahead of =collapse= and the
+merely-subsequence matches like =colorize-lisp=.
+=./refresh-screenshot.sh --scene spotter=./
 
 *"I need to look at something else" has three answers, by intent:*
 - /related/ (a function it calls, a class it names) → *open-beside* spawns a new
@@ -1020,20 +1120,68 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
 
 * 7. Prerequisite: we should finally use packages
 
-Today the entire userland lives in =CL-USER=. A code browser whose headline pane
-is *Packages* — browsing a system with exactly one package — would be a bad joke.
+/(Partly overtaken by events — see §4⅔. Kept because the reasoning still holds
+for new code.)/
 
-So: *new code goes in packages* (=LOL.BROWSER=, =LOL.SURFACE=, =LOL.MODEL=, …).
-Retrofitting the existing nine files is optional and can be a later cleanup; even
-one or two real packages makes the pane meaningful and demonstrates the concept.
-Pleasingly, the browser is what finally motivates the packages, and the packages
-are what make the browser worth looking at.
+The worry was: a code browser whose headline pane is *Packages*, browsing a
+system with exactly one package, would be a bad joke. So *new code goes in
+packages* — and some now does: the toolkit is =LOL.CANVAS=, =LOL.TEXTVIEW=,
+=LOL.FB=, =LOL.X11=, =LOL.SCENE=, and the specimen gallery is =LOL.EXAMPLES=.
+The application layer (=initramfs/*.lisp= plus =poc/shell.lisp=) is still
+=CL-USER=.
+
+*What changed the calculus:* retrofitting those ~300 definitions turned out to be
+the wrong fix for the actual problem. A single =LOL= package would merely rename
+=CL-USER= and leave the same flat list; the grouping a reader wants is *by
+module*, which the registry already recorded and which cost one predicate to
+surface (§4⅔). So the packages pane is no longer carrying the navigation load it
+was being asked to carry here.
+
+Packages still earn their keep for *namespacing* — =LOL.CANVAS:PRESENT= versus
+our own =PRESENT= is a real collision avoided — so the "new code goes in
+packages" rule stands. It is simply no longer a *prerequisite* for the browser to
+be worth looking at.
+
+*If a full retrofit is ever attempted*, four things in the current code are keyed
+to =CL-USER= and would need moving with it — three of them fail *silently*:
+
+1. [[file:../poc/shell.lisp][=poc/shell.lisp=]] reaches [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]'s entry points *late-bound by
+   symbol* — =(funcall 'run-spotter-fb)=, =run-cheatsheet-fb=, =run-debugger-fb=
+   — because shell.lisp is loaded first and cannot reference them directly. Split
+   those two files across packages and =fboundp= simply returns NIL: the Spotter,
+   the cheatsheet and the debugger stop working with no error at all.
+2. =run-browser-fb= defaults its root to =(find-package :cl-user)= — the browser
+   would open on a near-empty package.
+3. =jump-at-point= resolves a bare token via =(find-symbol tok :cl-user)= then
+   =:cl=, so =M-.= and Ctrl-click would quietly stop resolving.
+4. [[file:../initramfs/registry.lisp][=registry.lisp=]] binds =*package*= to =CL-USER= when *re-reading* captured
+   source. Miss this one and re-read definitions intern into the wrong package —
+   corrupting the self-hosting property this whole document is built on.
 
 * 8. Phases (each independently demoable — this repo likes screenshots)
 
 Note the ordering: *the model comes first and the window comes second*, because
 the model is the part that is hard to get right and it is testable from the REPL
 we already have. But the UI is pixel-native from its very first line.
+
+*The screenshots in this document are reproducible*, not decoration. Each is a
+named *scene* in [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] — a menu key plus a deterministic key
+sequence, driven over QMP into a headless QEMU boot:
+
+| scene       | shows                                   | section |
+|-------------+-----------------------------------------+---------|
+| =browser=   | the accordion at the root               | §4½     |
+| =modules=   | the module index                        | §4⅔     |
+| =matrix=    | =collide='s dispatch grid                | §3      |
+| =debugger=  | the live debugger on =(/ 1 0)=          | §3      |
+| =workspace= | the scratch buffer and its verbs        | §3a     |
+| =spotter=   | the find-anything palette               | §4¾     |
+
+=./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
+rewrites this file's link to the new dated PNG. They are deterministic because
+every list here is sorted alphabetically and a fresh pane opens on row 0 — so
+"down three times" always lands in the same place. /Add a definition to
+=examples.lisp= and the =matrix= path shifts; re-check it./
 
 *Phase 2 and the text view of phase 3 are PROVEN* — the [[file:../poc/][poc/]] prototype opens a
 real window from a plain =sbcl= via the pure-Lisp X11 client, renders the same
