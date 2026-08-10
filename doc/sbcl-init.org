@@ -10,8 +10,9 @@ STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #23). A C preinit mounts
 /proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
 interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — tabbed browser +
-Workspace, (p) Lisp workspace, (c) change set, (w) spawn a worker, (a) draw the
-Land-of-Lisp alien, (m) memory usage, (t) toggle the network REPL, (s) power off.
+Workspace, (p) Lisp workspace, (c) change set, (l) the module index, (w) spawn a
+worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle the network
+REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -176,6 +177,9 @@ print-menu]] prints it, and the =cond= right below it dispatches):
                                      (=run-browser-fb=, [[file:code-browser.org][code-browser.org]])
   p) Lisp workspace               -> a scratch buffer: Do it / Print it / Inspect it
   c) change set                   -> definitions edited live this session
+  l) modules                      -> every definition grouped by the file it came
+                                     from — the browser's table of contents
+                                     (=subj-modules=, [[file:code-browser.org][code-browser.org]] §4⅔)
   w) spawn a worker process       -> fork+exec another /sbin/lisp as a worker
   a) draw the Land-of-Lisp alien  -> blit a sprite to /dev/fb0 (see framebuffer.org §8)
   m) show memory usage            -> =report-memory= ([[file:../initramfs/meminfo.lisp][meminfo.lisp]])

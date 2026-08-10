@@ -70,6 +70,31 @@
 ;; The change set (§6): the definitions Accepted (edited live) this session — a
 ;; browsable list, Smalltalk's Changes. Data comes from CHANGED-DEFINITIONS.
 (defstruct (subj-change-set (:constructor subj-change-set ())))
+;; The module index: OUR FILES ARE OUR CATEGORIES (model.lisp's CATEGORIZE :file).
+;; A package view is one flat list of every definition in the image; that is the
+;; wrong granularity for finding your way around, because it throws away the one
+;; grouping the source already has — which module a definition came from.
+;; SUBJ-MODULES is the index (one row per file); SUBJ-MODULE is one file's
+;; definitions. Provenance comes from DEFN-FILE, captured by LOAD-RECORDING.
+(defstruct (subj-modules (:constructor subj-modules ())))
+(defstruct (subj-module  (:constructor subj-module (category))) category)
+
+(defun module-index ()
+  "Alist of (CATEGORY . COUNT) over every recorded definition, keyed by the module
+   it was loaded from (CATEGORY-OF … :file), alphabetical so the list reads the
+   same every time. A definition with no recorded file is skipped rather than
+   bucketed under NIL — that only happens for things we did not load-record.
+   Defined up here because the Spotter (below) offers every module as a
+   destination, and it is nicer than a forward reference."
+  (let ((counts (make-hash-table :test 'eql)) (out '()))
+    (maphash (lambda (name defns)
+               (declare (ignore name))
+               (dolist (d defns)
+                 (let ((c (ignore-errors (category-of d :file))))
+                   (when c (incf (gethash c counts 0))))))
+             *registry*)
+    (maphash (lambda (c n) (push (cons c n) out)) counts)
+    (sort out #'string-lessp :key (lambda (e) (princ-to-string (car e))))))
 
 ;;; ---- the Spotter: fuzzy-find anything, open it in a trail (§4¾) -----------
 ;;; Pure data + ranking; the shell owns the overlay and the open-in-new-trail. A
@@ -124,7 +149,16 @@
   (let ((out '()))
     (ignore-errors
       (push (list :label "workspace"  :detail "surface" :subject (subj-workspace))  out)
-      (push (list :label "change set" :detail "surface" :subject (subj-change-set)) out))
+      (push (list :label "change set" :detail "surface" :subject (subj-change-set)) out)
+      (push (list :label "modules"    :detail "surface" :subject (subj-modules))    out))
+    ;; each module by name, so typing "net" finds net.lisp itself and not only the
+    ;; definitions inside it — the index is a destination, not just a waypoint.
+    (dolist (e (ignore-errors (module-index)))
+      (ignore-errors
+        (push (list :label (string-downcase (symbol-name (car e)))
+                    :detail (format nil "module · ~d definition~:p" (cdr e))
+                    :subject (subj-module (car e)))
+              out)))
     (dolist (p (ignore-errors (list-all-packages)))
       (ignore-errors
         (push (list :label (string-downcase (package-name p))
@@ -183,32 +217,76 @@
 (defgeneric commands-for (subject)
   (:documentation "The COMMANDs SUBJECT affords, by type. Pure."))
 
-;;; ---- packages: their definitions ----------------------------------------
+;;; ---- packages and modules: lists of definitions --------------------------
+
+(defun definition-items (keep-p)
+  "Items for every recorded definition KEEP-P accepts — it is called with
+   (NAME DEFN) and returns true to include that record. A generic function
+   collapses to ONE row that drills into its own view (matrix + methods), so its
+   methods do not clutter the list; everything else gets a row per DEFN record.
+   Shared by the package view and the module view so the two look, sort and tint
+   identically — the only difference between them is this predicate. Every probe
+   is guarded: this runs in PID 1, and one malformed entry must not break a list."
+  (let ((items '()) (seen-gfs '()))
+    (maphash
+     (lambda (name defns)
+       (dolist (d defns)
+         (when (ignore-errors (funcall keep-p name d))
+           (if (and (ignore-errors (fboundp name))
+                    (ignore-errors (typep (fdefinition name) 'generic-function)))
+               (unless (member name seen-gfs :test #'equal)
+                 (push name seen-gfs)
+                 (push (make-item :label (string-downcase (princ-to-string name))
+                                  :detail "generic function" :kind :generic-function
+                                  :subject (fdefinition name))
+                       items))
+               (push (make-item :label  (string-downcase (princ-to-string name))
+                                :detail (string-downcase (princ-to-string (defn-kind d)))
+                                :kind (defn-kind d)
+                                :subject (subj-defn name (defn-kind d)))
+                     items)))))
+     *registry*)
+    (sort items #'string< :key #'item-label)))
 
 (defmethod present ((p package))
-  (let ((items '()) (seen-gfs '()))
-    (maphash (lambda (name defns)
-               (when (and (symbolp name) (eq (symbol-package name) p))
-                 (if (and (fboundp name) (typep (fdefinition name) 'generic-function))
-                     ;; a generic function is ONE entry that drills into its own view
-                     ;; (matrix + methods + source); its methods don't clutter the
-                     ;; package list. Its subject is the GF object, not a subj-defn.
-                     (unless (member name seen-gfs)
-                       (push name seen-gfs)
-                       (push (make-item :label (string-downcase (princ-to-string name))
-                                        :detail "generic function" :kind :generic-function
-                                        :subject (fdefinition name))
-                             items))
-                     (dolist (d defns)
-                       (push (make-item :label  (string-downcase (princ-to-string name))
-                                        :detail (string-downcase (princ-to-string (defn-kind d)))
-                                        :kind (defn-kind d)
-                                        :subject (subj-defn name (defn-kind d)))
-                             items)))))
-             *registry*)
-    (make-view :title (format nil "package ~a" (package-name p))
-               :kind :list :subject p
-               :items (sort items #'string< :key #'item-label))))
+  (make-view :title (format nil "package ~a" (package-name p))
+             :kind :list :subject p
+             :items (definition-items
+                        (lambda (name d)
+                          (declare (ignore d))
+                          (and (symbolp name) (eq (symbol-package name) p))))))
+
+;;; ---- modules: the browser's table of contents ----------------------------
+;;; A flat package list answers "what exists"; it does not answer "where does
+;;; this live". The registry already knows — LOAD-RECORDING stamps each DEFN
+;;; with the file it came from — so grouping by module costs nothing but a
+;;; predicate, and gives back the structure build.sh's LISP_SOURCES describes.
+
+(defmethod present ((s subj-modules))
+  "The module index — one row per source file, drilling into its definitions."
+  (let ((mods (module-index)))
+    (make-view
+     :title "modules — every definition, by the file it came from"
+     :kind :list :subject s
+     :items (if mods
+                (mapcar (lambda (e)
+                          (destructuring-bind (cat . n) e
+                            (make-item :label (string-downcase (symbol-name cat))
+                                       :detail (format nil "~d definition~:p" n)
+                                       :kind :package   ; a container, tinted like one
+                                       :subject (subj-module cat))))
+                        mods)
+                (list (make-item :label "(no recorded modules)"
+                                 :detail "nothing was loaded with load-recording"))))))
+
+(defmethod present ((m subj-module))
+  (let ((cat (subj-module-category m)))
+    (make-view :title (format nil "module ~(~a~).lisp" cat)
+               :kind :list :subject m
+               :items (definition-items
+                          (lambda (name d)
+                            (declare (ignore name))
+                            (eql (ignore-errors (category-of d :file)) cat))))))
 
 ;;; ---- a definition: its source (or reference, for a builtin) --------------
 

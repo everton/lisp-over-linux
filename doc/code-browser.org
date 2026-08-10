@@ -707,6 +707,45 @@ subject type gets a =present= method and optionally a =commands-for= method; a n
 — is the shell re-=present='ing a subject when its dependency signals, not a
 command. Do not overload commands to do double duty.)
 
+* 4⅔. The module index — our files ARE our categories  [DONE]
+
+A package view is one flat alphabetical list of every definition in the image.
+That answers *"what exists"* and is exactly the wrong shape for *"where does this
+live"* — rooted at =CL-USER= it is a single 300-plus-row list, and Smalltalk's
+class categories are the thing Lisp does not give us (§3's concept map says as
+much). But we already have the grouping: [[file:../initramfs/registry.lisp][=load-recording=]] stamps every =DEFN=
+with the file it came from, and [[file:../initramfs/model.lisp::defun categorize][=categorize=]] in [[file:../initramfs/model.lisp][=model.lisp=]] has always been
+able to group by it (=:file= is its *default* scheme). It just was not surfaced.
+
+Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that gap:
+
+- =subj-modules= — the *index*: one row per source file with a definition count,
+  drilling into that file. Reached by the supervisor's =l)= key, or the Spotter.
+- =subj-module= — one file's definitions, in the *same* item shape as a package
+  view (kind-tinted rows, a generic function collapsed to one row that opens its
+  own matrix view). Both views are built by one shared =definition-items=
+  helper that takes a predicate, so the package and module views cannot drift
+  apart in look, sort order or tinting — the predicate is their only difference.
+
+/Verified in the booted guest over the net REPL: 17 modules, 440 definition
+records; =(subj-module :dhcp)= lists =build-dhcp=, =parse-dhcp=, =dhcp-acquire=,
+=configure-eth0=, =*gateway*=, =+siocgifhwaddr+= … correctly kinded; and the
+Spotter's candidate list grew to 471 with all 17 modules as destinations, so
+typing "net" now finds =net.lisp= itself and not only the definitions inside it./
+
+*An unplanned benefit.* The =CL-USER= root could only ever show what lives in
+=CL-USER=. The toolkit does not — =canvas=, =textview=, =fb= and =shell= are in
+their own =lol.*= packages, so the browser's default root never listed them at
+all; you had to know to go looking for the package. The module index is keyed by
+*provenance, not package*, so it shows all 17 modules including those four. It is
+a strictly better table of contents than the package root, which is a good
+argument for it being the more natural place to start.
+
+This is also the cheap answer to "should everything move into one =LOL= package
+so it is easier to find?". A single package would merely rename =CL-USER= and
+leave the same flat list; the grouping people actually want is by module, and
+that needed a predicate rather than a migration of 300-plus definitions.
+
 * 4¾. The environment — trails, the Spotter, and the tiled shell
 
 The accordion (§4½) is *one investigation*. This section is the container above
