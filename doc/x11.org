@@ -1,0 +1,280 @@
+#+TITLE: Speaking X11 — a window on the dev host, in pure Lisp
+#+STARTUP: showall
+
+Companion to [[file:framebuffer.org][framebuffer.org]] (pixels → the laptop panel) and [[file:fonts.org][fonts.org]] (glyphs →
+pixels). This file covers the *other* place our pixels can land: an ordinary
+window on your desktop, drawn by [[file:../poc/x11.lisp][=poc/x11.lisp=]] — a complete X11 *client* in 309
+lines of Common Lisp, with no C, no Xlib and no CLX.
+
+Why it exists: the code browser ([[file:code-browser.org][code-browser.org]]) has to be developed
+*somewhere*, and rebooting a laptop to try a change is a miserable loop. The same
+canvas that [[file:../poc/fb.lisp][=fb.lisp=]] pushes to =/dev/fb0= in the guest goes to an X window on
+the host, so the browser runs from a plain =sbcl= on your desktop. Same code,
+two backends — see [[file:../poc/README.org][poc/README.org]].
+
+Note it is a *development* backend: =x11.lisp= is deliberately **not** in
+=build.sh='s =LISP_SOURCES=, so the booted image carries the framebuffer path
+only. Nothing here ever runs on the machine — which is exactly why it can be
+this small.
+
+* The one-sentence essence
+
+X11 is *a protocol on a socket*, not a library — so "supporting X" never meant
+running an X *server*; it meant writing ~300 lines that speak the handful of
+messages we actually need.
+
+* 1. The misconception this file removes
+
+"We can't do X, that needs drivers." That confuses the two halves of X11:
+
+- The *server* owns the hardware — modesetting, GPU drivers, input devices,
+  keyboard layouts. Writing one would need everything [[file:framebuffer.org][framebuffer.org §6½]] says
+  we are deliberately not doing.
+- The *client* owns nothing. It opens a Unix socket, says hello, asks for a
+  window, and sends pixels. That is all.
+
+Your desktop already runs a server. We only ever need to be a client, and a
+client is *just bytes on a socket* — which we have, because =sb-bsd-sockets= is
+baked into the image ([[file:networking.org][networking.org §2a]]).
+
+* 2. Why our slice of the protocol is so small
+
+X11 is a large protocol because it was designed when the *server* did the
+drawing: you asked it to stroke lines, fill polygons, load fonts and render
+text, so that a workstation could drive a terminal over a network.
+
+*We want none of that.* [[file:../poc/canvas.lisp][=canvas.lisp=]] already draws everything ourselves — every
+rectangle, every glyph, every syntax colour — into one array of pixels. So we
+never ask X to draw anything. We hand it *one finished image*.
+
+That collapses the protocol to:
+
+#+begin_src
+  connect + authenticate      MIT-MAGIC-COOKIE-1 from $XAUTHORITY
+  CreateWindow                give me a rectangle
+  ChangeProperty              …call it "lisp-over-linux"
+  CreateGC                    a graphics context (PutImage insists on one)
+  GetKeyboardMapping          keycodes -> keysyms, so typing works
+  MapWindow                   make it visible
+  PutImage                    THE ONLY DRAWING CALL WE EVER MAKE
+  <- events                   KeyPress, ButtonPress, Motion, Expose, Configure
+#+end_src
+
+Eight message types. Everything else X can do, we simply never use — which is
+the same trade this project makes everywhere: do the work yourself, and the
+interface you must learn shrinks to almost nothing.
+
+* 3. The wire format — three rules
+
+Read these and the code stops looking like magic.
+
+1. *Little-endian, declared by us.* The first byte of the connection is =#x6c= —
+   ASCII =l= — telling the server to expect little-endian. (=B= would mean big.)
+   That matches x86 *and* it matches our canvas, which is the point of §6 below.
+2. *Everything is padded to 4 bytes.* Strings, request bodies, all of it. Hence
+   =pad4= in the source: =(mod (- 4 (mod n 4)) 4)=.
+3. *A request is: opcode, one data byte, then a length in 32-bit WORDS.* Not
+   bytes — words. So =(put-u16 s (+ 6 words))= means "this request is 6 header
+   words plus the payload". Get that length wrong and the server desynchronises
+   and closes the connection, which is the classic way to break an X client.
+
+The helpers at the top of the file (=u8= / =u16= / =u32= to read, =put-u8= /
+=put-u16= / =put-u32= to write) are the whole of the encoding layer. Nine lines.
+
+* 4. Authentication — and a byte-order joke
+
+An X server will not let just anyone open a window on your desktop. The usual
+scheme is *MIT-MAGIC-COOKIE-1*: a 16-byte secret written into the file named by
+=$XAUTHORITY=. You send it; the server compares it.
+
+=read-xauth-cookie= parses that file. It is a flat sequence of entries:
+
+#+begin_src
+  family · address · number · name · data     (each length-prefixed)
+#+end_src
+
+Here is the detail worth stopping on. The X *protocol* is little-endian because
+we asked for it. The =.Xauthority= *file* is **big-endian** — its length prefixes
+are big-endian =u16=. So this one file reads its lengths most-significant-byte
+first and then sends everything else least-significant-byte first:
+
+#+begin_src lisp
+  (flet ((be16 () (let ((a (read-byte s nil nil)) (b (read-byte s nil nil)))
+                    (and a b (logior (ash a 8) b)))))   ; a is the HIGH byte
+#+end_src
+
+Compare =u16= at the top of the same file, which does the opposite. This is the
+one place in the whole project where the little-endian assumption of
+[[file:framebuffer.org][framebuffer.org §9.2]] is *inverted*, and it is a good reminder that endianness is
+a property of each format you meet, never of "the machine".
+
+(If no cookie is found we send empty auth. That works for a server started with
+authentication disabled, and fails cleanly otherwise.)
+
+* 5. Connecting: the setup reply, and minting your own IDs
+
+You send a short setup request; the server answers with a *setup reply* that
+describes the whole display. =build-display= parses just enough of it:
+
+- =id-base= — see below.
+- =root= and its =visual= — the root window and its pixel format, which our
+  window inherits. We do not go shopping for a visual; we take the root's.
+- =max-request= — the request size cap. §7 is entirely about this.
+- The screen record does not sit at a fixed offset: it comes after a 32-byte
+  fixed part, the vendor string (padded), and 8 bytes per pixmap format. Hence
+  the =soff= arithmetic — the one genuinely fiddly line in the file.
+
+*Resource IDs are minted by the client.* This surprises people who expect to ask
+the server "please allocate me a window and tell me its number". Instead the
+server hands you a *range* (=id-base=) at connection time, and you make up IDs
+inside it yourself:
+
+#+begin_src lisp
+  (defun new-id (d)
+    (prog1 (logior (display-id-base d) (display-next-id d))
+      (incf (display-next-id d))))
+#+end_src
+
+That is a latency optimisation baked into the protocol's design: you can create a
+window *and* use it in the same batch of writes, never waiting for a round trip.
+It is why our whole setup — CreateWindow, ChangeProperty, CreateGC, MapWindow —
+is one unbroken run of writes with a single =finish-output= at the end.
+
+* 6. Drawing: =PutImage= is the entire renderer
+
+#+begin_src lisp
+  (defun present (d canvas) …)     ; opcode 72, format ZPixmap
+#+end_src
+
+=ZPixmap= means "pixels laid out one after another, in the visual's format",
+which is exactly how [[file:../poc/canvas.lisp][=canvas.lisp=]] already stores them.
+
+And here the same happy accident from [[file:framebuffer.org][framebuffer.org §9.2]] pays off a *second*
+time. The canvas stores =#x00RRGGBB= per pixel; little-endian puts that in memory
+as bytes =B,G,R,0=; and that is what the server wants. So the inner loop is a
+byte shuffle with no conversion table, no swizzle, no format negotiation — the
+identical reason the framebuffer path needs none:
+
+#+begin_src lisp
+  (setf (aref line i)       (logand p #xff)           ; B
+        (aref line (+ i 1)) (logand (ash p -8) #xff)  ; G
+        (aref line (+ i 2)) (logand (ash p -16) #xff) ; R
+        (aref line (+ i 3)) 0)
+#+end_src
+
+One canvas format, chosen once, satisfies both the panel and the X server. That
+is not luck — it is why =#x00RRGGBB= was chosen.
+
+* 7. The one complication: request size, and banding
+
+A single X request cannot exceed =max-request= *words* (typically 65535 words =
+256 KB). A 1280×800 frame is 4 MB. So a full-screen present *cannot* be one
+request; it has to go as horizontal bands:
+
+#+begin_src lisp
+  (max-words     (- (display-max-request d) 6))    ; minus the PutImage header
+  (rows-per-band (max 1 (floor max-words w)))
+#+end_src
+
+…then walk down the image a band at a time. At 1280 wide that is ~51 rows per
+band, so ~16 requests per frame.
+
+This is the honest reason real toolkits track *damage rectangles* instead of
+pushing whole frames: you should be sending the 200×20 pixels that actually
+changed, not re-shipping four megabytes because a cursor blinked. We push full
+frames because it is a prototype and it is fast enough — the same "correct and
+obvious beats clever" call as the row-at-a-time framebuffer blit
+([[file:framebuffer.org][framebuffer.org §9.1]]). Damage tracking is listed as owed work in
+[[file:code-browser.org][code-browser.org]]'s Phase 2.
+
+* 8. The keyboard — why a keymap is not optional
+
+X delivers *keycodes*: raw, layout-independent hardware numbers. Keycode 38 is
+"the key one right of Caps Lock" — which is =a= on QWERTY, =q= on AZERTY. You
+cannot write a text editor against that.
+
+Turning a keycode into "the character the user meant" is the *server's keyboard
+map*, so we ask for it once with =GetKeyboardMapping= (=fetch-keymap=) and do the
+lookup ourselves in =keysym= / =decode-key=. Most of that lookup is trivial,
+thanks to a deliberate piece of X design: **Latin-1 keysyms are their own
+character codes**, so =#x41= is just =A=. Only the named keys need a table:
+
+#+begin_src lisp
+  (#xff08 :backspace) (#xff09 :tab) (#xff0d :return) (#xff1b :escape) …
+#+end_src
+
+** A concurrency subtlety worth stealing
+
+Note *when* the keymap is fetched — before =MapWindow=:
+
+#+begin_example
+  ;; Fetch the keyboard map BEFORE mapping the window. X replies and events
+  ;; share one stream; doing this while the window is still unmapped means no
+  ;; event can be queued ahead of the reply, so we can just read it straight.
+#+end_example
+
+On an X connection, *replies and events arrive on the same socket*. A real client
+therefore needs a dispatch loop that can buffer events while waiting for a reply.
+We dodge that entirely by asking our one question during the window in which no
+events can exist yet — the window is not mapped, so nothing can be exposed,
+clicked or typed into. Order the requests correctly and a whole category of
+machinery disappears.
+
+The reply is also *validated* before its length is trusted:
+
+#+begin_src lisp
+  (unless (= (u8 hdr 0) 1)     ; 1 = reply; 0 = error
+    (warn "GetKeyboardMapping did not return a reply…")
+    (return-from fetch-keymap))
+#+end_src
+
+Reading a length out of an error packet would make us block forever waiting for
+bytes that are never coming — the classic protocol hang.
+
+* 9. Events — 32 bytes, always
+
+Every X event is *exactly 32 bytes*. That makes the read loop trivial: pull 32
+bytes, look at the opcode, decode the five kinds we care about, discard the rest.
+
+| code | event           | what we take                     |
+|------+-----------------+----------------------------------|
+|    0 | =Error=         | reported, not modelled (a POC)   |
+|    2 | =KeyPress=      | keycode + modifier state         |
+|    4 | =ButtonPress=   | button + x,y + state             |
+|    6 | =MotionNotify=  | x,y (the mouse cursor)           |
+|   12 | =Expose=        | we just repaint everything       |
+|   22 | =ConfigureNotify= | the new window size            |
+
+The high bit of byte 0 marks a *synthetic* (client-sent) event, which is why the
+code masks with =#x7f=.
+
+=Expose= is where full-frame pushing quietly pays for itself: the correct
+response to "this region was damaged" is to redraw that region, but since we
+always send the whole canvas anyway, we can ignore the rectangle entirely.
+
+* 10. What this proves, and what it deliberately omits
+
+*Proved:* the browser's pixel toolkit is backend-neutral. The identical
+=canvas.lisp= renders to an X window on the host and to =/dev/fb0= as PID 1 in
+the guest, and the only thing that differs is the ~40 lines that ship the buffer.
+That is what let Phases 2–4 of [[file:code-browser.org][code-browser.org]] be developed at desktop speed and
+then simply *run* on the machine.
+
+*Omitted, on purpose:*
+
+- *Damage tracking* — we push whole frames (§7).
+- *Window-manager conversation* — no =WM_PROTOCOLS=, so clicking the ✕ kills the
+  connection rather than asking us politely to close. Fine for a dev harness.
+- *Modifier tracking beyond the event's =state= field*, no =xkb=, no compose key,
+  no input methods.
+- *Errors as data* — code 0 is reported, not modelled.
+- *Any server-side drawing whatsoever.* This is the omission that makes all the
+  others affordable.
+
+* See also
+
+- [[file:../poc/x11.lisp][=poc/x11.lisp=]] — the client itself; the header comment is a good summary.
+- [[file:../poc/run-host.lisp][=poc/run-host.lisp=]] / [[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]] — the host entry points that use it.
+- [[file:../poc/README.org][poc/README.org]] — what the prototype settles, and its known rough edges.
+- [[file:framebuffer.org][framebuffer.org]] — the other backend, and the shared pixel-format reasoning.
+- [[file:code-browser.org][code-browser.org]] §6.1 — the host dev loop this client exists to make possible.

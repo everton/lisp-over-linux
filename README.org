@@ -145,6 +145,8 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:doc/framebuffer.org][framebuffer.org]]   | Framebuffer → efifb → fbcon, /dev/fb0, fonts, drawing the alien. Also: why there is no GPU driver here. |
 | [[file:doc/code-browser.org][code-browser.org]]  | *The active major effort.* The pixel-native, Smalltalk-style code browser: the =present= drill-down protocol, the accordion shell, trails/tabs/Spotter, live editing, the debugger. Design + phase tracker. |
 | [[file:doc/fonts.org][fonts.org]]         | How a character becomes pixels in our own renderer (bitmap glyph → =draw-string=), and how to change the font or its size. |
+| [[file:doc/x11.org][x11.org]]           | The pure-Lisp X11 *client* (309 lines, no Xlib): why "supporting X" is just a socket protocol, and how the browser gets a window on your dev host. |
+| [[file:doc/background/learn-clos.org][learn-clos.org]]    | From-scratch tutorial: CLOS (multiple dispatch, method combination) and the MOP — the Lisp the code browser is built out of. |
 | [[file:doc/background/background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
 | [[file:doc/background/learn-networking.org][learn-networking.org]] | From-scratch networking tutorial (progress tracker + code links). |
 | [[file:doc/line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |

@@ -21,8 +21,10 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/code-browser.org` | **The active major effort.** Full design + phase tracker for the Smalltalk/Pharo-style code browser: the `present` drill-down protocol, the accordion shell, trails/tabs/Spotter, the debugger. The longest doc here and the best maintained — treat its phase list as truth. |
 | `doc/fonts.org` | How our pure-Lisp renderer turns a character into pixels (PSF/`.lolf` bitmap → `draw-string`), and how to change the font or its size. |
 | `doc/agent.org` | **PLAN.** An LLM client written in Lisp and living in the image: HTTP/JSON/SSE over the existing sockets, `registry.lisp`/`model.lisp`/`present.lisp` as its tool surface, doorways from the REPL / a browser tab / the debugger, and TLS 1.3 from scratch as a late sub-project. Also records why we are *not* running the `claude` CLI in the guest. |
+| `doc/x11.org` | The pure-Lisp X11 **client** (`poc/x11.lisp`): the wire format, MIT-MAGIC-COOKIE auth, `PutImage` + banding, keycodes vs keysyms. The host dev backend — deliberately NOT in `LISP_SOURCES`, so it never ships in the image. |
 | `doc/background/background.org` | General firmware/CPU/hardware theory (UEFI handoff, x86 modes, USB-HID, multicore). "Not project rationale." |
 | `doc/background/learn-networking.org` | From-scratch networking tutorial with a progress tracker + deep links into the code. |
+| `doc/background/learn-clos.org` | From-scratch CLOS + MOP tutorial (same shape as `learn-networking.org`). The Lisp background the browser assumes: multiple dispatch, specificity, method combination, conditions/restarts, and the `sb-mop` accessors `model.lisp` is built from. |
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |

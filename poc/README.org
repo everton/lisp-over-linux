@@ -25,7 +25,7 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 |------------------+------------------------------------------------------------------|
 | =canvas.lisp=    | the pixel buffer + =fill-rect= / =blit-rgba= / PSF font + =draw-string=. *Backend-blind.* |
 | =scene.lisp=     | what we draw: a mock code browser (tabs, 3 list panes, syntax-coloured source, the alien). *Backend-blind.* |
-| =x11.lisp=       | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, events. ~250 lines. |
+| =x11.lisp=       | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, events. 309 lines — written up in full in [[file:../doc/x11.org][doc/x11.org]]. |
 | =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |

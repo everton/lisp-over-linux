@@ -920,8 +920,14 @@ Lisp* — no kernel option we do not already have, no C, no library.
 Before any of it touches the guest: the same browser runs on your host from a
 plain =sbcl=, presenting through the pure-Lisp X11 client into a window on your
 desktop. Real keyboard, real mouse, no QEMU, no reboot, edit-and-rerun in
-seconds. Lives under [[file:../host-client/][host-client/]] — already the home for host-side code that
-never ships in the image.
+seconds. [DONE — [[file:../poc/x11.lisp][=poc/x11.lisp=]], written up in [[file:x11.org][x11.org]].]
+
+/(This paragraph originally planned to put the client under =host-client/=. It
+landed in [[file:../poc/][poc/]] instead, and that reads better: it is not a host *tool* the way
+the C =lol-repl-client= is — it is one of =canvas.lisp='s two backends, the
+sibling of [[file:../poc/fb.lisp][=fb.lisp=]], and it is developed and changed alongside them. Like
+=host-client/=, it does not ship — =x11.lisp= is deliberately absent from
+=build.sh='s =LISP_SOURCES=, so the image carries the framebuffer backend only.)/
 
 A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
 (and reuses the PPM→PNG code already sitting in =build.sh=).

@@ -1,0 +1,331 @@
+#+TITLE: Learn CLOS and the MOP — from zero, then into our code
+#+STARTUP: showall content
+
+This is a *from-scratch* tutorial: it assumes you can read basic Common Lisp
+(=defun=, lists, =let=) and nothing more, and builds up to the two things the
+code browser is made of — *CLOS*, Lisp's object system, and the *MOP*, the
+protocol that lets a program ask CLOS about itself.
+
+Why it earns a place here: [[file:../../initramfs/model.lisp][=model.lisp=]] is 476 lines with *35 distinct
+=sb-mop:= calls*, and the whole browser is built on generic-function dispatch.
+Every other doc in this project explains a piece of Linux; this one explains the
+piece of *Lisp* the project leans on hardest, and which C and Python readers have
+no prior for — CLOS is genuinely unlike the objects in either.
+
+Each section ends with:
+- *In the code* — links to the exact spot in our sources that uses the idea.
+- *Check yourself* — a question to make sure it stuck.
+
+Companion: [[file:background.org][background.org]] (firmware/CPU theory) · [[file:learn-networking.org][learn-networking.org]] (the same
+shape, for networking) · the design doc this serves is [[file:../code-browser.org][code-browser.org]].
+
+* Progress  [0/10]
+Tick a box as you finish a section (in Emacs: =C-c C-c= on the checkbox).
+- [ ] 1. The one big idea: methods do not live in classes
+- [ ] 2. Classes and slots
+- [ ] 3. Generic functions and multiple dispatch
+- [ ] 4. Specificity: how CLOS picks a method
+- [ ] 5. Method combination: =:before=, =:after=, =:around=
+- [ ] 6. Conditions and restarts (CLOS wearing a different hat)
+- [ ] 7. What "the MOP" means
+- [ ] 8. Asking about classes with the MOP
+- [ ] 9. Asking about generic functions with the MOP
+- [ ] 10. Synthesis: how the browser is *only* these ideas
+
+* 1. The one big idea: methods do not live in classes
+
+If you come from Java, Python or C++, an object is *a bundle of data and the
+functions that act on it*, and you call one with =object.method(args)=. The
+method belongs to the class. Adding a method means editing the class.
+
+*CLOS does not work that way, at all.* In CLOS:
+
+- a *class* holds only data (fields, called *slots*);
+- a *generic function* is a free-standing function name;
+- a *method* is one implementation of a generic function, tagged with the classes
+  of arguments it applies to.
+
+So you never write =ship.collide(asteroid)=. You write =(collide ship asteroid)=
+— an ordinary function call — and CLOS looks at the classes of *both* arguments
+to decide which method body runs.
+
+The consequence that matters most: **you can add methods to classes you did not
+write, without modifying them.** Our =present= generic function has methods for
+=package=, =class=, =generic-function= — SBCL's own built-in classes — and we did
+not touch SBCL to do it. That single property is what makes the browser's
+"everything is browsable" claim cheap instead of impossible.
+
+*In the code:* [[file:../../initramfs/present.lisp][=present.lisp=]] is nothing but this idea: one generic function,
+a method per kind of thing, and a =(defmethod present ((x t)) …)= catch-all so
+nothing is ever a dead end.
+
+*Check yourself:* in =(collide a b)=, where is the code that decides which body
+runs — inside =a='s class, inside =b='s class, or somewhere else?
+
+* 2. Classes and slots
+
+A class defines *slots* (fields) and its *superclasses*:
+
+#+begin_src lisp
+  (defclass space-object ()                      ; no superclasses
+    ((name :initarg :name :reader name :initform "?")))
+
+  (defclass ship (space-object) ())              ; inherits NAME
+#+end_src
+
+Slot options do the work:
+- =:initarg :name= — the keyword =make-instance= accepts: =(make-instance 'ship
+  :name "Nostromo")=.
+- =:reader name= — auto-define a generic function =name= that returns the slot.
+  (=:accessor= also gives you the =setf=.)
+- =:initform "?"= — the default when no initarg is passed.
+
+Multiple inheritance is allowed: =(defclass x (a b) …)= is legal and normal, not
+exotic. §4 is how CLOS keeps that unambiguous.
+
+*In the code:* [[file:../../initramfs/examples.lisp][=examples.lisp=]] defines a deliberately small hierarchy —
+=space-object= with =asteroid=, =ship=, =station= and =missile= under it — that
+exists purely to be looked at in the browser.
+
+*Check yourself:* what is the difference between =:initarg= and =:initform=?
+
+* 3. Generic functions and multiple dispatch
+
+A generic function declares the name; methods fill it in.
+
+#+begin_src lisp
+  (defgeneric collide (a b))                     ; the name and its shape
+
+  (defmethod collide ((a asteroid) (b ship))     ; one implementation…
+    …)
+  (defmethod collide ((a missile) (b ship))      ; …another
+    …)
+#+end_src
+
+Those =(a asteroid)= parameter forms are *specializers*: "this method applies when
+the first argument is an =asteroid= and the second is a =ship=."
+
+Because *every* required parameter can be specialized, CLOS has **multiple
+dispatch**. This is the feature single-dispatch languages lack, and the reason
+they need visitor patterns and double-dispatch tricks: in Java,
+=asteroid.collide(ship)= can only pick a method by the type of =asteroid=, and
+the =ship= half has to be recovered by hand.
+
+Multiple dispatch is why a generic function's coverage is a *grid*, not a list —
+one axis per specialized argument. Our browser draws exactly that grid.
+
+*In the code:* =collide= in [[file:../../initramfs/examples.lisp][=examples.lisp=]] is the project's showcase: 13
+methods (10 primary, plus an =:around=/=:before=/=:after= trio — see §5) over 4
+classes, dispatching on *both* arguments, with real gaps where nobody wrote a
+rule. Our own =present= dispatches on one argument, so its matrix
+honestly degrades to a list — the reason =collide= exists at all.
+
+*Check yourself:* why can a single-dispatch language not express =collide=
+directly?
+
+* 4. Specificity: how CLOS picks a method
+
+Several methods can apply at once. =(collide missile ship)= matches the
+=(missile ship)= method, and would also match a hypothetical
+=(space-object space-object)= one. CLOS picks the *most specific*, by a rule with
+no ambiguity in it:
+
+1. Each class has a **class precedence list** (CPL) — its own linearization of
+   itself plus all its ancestors, most specific first. Ask SBCL for =ship='s and
+   you get =(SHIP SPACE-OBJECT STANDARD-OBJECT SLOT-OBJECT T)= — note that the
+   tail past your own classes is implementation detail (=SLOT-OBJECT= is SBCL's,
+   not ANSI's), and that =T= is always last.
+2. Applicable methods are sorted by comparing specializers *left to right*: the
+   first argument's specificity decides; ties are broken by the second, and so on.
+
+So argument order is not cosmetic — it is the tie-break order. And because every
+class ultimately has =t= in its CPL, a method specialized on =t= is the universal
+fallback. That is precisely how =(defmethod present ((x t)) …)= guarantees the
+browser can present *anything*.
+
+*In the code:* [[file:../../initramfs/model.lisp::defun precedence-list][=precedence-list=]] in [[file:../../initramfs/model.lisp][=model.lisp=]] exposes the CPL, and
+[[file:../../initramfs/model.lisp::defun applicable-methods][=applicable-methods=]] shows which methods apply to a given class tuple, most
+specific first — the browser's "effective method preview".
+
+*Check yourself:* for =(collide missile ship)=, which is consulted first to break
+a tie — =missile='s CPL or =ship='s?
+
+* 5. Method combination: =:before=, =:after=, =:around=
+
+CLOS does not only pick *one* method. By default it builds an **effective
+method** out of all applicable ones, using their *qualifiers*:
+
+| qualifier  | when it runs                                              |
+|------------+-----------------------------------------------------------|
+| =:around=  | outermost; wraps everything, may decline to call inward    |
+| =:before=  | before the primary, most specific first                    |
+| /(none)/   | the *primary* method — the actual result                   |
+| =:after=   | after the primary, most specific **last**                  |
+
+The order is an onion:
+
+#+begin_src
+  :around          ────────────────────────┐
+     :before  (most specific first)        │
+        primary   ← the value comes from here
+     :after   (most specific LAST)         │
+                 ────────────────────────┘
+#+end_src
+
+Inside a primary method, =(call-next-method)= invokes the *next most specific*
+primary — CLOS's answer to =super=. Inside an =:around=, it invokes the rest of
+the onion; omit it and you have suppressed the whole operation.
+
+This is how you add behaviour without touching existing code: logging, locking
+and validation become =:before= / =:around= methods bolted on from outside.
+
+*In the code:* [[file:../../initramfs/model.lisp::defun effective-method-onion][=effective-method-onion=]] computes exactly this structure, indented
+so the indentation *is* the call stack. =examples.lisp='s =(missile ship)= pair
+deliberately carries =:around=, =:before= and =:after= methods so the onion has
+real layers to show. In the browser: find =collide=, drill the dispatch matrix,
+click the =(missile ship)= cell.
+
+*Check yourself:* if an =:around= method never calls =call-next-method=, do the
+=:before= methods run?
+
+* 6. Conditions and restarts (CLOS wearing a different hat)
+
+Lisp's error system is built *from* CLOS: a condition is an object of a class,
+and handlers dispatch on that class. But it differs from =try/catch= in one
+decisive way.
+
+In most languages, catching an error *unwinds the stack first* — by the time your
+handler runs, the frames where the problem happened are gone. In Lisp,
+=handler-bind= runs your handler **before the unwind**, with the erroring stack
+still standing. From there you can inspect it, and you can invoke a *restart* — a
+recovery path the erroring code published by name — and *resume*, rather than
+abort.
+
+That is not a detail; it is the entire reason our debugger works. Because
+=fb-browser.lisp= uses =handler-bind= and not =handler-case=, when =(/ 1 0)=
+signals we can show live restarts, walk real frames, read their locals, and let
+you choose to continue.
+
+*In the code:* [[file:../../initramfs/model.lisp::defun restart-list][=restart-list=]] and [[file:../../initramfs/model.lisp::defun backtrace-frames][=backtrace-frames=]] in [[file:../../initramfs/model.lisp][=model.lisp=]]; the
+live debugger is =run-debugger-fb= in [[file:../../initramfs/fb-browser.lisp][=fb-browser.lisp=]]. Design notes:
+[[file:../code-browser.org][code-browser.org]] Phase 6.
+
+*Check yourself:* why would =handler-case= make a useful debugger impossible?
+
+* 7. What "the MOP" means
+
+Everything so far is CLOS as a *user*. The **Metaobject Protocol** is CLOS
+described in terms of itself: classes, generic functions and methods are
+themselves *objects*, of classes like =standard-class= and =standard-method=, and
+there are generic functions for interrogating them.
+
+"Meta" only means: *the object system is made of the same kind of stuff it
+manages*, and that stuff is reachable at runtime.
+
+Two things follow, and the second is the one this project cares about:
+
+1. You can *extend* CLOS — define new kinds of class, change how slots are
+   stored. We do none of this.
+2. You can *ask questions*: what are this class's superclasses? what methods does
+   this generic function have? what does each specialize on? This is all we use
+   the MOP for, and it is what makes a code browser possible without a parser, a
+   database, or a build step.
+
+In SBCL the package is =sb-mop=. (It is not in the ANSI standard — the MOP comes
+from *The Art of the Metaobject Protocol*, and implementations that provide it
+mostly agree.)
+
+*In the code:* [[file:../../initramfs/model.lisp][=model.lisp=]] is the project's entire MOP surface. Everything
+above it — [[file:../../initramfs/present.lisp][=present.lisp=]], the shell, the browser — is a renderer over these
+accessors and touches =sb-mop= not at all.
+
+*Check yourself:* which of the MOP's two uses does this project rely on?
+
+* 8. Asking about classes with the MOP
+
+The class questions, and the accessors that answer them:
+
+| question                      | MOP accessor                        |
+|-------------------------------+-------------------------------------|
+| what does it inherit from?    | =class-direct-superclasses=         |
+| what inherits from it?        | =class-direct-subclasses=           |
+| the full linearization?       | =class-precedence-list=             |
+| what slots does it define?    | =class-direct-slots=                |
+| …including inherited ones?    | =class-slots=                       |
+| a slot's name / type / readers| =slot-definition-name= / =-type= / =-readers= |
+
+One trap, and it is a real one: a class must be **finalized** before
+=class-precedence-list= or =class-slots= will answer. A class that has never been
+instantiated may not be. Hence the guard in our code:
+
+#+begin_src lisp
+  (unless (sb-mop:class-finalized-p c)
+    (ignore-errors (sb-mop:finalize-inheritance c)))
+#+end_src
+
+Miss that and browsing a never-used class errors instead of showing you anything.
+
+*In the code:* [[file:../../initramfs/model.lisp::defun class-info][=class-info=]], [[file:../../initramfs/model.lisp::defun subclasses][=subclasses=]], [[file:../../initramfs/model.lisp::defun superclasses][=superclasses=]] and
+[[file:../../initramfs/model.lisp::defun show-class][=show-class=]]. The browser's class view is a direct rendering of =class-info=.
+
+*Check yourself:* why might =class-slots= fail on a class you have never
+instantiated?
+
+* 9. Asking about generic functions with the MOP
+
+The same trick, one level up:
+
+| question                          | MOP accessor                     |
+|-----------------------------------+----------------------------------|
+| what methods does it have?        | =generic-function-methods=       |
+| what does this method specialize on? | =method-specializers=         |
+| is it =:before= / =:after= / =:around=? | =method-qualifiers=       |
+| its argument list?                | =generic-function-lambda-list=   |
+| which methods mention this class?  | =specializer-direct-methods=    |
+| which apply to this class tuple?  | =compute-applicable-methods-using-classes= |
+
+That last one is the star. It answers "given arguments of *these classes*, which
+methods apply, most specific first?" — *without calling anything*. It is how our
+browser previews an effective method rather than running it, and how a dispatch
+matrix cell knows whether it is filled or empty.
+
+From these six accessors the whole generic-function view falls out: build the set
+of specializer classes → those are the grid's axes; count primaries per cell →
+that is the coverage; sort by specificity → that is the onion.
+
+*In the code:* [[file:../../initramfs/model.lisp::defun gf-info][=gf-info=]], [[file:../../initramfs/model.lisp::defun methods-of][=methods-of=]], [[file:../../initramfs/model.lisp::defun dispatch-matrix][=dispatch-matrix=]],
+[[file:../../initramfs/model.lisp::defun applicable-methods][=applicable-methods=]], [[file:../../initramfs/model.lisp::defun effective-method-onion][=effective-method-onion=]].
+
+*Check yourself:* what does =compute-applicable-methods-using-classes= give you
+that actually calling the generic function would not?
+
+* 10. Synthesis: how the browser is *only* these ideas
+
+Put the pieces together and the code browser stops looking like a big program:
+
+1. *The registry* ([[file:../../initramfs/registry.lisp][=registry.lisp=]]) captures each definition's source text as it
+   loads — the one part that is *not* CLOS, because Lisp does not keep your
+   source.
+2. *The model* ([[file:../../initramfs/model.lisp][=model.lisp=]]) asks the MOP everything else: classes, slots,
+   methods, specializers, applicability. No parsing. No index. The live image
+   already knows.
+3. *The protocol* ([[file:../../initramfs/present.lisp][=present.lisp=]]) is *one generic function*, =present=, with a
+   method per kind of subject and a =t= fallback — §1 and §4 doing the work.
+4. *The shell* renders whatever =present= returned, and knows nothing about
+   classes, methods or the MOP.
+
+So "add a new kind of thing to the browser" = *write one method*. That is why
+§4⅔'s module index was a predicate and two small methods rather than a feature,
+and it is the payoff for everything in this file.
+
+*Check yourself:* you want the browser to display a new subject — say, a network
+socket. What is the minimum you must write?
+
+* Where to go next
+
+- [[file:../code-browser.org][code-browser.org]] — the design this all serves, especially §4½ (the drill-down
+  protocol) and §3 (the Smalltalk → Lisp concept map).
+- *The Art of the Metaobject Protocol* (Kiczales, des Rivières, Bobrow) — the
+  book the MOP comes from. Chapters 1–2 are the readable part.
+- =(show-class 'ship)=, =(show-gf 'collide)=, =(applicable-methods 'collide
+  'missile 'ship)= — run them in the guest's REPL, or just press =b= and browse.
