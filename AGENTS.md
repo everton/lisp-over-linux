@@ -74,6 +74,58 @@ system, update the matching doc **in the same turn**:
 
 If a doc and the code disagree, the **code/`.config` is truth** — fix the doc.
 
+### Verify, don't assert
+
+**Every factual claim in a doc gets checked against the source before it is
+written** — our code, `./linux`, `./sbcl`, or a running SBCL. This is not
+pedantry; it routinely catches real errors. Recent examples: `ship`'s class
+precedence list includes SBCL's own `SLOT-OBJECT` (the ANSI-only answer was
+wrong), `COLLIDE` has 13 methods where a `grep` suggested 12, `fbcon.c` lives
+under `drivers/video/fbdev/core/` and not `drivers/video/console/`, and
+`DRM_FBDEV_EMULATION` is defined in `drivers/gpu/drm/clients/Kconfig`.
+
+Cheap checks worth running: `grep` the kernel headers for an ioctl constant's
+value, `grep -n "^config FOO"` for a config symbol, `wc -l` for a line count,
+`stat`/`ls` for a size, and a throwaway `sbcl --non-interactive --eval` for
+anything about CLOS/the MOP.
+
+**Check every `[[file:...]]` link resolves**, including its `::search` anchor.
+Depth differs by directory: `../` from `doc/`, `../../` from `doc/background/`.
+A scripted sweep over all `.org` files takes seconds — extract each link, resolve
+it relative to the file it lives in, and confirm the anchor text is present.
+(Two literal `[[file:...]]` placeholders in `code-browser.org` §8½ are prose
+examples, not links; they always "fail" and should be ignored.)
+
+### Drift shapes to check first
+
+The rule above has existed for a while and drift still accumulated, because these
+failures are *quiet* — nothing breaks, a doc merely stops being true. The audit on
+2026-08-09 found all of these; check them by name when touching a doc:
+
+- **Facts that were true once.** `AGENTS.md` claimed "Networking is entirely OFF
+  (`CONFIG_NET` unset)" — wrong since tag #21 — and `line-editing.org` ruled out a
+  network REPL on the same dead premise.
+- **Tag numbers diverging** across `AGENTS.md` / `kernel-config.org` /
+  `sbcl-init.org`.
+- **Roadmaps and phase lists** left on an old "Next:" after the work shipped.
+  `doc/code-browser.org`'s phase list is the truth for browser status — but even
+  it listed trail tabs and the Spotter as owed long after both landed.
+- **Measured numbers that grow**: image/core/cpio sizes, line counts. State the
+  tag they were measured at.
+- **Paths drifting absolute.** A doc showed `/home/everton/...` where the real
+  `initramfs.sbcl.list` uses a relative path — that breaks the repo's
+  relocatable-for-anyone property, which is a stated goal in `README.org`.
+- **Plans described as current** after the implementation went elsewhere
+  (`code-browser.org` §6.1 had the X11 client living in `host-client/`; it landed
+  in `poc/`).
+
+### Explaining concepts
+
+When a doc leans on a term the reader may not have (`ioctl`, character device,
+major/minor, "a frozen heap", sysfs, endianness), explain it **where the reader
+first meets it**, not in a glossary — and keep the surrounding didactic register.
+Prefer a few well-placed sections over one-liners scattered about.
+
 ## Conventions
 
 - Every `.org` file starts with `#+TITLE` / `#+STARTUP`.
@@ -128,9 +180,15 @@ protocol in a tiled, keyboard-first shell. Progress:
    `sb-di` backtrace + frame locals + `M-.` on a frame), and the **change set**
    (menu `c`). *File-out is deferred* to its own future session — it needs a
    storage-target decision first (the rootfs is tmpfs).
-9. **Next:** phase 3's remaining widgets, phase 4a's condition view, and the
-   phase 5 scrolling gaps. Phase 7 (Morphic) is open horizon.
-   See the Phases section of `doc/code-browser.org` — that doc is the truth here.
+9. **The module index** (§4⅔) — *DONE* (menu `l`, or the Spotter): every
+   definition grouped by the file it came from, which is the browser's table of
+   contents. `subj-modules` / `subj-module` in `present.lisp`, over
+   `model.lisp`'s `categorize :file`. Note it is keyed by *provenance*, so it
+   shows the `lol.*` toolkit modules (`canvas`, `textview`, `fb`, `shell`) that
+   the CL-USER package root never listed at all.
+10. **Next:** phase 3's remaining widgets, phase 4a's condition view, and the
+    phase 5 scrolling gaps. Phase 7 (Morphic) is open horizon.
+    See the Phases section of `doc/code-browser.org` — that doc is the truth here.
 
 ## Known design facts (don't re-derive these)
 

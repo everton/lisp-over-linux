@@ -7,7 +7,7 @@ userland is *SBCL Common Lisp running as PID 1*. No GRUB, no systemd, no shell �
 firmware → kernel → Lisp. "lisp-over-linux", LoL for short (yes, also a nod to
 the *Land of Lisp* alien this thing paints in the corner of the screen).
 
-[[./media/screenshots/screenshot-2026-07-07.png]]
+[[./media/screenshots/screenshot-2026-08-09.png]]
 
 /Booted under QEMU/OVMF: SBCL is PID 1 — the supervisor menu, then a colored
 REPL session driven on the framebuffer console (default 8x16 font, 160x50).
@@ -29,7 +29,7 @@ editing — its own source.
 
 /The code browser running as PID 1 on the bare framebuffer (=b= from the
 supervisor menu): the =COMMON-LISP-USER= package on the left, kind-coloured and
-319 definitions deep, with the selected function's syntax-highlighted source
+323 definitions deep, with the selected function's syntax-highlighted source
 beside it./
 
 A few of the affordances, without turning this into a manual: *tabs* across the
@@ -38,7 +38,9 @@ press ↵ on anything and the next pane opens on it, =Super-←= steps back; =Su
 summons the *Spotter* to find any definition, package or object; a source pane is
 *live* — edit it and =C-c C-c= compiles the definition back into the running image;
 and an error opens a real *debugger* with restarts, an =sb-di= backtrace and frame
-locals.
+locals. If a flat package list is the wrong way in, =l= at the supervisor menu
+opens the *module index* instead — every definition grouped by the file it came
+from.
 
 The full design and the phase-by-phase state live in [[file:doc/code-browser.org][code-browser.org]]; the
 host-runnable prototype (same toolkit, in a window on your desktop, from a plain
