@@ -670,18 +670,20 @@ next panel while its parent collapses to a *breadcrumb bar* you can click to
 re-expand (collapsing the rest). The bars are simultaneously the breadcrumb and
 the drill path.
 
-*Built.* At the root (=b= at the supervisor menu) the accordion is one expanded
-list with the selected definition's source shown beside it:
+*Built.* A package view is one expanded list with the selected definition's
+source shown beside it — here =CL-USER= (=l= at the supervisor menu):
 
-[[file:../media/screenshots/browser-2026-08-09.png]]
+[[file:../media/screenshots/package-2026-08-10.png]]
 
-/The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it./
+/The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it.
+=./refresh-screenshot.sh --scene package=./
 
 Drill a few levels and the parents collapse into stacked breadcrumb bars. The
 matrix shot in §3 shows three of them stacked above the expanded pane —
-=modules=, =module examples.lisp=, =generic-function collide= — each labelled on
-the right with *what was picked from it* (=picked examples=, =picked collide=,
-=picked dispatch matrix=), so the bar is the breadcrumb and the choice at once.
+=modules=, =module initramfs/examples.lisp=, =generic-function collide= — each
+labelled on the right with *what was picked from it* (=picked initramfs/examples=,
+=picked collide=, =picked dispatch matrix=), so the bar is the breadcrumb and the
+choice at once.
 
 The entire thing is *one generic function and one data rule*:
 
@@ -804,7 +806,8 @@ able to group by it (=:file= is its *default* scheme). It just was not surfaced.
 Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that gap:
 
 - =subj-modules= — the *index*: one row per source file with a definition count,
-  drilling into that file. Reached by the supervisor's =l)= key, or the Spotter.
+  drilling into that file. This is what the browser OPENS ON (=b=); the Spotter
+  reaches it by name too.
 - =subj-module= — one file's definitions, in the *same* item shape as a package
   view (kind-tinted rows, a generic function collapsed to one row that opens its
   own matrix view). Both views are built by one shared =definition-items=
@@ -813,14 +816,40 @@ Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that ga
 
 [[file:../media/screenshots/modules-2026-08-10.png]]
 
-/The module index (=l= at the supervisor menu): 17 modules with their definition
-counts, the selected one previewed beside. =--scene modules=./
+/The module index — the browser's default root (=b= at the supervisor menu):
+each module with its definition count, the selected one previewed beside. Keys
+are =directory/name=, so the =initramfs/= and =poc/= trees stay distinct.
+=--scene modules=./
 
 /Verified in the booted guest over the net REPL: 17 modules, 440 definition
-records; =(subj-module :dhcp)= lists =build-dhcp=, =parse-dhcp=, =dhcp-acquire=,
-=configure-eth0=, =*gateway*=, =+siocgifhwaddr+= … correctly kinded; and the
-Spotter's candidate list grew to 471 with all 17 modules as destinations, so
-typing "net" now finds =net.lisp= itself and not only the definitions inside it./
+records; =(subj-module :initramfs/dhcp)= lists =build-dhcp=, =parse-dhcp=,
+=dhcp-acquire=, =configure-eth0=, =*gateway*=, =+siocgifhwaddr+= … correctly
+kinded; and the Spotter's candidate list grew to 471 with all 17 modules as
+destinations, so typing "net" now finds =net.lisp= itself and not only the
+definitions inside it./
+
+*Two follow-ups, both applied after the first cut:*
+
+1. *The key is =directory/name=, not the bare basename.* =category-of= originally
+   interned =(pathname-name …)= alone, which would have silently merged an
+   =initramfs/foo.lisp= with a =poc/foo.lisp= into one bucket. We load from
+   exactly those two trees, so that was a live hazard rather than a theoretical
+   one. Qualifying also earns its keep in the display: you can see at a glance
+   that four of the seventeen modules are the shared =poc/= toolkit.
+2. *This became the browser's default root* (=run-browser-fb= with no argument),
+   displacing =CL-USER=. The deciding argument is coverage, not taste: a package
+   root can only show one package, and the toolkit lives in =lol.canvas=,
+   =lol.textview=, =lol.fb= and =poc/shell.lisp='s =CL-USER= half — so the old
+   root could not list =canvas=, =textview= or =fb= *at all*. The module index is
+   keyed by provenance and shows the whole system. The flat package view is still
+   one keypress away (=l=), and every package remains reachable through the
+   Spotter.
+
+*Known limits.* Definitions with no recorded file are skipped rather than bucketed
+under =NIL= (currently none). And inherited from the registry rather than from
+this view: a definition created at *runtime* is never recorded at all, so it
+appears in neither the module index nor a package view — Accepted *edits* to
+existing definitions do update the registry, wholly new ones do not.
 
 *An unplanned benefit.* The =CL-USER= root could only ever show what lives in
 =CL-USER=. The toolkit does not — =canvas=, =textview=, =fb= and =shell= are in
@@ -1170,7 +1199,8 @@ sequence, driven over QMP into a headless QEMU boot:
 
 | scene       | shows                                   | section |
 |-------------+-----------------------------------------+---------|
-| =browser=   | the accordion at the root               | §4½     |
+| =browser=   | the default root (= the module index)   | README  |
+| =package=   | the flat =CL-USER= list + a source pane  | §4½     |
 | =modules=   | the module index                        | §4⅔     |
 | =matrix=    | =collide='s dispatch grid                | §3      |
 | =debugger=  | the live debugger on =(/ 1 0)=          | §3      |
@@ -1350,7 +1380,7 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   kernel + initramfs, or a separate virtio disk). The producer side is ready —
   =changed-definitions= gives the set, each defn's =:source= is the text to write.
 - *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
-  =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]], supervisor menu =l)=] Every
+  =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; the browser's default root] Every
   definition grouped by the file it came from, over =model.lisp='s
   =categorize :file=. Listed here because this section is the authoritative
   status and it would otherwise be invisible to anyone reading only the phases.

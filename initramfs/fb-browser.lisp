@@ -272,14 +272,21 @@
 (defvar *fb-mouse* nil)  (defvar *fb-kbd* nil)
 
 (defun run-browser-fb (&optional root)
-  "Launch the browser full-screen on /dev/fb0, rooted at ROOT (default: the CL-USER
-   package — the code browser; pass (subj-workspace) for the Workspace). Blocks until
-   you leave it (C-g at the root), then restores the text console and returns to the
-   supervisor menu. Any error is caught so it cannot crash PID 1."
+  "Launch the browser full-screen on /dev/fb0, rooted at ROOT. Blocks until you
+   leave it (C-g at the root), then restores the text console and returns to the
+   supervisor menu. Any error is caught so it cannot crash PID 1.
+
+   ROOT defaults to the MODULE INDEX (subj-modules), not to the CL-USER package.
+   Two reasons. It is a table of contents rather than one flat 300-plus-row list;
+   and it is the only root that shows the WHOLE system — it groups by the file a
+   definition came from, so the toolkit in its own lol.* packages (canvas,
+   textview, fb, shell) is visible, where a CL-USER root cannot show it at all.
+   The flat package view is still one keypress away (supervisor menu 'l'), and
+   any package is reachable through the Spotter."
   (handler-case
       (progn
         (unless *bfont* (setf *bfont* (lol.canvas:load-font "/cozette.lolf")))
-        (open-environment (or root (find-package :cl-user)))
+        (open-environment (or root (subj-modules)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))

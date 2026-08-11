@@ -70,7 +70,7 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules matrix debugger workspace spotter"
+SCENE_NAMES="modules package matrix debugger workspace spotter"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
@@ -191,12 +191,14 @@ BROWSER_KEYS = []
 # dropped. Try stepping the cursor in small increments if you pick this up.
 SCENES = {
     # the module index (§4⅔): the table of contents, first module previewed beside
-    "modules":   ("l", []),
+    "modules":   ("b", []),
+    # the flat CL-USER package view — the old default root, kept on 'l'
+    "package":   ("l", []),
     # the Workspace (§3a): a scratch buffer whose verbs eval
     "workspace": ("p", []),
     # the dispatch matrix (§4a) for COLLIDE, the 2-axis showcase in examples.lisp:
-    #   modules -> examples (4th) -> collide (3rd) -> "dispatch matrix" (row 0)
-    "matrix":    ("l", [("k","down"),("k","down"),("k","down"),("k","ret"),
+    #   modules -> initramfs/examples (3rd) -> collide (3rd) -> "dispatch matrix"
+    "matrix":    ("b", [("k","down"),("k","down"),("k","ret"),
                         ("k","down"),("k","down"),("k","ret"),
                         ("w",1.0),("k","ret")]),
     # the live debugger (phase 6): Workspace -> a form that errors -> Debug it
@@ -205,7 +207,7 @@ SCENES = {
     # the Spotter (§4¾): the floating palette over the dimmed browser. Super must
     # be HELD (see Qmp.hold) — a send-key chord releases it too fast to survive
     # the evdev-modifier / cooked-tty split.
-    "spotter":   ("b", [("w",1.0),("h",("meta_l","spc")),("w",1.5),("t","coll")]),
+    "spotter":   ("l", [("w",1.0),("h",("meta_l","spc")),("w",1.5),("t","coll")]),
 }
 
 # --- char -> QMP QKeyCode(s). Shifted chars send a [shift, key] chord. -------

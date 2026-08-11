@@ -295,8 +295,19 @@
      :export — external vs internal ≈ public vs private."
   (ecase scheme
     (:kind   (defn-kind defn))
-    (:file   (and (defn-file defn)
-                  (intern (string-upcase (pathname-name (defn-file defn))) :keyword)))
+    ;; Key on DIRECTORY/NAME, not the bare name. We load from two trees —
+    ;; initramfs/ (guest-only) and poc/ (shared with the host dev loop) — so a
+    ;; bare basename would silently merge an initramfs/foo.lisp with a
+    ;; poc/foo.lisp into one bucket. Qualifying also tells the reader which tree
+    ;; a module came from, which is real information here.
+    (:file   (let ((f (defn-file defn)))
+               (when f
+                 (let ((dir (car (last (pathname-directory f)))))
+                   (intern (string-upcase
+                            (if (stringp dir)
+                                (format nil "~a/~a" dir (pathname-name f))
+                                (pathname-name f)))
+                           :keyword)))))
     (:export (multiple-value-bind (sym status)
                  (when (symbolp (defn-name defn))
                    (find-symbol (symbol-name (defn-name defn))

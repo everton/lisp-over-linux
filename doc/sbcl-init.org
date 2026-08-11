@@ -9,10 +9,10 @@ Common Lisp) the very first userspace process.
 STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #23). A C preinit mounts
 /proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
 interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
-list; as of now: (r) Lisp REPL, (b) the pixel environment — tabbed browser +
-Workspace, (p) Lisp workspace, (c) change set, (l) the module index, (w) spawn a
-worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle the network
-REPL, (s) power off.
+list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
+index, (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
+(w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
+the network REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -173,13 +173,18 @@ dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
 The supervisor is an interactive menu read from the console ([[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp →
 print-menu]] prints it, and the =cond= right below it dispatches):
   r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
-  b) the environment              -> the tabbed pixel browser + Workspace on /dev/fb0
-                                     (=run-browser-fb=, [[file:code-browser.org][code-browser.org]])
+  b) the environment              -> the tabbed pixel browser on /dev/fb0, opening
+                                     on the MODULE INDEX: every definition grouped
+                                     by the file it came from, which is the only
+                                     root that shows the whole system (the lol.*
+                                     toolkit included). =run-browser-fb= with no
+                                     root; [[file:code-browser.org][code-browser.org]] §4⅔
   p) Lisp workspace               -> a scratch buffer: Do it / Print it / Inspect it
   c) change set                   -> definitions edited live this session
-  l) modules                      -> every definition grouped by the file it came
-                                     from — the browser's table of contents
-                                     (=subj-modules=, [[file:code-browser.org][code-browser.org]] §4⅔)
+  l) all definitions (CL-USER)    -> the flat package view — the former default
+                                     root, kept because "one alphabetical list of
+                                     everything in CL-USER" is still sometimes what
+                                     you want. Any other package: the Spotter.
   w) spawn a worker process       -> fork+exec another /sbin/lisp as a worker
   a) draw the Land-of-Lisp alien  -> blit a sprite to /dev/fb0 (see framebuffer.org §8)
   m) show memory usage            -> =report-memory= ([[file:../initramfs/meminfo.lisp][meminfo.lisp]])

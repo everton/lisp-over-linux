@@ -184,12 +184,14 @@ protocol in a tiled, keyboard-first shell. Progress:
    `sb-di` backtrace + frame locals + `M-.` on a frame), and the **change set**
    (menu `c`). *File-out is deferred* to its own future session — it needs a
    storage-target decision first (the rootfs is tmpfs).
-9. **The module index** (§4⅔) — *DONE* (menu `l`, or the Spotter): every
-   definition grouped by the file it came from, which is the browser's table of
-   contents. `subj-modules` / `subj-module` in `present.lisp`, over
-   `model.lisp`'s `categorize :file`. Note it is keyed by *provenance*, so it
-   shows the `lol.*` toolkit modules (`canvas`, `textview`, `fb`, `shell`) that
-   the CL-USER package root never listed at all.
+9. **The module index** (§4⅔) — *DONE, and now the browser's default root*
+   (menu `b`): every definition grouped by the file it came from.
+   `subj-modules` / `subj-module` in `present.lisp`, over `model.lisp`'s
+   `categorize :file`, which keys on `directory/name` so the `initramfs/` and
+   `poc/` trees cannot collide. It is keyed by *provenance*, so it shows the
+   `lol.*` toolkit modules (`canvas`, `textview`, `fb`, `shell`) that a CL-USER
+   root cannot list at all — which is why it replaced CL-USER as the default.
+   The flat package view is still menu `l`.
 10. **Next:** phase 3's remaining widgets, phase 4a's condition view, and the
     phase 5 scrolling gaps. Phase 7 (Morphic) is open horizon.
     See the Phases section of `doc/code-browser.org` — that doc is the truth here.
