@@ -27,6 +27,8 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/background/learn-clos.org` | From-scratch CLOS + MOP tutorial (same shape as `learn-networking.org`). The Lisp background the browser assumes: multiple dispatch, specificity, method combination, conditions/restarts, and the `sb-mop` accessors `model.lisp` is built from. |
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
+| `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
+| `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the `code-browser.org` illustrations (`--scenes` lists them). |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
 | `initramfs/registry.lisp` | The definition registry: `load-recording` captures every module's source INTO the image, so the running system can show its own code (`source-of`, `show-source`, `senders`). Phase 0 of the code browser — see `doc/code-browser.org`. |
@@ -89,12 +91,14 @@ value, `grep -n "^config FOO"` for a config symbol, `wc -l` for a line count,
 `stat`/`ls` for a size, and a throwaway `sbcl --non-interactive --eval` for
 anything about CLOS/the MOP.
 
-**Check every `[[file:...]]` link resolves**, including its `::search` anchor.
-Depth differs by directory: `../` from `doc/`, `../../` from `doc/background/`.
-A scripted sweep over all `.org` files takes seconds — extract each link, resolve
-it relative to the file it lives in, and confirm the anchor text is present.
-(Two literal `[[file:...]]` placeholders in `code-browser.org` §8½ are prose
-examples, not links; they always "fail" and should be ignored.)
+**Check every `[[file:...]]` link resolves** — run **`./check-links.sh`** (add
+`--quiet` for problems only; it exits non-zero if anything is broken). It
+resolves each link relative to the file it lives in, because depth differs —
+`../` from `doc/`, `../../` from `doc/background/`, the commonest way to get one
+wrong — and it verifies the `::search` anchor is really present, so a renamed
+function surfaces as a broken link instead of a silent one. Links into the
+gitignored `./linux` and `./sbcl` trees are reported as SKIPPED when those
+symlinks are absent. Run it before committing any doc change.
 
 ### Drift shapes to check first
 

@@ -161,6 +161,9 @@ Nothing in the project needs editing — only the symlink moves.
 #+begin_src
   build.sh                 one-step build (userland, --kernel, --run)
   deps.sh                  fetch/link/update the ./linux and ./sbcl trees
+  check-links.sh           verify every [[file:...]] link in the .org docs resolves
+  refresh-screenshot.sh    re-capture the screenshots (headless QEMU, driven over QMP)
+  loc.sh                   lines of code/prose, by language
   kernel/                  pinned .config snapshots (config-<version>)
   initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
   poc/                     the code browser's pixel toolkit — canvas, text view, X11 client,

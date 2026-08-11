@@ -1349,6 +1349,11 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   tmpfs, so it first needs a storage-target decision (the ESP that already holds the
   kernel + initramfs, or a separate virtio disk). The producer side is ready —
   =changed-definitions= gives the set, each defn's =:source= is the text to write.
+- *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
+  =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]], supervisor menu =l)=] Every
+  definition grouped by the file it came from, over =model.lisp='s
+  =categorize :file=. Listed here because this section is the authoritative
+  status and it would otherwise be invisible to anyone reading only the phases.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

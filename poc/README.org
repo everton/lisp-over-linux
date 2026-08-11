@@ -92,15 +92,22 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
   *PageUp/PageDown*. Fix: handle button 4/5 in the event loop → scroll the current
   pane; add =:page-up=/=:page-down= (already decoded by =x11.lisp=) to =browser-key=
   and a viewport-scroll that is independent of the caret.
-- No trail *tabs* / *Spotter* yet (single trail; §4¾).
+- Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
+  [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (=draw-spotter=), candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note the
+  Spotter and the debugger are summoned through =fb-browser.lisp=, so they exist
+  only in the *guest*: the host X11 runner reaches them via =(fboundp …)= and
+  simply does nothing if that file was not loaded.
 - *Jump-to-definition — done for the mouse* (=shell.lisp=: =jump-to-definition=,
   =click-token=, =resolve-symbol=): =Ctrl-click= a symbol in a source pane resolves
   it (=find-symbol=, so a typo can't intern) and drills into its definition on a new
   trail level — source if we recorded it, else a =sb-introspect= reference. A plain
-  click in code is inert (reserved for future caret placement). Still owed: the =M-.=
-  keyboard form, and holding Ctrl over the console needs the keyboard's evdev (the
-  cooked tty can't report a bare modifier) — the framebuffer browser does this; the
-  X11 runner reads Ctrl straight from the button event's modifier state.
+  click in code is inert (reserved for future caret placement). *=M-.= from the
+  keyboard is now done too* — Esc is decoded as the Emacs Meta prefix
+  (=fb-read-key= / =lol.canvas:meta-p=) and resolves the symbol at point through
+  the same =jump-at-point=. Holding Ctrl over the console needs the keyboard's own
+  evdev (the cooked tty can't report a bare modifier) — the framebuffer browser
+  does this; the X11 runner reads Ctrl straight from the button event's modifier
+  state.
 - Chrome markers are ASCII (=>= / =v= / =>=); the 6×15 blob is 256 codepoints, so
   no ▸▾→ glyphs — draw chrome as shapes later (§6.2).
 
