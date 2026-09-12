@@ -424,6 +424,20 @@ musl only helps for things we *compile ourselves*. Rule of thumb:
   - prebuilt glibc binary -> needs glibc (or a compat shim like Alpine gcompat)
   - static linking (either libc) -> self-contained, needs no libc.so in rootfs
 
+The *other* direction — a musl-static program that must load a glibc =.so= at
+runtime — is the hard one, and it does have a demonstrated answer:
+[[https://github.com/pg83/solo][pg83/solo]] links an ELF loader plus a glibc->musl ABI shim into the static
+binary so that =dlopen=/=dlsym= work with no second libc in the process (its
+motivating case is loading vendor GPU drivers, which ship only as glibc-linked
+=.so=s). The size of that shim is the part worth taking away: symbol
+versioning, all four TLS models, IFUNC resolvers, C++ exception unwinding and
+=getcontext=/=makecontext= all have to be reimplemented. Nothing here needs it
+today — and note it would *not* remove the glibc we ship, because that is the
+opposite problem: SBCL itself is a glibc-*dynamic* binary ([[file:sbcl-init.org][sbcl-init.org]]), which
+neither musl nor a shim for static binaries can fix; building SBCL against musl
+would. The one hypothetical where solo's direction would come up is
+[[file:framebuffer.org][framebuffer.org]] §6½.
+
 Install the toolchain (provides the musl-gcc wrapper):
 #+begin_src sh
   sudo apt install -y musl-tools

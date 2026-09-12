@@ -296,6 +296,19 @@ The card in this laptop is =00:02.0 [8086:8a52] Intel Iris Plus Graphics G7=
   find out what to set the mode *to*. All of it is doable in =sb-alien= — it is
   the same FFI that already drives =reboot(2)=, =ioctl=, =poll= and =KDSETMODE= —
   but it is a genuine subsystem to write and debug, not an afternoon.
+- *Acceleration (not modesetting) would also bring a libc problem.* The
+  dumb-buffer path above is pure =ioctl(2)=: no vendor userland at all. Real
+  2D/3D acceleration is a different story — it goes through *Mesa*, and Mesa's
+  driver modules (=dri/iris_dri.so= for this chip — on current Mesa a symlink
+  into the =libdril_dri.so= megadriver) are *glibc-linked* shared objects,
+  loaded with =dlopen=. That collides with the userland we actually
+  build, which is musl-static ([[file:micro-distro.org][micro-distro.org]] § "Shrinking init with musl
+  libc"): musl and glibc are not ABI-compatible, so a static binary cannot just
+  open one. It is not impossible — [[https://github.com/pg83/solo][pg83/solo]] does exactly this, bridging a
+  glibc =.so= onto musl's runtime with its own ELF loader and ABI shim — but
+  that is another whole loader to carry, on top of the driver and the blobs.
+  Modesetting and page flips, the things §(a) actually wants, need none of it.
+
 - *Size, honestly.* In this tree =drivers/gpu/drm/i915= is *14 MB of source,
   418,079 lines* of =.c= and =.h=. Our entire project — every Lisp module, the C
   preinit, all the shell — is *7,222 lines*. The driver is roughly *58×* the
