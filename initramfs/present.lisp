@@ -215,13 +215,16 @@
 
 (defparameter +recents-kept+ 8)
 
-(defun note-recent (subject label &optional detail)
+(defun note-recent (subject label &optional detail kind)
   "Record that SUBJECT was just opened, for the Spotter's recents. Deduped by LABEL —
-   revisiting something should move it up the list, not add a second copy."
+   revisiting something should move it up the list, not add a second copy. KIND is the
+   Lisp concept it is (:class, :function, …) so the row can be tinted like every other
+   row; \"recent\" is a provenance, not a kind, and says nothing about what the thing is."
   (ignore-errors
     (setf *spotter-recents*
           (cons (list :label (string-downcase (princ-to-string label))
-                      :detail (or detail "recent") :group "recent" :subject subject)
+                      :detail (or detail "recent") :group "recent"
+                      :kind kind :subject subject)
                 (remove (string-downcase (princ-to-string label)) *spotter-recents*
                         :key (lambda (c) (getf c :label)) :test #'string=)))
     (when (> (length *spotter-recents*) +recents-kept+)

@@ -1313,15 +1313,17 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   panes/lists/scrollbars/menus this phase also owed are now =lol.widgets=:
   =draw-panel= (a framed pane with its header band), =draw-bar= (a collapsed
   breadcrumb), =draw-list= (rows, sections, selection, viewport, scrollbar),
-  =draw-scrollbar=, =draw-grid= (the dispatch matrix's cells) and =draw-card= (a
-  floating surface over a dimmed page). The palette and the row metrics moved there
-  too, so a widget and its caller cannot drift apart.
+  =draw-scrollbar=, =draw-grid= (the dispatch matrix's cells), =draw-card= +
+  =draw-query-line= (a floating finder) and =scrim= (the modal dim). The palette and
+  the row metrics moved there too, so a widget and its caller cannot drift apart.
   *The rule that makes them widgets and not just moved code: a widget knows nothing
   about the browser.* It never sees an =ITEM=, a =VIEW=, a =PANE= or a =SUBJECT= —
   it is handed geometry and a vector of =ROW=s and hands back where it drew them. So
   the Spotter's candidates, the debugger's restarts and a package's definitions can
-  all be the same widget with different rows. =shell.lisp='s =item->row= is the
-  entire boundary between the two layers.
+  all be the same widget with different rows — and the Spotter already is one
+  (=spotter-rows=), which is what proved the boundary was real rather than merely
+  described. =shell.lisp='s =item->row= is the same ten lines for the present
+  protocol.
   *And: draw records what it did.* Every clickable widget returns a hit map instead
   of letting the caller re-derive geometry from a formula. That is not ceremony —
   the browser has already shipped two bugs of exactly that shape (a click landing a
@@ -1438,10 +1440,13 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   Design spec: [[file:../media/browser-views-design.html][media/browser-views-design.html]].
   /Verified by rendered frame (=poc/render-frame.lisp condition:division-by-zero=)
   and headless: =DIVISION-BY-ZERO= reports "arithmetic error DIVISION-BY-ZERO
-  signalled", no signaller in the image, and 24 handlers — every =ignore-errors=,
-  correctly, since that is =handler-case= on =ERROR= wearing a hat. With
-  =canvas.lisp= loaded, =SIMPLE-ERROR='s signallers come back as =LOAD-FONT= and
-  =LOAD-PSF=, which are exactly the two =(error "…")= sites in it./
+  signalled", nothing in the image signals it, and its Handlers list is exactly the
+  set of =ignore-errors= sites in the loaded modules — correctly, since that is
+  =handler-case= on =ERROR= wearing a hat, and =ERROR= is a supertype. (The count
+  therefore tracks however much code is loaded, which is why it is not quoted here.)
+  =SIMPLE-ERROR='s signallers come back as =LOAD-FONT= and =LOAD-PSF=: exactly the
+  two =(error "…")= sites in =canvas.lisp=, and a good check that the walker sees a
+  format-string call as the =SIMPLE-ERROR= it really is./
 - *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
   *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
   (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
@@ -1473,16 +1478,37 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   =REL_WHEEL= record, X11 delivers buttons 4 and 5 — so =+wheel-lines+= (3 lines a
   notch) lives in =shell.lisp= where both can reach it. The whole input path is
   written up in [[file:input.org][input.org]].
-  /Verified in the booted guest over QMP, reading the browser's own state back
-  through the net REPL rather than eyeballing pixels: on the module index PageDown
-  moves the selection 0->12 (=+list-page+=) and PageUp returns it, wheel-down x2
-  moves it 0->6 and wheel-up x1 back to 3; in a source pane wheel-down x3 takes
-  =tv-scroll= 0->9 (exactly 3 x =+wheel-lines+=), wheel-up x1 back to 6, with
-  =tv-point-line= unmoved at 0 throughout, and PageDown then moves point to 37. Ten
-  assertions, all passing./ A list pane still moves its *selection* rather than a
-  viewport of its own — =draw-list-body= anchors the visible window to the
-  selection — which is the last piece, and it belongs to phase 3's list/scrollbar
-  widget rather than here.
+  A text pane's wheel scrolls the viewport and leaves point alone; a list pane's
+  wheel scrolls *its* viewport and leaves the selection alone — scrolling is
+  /looking/, not moving — and any selection move re-attaches the view to the
+  selection. (That last rule is enforced in =set-pane-sel=, the one door onto
+  =pane-sel=, and deliberately *not* in the draw: the framebuffer loop redraws on
+  every event, mouse motion included, so re-arming there would snap a
+  wheel-scrolled list back the instant the pointer twitched.)
+  /Verified in the booted guest over QMP — real evdev =REL_WHEEL= records, from
+  QEMU's wheel-up/wheel-down buttons — reading the browser's own state back through
+  the net REPL rather than eyeballing pixels. On the flat =CL-USER= list: PageDown
+  moves the selection 0->12 (=+list-page+=) and PageUp returns it; wheel-down x2
+  moves the *viewport* =pane-top= 0->6 with the selection still 0; wheel-up x1
+  brings it to 3; and one =↓= re-attaches — selection 0->1 and viewport 3->1, i.e.
+  scrolled just far enough to show the selected row, not reset to the top. In a
+  source pane wheel-down x3 takes =tv-scroll= 0->9 (exactly 3 x =+wheel-lines+=),
+  wheel-up x1 back to 6, with =tv-point-line= unmoved at 0 throughout, and PageDown
+  then moves point to 39. Twelve assertions, all passing./
+  /Two things that quietly made earlier versions of that test prove nothing, both
+  worth remembering when writing the next one: the *module index* was the obvious
+  list to test on, and it is nineteen rows — it fits entirely on an 800-line screen,
+  so its viewport cannot move and every wheel assertion passed by being vacuous. And
+  drilling whatever happened to be under the cursor landed on a three-line
+  =defparameter=; a buffer shorter than its viewport does not scroll either. The
+  test now uses the several-hundred-row package list and reaches a long definition
+  deliberately, through the Spotter./
+  /Reading state back needed one trick worth recording: the guest serves the
+  EDITING repl, which echoes every character in ANSI colour, so a naive read gets
+  echo rather than answers. The probe makes the answer self-identifying — the form
+  prints =<<value>>=, and the echo of the source can never match, because the echo
+  contains the literal =~s=./
+
 - *Phase 6 — the live system.* [DEBUGGER DONE — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]
   (=run-debugger-fb= / =draw-debugger=) + [[file:../initramfs/model.lisp][model.lisp]] + =workspace-debug-it= in
   [[file:../poc/shell.lisp][poc/shell.lisp]]] An unhandled =serious-condition= from *Debug it* opens the live

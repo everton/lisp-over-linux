@@ -76,18 +76,44 @@
   "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
 
+(defun view-kind-concept (kind)
+  "A VIEW's kind (:source :matrix :class …) mapped to the Lisp CONCEPT it is a view
+   OF (:function :generic-function :class …), so chrome can be tinted from the same
+   palette as the rows. One mapping, used by both the pane/tab/crumb tint and the
+   Spotter's recents — it existed twice for a while and the copies disagreed about
+   what colour a remembered Workspace was."
+  (case kind
+    (:workspace :restart)                  ; amber: a surface, not a definition
+    ((:source :reference) :function)
+    ((:matrix :generic) :generic-function)
+    (:class :class)
+    (:inspector :variable)
+    (t :package)))                         ; a list root is usually a package
+
 (defun current-trail () "The focused trail (its list of panes)." (nth *active* *trails*))
 (defun set-current-trail (panes) "Replace the focused trail's panes." (setf (nth *active* *trails*) panes))
 (defun current-pane () "The deepest pane of the focused trail." (car (last (current-trail))))
 
 ;; --- within the active trail (drill-down accordion, unchanged semantics) ---
+(defun subject-concept (subject pane)
+  "The Lisp concept SUBJECT is, for tinting a Spotter recent. A SUBJ-DEFN already
+   knows exactly what it is (:constant, :macro, :class …) and should say so; anything
+   else falls back to what KIND of view it opened, which is as much as the shell can
+   tell. Without the first case a remembered constant is tinted as a function, merely
+   because constants and functions both open in a source pane."
+  (or (and (subj-defn-p subject) (subj-defn-kind subject))
+      (view-kind-concept (view-kind (pane-view pane)))))
+
 (defun trail-root (subject)
   "Start the environment at SUBJECT — one trail, made active. Additional trails come
    from NEW-TRAIL (a spotter hit, SuperL-drill)."
-  (setf *trails* (list (list (open-pane subject))) *active* 0))
+  (let ((pane (open-pane subject)))
+    (note-recent subject (view-title (pane-view pane)) nil (subject-concept subject pane))
+    (setf *trails* (list (list pane)) *active* 0)))
 (defun trail-push (subject) "Drill into SUBJECT in the active trail."
   (let ((pane (open-pane subject)))
-    (note-recent subject (view-title (pane-view pane)))     ; for the Spotter's recents
+    (note-recent subject (view-title (pane-view pane))       ; for the Spotter's recents
+                 nil (subject-concept subject pane))
     (set-current-trail (append (current-trail) (list pane)))))
 (defun trail-pop () "Pop the active trail's deepest pane (back)."
   (when (cdr (current-trail)) (set-current-trail (butlast (current-trail)))))
@@ -98,7 +124,7 @@
 (defun new-trail (subject)
   "Open SUBJECT in a NEW trail and focus it — a spotter hit / SuperL-drill."
   (let ((pane (open-pane subject)))
-    (note-recent subject (view-title (pane-view pane)))
+    (note-recent subject (view-title (pane-view pane)) nil (subject-concept subject pane))
     (setf *trails* (append *trails* (list (list pane)))
           *active* (1- (length *trails*)))))
 (defun close-trail ()
@@ -444,13 +470,7 @@
 (defun view-kind-color (view)
   "The semantic tint for a VIEW — the concept colour of what it opens on, so a Workspace,
    a package, a class, a generic function each read by colour in the chrome."
-  (case (view-kind view)
-    (:workspace *ui-amber*)
-    ((:source :reference) (concept-color :function))
-    ((:matrix :generic) (concept-color :generic-function))
-    (:class (concept-color :class))
-    (:inspector (concept-color :variable))
-    (t (concept-color :package))))     ; a list root is usually a package
+  (concept-color (view-kind-concept (view-kind view))))
 
 (defun trail-kind-color (trail)
   "The semantic tint for TRAIL's tab — from its ROOT view (see VIEW-KIND-COLOR)."
@@ -664,11 +684,13 @@
   (spotter-band (spotter-filter query candidates limit)))
 
 (defun spotter-kind (r)
-  "The Lisp-concept keyword for a Spotter candidate, from its DETAIL text — which is
-   how the candidate list already describes itself, and cheaper than threading a
-   second field through it."
+  "The Lisp-concept keyword for a Spotter candidate: its explicit :KIND when it has
+   one (the recents record theirs, since \"recent\" says nothing about what the thing
+   IS), else read off its DETAIL text, which is how the candidate list already
+   describes itself and cheaper than threading a field through every producer."
   (let ((d (or (getf r :detail) "")))
-    (cond ((search "generic" d) :generic-function)
+    (cond ((getf r :kind))                       ; an explicit concept wins (recents)
+          ((search "generic" d) :generic-function)
           ((search "package" d) :package)
           ((search "module"  d) :package)
           ((search "macro"   d) :macro)
