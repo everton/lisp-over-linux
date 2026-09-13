@@ -35,7 +35,7 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
 | =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
-| =bdf2font.py=    | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |
+| =bdf2font.lisp=  | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |
 | =cozette-LICENSE.txt= | Cozette's MIT license (required to ship the font). |
 
 * Run it
@@ -148,11 +148,11 @@ wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugge
 here), and anything about =present-fb= itself. Its module index is correspondingly a
 subset of the guest's.
 
-For the half it cannot reach there is [[file:../check-scroll.py][=check-scroll.py=]] in the project root: it boots
+For the half it cannot reach there is [[file:../check-scroll.lisp][=check-scroll.lisp=]] in the project root: it boots
 the real image and asserts what the machine *does* with real input — QMP keys and
 genuine evdev =REL_WHEEL= records — reading =pane-top= / =pane-sel= / =tv-scroll=
 back over the net REPL rather than guessing from pixels. The two harnesses divide
-the work cleanly: =render-frame.lisp= for how a frame looks, =check-scroll.py= for
+the work cleanly: =render-frame.lisp= for how a frame looks, =check-scroll.lisp= for
 how the machine behaves.
 
 * Known rough edges (it is a POC)
@@ -202,7 +202,7 @@ how the machine behaves.
 
 The shipped font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
 chosen from a side-by-side comparison. It is baked into our own tiny =.lolf= blob
-(6x15, glyphs indexed by codepoint) by =bdf2font.py=, the way =alien.rgba= is
+(6x15, glyphs indexed by codepoint) by =bdf2font.lisp=, the way =alien.rgba= is
 pre-generated and committed. Note the kernel's built-in =font_8x16= is *GPL* and
 must not be lifted; Cozette's MIT license is committed alongside the blob.
 
@@ -211,7 +211,7 @@ To *regenerate* =cozette.lolf= (the blob is committed, so this is only for updat
 #+begin_src sh
   curl -fsSL -o /tmp/cozette.bdf \
     https://github.com/slavfox/Cozette/releases/latest/download/cozette.bdf
-  python3 poc/bdf2font.py /tmp/cozette.bdf poc/cozette.lolf
+  sbcl --script poc/bdf2font.lisp /tmp/cozette.bdf poc/cozette.lolf
 #+end_src
 
 The =.lolf= format and the whole glyph→pixel path are documented in [[file:../doc/fonts.org][doc/fonts.org]].

@@ -29,7 +29,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
-| `check-scroll.py` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. Its `Qmp.hold` and `Repl.probe` are the reusable half for any other guest assertion. |
+| `check-scroll.lisp` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. |
 | `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the `code-browser.org` illustrations (`--scenes` lists them). |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
@@ -48,7 +48,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `initramfs/examples.lisp` | A gallery of CLOS specimens that exist purely to be *looked at* in the browser — chiefly `COLLIDE`, a genuinely 2-argument generic whose dispatch matrix is a real grid with real gaps. |
 | `initramfs/initramfs.sbcl.list` | `gen_init_cpio` description of the rootfs. |
 | `poc/` | Prototype for the code browser's pixel UI (pure-Lisp X11 client + framebuffer, a text view). Host-runnable; see `poc/README.org` and `doc/code-browser.org`. |
-| `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client. The deliberate opposite of `initramfs/`. |
+| `host-client/` | **Host-side** tools (NOT shipped in the image, never run in the guest): the network-REPL raw-forwarding client (C), plus the Lisp tooling the build and screenshot scripts run — `qmp.lisp` (drive a running QEMU), `png.lisp` (write a PNG, DEFLATE included), and the three CLIs over them. These replaced all the project's Python; see its README for the compression trade. The deliberate opposite of `initramfs/`. |
 
 External source trees are reached via **gitignored symlinks** in the project root,
 created by `deps.sh` (never hardcode a path):

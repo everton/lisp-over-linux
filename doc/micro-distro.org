@@ -330,17 +330,19 @@ On the graphical console (the banner) you'd see the Hello box.
 
 Add =-qmp unix:/tmp/qmp.sock,server,nowait= to the QEMU line, then:
 
-#+begin_src python :results output
-  import socket, time
-  s = socket.socket(socket.AF_UNIX); s.connect("/tmp/qmp.sock")
-  time.sleep(0.3); s.recv(65536)
-  s.sendall(b'{"execute":"qmp_capabilities"}\n'); time.sleep(0.3); s.recv(65536)
-  s.sendall(b'{"execute":"screendump","arguments":{"filename":"/home/everton/lisp-over-linux/screen.ppm"}}\n')
-  time.sleep(0.6); s.recv(65536); s.close()
+#+begin_src sh
+  sbcl --script host-client/screenshot.lisp /tmp/qmp.sock screen.ppm screen.png
 #+end_src
 
-(=screen.ppm= is Netpbm P6; convert to PNG with any tool, or the inline Python
-PPM->PNG snippet used during the session.)
+That one command does both halves: [[file:../host-client/qmp.lisp][=host-client/qmp.lisp=]] connects to the monitor
+socket, completes the QMP handshake and asks for a =screendump=; then
+[[file:../host-client/png.lisp][=host-client/png.lisp=]] turns QEMU's Netpbm P6 output into a PNG — DEFLATE and all,
+so nothing outside SBCL is needed. (=./build.sh --run= and =./refresh-screenshot.sh=
+call the same two files.)
+
+/This used to be a snippet of Python here, and matching snippets embedded in three
+shell scripts. They are gone; see [[file:../host-client/README.org][host-client/README.org]] for why, and for what the
+hand-written DEFLATE costs in file size./
 
 * Writing to a real USB stick  (DESTRUCTIVE — pick the right device!)
 

@@ -5,8 +5,39 @@ Everything in this directory runs on the *host* (the developer's machine). It is
 *not* part of the guest: nothing here is shipped in the initramfs, baked into
 =/sbin/lisp=, or ever runs as the guest's PID 1. The guest world lives in
 =initramfs/=; this is its deliberate opposite, kept separate so the boundary is
-obvious. It is written in *C* (not Lisp) on purpose — so it needs no host SBCL,
-and so it is plainly a separate host tool rather than part of the Lisp machine.
+obvious.
+
+| file                | what it is                                                    |
+|---------------------+---------------------------------------------------------------|
+| =lol-repl-client.c= | a host terminal for the guest's network REPL. *C* on purpose — it needs no host SBCL. |
+| =qmp.lisp=          | a QMP client: drive a running QEMU (keys, chords, held modifiers, the wheel, clicks, screendump). |
+| =png.lisp=          | write a PNG, including a DEFLATE implementation. Plus a PPM reader. |
+| =screenshot.lisp=   | CLI: QMP screendump -> PPM -> PNG. Used by =build.sh= and =poc/build-poc.sh=. |
+| =ppm2png.lisp=      | CLI: just the conversion. Used by =refresh-screenshot.sh=.     |
+| =drive-scene.lisp=  | CLI: drive the guest through a named scene and screendump it. The engine behind =refresh-screenshot.sh=. |
+
+* Why the Lisp ones exist
+
+They replaced ~440 lines of Python that were embedded in three shell scripts
+(=build.sh=, =poc/build-poc.sh=, =refresh-screenshot.sh=) and two standalone
+=.py= files. Nothing about the work wanted another language — it is a Unix
+socket, a TCP socket, some byte packing and some sleeps, all of which SBCL has in
+the box — and a project about writing its own Lisp machine should not require a
+reader to know Python to follow its build. *python3 is no longer a dependency of
+anything here.*
+
+The one piece that looked like it needed a library is PNG's zlib stream, and
+=png.lisp= writes it: CRC-32, Adler-32, LZ77 over a 32 KB window, and DEFLATE's
+fixed Huffman code. Measured against the alternatives on a real 1280×720
+screenshot — PPM 2 764 816 bytes, ours 29 316, Python's =zlib -9= 12 765 — so it
+is 94× better than storing the data uncompressed and 2.3× worse than zlib. That
+costs about 16 KB per committed screenshot, which is the right trade for deleting
+a language; the whole remaining gap is dynamic Huffman, noted in the file as a
+known ~150 lines if it ever matters.
+
+QMP is line-delimited JSON, and there is deliberately *no JSON parser*: we only
+ever emit JSON (which is =format=) and the only thing we ask of a reply is whether
+it says =return= or =error= (which is =search=).
 
 * lol-repl-client.c — a host terminal for the guest's network REPL
 
@@ -38,4 +69,5 @@ Keys (the guest interprets these; the client just forwards them raw):
 remote root, since the REPL is PID 1. Use it only over the QEMU =hostfwd= (host
 loopback) or a trusted cable; never on an untrusted network.
 
-Dependencies: a C compiler and a standard libc — nothing else.
+Dependencies: a C compiler and a standard libc for the client; a host SBCL for
+the Lisp tools (the same one =build.sh= already needs). Nothing else — no Python.

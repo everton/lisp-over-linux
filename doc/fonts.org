@@ -196,14 +196,14 @@ changes.
 
 *The shipped font is Cozette (MIT), via our own blob — not a raw PSF.* =load-psf=
 (§2) is the pedagogical baseline, but what the tool actually loads is =load-font=,
-reading a =.lolf= blob produced by [[file:../poc/bdf2font.py][=bdf2font.py=]] from a BDF. The blob is trivial
+reading a =.lolf= blob produced by [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] from a BDF. The blob is trivial
 (magic =LF=, width byte, height byte, then 256 glyphs) and, crucially, *its glyphs
 are indexed by real Unicode codepoint* — which is exactly what defeats the =·=→=Ö=
 trap (§9). Cozette is 6×15; its MIT license ships beside the blob. To regenerate:
-=python3 poc/bdf2font.py cozette.bdf poc/cozette.lolf= (see [[file:../poc/README.org][poc/README.org]]).
+=sbcl --script poc/bdf2font.lisp cozette.bdf poc/cozette.lolf= (see [[file:../poc/README.org][poc/README.org]]).
 
 *Swap the whole font:* point =load-font= at a different =.lolf= (rebuild it from a
-BDF with =bdf2font.py=), or =load-psf= at a =.psf=. Done. (Both are 1 byte per row,
+BDF with =bdf2font.lisp=), or =load-psf= at a =.psf=. Done. (Both are 1 byte per row,
 so ≤8 wide today; wider needs the PSF2 / multi-byte-row path below.)
 
 *Make it bigger — two paths* (decided: bitmap-first, see [[file:code-browser.org][§6.2]]):
@@ -246,7 +246,7 @@ so ≤8 wide today; wider needs the PSF2 / multi-byte-row path below.)
 - *The =·= → =Ö= trap — FIXED for the shipped font.* PSF1's 256-glyph order is an
   *implicit* Latin-1-ish table; a codepoint you assume (say =#\·=) may map to a
   different glyph. That is why the tool ships a =.lolf= blob whose glyphs are
-  *indexed by real codepoint* ([[file:../poc/bdf2font.py][=bdf2font.py=]] / =load-font=, §7): =#\·= (183) is the
+  *indexed by real codepoint* ([[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] / =load-font=, §7): =#\·= (183) is the
   middle dot, verified. The trap only bites raw =load-psf= use — still, keep UI
   text to characters the font actually has ([[file:code-browser.org][§6.2]]).
 - *Aliased, not antialiased.* Bitmap glyphs are pure on/off — crisp and fast, no

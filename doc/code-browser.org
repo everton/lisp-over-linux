@@ -1125,7 +1125,7 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   backend behind the same call), never a rewrite.
   - /Now — the bitmap backend: DONE, font chosen./ The shipped font is *Cozette
     (MIT)*, baked like =alien.rgba= ([[file:framebuffer.org][framebuffer.org §8]]) into our own tiny =.lolf=
-    blob ([[file:../poc/cozette.lolf][poc/cozette.lolf]], 6×15) by the build-host converter [[file:../poc/bdf2font.py][poc/bdf2font.py]]
+    blob ([[file:../poc/cozette.lolf][poc/cozette.lolf]], 6×15) by the build-host converter [[file:../poc/bdf2font.lisp][poc/bdf2font.lisp]]
     (BDF → blob). The converter indexes glyphs by *real codepoint*, which is what
     prevents the =·=→=Ö= class of bug (verified: =#\·= renders as the middle dot).
     Its MIT licence ships beside it (=cozette-LICENSE.txt=). Crisp, fast,
@@ -1279,7 +1279,7 @@ its own.
 glyph — =…= (8230) blits as =&=. Latin-1 is fully present, so =× » « · ¾= are safe
 and are what the chrome uses; the mock-up's =⌕ ▶ ↳ ↩ ◂ ⊕ ▾ ▷ ⚡= are not, and each is
 rendered as colour, position or a Latin-1 substitute instead. Elisions are =".."=.
-[[file:fonts.org][fonts.org]] has the whole glyph path; [[file:../poc/bdf2font.py][=bdf2font.py=]] can add glyphs if one is ever
+[[file:fonts.org][fonts.org]] has the whole glyph path; [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] can add glyphs if one is ever
 truly needed.
 
 * 7. Prerequisite: we should finally use packages
@@ -1584,7 +1584,7 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   source pane wheel-down x3 takes =tv-scroll= 0->9 (exactly 3 x =+wheel-lines+=),
   wheel-up x1 back to 6, with =tv-point-line= unmoved at 0 throughout, and PageDown
   then moves point to 39. Twelve assertions, all passing./
-  /The check is reproducible: [[file:../check-scroll.py][=./check-scroll.py=]] boots the image, runs all twelve, and
+  /The check is reproducible: [[file:../check-scroll.lisp][=check-scroll.lisp=]] boots the image, runs all twelve, and
   exits non-zero if any fails./
   /Two things that quietly made earlier versions of that test prove nothing, both
   worth remembering when writing the next one: the *module index* was the obvious

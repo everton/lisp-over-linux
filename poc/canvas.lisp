@@ -144,7 +144,7 @@
         (make-font :cw 8 :ch ch :glyphs glyphs)))))
 
 (defun load-font (path)
-  "Read a .lolf bitmap font blob into a FONT (the format poc/bdf2font.py writes).
+  "Read a .lolf bitmap font blob into a FONT (the format poc/bdf2font.lisp writes).
    Unlike load-psf, glyphs are indexed by codepoint 0..255 — we own the mapping,
    so there are no PSF glyph-order surprises (the ·->Ö trap; see doc/fonts.org).
    Header: magic 'LF', width byte, height byte; then 256 glyphs of HEIGHT bytes

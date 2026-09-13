@@ -254,42 +254,13 @@ if [ "$DO_RUN" -eq 1 ]; then
   QPID=$!
   sleep "$WAIT"
 
-  # take a screenshot through the QMP monitor socket
-  python3 - "$QMP" "$SHOT_PPM" <<'PY' || true
-import socket, sys, time
-sock, ppm = sys.argv[1], sys.argv[2]
-s = socket.socket(socket.AF_UNIX); s.connect(sock); time.sleep(0.3); s.recv(65536)
-s.sendall(b'{"execute":"qmp_capabilities"}\n'); time.sleep(0.3); s.recv(65536)
-s.sendall(('{"execute":"screendump","arguments":{"filename":"%s"}}\n' % ppm).encode())
-time.sleep(0.8); s.recv(65536); s.close()
-PY
+  # Screenshot + PNG, both in Lisp (host-client/screenshot.lisp -> qmp.lisp +
+  # png.lisp). This used to be two blocks of embedded Python leaning on zlib, which
+  # made python3 a hard dependency of a Lisp project for the sake of one conversion.
+  SBCL_HOME="$SBCL/obj/sbcl-home" "$SBCL_RUNTIME" --core "$SBCL_CORE" \
+      --script "$MICRO/host-client/screenshot.lisp" \
+      "$QMP" "$SHOT_PPM" "$SHOT_PNG" || true
   kill "$QPID" 2>/dev/null || true
-
-  # convert PPM (P6) -> PNG with only the stdlib
-  python3 - "$SHOT_PPM" "$SHOT_PNG" <<'PY' || true
-import sys, zlib
-from struct import pack
-ppm, png = sys.argv[1], sys.argv[2]
-d = open(ppm, "rb").read(); assert d[:2] == b'P6'
-i = 2; f = []
-while len(f) < 3:
-    while d[i] in b' \t\n\r': i += 1
-    if d[i:i+1] == b'#':
-        while d[i] not in b'\n': i += 1
-        continue
-    j = i
-    while d[j] not in b' \t\n\r': j += 1
-    f.append(int(d[i:j])); i = j
-i += 1; w, h, _ = f; px = d[i:i+w*h*3]
-def ch(t, x): return pack(">I", len(x)) + t + x + pack(">I", zlib.crc32(t+x) & 0xffffffff)
-raw = bytearray()
-for y in range(h):
-    raw.append(0); raw += px[y*w*3:(y+1)*w*3]
-open(png, "wb").write(b'\x89PNG\r\n\x1a\n'
-    + ch(b'IHDR', pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
-    + ch(b'IDAT', zlib.compress(bytes(raw), 9)) + ch(b'IEND', b''))
-print("  screenshot:", png)
-PY
 
   echo "  serial markers:"
   grep -aE 'Unpacking initramfs|Freeing initrd|Run /init|supervisor|worker' "$SERIAL" \
