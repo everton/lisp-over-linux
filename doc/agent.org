@@ -559,7 +559,7 @@ reply would be the most unnatural thing we could do.
   meaning /kind/.
 - Deltas arrive faster than the framebuffer should redraw: append as they come,
   redraw on a budget (~15 Hz) and always on block boundaries.
-- =:sb-thread= is present in our SBCL (2.6.6), so a reader thread is available —
+- =:sb-thread= is present in our SBCL (2.6.8), so a reader thread is available —
   but with one CPU there is nothing to win, and a non-blocking read polled from
   the existing event loop keeps the UI single-threaded and the failure modes
   boring. Prefer that.
@@ -892,7 +892,7 @@ Against this machine and this tree, 2026-08-06:
 | already in our cpio                    | =ld-linux-x86-64.so.2=, =libc.so.6=, =libm.so.6=                |
 | =initramfs.cpio= today                 | 44 MB (=lisp-init= is 40 MB)                                    |
 | QEMU memory                            | =-m 2048=                                                       |
-| SBCL                                   | 2.6.6.74, =:sb-thread= present                                  |
+| SBCL                                   | 2.6.8, =:sb-thread= present                                     |
 | kernel: on                             | =NET INET VIRTIO_NET PACKET UNIX EPOLL EVENTFD TIMERFD SIGNALFD FUTEX AIO MEMBARRIER POSIX_TIMERS TMPFS UNIX98_PTYS IO_URING BINFMT_ELF= |
 | kernel: off                            | =RTC_CLASS INOTIFY_USER HIGH_RES_TIMERS SMP (NR_CPUS=1) SECCOMP MODULES VIRTIO_BLK EXT4_FS NET_9P= |
 | SLIRP addresses                        | guest =10.0.2.15=, host/gw =10.0.2.2=, DNS =10.0.2.3=           |

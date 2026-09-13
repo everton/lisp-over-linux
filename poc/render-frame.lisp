@@ -134,14 +134,37 @@ OPTIONS
    `gf:lol.examples:collide`. An ambiguous name is an error naming the candidates,
    never a silent pick."
   (or (resolve-symbol name)
-      (let ((hits '()))
+      (let ((hits '()) (keyword (find-package :keyword)))
         (dolist (p (list-all-packages))
-          (multiple-value-bind (sym status) (find-symbol (string-upcase name) p)
-            (when (and sym (eq status :external)) (pushnew sym hits))))
+          ;; Skip KEYWORD: every keyword is external there, so a name that happens to
+          ;; also exist as a keyword would look "ambiguous" and refuse to resolve.
+          ;; `onion:collide:ship,asteroid` started failing the moment something
+          ;; interned :ASTEROID — nothing to do with the class of the same name.
+          (unless (eq p keyword)
+            (multiple-value-bind (sym status) (find-symbol (string-upcase name) p)
+              (when (and sym (eq status :external)) (pushnew sym hits)))))
         (cond ((null (rest hits)) (first hits))
               (t (error "~a is exported by several packages: ~{~s~^, ~}" name hits))))
       (error "no such symbol: ~a (it must already exist in the image — note this ~
               harness loads only part of the guest's module list)" name)))
+
+(defun find-class-sym (name)
+  "NAME -> a symbol that actually NAMES A CLASS. FIND-SYM alone is not enough for a
+   class argument: it returns the first external symbol of that name in any package,
+   and once enough code is loaded a name like SHIP or ASTEROID exists in several —
+   most of them not classes. So filter by what the caller actually needs."
+  (let ((direct (resolve-symbol name)))
+    (if (and direct (find-class direct nil))
+        direct
+        (let ((hits '()) (keyword (find-package :keyword)))
+          (dolist (p (list-all-packages))
+            (unless (eq p keyword)
+              (multiple-value-bind (sym status) (find-symbol (string-upcase name) p)
+                (when (and sym (eq status :external) (find-class sym nil))
+                  (pushnew sym hits)))))
+          (cond ((null hits) (error "no class named ~a" name))
+                ((null (rest hits)) (first hits))
+                (t (error "~a names a class in several packages: ~{~s~^, ~}" name hits)))))))
 
 (defun parse-subject (spec)
   "The SUBJECT command-line word -> a subject object for OPEN-ENVIRONMENT."
@@ -181,7 +204,7 @@ OPTIONS
                   rest (mapcar (lambda (e) (princ-to-string (car e))) index)))
          (subj-module (car hit))))
       ((string= head "class")
-       (or (find-class (find-sym rest) nil) (error "not a class: ~a" rest)))
+       (or (find-class (find-class-sym rest) nil) (error "not a class: ~a" rest)))
       ((string= head "gf")
        (let ((f (fdefinition (find-sym rest))))
          (unless (typep f 'generic-function) (error "not a generic function: ~a" rest))
@@ -197,7 +220,7 @@ OPTIONS
        ;; onion:GF:C1,C2 — the tuple is class NAMES, as effective-method-onion wants.
        (let* ((parts (split-on #\: rest))
               (gf    (find-sym (first parts)))
-              (tuple (mapcar (lambda (c) (find-sym c)) (split-on #\, (or (second parts) "")))))
+              (tuple (mapcar #'find-class-sym (split-on #\, (or (second parts) "")))))
          (unless tuple (error "onion needs a class tuple: onion:collide:ship,asteroid"))
          (subj-onion gf tuple)))
       (t (error "unknown subject kind ~s — see -h" head)))))

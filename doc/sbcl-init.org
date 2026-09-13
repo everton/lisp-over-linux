@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #23). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #24). A C preinit mounts
 /proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
 interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
@@ -19,7 +19,8 @@ with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabl
 (Terminus 16x32 — *since reverted*, see [[file:kernel-config.org][kernel-config.org]] / [[file:framebuffer.org][framebuffer.org]] §7);
 tag #21 = IPv4 networking + QEMU virtio-net (kernel half; the userland half has
 since landed too — see [[file:networking.org][networking.org]]); tag #22 = dropped legacy BSD PTYs
-(/dev declutter; Unix98 PTYs stay); tag #23 = rebased onto Linux 7.1.3.
+(/dev declutter; Unix98 PTYs stay); tag #23 = rebased onto Linux 7.1.3; tag #24 =
+rebased onto Linux 7.2.5 (and SBCL 2.6.6 -> 2.6.8).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -32,8 +33,8 @@ initramfs — the exact thing static linking let us avoid before.
 
 * Findings from the actual ./sbcl tree (grounded, measured)
 
-SBCL here is a *built source tree*, version 2.6.6.74-c36b941e3 (reached via the
-gitignored =./sbcl= symlink -> =sources/sbcl=):
+SBCL here is a *built source tree*, version 2.6.8 (reached via the gitignored
+=./sbcl= symlink -> =sources/sbcl-2.6.8=):
   - runtime:  ./sbcl/src/runtime/sbcl        (2.2 MB, ELF, dynamically linked)
   - core:     ./sbcl/output/sbcl.core        (~35 MB Lisp heap image)
   - contribs: ./sbcl/contrib/...             (NOT needed for a minimal init)
@@ -58,7 +59,7 @@ Crucial runtime behaviour:
 * The approach we followed
 
 1. *Standalone image.* =save-lisp-and-die :executable t= bakes the core INTO a
-   single executable (/sbin/lisp) — ~40 MB at tag #23, and it grows with the
+   single executable (/sbin/lisp) — ~40 MB at tag #24, and it grows with the
    Lisp world since it *is* the heap (see "What 'a frozen heap' actually means"
    below). No separate .core file to manage.
 2. *Ship glibc.* Copy the 3 glibc pieces (loader + libc + libm) into the
@@ -594,15 +595,19 @@ Cost: ~1 MB of files + a terminfo entry + a devpts mount. NO kernel rebuild
 * Toolchain currency (both external trees)
 
 Both halves of the toolchain are *current and verified*. The image is built
-against SBCL =2.6.6= (the latest stable line, June 2026) on the Linux =7.1.3=
-kernel (latest stable) — each baked in at build time by whatever the gitignored
+against SBCL =2.6.8= (the newest release, August 2026) on the Linux =7.2.5=
+kernel (the current stable line) — each baked in at build time by whatever the gitignored
 =./sbcl= / =./linux= symlinks point at (=deps.sh=), so moving either version is
 independent of the other. Nothing in the userland pins a version (the banner just
 reports =lisp-implementation-version=), which is why the SBCL jump from the old
-=2.5.7= tree moved forward cleanly: a full =make.sh= rebuild, then =./build.sh=,
-then a headless QEMU boot, all green — no new =sb-alien=/=sb-int= style-warnings
-from the internals the line editor and REPL lean on. The kernel jump from =6.18.3=
-was likewise clean (=make olddefconfig= took the new symbols at safe defaults; the
+=2.5.7= tree moved forward cleanly, and so did the =2.6.6= -> =2.6.8= one: a full
+=make.sh= rebuild, then =./build.sh=, then a headless QEMU boot, all green — no new
+=sb-alien=/=sb-int= style-warnings from the internals the line editor and REPL lean
+on, and the three PRIVATE internals the browser reaches for still exist
+(=sb-di::debug-fun-debug-vars= for frame locals, =sb-kernel::restart-function= and
+=sb-kernel::restart-interactive-function= for the debugger — those are the ones a
+release could quietly move, so they are checked by name on every bump). The kernel
+jump from =6.18.3= was likewise clean (=make olddefconfig= took the new symbols at safe defaults; the
 one deliberate fix was pinning =PREEMPT_LAZY= so =TINY_RCU= survives on our
-uniprocessor image — see [[file:kernel-config.org][kernel-config.org]] tag =#23=). Both recipes are the same
+uniprocessor image — see [[file:kernel-config.org][kernel-config.org]] tag =#24=). Both recipes are the same
 shape: re-point the symlink, rebuild, boot-test — so any future bump is routine.
