@@ -3,7 +3,9 @@
 
 Parent doc: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor / REPL) ·
 related: [[file:framebuffer.org][framebuffer.org]] (the fbcon console that renders the
-escapes) · [[file:kernel-config.org][kernel-config.org]].
+escapes) · [[file:kernel-config.org][kernel-config.org]] · [[file:input.org][input.org]] (the OTHER half of input: the raw
+=/dev/input/event*= devices, for the mouse and for the bare modifiers this
+termios path structurally cannot see).
 
 Question that prompted this: the supervisor's menu/REPL only has the kernel's
 *canonical-mode* editing (backspace + line buffering). Can we get readline-style

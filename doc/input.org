@@ -1,0 +1,307 @@
+#+TITLE: Input devices — evdev, the mouse, the wheel, and the modifiers the tty hides
+#+STARTUP: showall
+
+Sibling docs: [[file:line-editing.org][line-editing.org]] (the *other* half of input — raw-mode termios and
+the cooked tty) · [[file:framebuffer.org][framebuffer.org]] (the output half — =/dev/fb0=) ·
+[[file:kernel-config.org][kernel-config.org]] (the options that create these device nodes) ·
+[[file:code-browser.org][code-browser.org]] §6.3 (what the browser does with them).
+
+Question that prompted this: /how does the machine know the mouse moved, or that
+the wheel turned?/ There is no X server, no libinput, no udev, and no mouse
+daemon. The answer is one character device, one 24-byte struct, and =poll(2)=.
+
+* The one-sentence essence
+
+The kernel turns every input device into a file at =/dev/input/eventN= that emits
+*fixed 24-byte records* saying "this type of thing, this code, this value" — and
+our entire mouse driver is a loop that reads 24 bytes at a time and adds the
+numbers up.
+
+* 1. Why the tty is not enough
+
+We already read the keyboard, and we read it through the *terminal*: fd 0, put
+into raw mode with termios, one byte per keystroke ([[file:line-editing.org][line-editing.org]]). That path
+is excellent for *text* and useless for two things:
+
+1. *The mouse.* The tty carries characters. A pointer has no character.
+2. *A bare modifier.* Hold Ctrl on its own and the tty delivers *nothing at all* —
+   there is no byte for "Ctrl is currently down". The tty only ever tells you
+   about a modifier once it has already been *combined* with a key: =C-g= arrives
+   as byte 7, and the Ctrl-ness is gone by the time you see it.
+
+The browser needs both — a pointer to click with, and =Ctrl-click= /
+=SuperL-click= as distinct gestures ([[file:code-browser.org][code-browser.org]] §4¾). So it opens a second
+and third door onto the hardware, underneath the terminal: the raw input devices.
+
+*Three fds, three jobs*, and they are deliberately not interchangeable:
+
+| fd                        | carries                                   | why not one of the others |
+|---------------------------+-------------------------------------------+---------------------------|
+| =0= (the console tty)     | typed *text*, escape sequences            | the only one that has been through the keymap — evdev gives key /codes/, not letters |
+| the mouse =eventN=        | motion, buttons, the wheel                | the tty has no notion of a pointer |
+| the keyboard's own =eventN= | *only* Ctrl / Shift / Super held state  | the tty cannot report a bare modifier |
+
+That third one is worth restating because it looks redundant: we read the
+keyboard *twice*, through two different doors, on purpose. Text comes from the
+cooked-ish tty because that is where the keymap lives (evdev would hand us
+"keycode 30", not =a=). The modifier *state* comes from evdev because that is the
+only place it exists. The main loop then =logior=s the evdev modifier bits into
+the state word before dispatching the tty's key — see [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]'s
+=run-browser-fb=.
+
+* 2. What evdev is
+
+=CONFIG_INPUT_EVDEV=y= builds [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], a *generic* handler that
+attaches to every input device the kernel has and exposes each as a character
+device =/dev/input/eventN=.
+
+It is generic in the strong sense: it does not know what a mouse is. It publishes
+the input subsystem's internal event stream verbatim, and userland decides that a
+device emitting relative-X and relative-Y is a pointer. The keyboard, the mouse,
+the touchpad and the ACPI power button all arrive through the identical
+interface, distinguished only by *which kinds of event they are capable of*.
+
+** The record
+
+Reading the device gives back a whole number of =struct input_event= records
+([[file:../linux/include/uapi/linux/input.h::struct input_event][=include/uapi/linux/input.h=]]). On 64-bit x86 one record is *24 bytes*:
+
+| offset | size | field   | meaning                              |
+|--------+------+---------+--------------------------------------|
+|      0 |    8 | =tv_sec=  | timestamp, seconds — we ignore it    |
+|      8 |    8 | =tv_usec= | timestamp, microseconds — ignored    |
+|     16 |    2 | =type=    | *what kind* of event (a key? motion?) |
+|     18 |    2 | =code=    | *which* one (which key, which axis)   |
+|     20 |    4 | =value=   | signed 32-bit: how much / pressed?   |
+
+The 16-byte =struct timeval= at the front is why the record is 24 and not 8, and
+it is the single most common source of "my offsets are wrong" — on a 32-bit
+machine that timeval is 8 bytes and the record is 16.
+
+There is no framing, no length prefix, and no escaping: records simply abut. The
+driver enforces this — [[file:../linux/drivers/input/evdev.c][=evdev.c=]] returns =-EINVAL= rather than a partial record
+if you hand it a buffer smaller than one event, and otherwise fills as many whole
+records as fit. So "read 24 bytes, decode, repeat" is not a convention we adopted;
+it is the contract.
+
+** Reading it in Lisp
+
+No new dependency: the same =sb-alien= FFI style as [[file:../initramfs/net.lisp][net.lisp]], on the =libc= we
+already ship. Open the node non-blocking ([[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]) and drain it
+([[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]):
+
+#+begin_src lisp
+  (let ((n (%fbb-read fd buf 24)))
+    (when (< n 24) (return))                    ; queue empty — O_NONBLOCK
+    (let* ((type (logior (deref e 16) (ash (deref e 17) 8)))            ; u16 LE
+           (code (logior (deref e 18) (ash (deref e 19) 8)))            ; u16 LE
+           (v    (logior (deref e 20) (ash (deref e 21) 8)
+                         (ash (deref e 22) 16) (ash (deref e 23) 24)))
+           (val  (if (>= v #x80000000) (- v #x100000000) v)))           ; s32
+      …))
+#+end_src
+
+Two details that matter:
+
+- *Little-endian reassembly by hand.* We read bytes and shift, rather than casting
+  a struct, because that is honest about the wire format and costs nothing.
+- *Sign extension.* =value= is =__s32=. Moving the mouse left gives =-1=, which
+  arrives as =#xFFFFFFFF=; the last line turns it back into =-1=. Skip it and the
+  cursor teleports right by four billion pixels on the first leftward twitch —
+  a very memorable bug.
+
+*The non-blocking read is the loop's terminator.* With =O_NONBLOCK= a read on an
+empty queue returns =-1= (=EAGAIN=) rather than waiting, so =(< n 24)= means
+"nothing more right now" and we stop. Draining in a loop rather than one record
+per frame is what makes a fast mouse flick feel smooth: several records collapse
+into one cursor move and one redraw.
+
+* 3. The events we actually decode
+
+Of the ~30 event types, the browser needs four. Constants from
+[[file:../linux/include/uapi/linux/input-event-codes.h::#define REL_WHEEL][=input-event-codes.h=]]:
+
+| =type=          | =code=              | =value=            | what we do                        |
+|-----------------+---------------------+--------------------+-----------------------------------|
+| =2= =EV_REL=    | =0= =REL_X=         | delta, signed      | =(incf *cursor-x* val)=, clamped  |
+| =2= =EV_REL=    | =1= =REL_Y=         | delta, signed      | =(incf *cursor-y* val)=, clamped  |
+| =2= =EV_REL=    | =8= =REL_WHEEL=     | notches, ±1        | sum into =wheel= (see §6)         |
+| =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, 0..32767 | scale onto the screen, assign     |
+| =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: =browser-click=    |
+| =1= =EV_KEY=    | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta | =1= down =2= repeat =0= up | set =*ctrl-down*= / =*shift-down*= / =*super-down*= |
+
+Relative *and* absolute are both handled because the two ways we run differ:
+QEMU's default PS/2 mouse is relative, while =-device usb-tablet= is absolute and
+reports a fixed 0..32767 range that we rescale to the real resolution. Absolute
+is what makes a scripted click land predictably, which matters for the QMP
+screenshot harness ([[file:code-browser.org][code-browser.org]] §8).
+
+Note =EV_KEY= covers *both* buttons and keys — a mouse button is just a key whose
+code happens to be =0x110=. That is the input subsystem's view, not a quirk.
+
+* 4. Finding the device without udev
+
+This is the part that surprised us, and it is the reason [[file:../initramfs/fb-browser.lisp::defun scan-input-device][=scan-input-device=]]
+exists at all.
+
+Two non-obvious facts:
+
+1. *=eventN= is not stable.* The number depends on probe order. Hardcoding
+   =/dev/input/event2= works until it doesn't.
+2. *There is no =/dev/input/mouse0=.* That node comes from =mousedev=, and
+   =CONFIG_INPUT_MOUSEDEV is not set= in our config. So the obvious trick —
+   scan =/proc/bus/input/devices= for a =Handlers== line containing =mouse= —
+   finds nothing. Our PS/2 mouse advertises only =Handlers=event2=.
+
+So we classify by *capability* instead. [[file:../linux/drivers/input/input.c][=drivers/input/input.c=]]'s
+=input_devices_seq_show= prints one block per device, blank-line separated:
+
+#+begin_example
+  I: Bus=0011 Vendor=0002 Product=0006 Version=0000
+  N: Name="ImExPS/2 Generic Explorer Mouse"
+  P: Phys=isa0060/serio1/input0
+  S: Sysfs=/devices/platform/i8042/serio1/input/input4
+  U: Uniq=
+  H: Handlers=event2
+  B: PROP=0
+  B: EV=7
+  B: KEY=70000 0 0 0 0
+  B: REL=103
+#+end_example
+
+The =B: EV== line is a *bitmask of the event types this device can emit*, in hex —
+one bit per =EV_*= constant. =EV=7= is bits 0,1,2 = =EV_SYN= + =EV_KEY= + =EV_REL=:
+it has buttons and it moves relatively. That is a pointer, and no other kind of
+device says so.
+
+So the rules are one line each:
+
+- *pointer* — EV_REL (bit 2) or EV_ABS (bit 3): [[file:../initramfs/fb-browser.lisp::defun find-mouse-device][=find-mouse-device=]]
+- *keyboard* — EV_KEY (bit 1) *and* EV_REP (bit =0x14= = 20, autorepeat):
+  [[file:../initramfs/fb-browser.lisp::defun find-keyboard-device][=find-keyboard-device=]]
+
+The =EV_REP= half of the keyboard rule is not decoration. The ACPI *power button*
+also registers as a keyboard-ish device (it emits =KEY_POWER=), and it also gets a
+=kbd= handler — but it cannot autorepeat. Without the EV_REP bit we would happily
+open the power button and wonder why Ctrl never seemed to be held.
+
+*One parsing subtlety, and why it is safe.* =input_seq_print_bitmap= prints a
+bitmap as space-separated 64-bit words, most significant first — see =B: KEY=
+above. Our parser reads hex up to the first space, i.e. only the first word. For
+=EV= that is exactly right and always will be: =EV_MAX= is =0x1f=, so the whole
+mask is a single word and there is never a second one to miss. (Do not copy the
+same parse for =B: KEY=, where it would silently read the wrong end.)
+
+* 5. Waiting on three things at once: =poll(2)=
+
+Three input sources, all of which may be idle. Busy-polling would spin PID 1 at
+100% CPU; blocking on any one would ignore the other two. =poll(2)= is the answer,
+and [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]] builds its argument array by hand:
+
+#+begin_src c
+  struct pollfd { int fd; short events; short revents; };   /* 8 bytes */
+#+end_src
+
+Three of those is a 24-byte array: =fd= at offset =n*8=, =events= at =n*8+4=,
+=revents= at =n*8+6=. We zero the whole thing, fill in the fds we have, and pass
+timeout =-1= (wait forever). The loop therefore *sleeps* until something actually
+happens, and the browser costs nothing when you are not touching it.
+
+A small robustness trick worth naming: an *absent* device (no mouse found) leaves
+its slot zeroed rather than shifting the array. A zeroed slot is =fd 0= with
+=events = 0=, which poll never reports ready — so the revents offsets stay put and
+the "no mouse" case needs no separate code path.
+
+* 6. The wheel, end to end
+
+There is no scroll *axis* and no scroll *position* — the wheel is a relative
+motion device that moves in detents. One notch is one record:
+
+#+begin_example
+  type=2 (EV_REL)  code=8 (REL_WHEEL)  value=+1   ; rolled away from you
+  type=2 (EV_REL)  code=8 (REL_WHEEL)  value=-1   ; rolled toward you
+#+end_example
+
+[[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]] sums these across one drain and returns them beside the click, so a
+fast flick becomes a single =wheel= of =+3= rather than three separate frames.
+Then the main loop turns notches into lines:
+
+#+begin_src lisp
+  (unless (zerop wheel)
+    (browser-scroll (* (- wheel) +wheel-lines+)))     ; +wheel-lines+ = 3
+#+end_src
+
+*The negation is a real sign-convention flip, not a fudge.* evdev's =+1= means
+"the wheel rolled away from the user". [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]]'s argument means "move
+this many lines further *down* the document". Rolling away conventionally moves
+you *up* the document, so the two disagree and one =-= reconciles them.
+
+=browser-scroll= then splits by pane kind:
+
+- a *text* pane scrolls its viewport via [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]], leaving the caret where it
+  is — scrolling is looking, not moving;
+- a *list* pane moves the *selection* instead, because =draw-list-body= anchors
+  the visible window to the selection and has no viewport of its own.
+
+That second case is a known wart: scrolling a list drags the selection with it,
+which is not what a scroll should do. Fixing it properly means giving lists a
+viewport independent of the selection — i.e. a real scrollbar widget, which is
+what phase 3's remaining toolkit work is for ([[file:code-browser.org][code-browser.org]] §8).
+
+* 7. The same gesture on the host: X11 buttons 4 and 5
+
+On the dev host there is no evdev in play at all. The X server owns the devices
+and hands us protocol events instead ([[file:x11.org][x11.org]]), and X has its own answer to the
+wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
+
+| gesture     | guest (evdev)                    | host (X11)                  |
+|-------------+----------------------------------+-----------------------------|
+| move        | =EV_REL= =REL_X/Y= deltas        | =MotionNotify= x,y          |
+| left click  | =EV_KEY= =BTN_LEFT= value 1      | =ButtonPress= detail =1=    |
+| wheel up    | =EV_REL= =REL_WHEEL= value =+1=  | =ButtonPress= detail =4=    |
+| wheel down  | =EV_REL= =REL_WHEEL= value =-1=  | =ButtonPress= detail =5=    |
+| Ctrl held   | =EV_KEY= =KEY_LEFTCTRL= value 1  | the event's =state= bitmask |
+
+[[file:../poc/x11.lisp][=x11.lisp=]] already decodes all of these — =:button-press= carries the button in
+=event-detail=. The Ctrl row is the neat part: X *gives* you the modifier state on
+every event, so the host needs no equivalent of the second keyboard fd. That
+asymmetry is exactly why the guest has one.
+
+*Known gap.* [[file:../poc/run-browser.lisp][=run-browser.lisp=]]'s event loop tests =(= 1 (event-detail e))= before
+acting, so buttons 4 and 5 are silently dropped: the wheel works on the bare
+framebuffer and does nothing in the X11 window. Closing it is one branch to
+=browser-scroll=, and it is the piece of phase 5 still genuinely owed.
+
+* 8. What makes it work (kernel side)
+
+| Option                            | State | Why                                                    |
+|-----------------------------------+-------+--------------------------------------------------------|
+| =CONFIG_INPUT_EVDEV=              | y     | creates =/dev/input/event*= — the whole mechanism above |
+| =CONFIG_INPUT_MOUSEDEV=           | *n*   | deliberately off; why there is no =mouseN= to look for  |
+| =CONFIG_MOUSE_PS2=                | y     | the PS/2 mouse + laptop touchpad driver                |
+| =CONFIG_SERIO= + =KEYBOARD_ATKBD= | y     | the PS/2 keyboard QEMU gives us                        |
+| =CONFIG_USB_HID= / =CONFIG_HID=   | y     | a USB mouse or keyboard                                |
+| =CONFIG_I2C_HID= + =_ACPI=        | y     | internal laptop touchpads/keyboards on the I2C-HID bus |
+
+Full table and the reasoning: [[file:kernel-config.org][kernel-config.org]]. Device nodes appear without us
+listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initramfs/preinit.c][=preinit.c=]]
+([[file:sbcl-init.org][sbcl-init.org]]).
+
+* 9. Where the code lives
+
+| what                                     | where                                                     |
+|------------------------------------------+-----------------------------------------------------------|
+| open a node non-blocking                 | [[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]                                     |
+| find the pointer / the keyboard          | [[file:../initramfs/fb-browser.lisp::defun scan-input-device][=scan-input-device=]], =find-mouse-device=, =find-keyboard-device= |
+| decode motion / buttons / wheel          | [[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]                                     |
+| track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
+| wait on tty + mouse + keyboard           | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]                                       |
+| notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |
+| the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                       |
+| the cursor bitmap we draw ourselves      | =*cursor-bits*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]                  |
+
+The cursor deserves the last word: there isn't one. No hardware sprite, no
+overlay plane — =*cursor-x*= and =*cursor-y*= are two integers, and we paint a
+little arrow from a string-art bitmap into the frame like everything else. The
+mouse pointer on this machine is drawn by the same =fill-rect= that draws the
+tab strip.

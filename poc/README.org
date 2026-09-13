@@ -68,11 +68,14 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
 - *The mouse is already there — and now read.* The guest's boot log shows
   =input: ImExPS/2 Generic Explorer Mouse=; =CONFIG_INPUT_EVDEV=y= is already set,
   so it is live under QEMU with no kernel change. =fb-browser.lisp= reads it: a
-  cursor tracks motion and left-click drills. Note the device is *not* a fixed
-  =eventN= and has no =mouseN= handler (=mousedev= is not loaded) — =find-mouse-device=
-  locates it by capability instead, scanning =/proc/bus/input/devices= for the block
-  whose =B: EV=- mask has EV_REL (bit 2) or EV_ABS (bit 3) set. Here that resolves
-  to =/dev/input/event2=.
+  cursor tracks motion, left-click drills, and the wheel scrolls. The device is
+  *not* a fixed =eventN= and has no =mouseN= handler (=mousedev= is not built), so
+  =find-mouse-device= locates it by *capability* — the block in
+  =/proc/bus/input/devices= whose =B: EV=- mask has EV_REL (bit 2) or EV_ABS
+  (bit 3) set. Here that resolves to =/dev/input/event2=. The whole mechanism —
+  the 24-byte =input_event= record, the three-fd =poll(2)=, the wheel's sign
+  convention, and why a bare Ctrl needs the keyboard's *own* evdev — is written up
+  in [[file:../doc/input.org][doc/input.org]].
 
 * Known rough edges (it is a POC)
 
@@ -85,13 +88,17 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
 
 ** Browser shell — known gaps / TODO (=shell.lisp=, =run-browser.lisp=)
 
-- *Scrolling is caret/selection-driven only.* A source pane scrolls only when the
-  caret moves off-screen (=↑↓=); a list pane scrolls only when the selection moves.
-  Missing: *mouse-wheel / touchpad scroll* (X sends the wheel as button 4/5 press
-  events — =run-browser= handles only button 1, so they are ignored) and
-  *PageUp/PageDown*. Fix: handle button 4/5 in the event loop → scroll the current
-  pane; add =:page-up=/=:page-down= (already decoded by =x11.lisp=) to =browser-key=
-  and a viewport-scroll that is independent of the caret.
+- *Scrolling — done in the guest, still owed on the host.* PageUp/PageDown and the
+  mouse wheel work on the framebuffer: =tv-wheel= scrolls a text pane's viewport
+  without moving the caret, =move-page= pages the caret, and =read-mouse= decodes
+  =REL_WHEEL= into =browser-scroll= (=+wheel-lines+= = 3 lines a notch). Two gaps
+  remain. (1) *The X11 runner ignores the wheel*: X delivers it as button 4/5
+  press events and =run-browser.lisp= tests =(= 1 (event-detail e))=, so they are
+  dropped — one branch to =browser-scroll= fixes it. (2) *A list pane has no
+  viewport of its own*: =draw-list-body= anchors the visible window to the
+  selection, so scrolling a list drags the selection with it. The real fix is the
+  scrollbar/list widget phase 3 still owes. See [[file:../doc/input.org][doc/input.org]] §6 for the wheel
+  end to end.
 - Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
   [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (=draw-spotter=), candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note the
   Spotter and the debugger are summoned through =fb-browser.lisp=, so they exist

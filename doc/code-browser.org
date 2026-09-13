@@ -1128,22 +1128,34 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
 - *Keyboard: already solved.* =KD_GRAPHICS= stops the console *rendering*; it does
   not stop key *delivery*. The existing raw-mode termios path keeps working
   untouched — the framebuffer backend needs *no new keyboard code*.
-- *Mouse: evdev — done* (=fb-browser.lisp=). =CONFIG_INPUT_EVDEV=y= is on. We read
-  24-byte =struct input_event= records from =/dev/input/eventN= (16-byte timeval,
-  u16 type, u16 code, s32 value), open non-blocking, and =poll(2)= keyboard (fd 0)
-  and the mouse fd together so the loop wakes on either. We handle both
-  =EV_REL=/=REL_X=/=REL_Y= (the PS/2 mouse QEMU gives us — relative) and
-  =EV_ABS=/=ABS_X=/=ABS_Y= (a =usb-tablet=, if added — absolute, 0..32767), plus
-  =EV_KEY=/=BTN_LEFT= for the click; a cursor is drawn each frame and left-click
-  calls =browser-click=. /Finding the device:/ do *not* assume =eventN= or grep the
-  Handlers line for =mouse= — =mousedev= is not loaded, so a plain PS/2 mouse shows
+- *Mouse: evdev — done* (=fb-browser.lisp=). Full write-up, with the record
+  format, the device-discovery trick and the wheel: *[[file:input.org][input.org]]*. In brief:
+  =CONFIG_INPUT_EVDEV=y= exposes every device as =/dev/input/eventN=, emitting
+  fixed 24-byte =struct input_event= records (16-byte timeval, u16 type, u16 code,
+  s32 value); we open them non-blocking and =poll(2)= the console tty (fd 0), the
+  mouse and the keyboard's *own* evdev together, so the loop sleeps until one of
+  the three has something. We decode =EV_REL= (relative — QEMU's PS/2 mouse, plus
+  =REL_WHEEL= for scroll), =EV_ABS= (absolute 0..32767 — a =usb-tablet=) and
+  =EV_KEY=/=BTN_LEFT=; a cursor is drawn each frame and left-click calls
+  =browser-click=. /Finding the device:/ do *not* assume =eventN= or grep the
+  Handlers line for =mouse= — =mousedev= is not built, so a plain PS/2 mouse shows
   only =Handlers=eventN= with no =mouseN= token. =find-mouse-device= instead reads
   =/proc/bus/input/devices= and picks the block whose =B: EV=- capability mask has
   EV_REL (bit 2) or EV_ABS (bit 3) set (here: =/dev/input/event2=).
-  /Real-hardware caveat:/ the laptop touchpad needs kernel options we do not
-  currently have (=CONFIG_MOUSE_PS2= or i2c-HID). Adding them is a modest kernel
-  change, but until then the mouse works in QEMU and on a USB mouse only — so keep
-  full keyboard accelerators for everything.
+- *A bare modifier needs the keyboard's own evdev.* The cooked tty reports Ctrl
+  only once it has been folded into a key (=C-g= is byte 7); it says nothing at all
+  while Ctrl is merely *held*. So Ctrl-click and the SuperL layer need a third
+  poll fd — =read-keyboard-evdev= tracks =*ctrl-down*= / =*shift-down*= /
+  =*super-down*=, and the main loop =logior=s them into the state word. Text still
+  comes from the tty, because that is where the keymap lives.
+- /Real-hardware note (corrected at tag #23):/ an older draft of this section said
+  the laptop touchpad needed kernel options "we do not currently have". That is no
+  longer true — =CONFIG_MOUSE_PS2=y= and =CONFIG_I2C_HID= + =_ACPI=y= are both
+  enabled (verified against =kernel/config-7.1.3=), so a PS/2 touchpad or an
+  I2C-HID one should enumerate like any other pointer. It is still *untested on
+  real hardware* — only QEMU's PS/2 mouse has actually been exercised — so keep
+  full keyboard accelerators for everything regardless: the mouse is an
+  accelerant, never a requirement (§4¾).
 - *Resolution* is whatever the firmware set (efifb cannot modeset — [[file:framebuffer.org][framebuffer.org
   §6]]). 1280x800 in QEMU. The layout must be resolution-agnostic; do not hardcode.
 

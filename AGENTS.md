@@ -17,6 +17,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/framebuffer.org` | Deep-dive: framebuffer → efifb → fbcon, `/dev/fb0`, font size, drawing images. Explains the Display options. |
 | `doc/fonts.org` | Orientation guide: how our pure-Lisp renderer turns a character into pixels (PSF bitmap → `draw-string` → screen), and how to change the font/size. Companion to `framebuffer.org`. |
 | `doc/line-editing.org` | Deep-dive: readline-class input in pure Lisp (raw-mode termios via FFI, fbcon ANSI). |
+| `doc/input.org` | Deep-dive: **input devices** — evdev (`/dev/input/eventN`, the 24-byte `input_event`), finding the mouse without udev, `poll(2)` over three fds, the wheel, and why a bare Ctrl needs the keyboard's own evdev. The input sibling of `framebuffer.org`. |
 | `doc/networking.org` | Networking: kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets`, static IP/DHCP, the TCP REPL. Wired path working; DNS/Wi-Fi ahead. |
 | `doc/code-browser.org` | **The active major effort.** Full design + phase tracker for the Smalltalk/Pharo-style code browser: the `present` drill-down protocol, the accordion shell, trails/tabs/Spotter, the debugger. The longest doc here and the best maintained — treat its phase list as truth. |
 | `doc/fonts.org` | How our pure-Lisp renderer turns a character into pixels (PSF/`.lolf` bitmap → `draw-string`), and how to change the font or its size. |

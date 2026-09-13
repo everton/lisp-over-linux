@@ -125,7 +125,9 @@ the original "it booted but showed nothing" bug.
 | =CONFIG_I2C= + =I2C_HID= + =_ACPI=       | y     | Internal I2C-HID keyboard bus (laptops)          |
 | =CONFIG_I2C_DESIGNWARE_CORE/_PLATFORM=   | y     | The common laptop I2C controller                 |
 | =CONFIG_SERIO= + =INPUT_KEYBOARD= + =KEYBOARD_ATKBD= | y | Legacy PS/2 keyboard (QEMU + old machines) |
-| =CONFIG_INPUT_EVDEV=                     | y     | =/dev/input/event*= layer (the diagnostic reads it) |
+| =CONFIG_INPUT_EVDEV=                     | y     | =/dev/input/event*= layer — the mouse, the wheel, modifier state ([[file:input.org][input.org]]) |
+| =CONFIG_INPUT_MOUSEDEV=                  | *n*   | deliberately OFF — why there is no =/dev/input/mouseN= to look for |
+| =CONFIG_MOUSE_PS2=                       | y     | PS/2 mouse + laptop touchpad (QEMU's pointer)    |
 
 Root-cause story: =CONFIG_PCI= was OFF in early builds. Everything used *early*
 in boot (EFI framebuffer, RAM rootfs, PS/2 keyboard in QEMU) is non-PCI, so the
@@ -139,7 +141,8 @@ In the tree, the chain a keypress travels: [[file:../linux/drivers/usb/host/xhci
 [[file:../linux/drivers/hid/hid-input.c][=drivers/hid/hid-input.c=]] (HID → input subsystem key codes) →
 [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], which is what creates =/dev/input/event*= — the same
 nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the browser's mouse and Ctrl detection
-([[file:code-browser.org][code-browser.org]] §6.3). The PS/2 path used under QEMU is
+(the full mechanism: [[file:input.org][input.org]]; what the browser does with it:
+[[file:code-browser.org][code-browser.org]] §6.3). The PS/2 path used under QEMU is
 [[file:../linux/drivers/input/keyboard/atkbd.c][=drivers/input/keyboard/atkbd.c=]] on top of =serio=.
 
 * 4. Platform & power
