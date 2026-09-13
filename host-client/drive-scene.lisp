@@ -88,6 +88,14 @@
                       (:chord "ctrl" "c") (:chord "ctrl" "d") (:wait 2.0)
                       (:key "tab") (:key "down") (:key "down") (:key "tab")
                       (:wait 0.6)))
+    ;; the stage (§3b): the same drill as 'matrix', one row further down —
+    ;;   modules -> initramfs/examples (3rd) -> collide (3rd) -> "stage"
+    ;; The long dwell at the end is the point. Every other scene is finished the
+    ;; instant the last key lands; a stage keeps running, so the shot is of a world
+    ;; several seconds old with a transcript that has had time to fill.
+    ("stage"     "b" ((:key "down") (:key "down") (:key "ret")
+                      (:key "down") (:key "down") (:key "ret")
+                      (:wait 1.0) (:key "down") (:key "ret") (:wait 13.0)))
     ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).

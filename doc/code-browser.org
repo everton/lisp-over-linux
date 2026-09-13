@@ -598,6 +598,128 @@ the four verbs sit in the status bar:
 
 /The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
+* 3b. The Stage — dispatch, happening  [DONE]
+
+The dispatch matrix (§3) shows which collisions *have a rule*. The Stage shows
+collisions *happening*: every sprite is a live CLOS instance from
+[[file:../initramfs/examples.lisp][=examples.lisp=]], every contact is a real =collide= call, and every hole in the
+matrix is a =no-applicable-method= waiting to open the debugger with the whole
+stack standing.
+
+[[file:../media/screenshots/stage-2026-09-13.png]]
+
+/=Kestrel= has just docked with =Anvil=, and the transcript records BOTH
+directions of the call agreeing. =./refresh-screenshot.sh --scene stage=./
+
+*Why a moving picture belongs in a strictly textual instrument.* Every other view
+answers /what is written/. The matrix comes closest to the running system and still
+stops short: it counts methods per cell, which is a fact about the source, not about
+anything that ever happened. =collide= is the one specimen in the image whose whole
+point is /behaviour at a pair of types/, and reading its ten methods teaches multiple
+dispatch the way reading a recipe teaches cooking. Watching a missile reach a ship and
+seeing =(:DESTROYED "Kestrel")= come back — then watching the same missile reach a
+station and get =(:DENTED "Anvil")= instead, from the same call site — teaches it in
+one gesture.
+
+It is *not a game* and must not grow into one. It is a presentation of *instances*,
+the way a list is a presentation of definitions; position is merely the layout this
+subject happens to want.
+
+** Three rules, all of them decisions
+
+*1. The specimen stays pure.* =space-object= gains no slots. A class whose job is to be
+four readable lines in a class view must not sprout =x/y/vx/vy= for a demo's benefit,
+so positions live in =body= structs in [[file:../initramfs/stage.lisp][=stage.lisp=]] — the instance is a slot OF the
+body, never the other way round. Nothing on screen can tell you it has ever been on a
+stage, and =(stage-find s "Kestrel")= hands you an ordinary =ship=.
+
+*2. Both directions, every contact.* Contact is symmetric and =collide= is not, so
+rather than inventing an argument order the stage calls it *both ways* and records
+both. This pays for itself twice. It makes the author's symmetric pairs legible —
+=(ship asteroid)= is written to delegate to =(asteroid ship)=, and seeing the two calls
+return the same value is the only way that intent is ever visible. And where they
+/don't/ agree the transcript says so in amber: =(asteroid asteroid)= already doesn't,
+since =:SHATTER= keeps its argument order. It also makes the matrix's missing
+=missile= column load-bearing rather than a footnote — nothing specialises argument B
+on a missile, so *every missile hit* prints one value and one "no applicable method".
+
+That forces one rule: *only a total absence signals.* One side answering is the
+ordinary case, reported in the transcript and nowhere else. Two ships, where neither
+direction resolves, is what opens the debugger — so the modal never fires on a
+missile. Probe order is creation order; now that both are called it carries no
+meaning, which is exactly why it can be the boring deterministic choice a headless
+frame can replay.
+
+*3. =collide= returns data; =stage-enact= makes it happen.* The effect of a collision
+is a consequence of the value =collide= returned, so redefining a method visibly
+changes the world without the stage knowing anything happened. =stage-enact=
+dispatches with =eql= specialisers on the returned tag — =:destroyed= removes the
+target, =:dock= parks the ship on the station's rim, =:shatter= replaces both rocks
+with fragments — which also gives the browser its *first =eql=-specialised generic
+function*, a dispatch shape the matrix view cannot draw and which is better discovered
+from a real specimen than from a hypothetical.
+
+A corollary worth stating: *a =collide= call you make yourself enacts nothing.* Only
+the tick's own call is passed to =stage-enact=. Otherwise inspecting the system would
+perturb it, and the Workspace would stop being safe to poke with.
+
+** The restarts are the stage's own
+
+=stage-signal= wraps the real call in =restart-case=, so the debugger's rail offers
+=pass-through=, =remove-both=, =use-value= and =define-method= beside SBCL's =abort=.
+This is the condition system used the way it is meant to be: the code that knows what
+the recovery options ARE is the code that establishes them. =define-method= drops a
+=defmethod= template into the Workspace with the specialisers already filled from the
+two arguments — you never retype what the debugger already knew. Nothing special was
+needed to make the debugger appear: the signal travels through =*debugger-hook*= into
+=run-debugger-fb= exactly as one from the Workspace does, which is the best evidence
+that the stage belongs in this browser rather than beside it.
+
+** What it cost
+
+- *A poll timeout* — the only real obstacle, and the one concession the input layer
+  makes to a view that moves. =fbb-wait= hardcoded a =-1= (sleep until input), which is
+  how the browser stays at zero CPU on an idle console. It now takes an optional
+  timeout, and =live-stage-timeout= returns a frame deadline *only* while a running
+  stage is actually on screen — drill away and the loop is back to sleeping until a
+  key.
+- *Wall-clock ticking.* One tick per frame would make the world's speed a function of
+  how expensive the pane is to draw: a full 1280x800 repaint in Lisp costs more than a
+  frame period, and the first guest run advanced at about 13 ticks a second instead of
+  30. =tick-live-stage= steps the arrears from =get-internal-real-time= instead, capped
+  so a stage left behind a modal debugger can't try to replay the whole pause at once.
+- *Three canvas primitives* — =draw-line= (Bresenham), =draw-poly=, =draw-circle=. A
+  sprite is a silhouette and a silhouette is lines.
+- *=stage-resize=* scales positions /and velocities/ with the viewport, so a scene
+  authored in proportions keeps its timing at any window size.
+- Everything else was already here: the debugger, the Inspector, Accept and the change
+  set, the accordion, =present=.
+
+** Colour and shape
+
+The stage introduces no palette. A sprite is =:class= blue because it is an instance of
+a class; the selected one is the accent; an impact flashes =:method= green because what
+you are being shown is a method; a signal flashes =:condition= red. Class identity is
+carried by *silhouette* — dart, chevron, ring, rock — which is what frees colour to
+keep meaning what it means in every other pane.
+
+** Settled, and still open
+
+Decided 2026-09-13: argument order is *call both, show agreement* (above); the layout
+is *the editable preview pane* — the Stage is the one subject whose side pane accepts
+=C-c C-c=; and the transcript is *its own strip*, so the Workspace buffer holds only
+what you typed. Still open: whether the proper nouns (=Kestrel=, =Anvil=, =Hornet=)
+are the right tone — they earn their place now that every contact prints two lines,
+but it is a rename away and adjacent to the "space"-themed naming idea (§4¾).
+
+*Not built:* the editable side pane is settled but not yet wired — the Stage currently
+opens as a full pane, and the Workspace is a separate tab. =[define-method]= records
+its template in =stage-pending= and =stage-defmethod-template= hands it over; nothing
+consumes it yet.
+
+The full design spec, with a running prototype of the same view, is in
+[[file:../media/stage-design.html][media/stage-design.html]].
+
 * 4. The browser itself
 
 ** Layout (schematic — the real thing is pixels, proportional type, and a mouse)
@@ -1338,6 +1460,7 @@ sequence, driven over QMP into a headless QEMU boot:
 | =modules=   | the module index                             | §4⅔     |
 | =matrix=    | =collide='s dispatch grid                    | §3      |
 | =debugger=  | the live debugger on =(lol.examples:launch)= | §3      |
+| =stage=     | the COLLIDE stage, running                   | §3b     |
 | =workspace= | the scratch buffer and its verbs             | §3a     |
 | =spotter=   | the find-anything palette                    | §4¾     |
 

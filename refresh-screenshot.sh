@@ -18,6 +18,7 @@
 #
 #   scene NAME         one CONCEPT illustration for doc/code-browser.org: the
 #                      module index, the dispatch matrix, the live debugger,
+#                      the COLLIDE stage,
 #                      the Workspace, the Spotter.
 #                      -> media/screenshots/<name>-<date>.png
 #
@@ -70,7 +71,7 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules package matrix debugger workspace spotter"
+SCENE_NAMES="modules package matrix debugger workspace spotter stage"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;

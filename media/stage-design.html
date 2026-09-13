@@ -1,0 +1,1364 @@
+<title>The Collide Stage</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+
+<style>
+/* ------------------------------------------------------------------
+   Tokens lifted verbatim from poc/widgets.lisp — the environment's own
+   palette. Nothing here invents a colour; the stage borrows the scheme
+   the browser already reads by.
+   ------------------------------------------------------------------ */
+:root{
+  --bg:#14161A; --panel:#1B1E24; --band:#242931; --rule:#2E343D;
+  --text:#D6D3C8; --dim:#6B727D; --accent:#7FDBCA; --sel:#2F4F4A; --lit:#FFFFFF;
+
+  --c-class:#89DDFF; --c-method:#A8FF78; --c-cond:#FF6B6B;
+  --c-amber:#FF9F43; --c-gold:#FFCB6B; --c-macro:#C792EA;
+
+  --ink:#E8E5DA;          /* prose, a shade brighter than pane text */
+  --ink-soft:#9AA1AB;
+  --page:#101216;         /* the document ground, one step under the panes */
+
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --sans:"IBM Plex Sans",system-ui,-apple-system,Segoe UI,sans-serif;
+  --cond:"IBM Plex Sans Condensed","IBM Plex Sans",system-ui,sans-serif;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--page); color:var(--ink);
+  font-family:var(--sans); font-size:16px; line-height:1.62;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:1180px; margin:0 auto; padding-inline:20px; padding-block:0 72px}
+.col{max-width:68ch}
+
+/* ---------- masthead ---------- */
+.masthead{padding-block:56px 30px}
+.eyebrow{
+  font-family:var(--cond); font-weight:600; font-size:12px;
+  letter-spacing:.16em; text-transform:uppercase; color:var(--dim);
+  display:flex; flex-wrap:wrap; gap:.55em; align-items:baseline;
+}
+.eyebrow .sep{color:var(--rule)}
+.eyebrow .flag{color:var(--c-amber)}
+h1{
+  font-family:var(--cond); font-weight:600; font-size:clamp(40px,7vw,68px);
+  line-height:1.02; letter-spacing:-.015em; margin:.22em 0 0;
+  text-wrap:balance; color:var(--ink);
+}
+h1 .thin{color:var(--dim); font-weight:500}
+.lede{font-size:19px; line-height:1.58; color:var(--ink); margin:20px 0 0; max-width:64ch}
+.lede b{color:var(--accent); font-weight:600}
+.standfirst{
+  margin-top:22px; padding-top:18px; border-top:1px solid var(--rule);
+  display:flex; flex-wrap:wrap; gap:28px;
+  font-family:var(--mono); font-size:12.5px; color:var(--dim);
+}
+.standfirst span b{color:var(--text); font-weight:500}
+
+/* ==================================================================
+   THE MOCK — a representation of /dev/fb0 at 1280x800.
+   Real geometry, real palette, larger type (the guest font is 6x15px;
+   at document scale that is unreadable, so the mock runs at ~12px).
+   ================================================================== */
+.envwrap{margin-block:8px 0}
+.env{
+  background:var(--bg); border:1px solid var(--rule);
+  font-family:var(--mono); font-size:12px; line-height:1.35;
+  color:var(--text); user-select:none; overflow:hidden;
+}
+
+/* tab strip */
+.tabs{display:flex; align-items:stretch; background:#0F1114; border-bottom:1px solid var(--rule)}
+.tab{padding:6px 14px; color:var(--dim); border-right:1px solid var(--rule); white-space:nowrap}
+.tab.on{background:var(--band); color:var(--text)}
+.tab.on .n{color:var(--accent)}
+.tab .n{color:var(--dim)}
+.tabs .grow{flex:1; border-right:0}
+.tabs .host{padding:6px 12px; color:var(--dim)}
+
+/* collapsed accordion breadcrumbs */
+.crumb{
+  display:flex; align-items:center; gap:10px;
+  padding:4px 10px; background:var(--band);
+  border-bottom:1px solid var(--rule); color:var(--text);
+}
+.crumb .mark{color:var(--c-amber); width:8px}
+.crumb .pick{margin-left:auto; color:var(--dim)}
+
+/* the split */
+.split{display:flex; align-items:stretch; min-height:0}
+.pane{background:var(--panel); border-right:1px solid var(--rule); min-width:0; display:flex; flex-direction:column}
+.pane:last-child{border-right:0}
+.band{
+  display:flex; align-items:center; gap:10px;
+  background:var(--band); border-bottom:1px solid var(--rule);
+  padding:4px 10px; color:var(--accent);
+}
+.band .mark{color:var(--accent)}
+.band .badge{margin-left:auto; color:var(--dim); font-size:11px}
+
+.stagepane{flex:1 1 62%}
+.sidecol{flex:1 1 38%; display:flex; flex-direction:column; border-right:0; min-width:250px}
+
+/* canvas viewport */
+.viewport{position:relative; background:#0E1013; flex:1; min-height:360px}
+#sky{display:block; width:100%; height:100%; max-width:100%}
+.hud{
+  position:absolute; left:0; right:0; bottom:0;
+  padding:4px 10px; font-size:11.5px; color:var(--dim);
+  background:linear-gradient(to top,rgba(14,16,19,.96),rgba(14,16,19,0));
+  display:flex; gap:8px; align-items:baseline; pointer-events:none;
+}
+.hud .k{color:var(--dim)}
+.hud .v{color:var(--c-method); font-weight:500}
+.hud .v.none{color:var(--dim)}
+
+/* event strip under the stage */
+.events{border-top:1px solid var(--rule); background:#171A1F; padding:6px 10px; height:104px; overflow:hidden}
+.events .ehead{color:var(--dim); font-size:11px; letter-spacing:.06em; margin-bottom:3px}
+.ev{white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:11.5px}
+.ev .call{color:var(--dim)}
+.ev .arrow{color:var(--rule)}
+.ev .res{color:var(--c-method)}
+.ev.bad .res{color:var(--c-cond)}
+.ev.warn .res{color:var(--c-amber)}
+.ev.probe .call{color:#4A5058}
+.ev.fresh{color:var(--lit)}
+
+/* matrix pane */
+.mx{padding:8px 10px 10px}
+table.grid{border-collapse:collapse; font-variant-numeric:tabular-nums; font-size:11.5px}
+table.grid th{font-weight:400; color:var(--dim); text-align:left; padding:2px 8px 4px}
+table.grid td{
+  padding:2px 0; text-align:center; color:var(--c-method);
+  background:#1A2A18; border-left:2px solid var(--c-method); min-width:56px;
+}
+table.grid td.hole{background:transparent; border-left:2px solid var(--rule); color:var(--rule)}
+table.grid td.fire{background:var(--c-method); color:#0E1013; font-weight:600}
+table.grid td.new{border-left-color:var(--c-amber); background:#2A2114; color:var(--c-amber)}
+table.grid th.row{color:var(--c-class); padding-right:12px}
+.mxnote{color:var(--dim); font-size:11px; margin-top:8px; line-height:1.45; white-space:normal}
+
+/* workspace pane */
+.ws{flex:1; display:flex; flex-direction:column; border-top:1px solid var(--rule); min-height:0}
+.wsbody{padding:6px 0 8px; overflow-y:auto; flex:1; min-height:150px}
+.form{
+  display:block; width:100%; text-align:left; background:none; border:0;
+  border-left:2px solid transparent; color:var(--text);
+  font-family:var(--mono); font-size:11.5px; line-height:1.45;
+  padding:2px 10px 2px 12px; cursor:pointer; white-space:pre-wrap;
+}
+.form:hover{background:var(--band); border-left-color:var(--accent)}
+.form:focus-visible{outline:1px solid var(--accent); outline-offset:-1px}
+.form .kw{color:var(--c-macro)}
+.form .fn{color:var(--accent)}
+.form .str{color:var(--c-method)}
+.form .lit{color:var(--c-amber)}
+.form .cls{color:var(--c-class)}
+.wove{padding:1px 10px 4px 12px; font-size:11.5px; color:var(--c-method)}
+.wove.bad{color:var(--c-cond)}
+.wove .g{color:var(--dim)}
+
+/* status bar */
+.statusbar{
+  display:flex; flex-wrap:wrap; align-items:center; gap:4px 6px;
+  border-top:1px solid var(--rule); background:#0F1114; padding:5px 10px;
+}
+.key{
+  background:none; border:0; padding:2px 4px; cursor:pointer;
+  font-family:var(--mono); font-size:11.5px; color:var(--dim); border-radius:2px;
+}
+.key b{color:var(--accent); font-weight:500}
+.key:hover{background:var(--band)}
+.key:hover b{color:var(--lit)}
+.key:focus-visible{outline:1px solid var(--accent); outline-offset:-1px}
+.key.warn b{color:var(--c-cond)}
+.statusbar .spacer{flex:1}
+.statusbar .note{color:var(--dim); font-size:11px}
+
+/* the debugger overlay — restarts LEFT, stack RIGHT (as built 2026-09-13) */
+.dbg{position:absolute; inset:0; background:var(--bg); display:flex; flex-direction:column}
+.dbg[hidden]{display:none}
+.dbgtitle{background:#5A1C1C; color:#FFD0C0; padding:3px 10px; font-size:11.5px}
+.dbghead{padding:10px 12px 6px}
+.dbghead .type{color:var(--c-cond); font-size:19px; letter-spacing:-.01em}
+.dbghead .report{color:var(--text); font-size:11.5px; margin-top:4px}
+.dbghead .caught{color:var(--dim); font-size:11.5px; margin-top:3px}
+.dbgcols{display:flex; flex:1; min-height:0; padding:2px 8px 8px; gap:0}
+.dbgcol{flex:1 1 52%; min-width:0; padding-left:18px; position:relative}
+.dbgcol.stack{flex:1 1 48%; border-left:1px solid var(--rule); margin-left:8px}
+.dbgcol .colhead{font-size:11px; margin-bottom:5px}
+.dbgcol.restarts .colhead{color:var(--c-amber)}
+.dbgcol.stack .colhead{color:var(--dim)}
+.dbgcol .colhead .hint{color:var(--dim)}
+.rail{position:absolute; left:0; top:22px; bottom:8px; width:2px}
+.restarts .rail{background:#8A5A28}
+.stack .rail{background:var(--accent); left:9px}
+.rs{
+  display:block; width:100%; text-align:left; background:none; border:0;
+  border-left:2px solid transparent; margin-left:-18px; padding:2px 6px 2px 16px;
+  font-family:var(--mono); font-size:11.5px; color:var(--dim); cursor:pointer;
+}
+.rs:hover,.rs:focus-visible{background:var(--sel); color:var(--text); border-left-color:var(--c-amber); outline:none}
+.rs .nm{color:var(--c-amber)}
+.rs:hover .nm{color:var(--lit)}
+.fr{padding:1px 0 1px 8px; color:var(--dim); font-size:11.5px}
+.fr.sig{color:var(--text)}
+.fr .bang{color:var(--c-amber); margin-left:-10px; margin-right:2px}
+.dbgfoot{border-top:1px solid var(--rule); padding:6px 12px; color:var(--dim); font-size:11px}
+.dbgfoot b{color:var(--c-amber); font-weight:500}
+
+/* figure caption */
+.figcap{
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  margin:10px 0 0; max-width:88ch; line-height:1.6;
+}
+.figcap b{color:var(--text); font-weight:500}
+
+/* ---------- document ---------- */
+section{padding-block:44px 0}
+h2{
+  font-family:var(--cond); font-weight:600; font-size:clamp(24px,3.4vw,32px);
+  line-height:1.14; letter-spacing:-.01em; margin:0 0 4px; color:var(--ink);
+  text-wrap:balance;
+}
+h2 .num{color:var(--c-amber); font-family:var(--mono); font-size:.56em; vertical-align:.35em; margin-right:.6em}
+.sublede{color:var(--ink-soft); margin:0 0 20px; max-width:64ch}
+h3{
+  font-family:var(--cond); font-weight:600; font-size:17px; letter-spacing:.01em;
+  margin:28px 0 6px; color:var(--accent);
+}
+p{margin:0 0 14px}
+.col p, .col li{color:var(--ink)}
+code,kbd{font-family:var(--mono); font-size:.875em}
+code{color:var(--accent); background:rgba(127,219,202,.07); padding:.08em .32em; border-radius:2px}
+code.cls{color:var(--c-class); background:rgba(137,221,255,.08)}
+code.m{color:var(--c-method); background:rgba(168,255,120,.08)}
+code.c{color:var(--c-cond); background:rgba(255,107,107,.08)}
+a{color:var(--accent); text-decoration:underline; text-underline-offset:2px; text-decoration-thickness:1px}
+
+ul.plain{list-style:none; padding:0; margin:0 0 14px}
+ul.plain li{padding-left:22px; position:relative; margin-bottom:9px}
+ul.plain li::before{
+  content:"—"; position:absolute; left:0; color:var(--rule);
+  font-family:var(--mono);
+}
+
+/* the loop — four beats, a real sequence, so it is numbered */
+.loop{display:grid; gap:1px; background:var(--rule); border:1px solid var(--rule); margin:22px 0 6px}
+@media(min-width:760px){.loop{grid-template-columns:repeat(4,1fr)}}
+.beat{background:var(--panel); padding:16px 16px 18px}
+.beat .step{font-family:var(--mono); font-size:11px; color:var(--c-amber); letter-spacing:.1em}
+.beat h4{font-family:var(--cond); font-weight:600; font-size:16px; margin:8px 0 6px; color:var(--ink)}
+.beat p{font-size:14px; line-height:1.5; color:var(--ink-soft); margin:0}
+.beat p code{font-size:.9em}
+
+/* tables */
+.tablewrap{overflow-x:auto; margin:18px 0 6px; border:1px solid var(--rule)}
+table.data{border-collapse:collapse; width:100%; min-width:600px; font-size:14px; background:var(--panel)}
+table.data th{
+  font-family:var(--cond); font-weight:600; font-size:11.5px; letter-spacing:.11em;
+  text-transform:uppercase; color:var(--dim); text-align:left;
+  padding:10px 16px; border-bottom:1px solid var(--rule); background:var(--band);
+  white-space:nowrap;
+}
+table.data td{padding:11px 16px; border-bottom:1px solid var(--rule); vertical-align:top; color:var(--ink-soft)}
+table.data tr:last-child td{border-bottom:0}
+table.data td:first-child{color:var(--ink); white-space:nowrap}
+table.data td.mono,table.data td:first-child.mono{font-family:var(--mono); font-size:12.5px}
+.swatch{display:inline-block; width:9px; height:9px; margin-right:7px; vertical-align:baseline}
+
+/* status pills for the build table */
+.pill{
+  display:inline-block; font-family:var(--cond); font-weight:600; font-size:11px;
+  letter-spacing:.08em; text-transform:uppercase; padding:2px 7px; white-space:nowrap;
+}
+.pill.have{color:var(--c-method); border:1px solid rgba(168,255,120,.35)}
+.pill.small{color:var(--c-amber); border:1px solid rgba(255,159,67,.35)}
+.pill.new{color:var(--c-class); border:1px solid rgba(137,221,255,.35)}
+
+/* open questions */
+.q{border-left:2px solid var(--c-amber); padding:2px 0 2px 18px; margin:0 0 20px}
+.q h4{font-family:var(--cond); font-weight:600; font-size:16px; margin:0 0 5px; color:var(--ink)}
+.q p{margin:0; color:var(--ink-soft); font-size:15px}
+.q p .rec{color:var(--accent)}
+
+footer{
+  margin-top:56px; padding-top:20px; border-top:1px solid var(--rule);
+  font-family:var(--mono); font-size:12px; color:var(--dim);
+  display:flex; flex-wrap:wrap; gap:6px 24px;
+}
+
+/* ---------- narrow ---------- */
+@media(max-width:860px){
+  .split{flex-direction:column}
+  .stagepane{flex:none}
+  .sidecol{flex:none; min-width:0; border-top:1px solid var(--rule)}
+  .pane{border-right:0}
+  .viewport{height:300px}
+  .events{height:88px}
+}
+@media(max-width:520px){
+  body{font-size:15px}
+  .env{font-size:11px}
+  .masthead{padding-block:36px 22px}
+  .tabs .host{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  *{animation-duration:.001ms !important; transition-duration:.001ms !important}
+}
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">
+      <span>lisp-over-linux</span><span class="sep">/</span>
+      <span>code-browser §3b</span><span class="sep">/</span>
+      <span class="flag">design settled — not built</span>
+    </div>
+    <h1>The Stage <span class="thin">— collide, live</span></h1>
+    <p class="lede">
+      The dispatch matrix shows which collisions <em>have a rule</em>. The Stage shows
+      collisions <b>happening</b>: every sprite is a live CLOS instance, every contact is a
+      real <code>collide</code> call, and every blank cell in the matrix is a
+      <code class="c">no-applicable-method</code> waiting to open the debugger.
+    </p>
+    <div class="standfirst">
+      <span>subject <b>lol.examples::collide</b></span>
+      <span>pane kind <b>:stage</b> (proposed)</span>
+      <span>pairs with <b>the Workspace</b></span>
+      <span>decisions <b>3 of 4 settled</b></span>
+    </div>
+  </header>
+
+  <!-- ============================ THE MOCK ============================ -->
+  <div class="envwrap">
+  <div class="env" id="env">
+
+    <div class="tabs">
+      <div class="tab"><span class="n">1</span> · modules ┤ ever..</div>
+      <div class="tab on"><span class="n">2</span> · stage collide</div>
+      <div class="tab grow"><span class="n">+</span></div>
+      <div class="host">lisp-over-linux</div>
+    </div>
+
+    <div class="crumb"><span class="mark">&gt;</span><span>module initramfs/examples.lisp</span><span class="pick">picked collide</span></div>
+    <div class="crumb"><span class="mark">&gt;</span><span>generic-function collide</span><span class="pick">picked stage</span></div>
+
+    <div class="split">
+
+      <!-- left: the stage -->
+      <div class="pane stagepane">
+        <div class="band"><span class="mark">v</span><span>stage collide</span><span class="badge" id="objcount">4 objects · running</span></div>
+        <div class="viewport">
+          <canvas id="sky" width="1200" height="760" aria-label="Animated stage: space objects drifting and colliding"></canvas>
+          <div class="hud">
+            <span class="k">applicable:</span>
+            <span class="v none" id="hud">nothing in range</span>
+          </div>
+
+          <!-- the debugger, on a hole in the matrix -->
+          <div class="dbg" id="dbg" hidden>
+            <div class="dbgtitle">! DEBUGGER — an unhandled condition</div>
+            <div class="dbghead">
+              <div class="type">sb-pcl::no-applicable-method-error</div>
+              <div class="report" id="dbgreport">There is no applicable method for the generic function COLLIDE when called with arguments (#&lt;SHIP Kestrel&gt; #&lt;SHIP Wren&gt;).</div>
+              <div class="caught">no handler claimed it — caught here with the whole stack still standing.</div>
+            </div>
+            <div class="dbgcols">
+              <div class="dbgcol restarts">
+                <div class="rail"></div>
+                <div class="colhead">RESTARTS <span class="hint">· 0-9 · Enter (asks for a value) · unwinds</span></div>
+                <button class="rs" data-r="define">0 <span class="nm">[define-method]</span> Open the Workspace on a defmethod template.</button>
+                <button class="rs" data-r="use">1 <span class="nm">[use-value]</span> Return a value from this collision.</button>
+                <button class="rs" data-r="ignore">2 <span class="nm">[pass-through]</span> Let them drift through each other.</button>
+                <button class="rs" data-r="remove">3 <span class="nm">[remove-both]</span> Delete both objects from the stage.</button>
+                <button class="rs" data-r="abort">4 <span class="nm">[abort]</span> Return to the stage.</button>
+              </div>
+              <div class="dbgcol stack">
+                <div class="rail"></div>
+                <div class="colhead">CALL STACK <span class="hint">· Tab walks · M-. source</span></div>
+                <div class="fr sig"><span class="bang">!</span>0 NO-APPLICABLE-METHOD</div>
+                <div class="fr">&nbsp;1 COLLIDE</div>
+                <div class="fr">&nbsp;2 STAGE-TICK</div>
+                <div class="fr">&nbsp;3 RUN-BROWSER-FB</div>
+                <div class="fr">&nbsp;4 SUPERVISOR-MAIN</div>
+                <div class="fr">&nbsp;5 %START-LISP</div>
+              </div>
+            </div>
+            <div class="dbgfoot">
+              Restarts <b>0–3</b> are established by the stage's own <code>restart-case</code>
+              around the call. <b>4</b> is the one SBCL already gives you.
+            </div>
+          </div>
+        </div>
+
+        <div class="events">
+          <div class="ehead">TRANSCRIPT</div>
+          <div id="log"></div>
+        </div>
+      </div>
+
+      <!-- right: matrix + workspace -->
+      <div class="pane sidecol">
+        <div class="band"><span class="mark">v</span><span>matrix collide</span><span class="badge">matrix</span></div>
+        <div class="mx">
+          <table class="grid" id="grid">
+            <thead><tr><th></th><th>asteroid</th><th>ship</th><th>station</th></tr></thead>
+            <tbody>
+              <tr><th class="row">asteroid</th><td data-c="asteroid|asteroid">×1</td><td data-c="asteroid|ship">×1</td><td data-c="asteroid|station">×1</td></tr>
+              <tr><th class="row">missile</th><td data-c="missile|asteroid">×1</td><td data-c="missile|ship">×4</td><td data-c="missile|station">×1</td></tr>
+              <tr><th class="row">ship</th><td data-c="ship|asteroid">×1</td><td data-c="ship|ship" class="hole">·</td><td data-c="ship|station">×1</td></tr>
+              <tr><th class="row">station</th><td data-c="station|asteroid">×1</td><td data-c="station|ship">×1</td><td data-c="station|station" class="hole">·</td></tr>
+            </tbody>
+          </table>
+          <p class="mxnote">
+            No <span style="color:var(--c-class)">missile</span> column: no method specialises its
+            <em>second</em> argument on one. Since every contact is now called both ways, that
+            missing column shows up in the transcript on <em>every single missile hit</em>.
+          </p>
+        </div>
+
+        <div class="ws">
+          <div class="band"><span class="mark">v</span><span>workspace</span><span class="badge">preview · editable</span></div>
+          <div class="wsbody" id="wsbody"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="statusbar">
+      <button class="key" id="k-run"><b>spc</b> pause</button>
+      <button class="key" id="k-step"><b>n</b> step</button>
+      <button class="key" data-spawn="ship"><b>s</b> ship</button>
+      <button class="key" data-spawn="asteroid"><b>a</b> asteroid</button>
+      <button class="key" data-spawn="missile"><b>m</b> missile</button>
+      <button class="key" data-spawn="station"><b>t</b> station</button>
+      <button class="key warn" id="k-force"><b>↯</b> force (ship ship)</button>
+      <button class="key" id="k-reset"><b>C-g</b> reset</button>
+      <span class="spacer"></span>
+      <span class="note">click a sprite to inspect · click a form to eval</span>
+    </div>
+
+  </div>
+  </div>
+
+  <p class="figcap">
+    <b>Everything above runs.</b> Sprites are instances; every contact is dispatched
+    <em>both ways</em> and the transcript records each call with its value or its
+    <span style="color:var(--c-cond)">⊘</span>; the matrix cells flash as they fire. Only when
+    <em>neither</em> direction is applicable — two ships — does the debugger open, restarts on
+    the left, stack on the right, the layout shipped on 2026-09-13. Type is enlarged: the guest
+    font is 6×15px.
+  </p>
+
+  <div class="col">
+
+    <!-- ================= 1 ================= -->
+    <section>
+      <h2><span class="num">1</span>The argument</h2>
+      <p class="sublede">Why a moving picture earns its place in a code browser, which is otherwise a
+        strictly textual instrument.</p>
+      <p>
+        Every view in the browser so far presents <em>definitions</em> — a list, a class DAG, a
+        source pane, a dispatch grid. They answer <em>what is written</em>. The matrix comes
+        closest to the running system and still stops short: it counts methods per cell, which is
+        a fact about the source, not about anything that ever happened.
+      </p>
+      <p>
+        <code class="cls">collide</code> is the one specimen in the image whose whole point is
+        <em>behaviour at a pair of types</em>. Reading its ten methods teaches multiple dispatch
+        the way reading a recipe teaches cooking. Watching a missile reach a ship and seeing
+        <code class="m">(:DESTROYED "Kestrel")</code> come back — then watching that same missile
+        reach a station and get <code class="m">(:DENTED "Anvil")</code> instead, from the same
+        call site — teaches it in one gesture.
+      </p>
+      <p>
+        So the Stage is not a game and shouldn't grow into one. It is a
+        <strong>presentation of instances</strong>, the way a list is a presentation of
+        definitions. Position is just the layout the subject happens to want.
+      </p>
+    </section>
+
+    <!-- ================= 2 ================= -->
+    <section>
+      <h2><span class="num">2</span>The loop that makes it a browser</h2>
+      <p class="sublede">Four beats. Each hands off to a view the environment already has, which is
+        the test of whether this belongs here at all.</p>
+    </section>
+  </div>
+
+  <div class="loop">
+    <div class="beat">
+      <div class="step">BEAT 1</div>
+      <h4>Watch it dispatch</h4>
+      <p>Two objects touch. The stage calls it <em>both ways</em> and the transcript records each
+        call with its value. Both matrix cells flash; a disagreement is flagged amber.</p>
+    </div>
+    <div class="beat">
+      <div class="step">BEAT 2</div>
+      <h4>Hit a hole</h4>
+      <p>Two ships touch and <em>neither</em> direction is applicable, so the debugger opens on the
+        standing stack — the same <code>run-debugger-fb</code>, no new code.</p>
+    </div>
+    <div class="beat">
+      <div class="step">BEAT 3</div>
+      <h4>Write the method</h4>
+      <p>The <code>[define-method]</code> restart drops a <code>defmethod</code> template into the
+        Workspace, specialisers already filled from the two arguments.</p>
+    </div>
+    <div class="beat">
+      <div class="step">BEAT 4</div>
+      <h4>Accept, and watch it change</h4>
+      <p><kbd>C-c C-c</kbd> compiles it into the image. The matrix grows a cell, the change set
+        grows an entry, and the next contact behaves differently.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <p style="margin-top:18px">
+      That last beat is the one the project exists to demonstrate, and it has never had a
+      demo where the <em>consequence</em> of a redefinition is visible at a glance. A recompiled
+      <code>report-memory</code> prints slightly different text. A recompiled
+      <code class="cls">collide</code> method changes what you are watching, while you watch it.
+    </p>
+
+    <!-- ================= 3 ================= -->
+    <section>
+      <h2><span class="num">3</span>Two generic functions, cleanly split</h2>
+      <p class="sublede">The didactic specimen must not be contaminated by the demo. That constraint
+        drives the whole structure.</p>
+      <p>
+        <code class="cls">collide</code> returns data and touches nothing:
+        <code class="m">(:HULL-BREACH "Kestrel")</code>. It stays exactly as written in
+        <code>initramfs/examples.lisp</code> — a clean multiple-dispatch specimen with no idea a
+        stage exists.
+      </p>
+      <p>
+        A second generic function, <code>enact</code>, turns that value into an effect, and
+        dispatches with <code>eql</code> specialisers on the returned tag:
+      </p>
+      <ul class="plain">
+        <li><code>(defmethod enact ((tag (eql :destroyed)) a b) …)</code> removes the target.</li>
+        <li><code>(defmethod enact ((tag (eql :dock)) a b) …)</code> parks the ship on the station's rim.</li>
+        <li><code>(defmethod enact ((tag (eql :shatter)) a b) …)</code> replaces both rocks with fragments.</li>
+      </ul>
+      <p>
+        This buys three things. The example stays pure. The stage's behaviour is a
+        <em>consequence of return values</em>, so redefining a <code class="cls">collide</code>
+        method visibly changes the world without the stage knowing anything about it. And
+        <code>enact</code> becomes the browser's first <code>eql</code>-specialised generic
+        function — a dispatch shape the matrix view can't draw yet, which is a useful thing to
+        discover from a real specimen rather than from a hypothetical.
+      </p>
+
+      <h3>Both directions, every contact</h3>
+      <p>
+        Contact is symmetric and <code class="cls">collide</code> is not, so the stage calls it
+        <strong>both ways</strong> and prints both lines. That settles the ordering question by
+        refusing it, and it turns out to pay for itself twice.
+      </p>
+      <p>
+        First, it makes the author's symmetric pairs legible: <code>(ship asteroid)</code> is
+        written to delegate to <code>(asteroid ship)</code>, and seeing the two calls return the
+        same value is the only way that intent is ever visible. Where they <em>don't</em> agree,
+        the transcript flags it amber — and one pair already doesn't:
+        <code class="m">(:SHATTER "Ceres-9" "Vesta-4")</code> against
+        <code class="m">(:SHATTER "Vesta-4" "Ceres-9")</code>. Harmless, and exactly the kind of
+        thing you would never notice reading the source.
+      </p>
+      <p>
+        Second, it makes the matrix's missing <code class="cls">missile</code> column
+        load-bearing instead of a footnote. Nothing specialises argument B on a missile, so
+        <em>every missile hit</em> now prints one value and one
+        <code class="c">⊘ no applicable method</code>. The asymmetry in how the example was
+        written stops being trivia and becomes something you watch happen.
+      </p>
+      <p>
+        Which forces one rule: <strong>only a total absence signals.</strong> One side answering
+        is the ordinary case, reported in the transcript and nowhere else. Two ships, where
+        neither direction resolves, is what opens the debugger — so beat 2 survives intact and
+        the modal never fires on a missile. <code>enact</code> runs once, on whichever direction
+        answered.
+      </p>
+      <p>
+        Probe order is creation order. Now that both are called it carries no meaning, which is
+        precisely why it can be the boring deterministic choice — a headless frame replays
+        identically.
+      </p>
+
+      <h3>A call you make enacts nothing</h3>
+      <p>
+        Evaluating <code>(collide a b)</code> yourself returns data and changes the stage not at
+        all. Only the tick's own call is passed to <code>enact</code>. Otherwise inspecting the
+        system would perturb it, and the Workspace would stop being safe to poke with.
+      </p>
+
+      <h3>Where the positions live</h3>
+      <p>
+        Not in <code class="cls">space-object</code>. Adding <code>x/y/vx/vy</code> slots would
+        wreck a class whose entire job is to be a small readable specimen in a class view. The
+        stage keeps a <code>weak :key</code> hash table from instance to a
+        <code>body</code> struct. The objects on screen are the same objects you get from
+        <code>(find-obj "Kestrel")</code> in the Workspace, and they carry no trace of having
+        been on a stage.
+      </p>
+    </section>
+
+    <!-- ================= 4 ================= -->
+    <section>
+      <h2><span class="num">4</span>Colour is already decided</h2>
+      <p class="sublede">The stage introduces no palette. Every mark on it is one of the semantic
+        tokens in <code>poc/widgets.lisp</code>, which is what keeps it legible next to every
+        other pane.</p>
+    </section>
+  </div>
+
+  <div class="tablewrap">
+    <table class="data">
+      <thead>
+        <tr><th>On the stage</th><th>Token</th><th>Because</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="mono">every sprite outline</td>
+          <td class="mono"><span class="swatch" style="background:#89DDFF"></span>*concept* :class</td>
+          <td>A sprite is an instance of a class. Same blue as a class row anywhere else.</td>
+        </tr>
+        <tr>
+          <td class="mono">the selected sprite</td>
+          <td class="mono"><span class="swatch" style="background:#7FDBCA"></span>*ui-accent*</td>
+          <td>Focus is focus, whether it's a list row or a rock.</td>
+        </tr>
+        <tr>
+          <td class="mono">the method that fired</td>
+          <td class="mono"><span class="swatch" style="background:#A8FF78"></span>*concept* :method</td>
+          <td>What you're being shown <em>is</em> a method. Green in the transcript, green in the cell.</td>
+        </tr>
+        <tr>
+          <td class="mono">a hole / the flash</td>
+          <td class="mono"><span class="swatch" style="background:#FF6B6B"></span>*concept* :condition</td>
+          <td>A missing method is a condition about to be signalled. Red is that promise.</td>
+        </tr>
+        <tr>
+          <td class="mono">a method added this session</td>
+          <td class="mono"><span class="swatch" style="background:#FF9F43"></span>*ui-amber*</td>
+          <td>Amber already means "this leads somewhere else" — here, into the change set.</td>
+        </tr>
+        <tr>
+          <td class="mono">shape, not colour</td>
+          <td class="mono">—</td>
+          <td>Class identity is carried by silhouette (dart, chevron, ring, rock) so colour stays
+            free to mean what it means everywhere else in the environment.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <!-- ================= 5 ================= -->
+    <section>
+      <h2><span class="num">5</span>What it costs</h2>
+      <p class="sublede">An honest inventory before anyone starts. Most of this exists; one item is
+        a genuine change to the input loop.</p>
+    </section>
+  </div>
+
+  <div class="tablewrap">
+    <table class="data">
+      <thead><tr><th>Piece</th><th>State</th><th>Notes</th></tr></thead>
+      <tbody>
+        <tr>
+          <td class="mono">pane kind <code>:stage</code></td>
+          <td><span class="pill new">new</span></td>
+          <td>A <code>present</code> method on a <code>subj-stage</code> subject, beside
+            <code>:list :source :matrix :class</code>. Slots into the accordion unchanged.</td>
+        </tr>
+        <tr>
+          <td class="mono">a tick in the poll loop</td>
+          <td><span class="pill small">1-line change</span></td>
+          <td><strong>The only real obstacle.</strong> <code>fbb-wait</code> hardcodes a
+            <code>-1</code> timeout at <code>fb-browser.lisp:58</code>, so the browser sleeps until
+            input. It needs a millisecond timeout argument so the loop can wake on a frame
+            deadline. Everything else follows from that.</td>
+        </tr>
+        <tr>
+          <td class="mono">canvas primitives</td>
+          <td><span class="pill small">small</span></td>
+          <td><code>fill-rect</code> and <code>draw-rect</code> exist. A stage wants
+            <code>draw-line</code> and a filled convex polygon; both are a dozen lines against the
+            same pixel buffer.</td>
+        </tr>
+        <tr>
+          <td class="mono">the debugger</td>
+          <td><span class="pill have">have it</span></td>
+          <td><code>run-debugger-fb</code> already does everything beat 2 needs. The stage only has
+            to wrap its call in <code>restart-case</code>.</td>
+        </tr>
+        <tr>
+          <td class="mono">inspect a sprite</td>
+          <td><span class="pill have">have it</span></td>
+          <td>Click → the existing Inspector pane on that instance. No new view.</td>
+        </tr>
+        <tr>
+          <td class="mono">live redefinition</td>
+          <td><span class="pill have">have it</span></td>
+          <td>Workspace <kbd>C-c C-c</kbd>, <code>accept-source</code>, the change set — all
+            shipped. Beat 4 is assembly, not construction.</td>
+        </tr>
+        <tr>
+          <td class="mono">headless frames</td>
+          <td><span class="pill small">small</span></td>
+          <td><code>poc/render-frame.lisp</code> can render a stage frame for the docs if the tick
+            is seeded and frame-counted, keeping the screenshot discipline intact.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="col">
+    <h3>What it deliberately is not</h3>
+    <ul class="plain">
+      <li>No physics beyond constant velocity and a radius test. Momentum, mass and rebound angles
+        would be code with nothing to teach.</li>
+      <li>No score, no goal, no input-driven flying. The moment it becomes playable it stops being
+        a view and starts competing for attention with the thing it illustrates.</li>
+      <li>No thread. It ticks inside the existing single-threaded browser loop, which is the whole
+        reason the timeout change matters.</li>
+      <li>No sprites for anything but this example. If a second subject ever wants a stage, that's
+        the moment to generalise — not before.</li>
+    </ul>
+
+    <!-- ================= 6 ================= -->
+    <section>
+      <h2><span class="num">6</span>Settled</h2>
+      <p class="sublede">Decided 2026-09-13. Three of four; the last is still open.</p>
+
+      <div class="q">
+        <h4>Argument order → call both, show agreement</h4>
+        <p>Not "faster object first", and not creation order as a semantic choice. Both
+          directions fire on every contact and both are printed; only a total absence signals.
+          Worked through in <span class="rec">§3, "Both directions, every contact"</span> — it
+          changed more of the design than any other answer here.</p>
+      </div>
+
+      <div class="q">
+        <h4>Layout → the editable preview pane</h4>
+        <p>The Stage is special-cased as the one subject whose side pane accepts
+          <kbd>C-c C-c</kbd>. One tab, no third motion in the accordion, and the form and its
+          consequence stay in one glance — which is the whole reason to build this.</p>
+      </div>
+
+      <div class="q">
+        <h4>Transcript → its own strip</h4>
+        <p>Automatic collisions scroll in the stage's own strip. The Workspace buffer holds only
+          what you typed, so it stays editable and re-runnable rather than being flooded within
+          seconds.</p>
+      </div>
+
+      <div class="q" style="border-left-color:var(--dim)">
+        <h4>Naming → still open</h4>
+        <p>No preference recorded, so the mock keeps <code>Kestrel</code>, <code>Anvil</code>,
+          <code>Hornet</code>. They earn their place in the transcript now that every contact
+          prints two lines — <code class="m">(:DESTROYED "Kestrel")</code> reads;
+          <code>(:DESTROYED "ship-2")</code> does not. <span class="rec">Nothing depends on
+          it</span>, and it is a rename away whenever the "space"-themed naming idea lands.</p>
+      </div>
+
+    </section>
+  </div>
+
+  <footer>
+    <span>lisp-over-linux · doc/code-browser.org §3b (proposed)</span>
+    <span>drafted 2026-09-13</span>
+    <span>nothing here is implemented</span>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+"use strict";
+
+var C = {
+  class_:"#89DDFF", accent:"#7FDBCA", method:"#A8FF78", cond:"#FF6B6B",
+  amber:"#FF9F43", dim:"#6B727D", text:"#D6D3C8", rule:"#2E343D", ground:"#0E1013"
+};
+var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------------------------------------------------------------- state */
+var cv = document.getElementById("sky");
+var ctx = cv.getContext("2d");
+var objs = [], nextId = 1, running = true, selected = null, paused = false;
+var W = 1200, H = 760, DPR = 1;
+var cooldown = {};           /* pair key -> ms until it may fire again */
+var passThrough = {};        /* pair key -> permanently ignored */
+var stars = [];
+
+var NAMES = {
+  ship:["Kestrel","Wren","Petrel","Fulmar","Shrike"],
+  asteroid:["Ceres-9","Vesta-4","Juno-7","Pallas-2"],
+  missile:["Hornet","Wasp","Dart","Sting"],
+  station:["Anvil","Bastion","Keystone"]
+};
+var used = {};
+function pickName(cls){
+  var pool = NAMES[cls], i;
+  for(i=0;i<pool.length;i++){ if(!used[pool[i]]){ used[pool[i]]=1; return pool[i]; } }
+  return cls.charAt(0).toUpperCase()+cls.slice(1)+"-"+(nextId);
+}
+
+var RADIUS = {asteroid:26, ship:20, station:40, missile:11};
+var SPEED  = {asteroid:.30, ship:.55, station:.05, missile:1.25};
+
+/* ------------------------------------------------- the method table
+   Exactly the ten methods in initramfs/examples.lisp. A missing key is a
+   genuine hole: no-applicable-method. */
+var METHODS = {
+  "asteroid|asteroid": function(a,b){ return [":SHATTER", a.name, b.name]; },
+  "asteroid|ship":     function(a,b){ return [":HULL-BREACH", b.name]; },
+  "ship|asteroid":     function(a,b){ return [":HULL-BREACH", a.name]; },
+  "asteroid|station":  function(a,b){ return [":CHIPPED", b.name]; },
+  "station|asteroid":  function(a,b){ return [":CHIPPED", a.name]; },
+  "ship|station":      function(a,b){ return [":DOCK", a.name, b.name]; },
+  "station|ship":      function(a,b){ return [":DOCK", b.name, a.name]; },
+  "missile|ship":      function(a,b){ return [":DESTROYED", b.name]; },
+  "missile|station":   function(a,b){ return [":DENTED", b.name]; },
+  "missile|asteroid":  function(a,b){ return [":DEFLECTED", a.name]; }
+};
+/* the (missile ship) cell carries :around/:before/:after as well */
+var QUALIFIED = {"missile|ship":[":around",":before","primary",":after"]};
+
+/* ---------------------------------------------------------------- setup */
+function spawn(cls, opts){
+  opts = opts || {};
+  var r = RADIUS[cls], s = SPEED[cls] * (reduce ? .55 : 1);
+  var ang = opts.dir !== undefined ? opts.dir : Math.random()*Math.PI*2;
+  var o = {
+    id: nextId++, cls: cls, name: opts.name || pickName(cls),
+    x: opts.x !== undefined ? opts.x : r + Math.random()*(W-2*r),
+    y: opts.y !== undefined ? opts.y : r + Math.random()*(H-2*r),
+    r: r, rot: Math.random()*Math.PI*2,
+    spin: (cls==="asteroid" ? (Math.random()-.5)*.008 : cls==="station" ? .0012 : 0),
+    flash: 0, flashColor: C.cond, breached: false, docked: null, trail: []
+  };
+  o.vx = Math.cos(ang)*s; o.vy = Math.sin(ang)*s;
+  if(cls==="station"){ o.vx*=.4; o.vy*=.4; }
+  /* irregular rock silhouette, fixed per instance */
+  if(cls==="asteroid"){
+    o.poly = [];
+    for(var i=0;i<9;i++) o.poly.push(.72 + Math.random()*.46);
+  }
+  objs.push(o);
+  count();
+  return o;
+}
+
+function reset(){
+  objs = []; nextId = 1; used = {}; cooldown = {}; passThrough = {};
+  selected = null;
+  spawn("station",  {name:"Anvil",   x:W*0.60, y:H*0.44});
+  spawn("ship",     {name:"Kestrel", x:W*0.18, y:H*0.24, dir:0.42});
+  spawn("asteroid", {name:"Ceres-9", x:W*0.80, y:H*0.78, dir:3.6});
+  spawn("missile",  {name:"Hornet",  x:W*0.10, y:H*0.86, dir:-0.72});
+  logLine("stage collide", "4 objects seeded", "plain");
+}
+
+function count(){
+  document.getElementById("objcount").textContent =
+    objs.length + " object" + (objs.length===1?"":"s") + " · " + (running ? "running" : "paused");
+}
+
+/* ---------------------------------------------------------------- log */
+var logEl = document.getElementById("log");
+function logLine(call, result, kind){
+  var d = document.createElement("div");
+  d.className = "ev fresh" + (kind && kind !== "plain" ? " " + kind : "");
+  if(kind === "plain"){
+    d.innerHTML = '<span class="call">' + esc(call) + '</span> <span class="arrow">·</span> ' +
+                  '<span class="res" style="color:var(--dim)">' + esc(result) + '</span>';
+  } else {
+    d.innerHTML = '<span class="call">' + esc(call) + '</span> ' +
+                  '<span class="arrow">→</span> <span class="res">' + esc(result) + '</span>';
+  }
+  logEl.appendChild(d);
+  while(logEl.children.length > 6) logEl.removeChild(logEl.firstChild);
+  setTimeout(function(){ d.classList.remove("fresh"); }, 700);
+}
+function esc(s){ return String(s).replace(/[&<>]/g, function(c){ return {"&":"&amp;","<":"&lt;",">":"&gt;"}[c]; }); }
+function pp(o){ return "#<" + o.cls.toUpperCase() + " " + o.name + ">"; }
+function ppv(v){ return "(" + v.join(" ") + ")"; }
+
+/* ---------------------------------------------------------------- matrix */
+function flashCell(key){
+  var td = document.querySelector('#grid td[data-c="' + key + '"]');
+  if(!td) return;
+  td.classList.add("fire");
+  setTimeout(function(){ td.classList.remove("fire"); }, 420);
+}
+function fillHole(key){
+  var td = document.querySelector('#grid td[data-c="' + key + '"]');
+  if(!td) return;
+  td.classList.remove("hole");
+  td.classList.add("new");
+  td.textContent = "×1";
+}
+
+/* ---------------------------------------------------------------- dispatch */
+function keyFor(a,b){ return a.cls + "|" + b.cls; }
+function pairKey(a,b){ return Math.min(a.id,b.id) + "-" + Math.max(a.id,b.id); }
+
+function doCollide(a, b){
+  /* Both directions, every contact — see §6. Probe order is creation order, so a
+     replay is deterministic; the ORDER carries no meaning now that both are called. */
+  if(b.id < a.id){ var t=a; a=b; b=t; }
+
+  var k1 = keyFor(a,b), k2 = keyFor(b,a);
+  var m1 = METHODS[k1], m2 = METHODS[k2];
+  var call1 = "(collide " + pp(a) + " " + pp(b) + ")";
+  var call2 = "(collide " + pp(b) + " " + pp(a) + ")";
+
+  /* Only a TOTAL absence is a real no-applicable-method. One direction answering is
+     the normal case for a missile: the author never specialised it as argument B. */
+  if(!m1 && !m2){ openDebugger(a,b,call1); return; }
+
+  var v1 = m1 ? m1(a,b) : null;
+  var v2 = m2 ? m2(b,a) : null;
+
+  if(m1) logLine(call1, ppv(v1), null); else logLine(call1, "\u2298 no applicable method", "bad probe");
+  if(m2) logLine(call2, ppv(v2), null); else logLine(call2, "\u2298 no applicable method", "bad probe");
+
+  if(m1 && m2 && ppv(v1) !== ppv(v2))
+    logLine("  agreement", "asymmetric \u2014 the two directions differ", "warn");
+
+  if(m1) flashCell(k1);
+  if(m2) flashCell(k2);
+  a.flash = 1; a.flashColor = C.method;
+  b.flash = 1; b.flashColor = C.method;
+
+  /* enact once, on whichever direction answered */
+  if(m1) enact(v1[0], a, b); else enact(v2[0], b, a);
+}
+
+/* enact — eql-specialised on the returned tag (see §3) */
+function enact(tag, a, b){
+  if(tag === ":DESTROYED"){ remove(b); }
+  else if(tag === ":DEFLECTED"){ remove(a); }
+  else if(tag === ":SHATTER"){
+    var x=(a.x+b.x)/2, y=(a.y+b.y)/2;
+    remove(a); remove(b);
+    if(objs.length < 8){
+      for(var i=0;i<2;i++){
+        var f = spawn("asteroid", {x:x+(i?30:-30), y:y+(i?20:-20)});
+        f.r = 15; f.name = "frag-" + f.id;
+      }
+    }
+  }
+  else if(tag === ":DOCK"){
+    var ship = a.cls==="ship" ? a : b, st = a.cls==="ship" ? b : a;
+    ship.docked = st; ship.vx = 0; ship.vy = 0;
+  }
+  else if(tag === ":HULL-BREACH"){
+    var s = a.cls==="ship" ? a : b; s.breached = true; bounce(a,b);
+  }
+  else { bounce(a,b); }
+}
+
+function remove(o){
+  var i = objs.indexOf(o);
+  if(i >= 0) objs.splice(i,1);
+  if(selected === o) selected = null;
+  count();
+}
+function reflect(o, nx, ny){
+  var dot = o.vx*nx + o.vy*ny;
+  if(dot > 0){ o.vx -= 2*dot*nx; o.vy -= 2*dot*ny; }
+}
+function bounce(a,b){
+  var dx = b.x-a.x, dy = b.y-a.y, d = Math.hypot(dx,dy) || 1;
+  var nx = dx/d, ny = dy/d, push = (a.r+b.r-d)/2 + 1.5;
+  if(a.cls!=="station" && !a.docked){ a.x -= nx*push; a.y -= ny*push; reflect(a,  nx,  ny); }
+  if(b.cls!=="station" && !b.docked){ b.x += nx*push; b.y += ny*push; reflect(b, -nx, -ny); }
+}
+
+/* ---------------------------------------------------------------- debugger */
+var dbgEl = document.getElementById("dbg");
+var dbgPair = null;
+function openDebugger(a,b,call){
+  dbgPair = {a:a, b:b, call:call};
+  document.getElementById("dbgreport").textContent =
+    "There is no applicable method for the generic function COLLIDE when called with arguments (" +
+    pp(a) + " " + pp(b) + ").";
+  dbgEl.hidden = false;
+  paused = true;
+  count();
+  logLine(call, "no applicable method", "bad");
+}
+function closeDebugger(){
+  dbgEl.hidden = true;
+  paused = false;
+  dbgPair = null;
+  count();
+}
+
+Array.prototype.forEach.call(document.querySelectorAll(".rs"), function(btn){
+  btn.addEventListener("click", function(){
+    if(!dbgPair) return;
+    var a = dbgPair.a, b = dbgPair.b, r = btn.getAttribute("data-r");
+    var pk = pairKey(a,b);
+
+    if(r === "define"){
+      insertTemplate(a.cls, b.cls);
+      passThrough[pk] = true;
+    } else if(r === "use"){
+      var val = [":FENDED-OFF", a.name, b.name];
+      logLine("use-value", ppv(val), null);
+      passThrough[pk] = true;
+    } else if(r === "ignore"){
+      passThrough[pk] = true;
+    } else if(r === "remove"){
+      remove(a); remove(b);
+    } else {
+      bounce(a,b);
+      cooldown[pk] = 1400;
+    }
+    closeDebugger();
+  });
+});
+
+/* ---------------------------------------------------------------- workspace */
+var wsbody = document.getElementById("wsbody");
+
+function hl(src){
+  /* strings first, parked behind placeholders: every later pass inserts markup
+     containing quotes, and would otherwise tokenise its own output. */
+  var strs = [];
+  var s = esc(src).replace(/"[^"]*"/g, function(m){ strs.push(m); return "\u0001" + (strs.length-1) + "\u0001"; });
+  s = s.replace(/\b(defmethod|setf|list)\b/g, '<span class="kw">$1</span>')
+       .replace(/\b(spawn|collide|find-obj|name)\b/g, '<span class="fn">$1</span>')
+       .replace(/\b(ship|asteroid|missile|station)\b/g, '<span class="cls">$1</span>')
+       .replace(/(:[a-z?-]+)/g, '<span class="lit">$1</span>');
+  return s.replace(/\u0001(\d+)\u0001/g, function(_, i){ return '<span class="str">' + strs[i] + '</span>'; });
+}
+
+var FORMS = [
+  { src: '(spawn \'missile "Wasp")',
+    run: function(){ var o = spawn("missile",{name:"Wasp"}); return pp(o); } },
+  { src: '(spawn \'ship "Wren")',
+    run: function(){ var o = spawn("ship",{name:"Wren"}); return pp(o); } },
+  { src: '(collide (find-obj "Hornet") (find-obj "Kestrel"))',
+    run: function(){
+      var a = find("Hornet"), b = find("Kestrel");
+      if(!a || !b) return {err:"no object named \"" + (a ? "Kestrel" : "Hornet") + "\""};
+      var m = METHODS[keyFor(a,b)];
+      if(!m) return {err:"no applicable method"};
+      flashCell(keyFor(a,b));
+      a.flash = 1; a.flashColor = C.method; b.flash = 1; b.flashColor = C.method;
+      return ppv(m(a,b));
+    },
+    after: "  ;; a call you made \u2014 returns data, enacts nothing" },
+  { src: '(collide (find-obj "Kestrel") (find-obj "Hornet"))',
+    run: function(){
+      var a = find("Kestrel"), b = find("Hornet");
+      if(!a || !b) return {err:"no object named \"" + (a ? "Hornet" : "Kestrel") + "\""};
+      var m = METHODS[keyFor(a,b)];
+      if(!m) return {err:"\u2298 no applicable method \u2014 nothing specialises B on missile"};
+      return ppv(m(a,b));
+    } },
+  { src: '(defmethod collide ((a ship) (b ship))\n  (list :near-miss (name a) (name b)))',
+    run: function(){
+      METHODS["ship|ship"] = function(a,b){ return [":NEAR-MISS", a.name, b.name]; };
+      fillHole("ship|ship");
+      passThrough = {};
+      return "#<STANDARD-METHOD collide (ship ship)>";
+    },
+    after: "  ;; matrix grew a cell · change set +1" }
+];
+
+FORMS.forEach(function(f, i){
+  var b = document.createElement("button");
+  b.className = "form";
+  b.type = "button";
+  b.innerHTML = hl(f.src);
+  var out = document.createElement("div");
+  out.className = "wove";
+  out.hidden = true;
+  b.addEventListener("click", function(){
+    var r;
+    try { r = f.run(); } catch(e){ r = {err:String(e)}; }
+    out.hidden = false;
+    if(r && r.err){
+      out.className = "wove bad";
+      out.textContent = "  ⇒ " + r.err;
+    } else {
+      out.className = "wove";
+      out.innerHTML = '<span class="g">  ⇒ </span>' + esc(r) + (f.after ? '<span class="g">' + esc(f.after) + '</span>' : '');
+    }
+  });
+  wsbody.appendChild(b);
+  wsbody.appendChild(out);
+});
+
+function insertTemplate(ca, cb){
+  var src = '(defmethod collide ((a ' + ca + ') (b ' + cb + '))\n  (list :?? (name a) (name b)))';
+  var b = document.createElement("button");
+  b.className = "form";
+  b.type = "button";
+  b.innerHTML = hl(src);
+  var note = document.createElement("div");
+  note.className = "wove";
+  note.innerHTML = '<span class="g">  ;; from [define-method] · fill in the tag, then C-c C-c</span>';
+  wsbody.appendChild(b);
+  wsbody.appendChild(note);
+  wsbody.scrollTop = wsbody.scrollHeight;
+  b.addEventListener("click", function(){
+    METHODS[ca+"|"+cb] = function(x,y){ return [":??", x.name, y.name]; };
+    if(ca!==cb) METHODS[cb+"|"+ca] = function(x,y){ return [":??", y.name, x.name]; };
+    fillHole(ca+"|"+cb);
+    note.innerHTML = '<span class="g">  ⇒ </span>#&lt;STANDARD-METHOD collide (' + ca + ' ' + cb + ')&gt;';
+  });
+}
+
+function find(n){
+  for(var i=0;i<objs.length;i++) if(objs[i].name === n) return objs[i];
+  return null;
+}
+
+/* ---------------------------------------------------------------- drawing */
+function fit(){
+  var rect = cv.getBoundingClientRect();
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  if(rect.width < 2) return;
+  var scale = rect.width / W;
+  H = Math.max(200, Math.round(rect.height / scale));
+  cv.width  = Math.round(rect.width * DPR);
+  cv.height = Math.round(rect.height * DPR);
+  ctx.setTransform(DPR*scale, 0, 0, DPR*scale, 0, 0);
+  if(stars.length === 0){
+    for(var i=0;i<70;i++) stars.push({x:Math.random()*W, y:Math.random()*H, a:.06+Math.random()*.16});
+  }
+}
+
+function drawShip(o){
+  ctx.beginPath();
+  ctx.moveTo(o.r, 0);
+  ctx.lineTo(-o.r*.65,  o.r*.68);
+  ctx.lineTo(-o.r*.32,  0);
+  ctx.lineTo(-o.r*.65, -o.r*.68);
+  ctx.closePath();
+  ctx.stroke();
+  if(o.breached){
+    ctx.save();
+    ctx.strokeStyle = C.cond;
+    ctx.beginPath(); ctx.moveTo(-o.r*.1, -o.r*.3); ctx.lineTo(o.r*.4, o.r*.15); ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawMissile(o){
+  ctx.beginPath();
+  ctx.moveTo(o.r*1.5, 0);
+  ctx.lineTo(-o.r, o.r*.5);
+  ctx.lineTo(-o.r*.5, 0);
+  ctx.lineTo(-o.r, -o.r*.5);
+  ctx.closePath();
+  ctx.stroke();
+}
+function drawAsteroid(o){
+  ctx.beginPath();
+  for(var i=0;i<o.poly.length;i++){
+    var t = i/o.poly.length*Math.PI*2, rr = o.r*o.poly[i];
+    var x = Math.cos(t)*rr, y = Math.sin(t)*rr;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+}
+function drawStation(o){
+  var i, t;
+  ctx.beginPath();
+  for(i=0;i<6;i++){ t = i/6*Math.PI*2; var x=Math.cos(t)*o.r, y=Math.sin(t)*o.r;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }
+  ctx.closePath(); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,o.r*.42,0,Math.PI*2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(0,0,o.r*.10,0,Math.PI*2); ctx.fillStyle = ctx.strokeStyle; ctx.fill();
+}
+
+function draw(){
+  ctx.fillStyle = C.ground;
+  ctx.fillRect(0,0,W,H);
+
+  for(var s=0;s<stars.length;s++){
+    var st = stars[s];
+    if(st.y > H) continue;
+    ctx.fillStyle = "rgba(214,211,200," + st.a + ")";
+    ctx.fillRect(st.x, st.y, 1, 1);
+  }
+
+  for(var i=0;i<objs.length;i++){
+    var o = objs[i];
+
+    if(o.cls === "missile" && o.trail.length > 1){
+      ctx.strokeStyle = "rgba(137,221,255,.20)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(o.trail[0].x, o.trail[0].y);
+      for(var t=1;t<o.trail.length;t++) ctx.lineTo(o.trail[t].x, o.trail[t].y);
+      ctx.stroke();
+    }
+
+    ctx.save();
+    ctx.translate(o.x, o.y);
+    ctx.rotate(o.cls==="ship" || o.cls==="missile" ? Math.atan2(o.vy,o.vx) : o.rot);
+    ctx.lineWidth = 1.6;
+    ctx.strokeStyle = o.flash > 0 ? o.flashColor : (o === selected ? C.accent : C.class_);
+    if(o.flash > 0) ctx.lineWidth = 2.4;
+    if(o.cls === "ship") drawShip(o);
+    else if(o.cls === "missile") drawMissile(o);
+    else if(o.cls === "asteroid") drawAsteroid(o);
+    else drawStation(o);
+    ctx.restore();
+
+    /* the name, in class blue — it is a slot reader, not decoration */
+    ctx.font = "500 13px 'IBM Plex Mono', monospace";
+    ctx.fillStyle = o === selected ? C.accent : "rgba(107,114,125,.95)";
+    ctx.fillText(o.name, o.x + o.r + 6, o.y + 4);
+
+    if(o === selected){
+      ctx.strokeStyle = "rgba(127,219,202,.35)";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(o.x, o.y, o.r + 9, 0, Math.PI*2); ctx.stroke();
+    }
+  }
+}
+
+/* ---------------------------------------------------------------- tick */
+function tick(dt){
+  var i, j;
+  for(i=0;i<objs.length;i++){
+    var o = objs[i];
+    if(o.flash > 0) o.flash -= dt*0.004;
+    o.rot += o.spin*dt;
+
+    if(o.docked){
+      o.x = o.docked.x + o.docked.r + o.r - 4;
+      o.y = o.docked.y;
+      continue;
+    }
+    o.x += o.vx*dt; o.y += o.vy*dt;
+
+    if(o.cls === "missile"){
+      o.trail.push({x:o.x, y:o.y});
+      if(o.trail.length > 16) o.trail.shift();
+    }
+    if(o.x < o.r){ o.x = o.r; o.vx = Math.abs(o.vx); }
+    if(o.x > W-o.r){ o.x = W-o.r; o.vx = -Math.abs(o.vx); }
+    if(o.y < o.r){ o.y = o.r; o.vy = Math.abs(o.vy); }
+    if(o.y > H-o.r){ o.y = H-o.r; o.vy = -Math.abs(o.vy); }
+  }
+
+  for(var k in cooldown){ cooldown[k] -= dt; if(cooldown[k] <= 0) delete cooldown[k]; }
+
+  /* nearest approaching pair, for the HUD */
+  var best = null, bestGap = 1e9;
+  for(i=0;i<objs.length;i++) for(j=i+1;j<objs.length;j++){
+    var a = objs[i], b = objs[j];
+    var gap = Math.hypot(b.x-a.x, b.y-a.y) - (a.r+b.r);
+    if(gap < bestGap){ bestGap = gap; best = [a,b]; }
+    if(gap <= 0){
+      var pk = pairKey(a,b);
+      if(!cooldown[pk] && !passThrough[pk] && !(a.docked===b || b.docked===a)){
+        cooldown[pk] = 900;
+        doCollide(a,b);
+        return;               /* one dispatch per tick — the guest loop would too */
+      }
+    }
+  }
+  updateHud(best, bestGap);
+}
+
+var hudEl = document.getElementById("hud");
+function updateHud(pair, gap){
+  if(!pair || gap > 150){
+    hudEl.className = "v none";
+    hudEl.style.color = "";
+    hudEl.textContent = "nothing in range";
+    return;
+  }
+  var a = pair[0], b = pair[1];
+  if(b.id < a.id){ var t=a; a=b; b=t; }
+  var k1 = keyFor(a,b), k2 = keyFor(b,a);
+  var m1 = !!METHODS[k1], m2 = !!METHODS[k2];
+  var q = QUALIFIED[k1] || QUALIFIED[k2];
+  function side(k, ok){ return "(" + k.replace("|"," ") + ") " + (ok ? "\u2713" : "\u2298"); }
+  hudEl.className = "v";
+  hudEl.style.color = (m1 || m2) ? "" : C.cond;
+  hudEl.textContent = side(k1,m1) + "  ·  " + side(k2,m2) +
+    (m1 && m2 ? "" : m1 || m2 ? "   one side only" : "   will signal") +
+    (q && (m1 || m2) ? "   " + q.join(" → ") : "");
+}
+
+var last = 0;
+function frame(ts){
+  if(!last) last = ts;
+  var dt = Math.min(48, ts - last);
+  last = ts;
+  if(running && !paused) tick(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+
+/* ---------------------------------------------------------------- input */
+cv.addEventListener("click", function(e){
+  var rect = cv.getBoundingClientRect();
+  var scale = W / rect.width;
+  var x = (e.clientX - rect.left) * scale, y = (e.clientY - rect.top) * scale;
+  var hit = null;
+  for(var i=objs.length-1;i>=0;i--){
+    var o = objs[i];
+    if(Math.hypot(o.x-x, o.y-y) <= o.r + 6){ hit = o; break; }
+  }
+  selected = hit;
+  if(hit) logLine("(inspect " + pp(hit) + ")", "name = \"" + hit.name + "\"  ·  class " + hit.cls, "plain");
+});
+
+document.getElementById("k-run").addEventListener("click", function(){
+  running = !running;
+  this.innerHTML = running ? "<b>spc</b> pause" : "<b>spc</b> run";
+  count();
+});
+document.getElementById("k-step").addEventListener("click", function(){ tick(16); draw(); });
+document.getElementById("k-reset").addEventListener("click", function(){
+  closeDebugger(); reset();
+});
+document.getElementById("k-force").addEventListener("click", function(){
+  var a = find("Kestrel"), b = null, i;
+  for(i=0;i<objs.length;i++) if(objs[i].cls==="ship" && objs[i]!==a){ b = objs[i]; break; }
+  if(!a){ a = spawn("ship"); }
+  if(!b){ b = spawn("ship", {x:a.x+90, y:a.y+30}); }
+  a.docked = null; b.docked = null;
+  b.x = a.x + a.r + b.r + 6; b.y = a.y;
+  passThrough = {}; cooldown = {};
+  var pk = pairKey(a,b);
+  delete passThrough[pk];
+  doCollide(a,b);
+});
+Array.prototype.forEach.call(document.querySelectorAll("[data-spawn]"), function(btn){
+  btn.addEventListener("click", function(){
+    if(objs.length >= 9){ logLine("spawn", "stage is full (9)", "bad"); return; }
+    var o = spawn(btn.getAttribute("data-spawn"));
+    logLine("(spawn '" + o.cls + ")", pp(o), null);
+  });
+});
+
+/* ---------------------------------------------------------------- boot */
+window.addEventListener("resize", fit);
+if(window.ResizeObserver) new ResizeObserver(fit).observe(cv.parentNode);
+fit();
+reset();
+requestAnimationFrame(frame);
+
+})();
+</script>
