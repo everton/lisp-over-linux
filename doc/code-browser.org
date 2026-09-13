@@ -512,9 +512,9 @@ below it. Two sides, two directions, two meanings — and that single image is t
 defining property of the condition system that code cannot show.
 
 It also makes the =handler-bind= vs =handler-case= distinction visible: a
-=handler-bind= handler runs *before* the unwind (still standing on the left
+=handler-bind= handler runs *before* the unwind (still standing on the *signal*
 rail — this is what makes it stronger than =catch=); a =handler-case= handler is
-a restart in disguise on the right rail, running *after* the unwind.
+a restart in disguise on the *restart* rail, running *after* the unwind.
 
 *The payoff: this view IS the debugger.* An unhandled condition is just this
 picture made interactive — the spine is the backtrace, the restart column is the
@@ -535,25 +535,33 @@ restart column is =compute-restarts= (already innermost-first, in stack order);
 the handler side's *effect* comes free the moment a condition is unhandled,
 because that is the debugger. Static side: =who-calls= + a registry source scan.
 
-*Built — the live half.* Evaluating =(/ 1 0)= in the Workspace with =C-c C-d=
-(Debug it) opens it on the framebuffer: the condition report, the =sb-di= call
-stack innermost-first on the left, the selectable restart column on the right,
-and the selected frame's locals in a strip along the bottom. The stack is *still
+*Built — the live half.* Evaluating =(lol.examples:launch)= in the Workspace with
+=C-c C-d= (Debug it) opens it on the framebuffer: the condition report, the
+selectable restart column on the *left* (it is the way out — the first thing you
+need to read), the =sb-di= call stack innermost-first on the *right*, and the
+selected frame's locals in a strip along the bottom. The stack is *still
 standing* — this is =handler-bind=, not =handler-case= — so invoking a restart
 genuinely transfers control rather than unwinding first:
 
 [[file:../media/screenshots/debugger-2026-09-13.png]]
 
-/The live debugger on =(/ 1 0)=. Note the whole chain is visible —
-=INTEGER-/-INTEGER → / → EVAL → WORKSPACE-DEBUG-IT → RUN-BROWSER-FB →
-SUPERVISOR-MAIN → %START-LISP= — i.e. all the way down to PID 1's own entry
-point. =./refresh-screenshot.sh --scene debugger=./
+/The live debugger on =(lol.examples:launch)= — the specimen in
+[[file:../initramfs/examples.lisp][=examples.lisp=]] written for exactly this: =STEER= signals =OFF-COURSE= from inside a
+=restart-case=, so the rail offers *four named ways out* beside =ABORT= — correct the
+course, hold the heading, supply one (=Enter= prompts, since =use-heading= takes a
+required value), or scrub. That is the condition system's point, and =(/ 1 0)=,
+whose rail is =ABORT= alone, cannot make it. Note also that the whole chain is
+visible — =WITH-SIMPLE-CONDITION-RESTARTS → STEER → LAUNCH → EVAL →
+WORKSPACE-DEBUG-IT → RUN-BROWSER-FB → SUPERVISOR-MAIN → %START-LISP= — i.e. all the
+way down to PID 1's own entry point, and =Tab= has walked the frame cursor to
+=LAUNCH=, whose own locals (=stage=, =fuel=, =drift=) are live in the bottom strip.
+=./refresh-screenshot.sh --scene debugger=./
 
-Frame 0's locals read =#<unavailable>= in that shot, and honestly so: it is
-SBCL's own compiled =INTEGER-/-INTEGER=, built without the debug info that would
-keep them live. Our own frames do better — [[file:../initramfs/examples.lisp][=examples.lisp=]] carries a
-=(declaim (optimize (debug 3)))= precisely so the specimens you are meant to
-inspect keep every local readable.
+Those locals are readable because [[file:../initramfs/examples.lisp][=examples.lisp=]] carries a =(declaim (optimize
+(debug 3)))= — precisely so the specimens you are meant to inspect keep every local
+alive. Walk up to frame 0 and they read =#<unavailable>=, and honestly so: that is
+SBCL's own compiled =WITH-SIMPLE-CONDITION-RESTARTS=, built without the debug info
+that would keep them.
 
 *Built — the static half too* (phase 4a). =(present (subj-condition 'foo))= renders
 the anatomy, the Signallers, the Handlers and the nearby restarts as one sectioned,
@@ -1212,15 +1220,15 @@ we already have. But the UI is pixel-native from its very first line.
 named *scene* in [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] — a menu key plus a deterministic key
 sequence, driven over QMP into a headless QEMU boot:
 
-| scene       | shows                                   | section |
-|-------------+-----------------------------------------+---------|
-| =browser=   | the default root (= the module index)   | README  |
-| =package=   | the flat =CL-USER= list + a source pane  | §4½     |
-| =modules=   | the module index                        | §4⅔     |
-| =matrix=    | =collide='s dispatch grid                | §3      |
-| =debugger=  | the live debugger on =(/ 1 0)=          | §3      |
-| =workspace= | the scratch buffer and its verbs        | §3a     |
-| =spotter=   | the find-anything palette               | §4¾     |
+| scene       | shows                                        | section |
+|-------------+----------------------------------------------+---------|
+| =browser=   | the default root (= the module index)        | README  |
+| =package=   | the flat =CL-USER= list + a source pane      | §4½     |
+| =modules=   | the module index                             | §4⅔     |
+| =matrix=    | =collide='s dispatch grid                    | §3      |
+| =debugger=  | the live debugger on =(lol.examples:launch)= | §3      |
+| =workspace= | the scratch buffer and its verbs             | §3a     |
+| =spotter=   | the find-anything palette                    | §4¾     |
 
 =./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
 rewrites this file's link to the new dated PNG. They are deterministic because
@@ -1439,8 +1447,10 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   (=run-debugger-fb= / =draw-debugger=) + [[file:../initramfs/model.lisp][model.lisp]] + =workspace-debug-it= in
   [[file:../poc/shell.lisp][poc/shell.lisp]]] An unhandled =serious-condition= from *Debug it* opens the live
   debugger on the framebuffer: the condition report (multi-line), its type, the
-  *restart column* (0-9 or up/dn select, ↵ or click to invoke, =C-g= aborts) and the
-  *backtrace spine* (=sb-di=, innermost first). The key is =handler-bind=, not the
+  *restart column* on the LEFT (0-9 or up/dn select, ↵ or click to invoke, =C-g=
+  aborts) and the *backtrace spine* on the right (=sb-di=, innermost first) — the
+  restarts lead because they are the way out, and the stack is the evidence behind
+  them. The key is =handler-bind=, not the
   outer =handler-case=: the handler runs *before the unwind*, with the erroring
   stack still standing, so the restarts and backtrace are live and invoking a
   restart genuinely transfers control. /Verified by QMP in the booted guest:
@@ -1448,7 +1458,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   RUN-BROWSER-FB → SUPERVISOR-MAIN → %START-LISP=); ABORT (↵ or =C-g=) returns to the
   workspace with "aborted"; a =(with-simple-restart (retry …) (/ 1 0))= shows both
   RETRY and ABORT, ↑/↓ move the selection, and invoking RETRY resumes — the eval
-  returns NIL, woven back as ==> NIL= in the status line./
+  returns NIL, woven back as ==> NIL= in the status line. And
+  =(lol.examples:launch)= — the scene the screenshot in §3 shows — fills the rail
+  with CORRECT-COURSE / HOLD-HEADING / USE-HEADING / SCRUB / ABORT./
   [FRAME-LOCALS DONE — [[file:../initramfs/model.lisp][model.lisp]] + [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] Tab focuses the
   backtrace; walking a frame shows its live locals (=sb-di= debug-vars, only the
   =:valid= ones read, each printed shallow + clipped) in a side column — frame 0 of

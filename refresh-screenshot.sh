@@ -201,9 +201,17 @@ SCENES = {
     "matrix":    ("b", [("k","down"),("k","down"),("k","ret"),
                         ("k","down"),("k","down"),("k","ret"),
                         ("w",1.0),("k","ret")]),
-    # the live debugger (phase 6): Workspace -> a form that errors -> Debug it
-    "debugger":  ("p", [("w",1.0),("t","(/ 1 0)"),("w",0.8),
-                        ("c",["ctrl","c"]),("c",["ctrl","d"]),("w",2.0)]),
+    # the live debugger (phase 6): Workspace -> a form that errors -> Debug it.
+    # (lol.examples:launch) rather than (/ 1 0): LAUNCH drifts OFF-COURSE and STEER
+    # signals it from inside a restart-case, so the rail fills with FOUR named ways
+    # out plus ABORT — the whole point of the condition system. (/ 1 0) offers only
+    # ABORT, which shows a rail of one and teaches nothing.
+    # Tab-down-down-Tab parks the frame cursor on LAUNCH (frame 2) and hands focus
+    # back to the restarts, so the bottom strip shows real locals (stage, fuel)
+    # instead of frame 0's SBCL-internal WITH-SIMPLE-CONDITION-RESTARTS noise.
+    "debugger":  ("p", [("w",1.0),("t","(lol.examples:launch)"),("w",0.8),
+                        ("c",["ctrl","c"]),("c",["ctrl","d"]),("w",2.0),
+                        ("k","tab"),("k","down"),("k","down"),("k","tab"),("w",0.6)]),
     # the Spotter (§4¾): the floating palette over the dimmed browser. Super must
     # be HELD (see Qmp.hold) — a send-key chord releases it too fast to survive
     # the evdev-modifier / cooked-tty split.

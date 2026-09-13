@@ -339,7 +339,7 @@
 
 (defvar *dbg-restart-top* 0 "screen-y of the first restart row, for click hit-testing.")
 (defvar *dbg-frame-top* 0 "screen-y of the first backtrace row, for click hit-testing.")
-(defvar *dbg-frame-x0* 8 "left edge of the clickable backtrace column.")
+(defvar *dbg-frame-x0* 0 "left edge of the clickable backtrace column (set at draw).")
 (defvar *dbg-frame-x1* 0 "right edge of the clickable backtrace column (set at draw).")
 (defparameter +dbg-row+ 17)
 (defparameter +dbg-frame-row+ 15)
@@ -389,7 +389,7 @@
 (defparameter *dbg-title-bg* !#5A1C1C "the alarm-red title band.")
 (defparameter *dbg-title-fg* !#FFD0C0 "text on the title band.")
 (defparameter +dbg-locals-h+ 132 "height of the bottom locals strip.")
-(defvar *dbg-restart-x0* 0 "left edge of the clickable restart rail (set at draw).")
+(defvar *dbg-restart-x0* 8 "left edge of the clickable restart rail (set at draw).")
 (defvar *dbg-restart-x1* 0 "right edge of the clickable restart rail (set at draw).")
 
 (defun dbg-fit (s px)
@@ -403,9 +403,10 @@
 
 (defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus)
   "Paint the debugger as the two-sided spine of §3: the CONDITION is the header; the
-   CALL STACK runs down the centre with a teal rail hugging its left (the signal rose
-   here and NOTHING unwound — every frame still stands) and the innermost frame marked
-   !; the RESTARTS stand in an amber rail on the right (invoking one is the unwind).
+   RESTARTS stand in an amber rail down the LEFT (they are the way out — the first
+   thing to read, and invoking one is the unwind); the CALL STACK runs down the RIGHT
+   with a teal rail hugging its left (the signal rose here and NOTHING unwound — every
+   frame still stands) and the innermost frame marked !.
    The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
    :backtrace) says which rail the arrows drive."
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
@@ -428,53 +429,54 @@
     (incf y 26)
     ;; --- the triptych ---
     (let* ((split   (floor (* w 52) 100))
-           (rail-x  28)
-           (frame-x 46)
+           (rail-x  28)                     ; amber restart rail, hard against the left
+           (rest-x  46)                     ; restart text
+           (frame-x (+ split 18))           ; stack text, right of the teal signal rail
            (top     y)
            (bottom  (- h +dbg-locals-h+ 6)))
       ;; column headers — the section title bright in its side colour, the key-hint dim
-      (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
-                                         (if (eq focus :backtrace) *ui-accent* *ui-dim*))))
-        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *ui-dim*))
-      (let ((pen (lol.canvas:draw-string canvas *bfont* "RESTARTS" (+ split 8) top
+      (let ((pen (lol.canvas:draw-string canvas *bfont* "RESTARTS" rest-x top
                                          (if (eq focus :restarts) *ui-amber* *ui-dim*))))
         (lol.canvas:draw-string canvas *bfont* "  ·  0-9 · Enter (asks for a value) · unwinds"
                                 pen top *ui-dim*))
+      (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
+                                         (if (eq focus :backtrace) *ui-accent* *ui-dim*))))
+        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *ui-dim*))
       (incf top 20)
-      ;; a rule divides the two sides; a SOLID teal signal rail (the stack stands) faces a
-      ;; mirrored dim-amber restart rail (the unwind) — §3's two forces, left and right.
+      ;; a rule divides the two sides; a dim-amber restart rail (the unwind) faces a
+      ;; mirrored SOLID teal signal rail (the stack stands) — §3's two forces, left and right.
       (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *ui-rule*)
-      (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
-                     *ui-accent*)
-      (draw-dbg-rail canvas split top (min bottom (+ top (* +dbg-row+ (length restarts))))
+      (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-row+ (length restarts))))
                      !#8A5A28)
-      ;; --- centre: the call stack; frame 0 (innermost) is where it was signalled ---
-      (setf *dbg-frame-top* top *dbg-frame-x0* (- frame-x 6) *dbg-frame-x1* (- split 12))
+      (draw-dbg-rail canvas split top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
+                     *ui-accent*)
+      ;; --- left: the restart rail (amber — invoking is the unwind) ---
+      (setf *dbg-restart-top* top *dbg-restart-x0* 8 *dbg-restart-x1* (- split 12))
+      (let ((ry top))
+        (loop for r in restarts for i from 0 while (< ry bottom) do
+          (when (= i rsel)
+            (lol.canvas:fill-rect canvas rail-x (- ry 2) (- split 8 rail-x) +dbg-row+ *ui-sel*)
+            (lol.canvas:fill-rect canvas rail-x (- ry 2) 2 +dbg-row+ *ui-amber*))
+          (lol.canvas:draw-string canvas *bfont*
+            (dbg-fit (format nil "~d  ~@[[~(~a~)]  ~]~a" i (getf r :name) (getf r :report))
+                     (- split rest-x 12))
+            rest-x ry (if (= i rsel) *ui-text* *ui-dim*))
+          (incf ry +dbg-row+)))
+      ;; --- right: the call stack; frame 0 (innermost) is where it was signalled ---
+      (setf *dbg-frame-top* top *dbg-frame-x0* (- frame-x 6) *dbg-frame-x1* (- w 8))
       (let ((fy top))
         (loop for fr in backtrace for i from 0 while (< fy bottom) do
           (when (= i fsel)
-            (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) (- split frame-x 6) +dbg-frame-row+
+            (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) (- w frame-x 2) +dbg-frame-row+
                                   (if (eq focus :backtrace) *ui-sel* *ui-hi*))
             (when (eq focus :backtrace)
               (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) 2 +dbg-frame-row+ *ui-accent*)))
           (when (zerop i)                                    ; the signal frame
             (lol.canvas:draw-string canvas *bfont* "!" (- frame-x 16) fy *ui-amber*))
           (lol.canvas:draw-string canvas *bfont*
-            (dbg-fit (format nil "~2d ~a" i fr) (- split frame-x 12))
+            (dbg-fit (format nil "~2d ~a" i fr) (- w frame-x 12))
             frame-x fy (if (= i fsel) *ui-text* *ui-dim*))
           (incf fy +dbg-frame-row+)))
-      ;; --- right: the restart rail (amber — invoking is the unwind) ---
-      (setf *dbg-restart-top* top *dbg-restart-x0* split *dbg-restart-x1* (- w 8))
-      (let ((ry top))
-        (loop for r in restarts for i from 0 while (< ry bottom) do
-          (when (= i rsel)
-            (lol.canvas:fill-rect canvas split (- ry 2) (- w split 8) +dbg-row+ *ui-sel*)
-            (lol.canvas:fill-rect canvas split (- ry 2) 2 +dbg-row+ *ui-amber*))
-          (lol.canvas:draw-string canvas *bfont*
-            (dbg-fit (format nil "~d  ~@[[~(~a~)]  ~]~a" i (getf r :name) (getf r :report))
-                     (- w split 16))
-            (+ split 10) ry (if (= i rsel) *ui-text* *ui-dim*))
-          (incf ry +dbg-row+)))
       ;; --- bottom strip: the locals of the selected frame ---
       (let ((ly (- h +dbg-locals-h+)))
         (lol.canvas:fill-rect canvas 0 ly w 1 *ui-rule*)
@@ -484,15 +486,15 @@
         (draw-dbg-locals canvas 12 (+ ly 28) w h locals)))))
 
 (defun dbg-restart-at (x y n)
-  "The restart-row index at screen X,Y — only within the restart rail (its right
+  "The restart-row index at screen X,Y — only within the restart rail (its left
    column), so a click in the stack never invokes a restart. NIL otherwise."
   (when (and (>= y *dbg-restart-top*) (<= *dbg-restart-x0* x *dbg-restart-x1*))
     (let ((i (floor (- y *dbg-restart-top*) +dbg-row+)))
       (when (< i n) i))))
 
 (defun dbg-frame-at (x y n)
-  "The backtrace-row index at screen X,Y — only within the frame column (its left
-   half), so a click in the locals column never selects a frame. NIL otherwise."
+  "The backtrace-row index at screen X,Y — only within the frame column (its right
+   half), so a click in the restart rail never selects a frame. NIL otherwise."
   (when (and (>= y *dbg-frame-top*) (<= *dbg-frame-x0* x *dbg-frame-x1*))
     (let ((i (floor (- y *dbg-frame-top*) +dbg-frame-row+)))
       (when (< i n) i))))
