@@ -89,6 +89,7 @@ exactly as open-environment does in the guest):
   defn:NAME[:KIND]         a definition's source            e.g. defn:draw-alien
   gf:NAME                  a generic function's view                e.g. gf:collide
   matrix:NAME              the dispatch matrix               e.g. matrix:DOCUMENTATION
+  condition:NAME           a condition's static face    e.g. condition:division-by-zero
   onion:NAME:C1,C2         the effective-method onion    e.g. onion:collide:ship,asteroid
   symbol:NAME              the inspector on a symbol's cells
   workspace                the Workspace scratch buffer
@@ -168,6 +169,7 @@ OPTIONS
          (unless (typep f 'generic-function) (error "not a generic function: ~a" rest))
          f))
       ((string= head "matrix") (subj-matrix (find-sym rest)))
+      ((string= head "condition") (subj-condition (find-sym rest)))
       ((string= head "symbol") (find-sym rest))
       ((string= head "defn")
        (let ((parts (split-on #\: rest)))

@@ -555,7 +555,10 @@ keep them live. Our own frames do better — [[file:../initramfs/examples.lisp][
 =(declaim (optimize (debug 3)))= precisely so the specimens you are meant to
 inspect keep every local readable.
 
-The *static* face above is the part still owed (phase 4a).
+*Built — the static half too* (phase 4a). =(present (subj-condition 'foo))= renders
+the anatomy, the Signallers, the Handlers and the nearby restarts as one sectioned,
+drillable list, computed by walking the registry's captured source. See the phase 4a
+entry in [[*8. Phases (each independently demoable — this repo likes screenshots)][Phases]] for how it is derived and what it honestly cannot see.
 
 * 3a. The Workspace — a scratch buffer with the editor's hands
 
@@ -1327,13 +1330,41 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   /Verified in the guest: a 3x4 =demo-op= grid shows the right counts; clicking the
   (integer,string) cell opens its onion — primary chain =(integer string) ->
   (number string)=, the two applicable methods most-specific-first./
-  The condition two-stack *is* the debugger, so the runtime half is now built (see
+  The condition two-stack *is* the debugger, so the runtime half is built (see
   phase 6): =restart-list= (=compute-restarts=, innermost-first) + =backtrace-frames=
   (=sb-di=, what SBCL's own debugger walks) in [[file:../initramfs/model.lisp][model.lisp]], rendered live on the
-  framebuffer. Still owed as a *browsable subject*: the static face — =(present
-  condition)= showing the condition class DAG, signallers, handler clusters — as a
-  drillable view rather than only the live pop-up. Design spec:
-  [[file:../media/browser-views-design.html][media/browser-views-design.html]].
+  framebuffer.
+  [CONDITION STATIC FACE DONE — =condition-info= and its scanners in
+  [[file:../initramfs/model.lisp][model.lisp]], =subj-condition= in [[file:../initramfs/present.lisp][present.lisp]]] =(present (subj-condition
+  'division-by-zero))= is now a browsable view, in four sections: *anatomy* (the
+  class itself, its supertypes and subtypes, its slots with their readers, and the
+  report string it would print), *Signallers*, *Handlers*, and the *restarts*
+  standing around the signalling sites. Signallers and Handlers are the exact
+  analogues of Senders and Implementors, and they have to be, because *control flow
+  is invisible in the class* — CLOS can say what a condition IS and nothing about
+  who raises or catches it. What can say is the *registry*: every definition's
+  source is in the image, so the three lists are a walk over =*REGISTRY*=,
+  =READ=ing each captured form back and matching *shapes* rather than text —
+  =(error 'foo …)=, =(handler-case … (foo …) …)=, =(restart-case … (retry …))=.
+  Reading beats grepping: a shape survives reformatting, line breaks, and the type
+  name appearing in a comment.
+  Three decisions worth recording. *Handlers include supertypes* — a
+  =handler-bind= on =error= really does catch a =division-by-zero=, and a list that
+  hid that would answer the wrong question; each row says which type it matched.
+  *Signallers include subtypes*, for the mirror-image reason. And the view carries
+  its own honest footnote: this is a *static approximation* — it sees lexically
+  apparent forms in the code we recorded, and cannot see a handler established by a
+  callee, a type computed at runtime, or anything inside SBCL, whose source we do
+  not ship (§0.1). The live debugger remains the authority.
+  Reached by drilling *any* condition class view, which now offers a
+  "signallers, handlers & restarts" row; =(show-condition 'foo)= is the REPL twin.
+  Design spec: [[file:../media/browser-views-design.html][media/browser-views-design.html]].
+  /Verified by rendered frame (=poc/render-frame.lisp condition:division-by-zero=)
+  and headless: =DIVISION-BY-ZERO= reports "arithmetic error DIVISION-BY-ZERO
+  signalled", no signaller in the image, and 24 handlers — every =ignore-errors=,
+  correctly, since that is =handler-case= on =ERROR= wearing a hat. With
+  =canvas.lisp= loaded, =SIMPLE-ERROR='s signallers come back as =LOAD-FONT= and
+  =LOAD-PSF=, which are exactly the two =(error "…")= sites in it./
 - *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
   *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
   (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is

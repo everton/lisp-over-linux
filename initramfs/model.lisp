@@ -476,6 +476,252 @@
                             :value (frame-var-value v loc frame)))))))
 
 ;;; ======================================================================
+;;; The condition system — the STATIC face (§3, phase 4a)
+;;; ======================================================================
+;;; The live half above is the debugger: a real stack, real restarts. This half is
+;;; what the BROWSER can say about a condition type when nothing is signalling —
+;;; and it is deliberately the same shape as Senders/Implementors:
+;;;
+;;;   Signallers  — who ERRORs/SIGNALs/WARNs this type   (the analogue of Senders)
+;;;   Handlers    — who HANDLER-BINDs/HANDLER-CASEs it   (the analogue of Implementors)
+;;;   Restarts    — what RESTART-CASEs stand around those signalling sites
+;;;
+;;; None of that is derivable from CLOS: control flow is invisible in the class.
+;;; It IS derivable from source, and we have every definition's source in the
+;;; registry — so these three are a walk over *REGISTRY*.
+;;;
+;;; HONEST LIMIT, stated once and surfaced in the view: this is a STATIC
+;;; approximation. It sees the lexically apparent forms in the code we recorded. It
+;;; cannot see a handler established by a function it calls, a type computed at
+;;; runtime, or anything inside SBCL itself (whose source we do not ship — §0.1).
+;;; The live debugger remains the authority on what is actually established.
+
+(defun condition-class-p (name)
+  "True when NAME designates a condition class."
+  (let ((c (as-class name)))
+    (and c (subtypep (class-name c) 'condition) t)))
+
+(defun defn-read-package (d)
+  "The package to READ D's captured source in — the home package of the name it
+   defines, which is the package the file was loaded in. Reading in the right
+   package matters for more than tidiness: read `(defmethod collide ((a asteroid)))`
+   in the wrong one and ASTEROID is interned somewhere it does not belong. Because
+   we read source that was already read once at load time, every symbol in it
+   already exists, so a correct *PACKAGE* interns nothing at all."
+  (let ((n (defn-name d)))
+    (or (and (symbolp n) (symbol-package n))
+        (and (consp n) (symbolp (second n)) (symbol-package (second n)))
+        *package*)))
+
+(defun defn-form (d)
+  "D's captured source READ back into a form, or NIL if it will not read. Reading
+   beats matching text: `(handler-case … (division-by-zero …))` is a shape, and a
+   shape survives reformatting, line breaks and a symbol appearing in a comment."
+  (let ((src (defn-source d)))
+    (when (stringp src)
+      (let ((*package* (defn-read-package d))
+            (*read-eval* nil))                  ; captured source is data, never #.
+        (ignore-errors (read-from-string src))))))
+
+(defun walk-form (form fn)
+  "Call FN on FORM and every sub-form of it (pre-order, conses only)."
+  (funcall fn form)
+  (when (consp form)
+    (loop for tail = form then (cdr tail)
+          while (consp tail)
+          do (walk-form (car tail) fn))))
+
+(defun form-arg (form n)
+  "Element N of FORM, or NIL if FORM is shorter than that — or IMPROPER. The second
+   guard is the one that matters: captured source is full of dotted pairs (an alist
+   literal like '(error . simple-error) is one), and SECOND on a dotted pair is a
+   type error rather than NIL. A walker over arbitrary recorded source meets them."
+  (let ((tail form))
+    (dotimes (i n)
+      (unless (consp tail) (return-from form-arg nil))
+      (setf tail (cdr tail)))
+    (and (consp tail) (car tail))))
+
+(defun form-tail (form n)
+  "The Nth cdr of FORM as a LIST, or NIL when FORM is improper or too short."
+  (let ((tail form))
+    (dotimes (i n)
+      (unless (consp tail) (return-from form-tail nil))
+      (setf tail (cdr tail)))
+    (and (listp tail) tail)))
+
+(defun quoted-symbol (x)
+  "X if it is a bare symbol or (QUOTE symbol), else NIL — how a condition type is
+   written at a signalling site: (error 'end-of-file) or (error 'end-of-file :s …)."
+  (cond ((and (symbolp x) x (not (keywordp x))) x)
+        ((and (consp x) (eq (first x) 'quote) (symbolp (second x))) (second x))))
+
+(defparameter *signal-operators*
+  '((error . simple-error) (cerror . simple-error) (signal . simple-condition)
+    (warn . simple-warning))
+  "The signalling operators, each with the type it signals when handed a FORMAT
+   STRING instead of a condition type — `(error \"boom\")` really does signal a
+   SIMPLE-ERROR, so SIMPLE-ERROR's Signallers list should contain it.")
+
+(defun form-signalled-type (form)
+  "The condition type FORM signals, if FORM is a signalling call; else NIL.
+   Handles (error 'foo …), (make-condition 'foo …), (signal 'foo), and the
+   format-string spellings that mean SIMPLE-ERROR / SIMPLE-WARNING."
+  (when (and (consp form) (symbolp (first form)) (first form))
+    (let* ((op (first form))
+           (arg (form-arg form 1))
+           ;; CERROR's first argument is the continue-report string; the type is next.
+           (arg (if (eq op 'cerror) (form-arg form 2) arg))
+           (entry (and (symbolp op) (assoc op *signal-operators*))))
+      (cond
+        ((eq op 'make-condition) (quoted-symbol arg))
+        ((null entry) nil)
+        ((stringp arg) (cdr entry))                ; (error "boom") -> simple-error
+        (t (quoted-symbol arg))))))
+
+(defun form-handled-types (form)
+  "The condition types FORM catches, if FORM is a handler form; else NIL.
+   HANDLER-BIND binds ((type fn) …); HANDLER-CASE clauses are (type (var) …) after
+   the protected form; IGNORE-ERRORS is HANDLER-CASE on ERROR wearing a hat."
+  (when (consp form)
+    (case (and (symbolp (first form)) (first form))
+      (handler-bind
+       (let ((bindings (form-arg form 1)))
+         (remove nil (mapcar (lambda (b) (and (consp b) (quoted-symbol (first b))))
+                             (and (listp bindings) bindings)))))
+      (handler-case
+       (remove nil (mapcar (lambda (c) (and (consp c) (quoted-symbol (first c))))
+                           (form-tail form 2))))
+      (ignore-errors (list 'error))
+      (t nil))))
+
+(defun form-restart-names (form)
+  "The restart names FORM establishes: RESTART-CASE clauses and WITH-SIMPLE-RESTART."
+  (when (consp form)
+    (case (and (symbolp (first form)) (first form))
+      (restart-case
+       (remove nil (mapcar (lambda (c) (and (consp c) (quoted-symbol (first c))))
+                           (form-tail form 2))))
+      (with-simple-restart
+       (let* ((spec (form-arg form 1))
+              (name (and (consp spec) (quoted-symbol (first spec)))))
+         (and name (list name))))
+      (t nil))))
+
+(defun map-recorded-forms (fn)
+  "Call FN with (DEFN FORM) for every definition whose source reads back. One pass
+   over the registry; the three scanners below each do their own, which is fine at
+   our scale (a few hundred definitions) and keeps them independently readable."
+  (maphash (lambda (name defns)
+             (declare (ignore name))
+             (dolist (d defns)
+               (let ((form (defn-form d)))
+                 (when form (funcall fn d form)))))
+           *registry*))
+
+(defun subtype-names-of (type)
+  "TYPE and every recorded subtype of it — signalling a subtype signals TYPE too,
+   so a Signallers list that ignored them would lie by omission."
+  (let ((c (as-class type)))
+    (if (null c)
+        (list type)
+        (cons (class-name c)
+              (labels ((down (class)
+                         (loop for s in (sb-mop:class-direct-subclasses class)
+                               append (cons (class-name s) (down s)))))
+                (remove-duplicates (down c)))))))
+
+(defun condition-signallers (type)
+  "Every recorded definition that signals TYPE (or a subtype), as plists
+   (:name :kind :type). The condition analogue of SENDERS."
+  (let ((wanted (subtype-names-of type)) (out '()))
+    (map-recorded-forms
+     (lambda (d form)
+       (let ((hits '()))
+         (walk-form form (lambda (f)
+                           (let ((ty (form-signalled-type f)))
+                             (when (member ty wanted) (pushnew ty hits)))))
+         (dolist (ty hits)
+           (push (list :name (defn-name d) :kind (defn-kind d)
+                       :label (defn-label d) :type ty) out)))))
+    (sort out #'string-lessp :key (lambda (e) (princ-to-string (getf e :name))))))
+
+(defun condition-handlers (type)
+  "Every recorded definition that HANDLER-BINDs / HANDLER-CASEs TYPE *or a
+   supertype of it* — a handler on ERROR does catch a DIVISION-BY-ZERO, and a view
+   that hid that would answer the wrong question. Plists (:name :kind :type)."
+  (let* ((c (as-class type))
+         (wanted (if c (mapcar #'class-name (sb-mop:class-precedence-list c)) (list type)))
+         (out '()))
+    (map-recorded-forms
+     (lambda (d form)
+       (let ((hits '()))
+         (walk-form form (lambda (f)
+                           (dolist (ty (form-handled-types f))
+                             (when (member ty wanted) (pushnew ty hits)))))
+         (dolist (ty hits)
+           (push (list :name (defn-name d) :kind (defn-kind d)
+                       :label (defn-label d) :type ty) out)))))
+    (sort out #'string-lessp :key (lambda (e) (princ-to-string (getf e :name))))))
+
+(defun condition-restarts (type)
+  "The restarts a signaller of TYPE stands inside: for each definition that signals
+   TYPE, the RESTART-CASE / WITH-SIMPLE-RESTART names established in that same
+   definition. Plists (:name :in). This is the shakiest of the three — a restart is
+   established at runtime by whoever is on the stack, and the same-definition rule
+   is only the part that is lexically visible — so the view labels it as such."
+  (let ((signallers (mapcar (lambda (e) (getf e :name)) (condition-signallers type)))
+        (out '()))
+    (when signallers
+      (map-recorded-forms
+       (lambda (d form)
+         (when (member (defn-name d) signallers :test #'equal)
+           (let ((hits '()))
+             (walk-form form (lambda (f)
+                               (dolist (r (form-restart-names f)) (pushnew r hits))))
+             (dolist (r hits) (push (list :name r :in (defn-name d)) out)))))))
+    (sort out #'string-lessp :key (lambda (e) (princ-to-string (getf e :name))))))
+
+(defun condition-report (type)
+  "TYPE's report string as it would print, or NIL. Built by MAKE-CONDITION on a
+   bare instance — many condition types need initargs and simply refuse, which is
+   not an error here, just an absent answer."
+  (ignore-errors
+    (let ((c (make-condition type)))
+      (let ((s (princ-to-string c)))
+        (and (plusp (length s)) s)))))
+
+(defun condition-info (type)
+  "Everything the static condition view needs, as a plist. Reuses CLASS-INFO for the
+   anatomy — conditions ARE CLOS classes, so the DAG and the slots come free."
+  (let ((i (class-info type)))
+    (when i
+      (append i (list :report      (condition-report type)
+                      :signallers  (condition-signallers type)
+                      :handlers    (condition-handlers type)
+                      :restarts    (condition-restarts type))))))
+
+(defun show-condition (type)
+  "Print the static condition view — the REPL twin of (present (subj-condition …))."
+  (let ((i (condition-info type)))
+    (if (null i)
+        (format t "~&; ~s is not a class.~%" type)
+        (progn
+          (format t "~&; condition ~s~@[  — ~a~]~%" (getf i :name) (getf i :doc))
+          (format t ";   supertypes : ~a~%" (or (getf i :supers) '(none)))
+          (format t ";   subtypes   : ~a~%" (or (getf i :subs) '(none)))
+          (format t ";   report     : ~@[~a~]~%" (getf i :report))
+          (dolist (key '(:signallers :handlers))
+            (format t ";   ~(~a~):~%" key)
+            (dolist (e (getf i key))
+              (format t ";     ~(~a~) ~(~a~)~%" (getf e :name) (getf e :type))))
+          (format t ";   restarts (lexical, near signallers):~%")
+          (dolist (e (getf i :restarts))
+            (format t ";     ~(~a~) in ~(~a~)~%" (getf e :name) (getf e :in)))))
+    (finish-output)
+    type))
+
+;;; ======================================================================
 ;;; The rest of the xref wrappers (registry.lisp has senders/referrers/…)
 ;;; ======================================================================
 

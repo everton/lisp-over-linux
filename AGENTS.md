@@ -174,9 +174,13 @@ protocol in a tiled, keyboard-first shell. Progress:
    into the running image and updates the registry). Trail **tabs** and the
    **Spotter** (§4¾) have landed too — `poc/shell.lisp:draw-tabs`,
    `initramfs/fb-browser.lisp:draw-spotter`.
-6. **Phase 4a — the Lisp-native views** — *generics DONE* (dispatch matrix,
-   clickable cells, effective-method onion). Still owed: the condition subject's
-   *static* face as a browsable view (the live debugger already exists).
+6. **Phase 4a — the Lisp-native views** — *DONE*. Generics: dispatch matrix,
+   clickable cells, effective-method onion. Conditions: the *static* face
+   (`subj-condition` in `present.lisp`, `condition-info` in `model.lisp`) — anatomy,
+   **Signallers**, **Handlers** and nearby restarts, derived by reading each
+   definition's captured source back out of the registry and matching forms. The
+   analogue of Senders/Implementors for control flow, which CLOS cannot show.
+   Honestly labelled a static approximation; the live debugger is the authority.
 7. **Phase 5 — into the machine** — *DONE* (`initramfs/fb-browser.lisp`): the same
    shell full-screen on `/dev/fb0` as PID 1 (menu `b`), keyboard **and** evdev
    mouse via `poll(2)`, `M-.`/Ctrl-click jump-to-definition, and **scrolling**
@@ -196,9 +200,16 @@ protocol in a tiled, keyboard-first shell. Progress:
    `lol.*` toolkit modules (`canvas`, `textview`, `fb`, `shell`) that a CL-USER
    root cannot list at all — which is why it replaced CL-USER as the default.
    The flat package view is still menu `l`.
-10. **Next:** phase 3's remaining widgets, phase 4a's condition view, and the
-    phase 5 scrolling gaps. Phase 7 (Morphic) is open horizon.
-    See the Phases section of `doc/code-browser.org` — that doc is the truth here.
+10. **Next:** phase 3's remaining widgets — generic panes/lists/scrollbars/menus,
+    which is also what a list pane needs before it can scroll a viewport instead of
+    dragging its selection. Then the visual-polish backlog. Phase 7 (Morphic) is
+    open horizon. See the Phases section of `doc/code-browser.org` — that doc is
+    the truth here.
+11. **Verifying a visual change:** `sbcl --script poc/render-frame.lisp SUBJECT`
+    renders one real browser frame to a PPM headless in about a second — no QEMU,
+    no X, no `/dev/fb0`. `-h` lists the subject forms; `-k` replays keys and clicks
+    to reach a drilled state. Use it instead of booting for anything cosmetic; see
+    `poc/README.org`, "Verifying a visual change".
 
 ## Known design facts (don't re-derive these)
 

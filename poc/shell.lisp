@@ -35,6 +35,11 @@
         :macro            !#C792EA   ; purple
         :compiler-macro   !#C792EA   ; purple
         :class            !#89DDFF   ; blue
+        :subclass         !#5E93AD   ; blue, dimmed — a class seen from ABOVE. Same hue,
+                                     ; less light: in a class view the supers are where
+                                     ; you came from and the subs are where you may go,
+                                     ; and the eye should be able to tell the two groups
+                                     ; apart without reading the detail column.
         :struct           !#89DDFF   ; blue
         :type             !#89DDFF   ; blue
         :condition        !#FF6B6B   ; red
@@ -324,21 +329,66 @@
       (lol.canvas:draw-string canvas *bfont* (string (code-char #xBB))
                               drill-x y (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*)))))
 
+(defvar *list-rows* '()
+  "alist ((y-top . item-index) …) of the rows DRAW-LIST-BODY last painted, so a click
+   maps to the item that was actually drawn there. It cannot be computed from y any
+   more: a sectioned view spends rows on GROUP HEADERS, so screen row N is no longer
+   item N. Same discipline as *crumb-rects* and *matrix-cells* — the draw records
+   what it did, and the hit-test reads that back.")
+
+(defun list-layout (items)
+  "ITEMS -> a vector of ROWS, each either (:header . LABEL) or (:item . INDEX).
+   A header is emitted wherever the GROUP changes, so a view that sets no groups
+   lays out exactly one row per item and nothing changes for it."
+  (let ((rows '()) (prev :none))
+    (loop for it in items for i from 0
+          do (let ((g (item-group it)))
+               (unless (equal g prev)
+                 (when g (push (cons :header g) rows))
+                 (setf prev g))
+               (push (cons :item i) rows)))
+    (coerce (nreverse rows) 'vector)))
+
+(defun row-of-item (layout index)
+  "Which LAYOUT row shows item INDEX (or 0 if it is not laid out)."
+  (or (position-if (lambda (r) (and (eq (car r) :item) (eql (cdr r) index))) layout) 0))
+
+(defun draw-group-header (canvas x y w label)
+  "A section header: a hairline rule across the pane and the group's name, both dim.
+   The rule is what does the work — it turns 'superclass, superclass, subclass' from
+   a wall of near-identical rows into three legible blocks."
+  (lol.canvas:fill-rect canvas (+ x 3) (+ y 8) (- w 6) 1 *sh-rule*)
+  (let ((px (lol.canvas:string-px *bfont* label)))
+    (lol.canvas:fill-rect canvas (+ x 8) (+ y 8) (+ px 8) 1 *sh-panel*)   ; gap for the text
+    (lol.canvas:draw-string canvas *bfont* label (+ x 12) (+ y 3) *sh-dim*)))
+
 (defun draw-list-body (canvas pane x y w h)
-  "Render a list view's items with selection + scrolling."
+  "Render a list view's items with selection, group sections and scrolling.
+   PANE-TOP indexes the LAYOUT (rows), not the item list, because a header occupies
+   a row of its own; ROW-OF-ITEM converts when the selection has to be kept in view."
   (let* ((items (view-items (pane-view pane)))
+         (layout (list-layout items))
+         (nrows (length layout))
          (rows (max 1 (floor h +row-h+)))
-         (sel (pane-sel pane)))
-    ;; keep the selection in view
-    (when (< sel (pane-top pane)) (setf (pane-top pane) sel))
-    (when (>= sel (+ (pane-top pane) rows)) (setf (pane-top pane) (- sel rows -1)))
-    (loop for i from (pane-top pane) below (min (length items) (+ (pane-top pane) rows))
+         (sel (pane-sel pane))
+         (sel-row (row-of-item layout sel)))
+    ;; keep the SELECTED ROW in view (and never scroll past the end)
+    (setf (pane-top pane) (max 0 (min (pane-top pane) (max 0 (- nrows rows)))))
+    (when (< sel-row (pane-top pane)) (setf (pane-top pane) sel-row))
+    (when (>= sel-row (+ (pane-top pane) rows)) (setf (pane-top pane) (- sel-row rows -1)))
+    (setf *list-rows* '())
+    (loop for r from (pane-top pane) below (min nrows (+ (pane-top pane) rows))
           for iy from y by +row-h+
-          do (draw-item canvas x (+ iy 4) w (nth i items) (= i sel)))
-    (when (> (length items) rows)                 ; a scroll hint
+          for row = (aref layout r)
+          do (if (eq (car row) :header)
+                 (draw-group-header canvas x iy w (cdr row))
+                 (progn
+                   (draw-item canvas x (+ iy 4) w (nth (cdr row) items) (= (cdr row) sel))
+                   (push (cons iy (cdr row)) *list-rows*))))
+    (when (> nrows rows)                          ; a scroll hint
       (lol.canvas:draw-string canvas *bfont*
                               (format nil "~a-~a/~a" (1+ (pane-top pane))
-                                      (min (length items) (+ (pane-top pane) rows)) (length items))
+                                      (min nrows (+ (pane-top pane) rows)) nrows)
                               (- (+ x w) 90) (+ y h -14) *sh-dim*))))
 
 ;;; ---- the clickable dispatch matrix (§3) ----------------------------------
@@ -897,9 +947,12 @@
       ;; plain click here also returns focus to the list (away from any side pane).
       ((>= y *content-top*)
        (setf *editing-side* nil)
+       ;; which row was actually painted here? *list-rows* answers; a click on a group
+       ;; header hits no row and is correctly inert.
        (let* ((items (view-items (pane-view p)))
-              (i (+ (pane-top p) (floor (- y *content-top*) +row-h+))))
-         (when (< i (length items))
+              (hit (find-if (lambda (e) (<= (car e) y (+ (car e) +row-h+))) *list-rows*))
+              (i (and hit (cdr hit))))
+         (when (and i (< i (length items)))
            (setf (pane-sel p) i)
            (let ((it (nth i items)))
              (when (item-subject it)

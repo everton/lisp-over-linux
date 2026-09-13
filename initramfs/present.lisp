@@ -23,6 +23,11 @@
   detail                 ; secondary/dim text, or NIL
   kind                   ; a Lisp-concept keyword (:function :class :macro …) — the
                          ; shell tints the row by it (concept-color); NIL = plain text
+  group                  ; a section label (a string), or NIL. Consecutive items sharing
+                         ; a GROUP are one visual block; the shell rules between blocks
+                         ; and heads each one. Declarative like everything else here —
+                         ; content says "these belong together", the shell decides how
+                         ; that looks. Views that need no sections simply leave it NIL.
   subject                ; what drilling opens — (present subject) — or NIL
   (disposition :in-place); :in-place | :new-trail | :beside | :replace (a HINT)
   action)                ; a thunk to run instead of drilling, or NIL
@@ -78,6 +83,14 @@
 ;; definitions. Provenance comes from DEFN-FILE, captured by LOAD-RECORDING.
 (defstruct (subj-modules (:constructor subj-modules ())))
 (defstruct (subj-module  (:constructor subj-module (category))) category)
+;; A condition type's STATIC face (§3, phase 4a). The LIVE face is the debugger —
+;; a real stack with real restarts. This is what the browser can say when nothing
+;; is signalling, and it deliberately mirrors Senders/Implementors: anatomy (the
+;; class DAG, slots, the report string), Signallers, Handlers, and the restarts
+;; standing around the signalling sites. Presenting the CLASS shows the DAG;
+;; presenting a SUBJ-CONDITION shows the control flow — the same "two readings,
+;; disambiguated by which subject you hand to PRESENT" trick as symbol vs subj-defn.
+(defstruct (subj-condition (:constructor subj-condition (name))) name)
 
 (defun module-index ()
   "Alist of (CATEGORY . COUNT) over every recorded definition, keyed by the module
@@ -338,16 +351,116 @@
      ;; labels stay within the font's coverage (§6.2): the detail distinguishes
      ;; super- from sub-class, so no >255 arrow glyphs in the text.
      :items (append
+             ;; A condition IS a class, so it lands here — but the interesting half
+             ;; of a condition is not its shape, it is who signals and who handles
+             ;; it, and that is a different subject (§3). Offer the door.
+             (when (condition-class-p (class-name c))
+               (list (make-item :label "signallers, handlers & restarts"
+                                :detail "the condition's control flow"
+                                :kind :condition :group "control flow"
+                                :disposition :new-trail
+                                :subject (subj-condition (class-name c)))))
              (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
-                                            :detail "superclass" :kind :class :subject (find-class s)))
+                                            :detail "superclass" :kind :class :group "superclasses"
+                                            :subject (find-class s)))
                      (getf i :supers))
              (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
-                                            :detail "subclass" :kind :class :subject (find-class s)))
+                                            :detail "subclass" :kind :subclass :group "subclasses"
+                                            :subject (find-class s)))
                      (getf i :subs))
              (mapcar (lambda (sl) (make-item :label (format nil "slot ~(~a~)" (getf sl :name))
                                              :detail (and (getf sl :readers) "has readers")
-                                             :kind :slot))
+                                             :kind :slot :group "slots"))
                      (getf i :direct-slots))))))
+
+;;; ---- conditions: the static face of the debugger (§3, phase 4a) ----------
+;;; The generic-function views answer "where do methods live" and "what actually
+;;; runs". The condition view answers the two questions CODE CANNOT SHOW, because
+;;; the condition system is control flow and control flow is invisible in a class:
+;;; who SIGNALS this, and who HANDLES it. They are the exact analogues of Senders
+;;; and Implementors, and model.lisp computes both by walking the registry's
+;;; captured source. Everything here is a thin renderer over CONDITION-INFO.
+
+(defun condition-group-items (entries group kind detail-fn)
+  "ENTRIES (plists from CONDITION-SIGNALLERS / CONDITION-HANDLERS) as items in
+   GROUP, each drilling to the definition it names."
+  (mapcar (lambda (e)
+            (make-item :label (format nil "~(~a~)~@[ ~a~]"
+                                      (princ-to-string (getf e :name))
+                                      ;; a method's specializer label, so two methods
+                                      ;; of one generic function are told apart
+                                      (getf e :label))
+                       :detail (funcall detail-fn e)
+                       :kind kind :group group
+                       :subject (subj-defn (getf e :name) (getf e :kind))))
+          entries))
+
+(defmethod present ((s subj-condition))
+  (let* ((type (subj-condition-name s))
+         (i (condition-info type)))
+    (if (null i)
+        (make-view :title (format nil "~(~a~) — not a condition class" type)
+                   :kind :list :subject s)
+        (make-view
+         :title (format nil "condition ~(~a~)" (getf i :name))
+         :kind :list :subject s
+         :items
+         (append
+          ;; --- anatomy: it IS a class, so say so and offer the class view ------
+          (list (make-item :label (string-downcase (princ-to-string (getf i :name)))
+                           :detail (or (getf i :report) "the condition class + its DAG")
+                           :kind :condition :group "anatomy"
+                           :subject (find-class (getf i :name) nil)))
+          (mapcar (lambda (n)
+                    (make-item :label (string-downcase (princ-to-string n))
+                               :detail "supertype" :kind :condition :group "anatomy"
+                               :subject (find-class n nil)))
+                  (getf i :supers))
+          (mapcar (lambda (n)
+                    (make-item :label (string-downcase (princ-to-string n))
+                               :detail "subtype" :kind :condition :group "anatomy"
+                               :subject (find-class n nil)))
+                  (getf i :subs))
+          (mapcar (lambda (sl)
+                    (make-item :label (format nil "slot ~(~a~)" (getf sl :name))
+                               :detail (let ((r (getf sl :readers)))
+                                         (and r (format nil "reader ~(~a~)" (first r))))
+                               :kind :slot :group "anatomy"))
+                  (getf i :direct-slots))
+          ;; --- signallers: the analogue of Senders -----------------------------
+          (or (condition-group-items
+               (getf i :signallers) "signallers" :function
+               (lambda (e) (format nil "signals ~(~a~)" (getf e :type))))
+              (list (make-item :label "(nobody in this image signals it)"
+                               :group "signallers")))
+          ;; --- handlers: the analogue of Implementors --------------------------
+          (or (condition-group-items
+               (getf i :handlers) "handlers" :function
+               (lambda (e) (format nil "handles ~(~a~)" (getf e :type))))
+              (list (make-item :label "(nobody in this image handles it)"
+                               :group "handlers")))
+          ;; --- restarts: what a signaller stands inside ------------------------
+          (or (mapcar (lambda (e)
+                        (make-item :label (string-downcase (princ-to-string (getf e :name)))
+                                   :detail (format nil "in ~(~a~)" (getf e :in))
+                                   :kind :restart :group "restarts"
+                                   :subject (subj-defn (getf e :in))))
+                      (getf i :restarts))
+              (list (make-item :label "(no restart-case around a signalling site)"
+                               :group "restarts")))
+          ;; --- and the honest footnote ----------------------------------------
+          (list (make-item
+                 :label "static approximation — the live debugger is the authority"
+                 :detail "lexical scan of recorded source; SBCL's own source is not shipped"
+                 :group "note")))))))
+
+(defmethod commands-for ((s subj-condition))
+  (let ((type (subj-condition-name s)))
+    (remove nil
+      (list (make-command :label "Class view" :surfaces '(:menu :halo)
+                          :target (find-class type nil))
+            (make-command :label "Signal it" :surfaces '(:menu)
+                          :action (lambda () (signal type)))))))
 
 ;;; ---- generic functions: methods, coverage, combination ------------------
 
