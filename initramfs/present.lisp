@@ -35,7 +35,7 @@
 (defstruct view
   "What (present subject) returns — a description, never pixels."
   title
-  (kind :list)           ; :list :source :reference :class :generic :inspector :matrix
+  (kind :list)           ; :list :source :reference :class :generic :inspector :matrix :stage
   (items '())            ; list of ITEM
   text                   ; body text for :source / :reference views
   data                   ; structured payload for a non-text render (a :matrix grid)
@@ -71,6 +71,13 @@
 ;; The Workspace (§3a): a scratch buffer whose verbs eval — Do it / Print it /
 ;; Inspect it — rather than Accept a whole definition. A :workspace view is an
 ;; editable text pane the shell drives; the shell owns the eval, staying pure here.
+(defvar *stage-subject-fn* nil
+  "Set by initramfs/stage.lisp (§3b): (funcall it GF-NAME) -> a stage subject, or NIL.
+
+   present.lisp loads before stage.lisp and must not mention it, but the
+   generic-function view is where a stage has to be offered from — so the dependency
+   is inverted into this one hook rather than reordering the build for a demo.")
+
 (defstruct (subj-workspace (:constructor subj-workspace ())))
 ;; The change set (§6): the definitions Accepted (edited live) this session — a
 ;; browsable list, Smalltalk's Changes. Data comes from CHANGED-DEFINITIONS.
@@ -709,16 +716,25 @@
                         :detail (format nil "~d method~:p" (length methods))
                         :disposition :new-trail
                         :subject (subj-matrix name))
-             (make-item :label "definition source"
-                        :detail "the defgeneric form"
-                        :subject (subj-defn name :generic))
-             (mapcar (lambda (m)
-                       (make-item
-                        :label (method-tuple-label m)
-                        :detail (if (getf m :source) "specialised method" "method (no source)")
-                        :kind :method
-                        :subject (subj-method name (getf m :qualifiers) (getf m :specializers))))
-                     methods)))))
+             (append
+              ;; a GF with a stage (§3b) offers it right under the matrix: the matrix
+              ;; says which pairs HAVE a rule, the stage shows the rules running.
+              (let ((stage (and *stage-subject-fn* (funcall *stage-subject-fn* name))))
+                (when stage
+                  (list (make-item :label "stage"
+                                   :detail "the instances, moving — dispatch made visible"
+                                   :disposition :new-trail
+                                   :subject stage))))
+              (list (make-item :label "definition source"
+                               :detail "the defgeneric form"
+                               :subject (subj-defn name :generic)))
+              (mapcar (lambda (m)
+                        (make-item
+                         :label (method-tuple-label m)
+                         :detail (if (getf m :source) "specialised method" "method (no source)")
+                         :kind :method
+                         :subject (subj-method name (getf m :qualifiers) (getf m :specializers))))
+                      methods))))))
 
 ;;; ---- the Workspace: a scratch buffer with the editor's hands (§3a) --------
 

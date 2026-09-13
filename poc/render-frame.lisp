@@ -52,6 +52,7 @@
   '("initramfs/model.lisp"        ; CLOS/introspection model
     "initramfs/present.lisp"      ; the present / commands-for protocol
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
+    "initramfs/stage.lisp"        ; the COLLIDE stage (§3b) — bodies, dispatch, enact
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
     "poc/textview.lisp"           ; the editable, syntax-colouring text view
     "poc/widgets.lisp"            ; phase 3 toolkit: panel / list / scrollbar / grid
@@ -88,6 +89,7 @@ SUBJECT — what the environment opens on (it becomes tab 1; a Workspace is tab 
 exactly as open-environment does in the guest):
 
   modules                  the module index (the browser's default root)
+  stage[:TICKS]            the COLLIDE stage, stepped TICKS times (default 240)
   module:NAME              one module's definitions   e.g. module:initramfs/model.lisp
   package:NAME             a package's flat definition list      e.g. package:CL-USER
   class:NAME               the class DAG + slots                  e.g. class:STREAM
@@ -148,6 +150,15 @@ OPTIONS
          (rest  (and colon (subseq spec (1+ colon)))))
     (cond
       ((string= head "modules")   (subj-modules))
+      ;; the stage (§3b) is the one subject with STATE: it has to be stepped before it
+      ;; is worth a picture, and its RNG is seeded so N ticks render identically here
+      ;; and in the guest. "stage" alone means 240 ticks (four seconds at sixty a tick).
+      ((string= head "stage")
+       (let ((st (reset-collide-stage))
+             (n (if rest (parse-integer rest) 240)))
+         (setf (stage-w st) 700 (stage-h st) 380)
+         (dotimes (i n) (step-stage st))
+         (subj-stage 'lol.examples:collide)))
       ((string= head "workspace") (subj-workspace))
       ((string= head "changes")   (subj-change-set))
       ((null rest) (error "subject ~s needs an argument — see -h" spec))

@@ -85,7 +85,7 @@
   (case kind
     (:workspace :restart)                  ; amber: a surface, not a definition
     ((:source :reference) :function)
-    ((:matrix :generic) :generic-function)
+    ((:matrix :generic :stage) :generic-function)
     (:class :class)
     (:inspector :variable)
     (t :package)))                         ; a list root is usually a package
@@ -452,6 +452,164 @@
                   '(("click a cell" . "its effective-method onion")
                     (nil . "a dim dot is a real gap in the coverage"))))))
 
+;;; ---- the stage (§3b): instances, moving, dispatching for real ---------------
+;;; The one view whose body changes without input. Everything here reads the stage and
+;;; draws; STEP-STAGE (initramfs/stage.lisp) is the only thing that advances it, driven
+;;; by the browser's poll timeout in fb-browser.lisp. No colour is invented: a sprite is
+;;; :class blue because it is an instance of a class, an impact flashes :method green
+;;; because what you are being shown is a method, and a signal flashes :condition red.
+
+(defparameter +stage-transcript-h+ 92 "Height of the transcript strip under the stage.")
+(defvar *stage-rect* nil "The viewport rect (x y w h) of the last stage drawn, for clicks.")
+
+(defun stage-sprite-points (b)
+  "The silhouette of body B in model space, as a list of (x . y) — scaled to its own
+   radius, unrotated. Class identity is carried by SHAPE, which is what frees colour to
+   keep meaning what it means everywhere else in the environment."
+  (let ((r (body-r b)))
+    (flet ((p (fx fy) (cons (round (* r fx)) (round (* r fy)))))
+      (ecase (body-kind b)
+        ;; a chevron with a notched tail — a thing with a front
+        (:ship (list (p 1 0) (p -0.65 0.68) (p -0.32 0) (p -0.65 -0.68)))
+        ;; a narrow dart: all nose, no body
+        (:missile (list (p 1.5 0) (p -1 0.5) (p -0.5 0) (p -1 -0.5)))
+        ;; an irregular rock, its jitter fixed per instance so it tumbles rather than boils
+        (:asteroid
+         (loop for m in (or (body-poly b) '(100 100 100 100 100 100 100 100 100))
+               for i from 0
+               for th = (/ (* 2 pi i) (length (body-poly b)))
+               collect (cons (round (* r (/ m 100.0) (cos th)))
+                             (round (* r (/ m 100.0) (sin th))))))
+        ;; a hexagon: built, not born
+        (:station
+         (loop for i below 6
+               for th = (/ (* 2 pi i) 6)
+               collect (cons (round (* r (cos th))) (round (* r (sin th))))))))))
+
+(defun stage-body-color (b stage)
+  "A body's outline colour. Flash wins (it is the whole point of the frame it appears
+   in), then selection, then the plain :class blue every instance wears."
+  (cond ((plusp (body-flash b))
+         (concept-color (if (eq (body-flash-kind b) :condition) :condition :method)))
+        ((eq b (stage-selected stage)) *ui-accent*)
+        (t (concept-color :class))))
+
+(defun draw-stage-sprite (canvas b stage ox oy)
+  "One body, rotated to its facing and translated into the viewport at OX,OY."
+  (let* ((color (stage-body-color b stage))
+         ;; the classes with a front point where they are going; the rest tumble
+         (th (if (member (body-kind b) '(:ship :missile))
+                 (atan (body-vy b) (body-vx b))
+                 (/ (body-rot b) 1000.0)))
+         (c (cos th)) (sn (sin th))
+         (pts (mapcar (lambda (p)
+                        (cons (+ ox (body-x b) (round (- (* (car p) c) (* (cdr p) sn))))
+                              (+ oy (body-y b) (round (+ (* (car p) sn) (* (cdr p) c))))))
+                      (stage-sprite-points b))))
+    (lol.canvas:draw-poly canvas pts color)
+    ;; the station's ring and core — a hexagon alone reads as a rock
+    (when (eq (body-kind b) :station)
+      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
+                              (round (* (body-r b) 42) 100) color)
+      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b)) 3 color :fill t))
+    ;; a survived hull breach is a scar the ship keeps wearing
+    (when (body-breached b)
+      (lol.canvas:draw-line canvas
+                            (+ ox (body-x b) -4) (+ oy (body-y b) -5)
+                            (+ ox (body-x b) 7)  (+ oy (body-y b) 4)
+                            (concept-color :condition)))
+    ;; the selection halo
+    (when (eq b (stage-selected stage))
+      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
+                              (+ (body-r b) 8) *ui-accent*))
+    ;; NAME is a slot reader, not a caption — it is drawn because the transcript names
+    ;; the same string, and the eye has to be able to join the two.
+    (lol.canvas:draw-string canvas *bfont* (lol.examples:name (body-obj b))
+                            (+ ox (body-x b) (body-r b) 6)
+                            (+ oy (body-y b) -6)
+                            (if (eq b (stage-selected stage)) *ui-accent* *ui-dim*))))
+
+(defun draw-stage-transcript (canvas stage x y w h)
+  "The tail of the transcript, oldest at the top. Each line is coloured by what it
+   records: a value in :method green, an absent direction in :condition red, a
+   disagreement in amber."
+  (lol.canvas:fill-rect canvas x y w 1 *ui-rule*)
+  (lol.canvas:draw-string canvas *bfont* "TRANSCRIPT" x (+ y 5) *ui-dim*)
+  (let* ((rows (max 1 (floor (- h 22) 14)))
+         (tail (reverse (subseq (stage-transcript stage)
+                                0 (min rows (length (stage-transcript stage))))))
+         (ty (+ y 20))
+         (maxc (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*)))))
+    (dolist (e tail)
+      (lol.canvas:draw-string canvas *bfont*
+                              (lol.widgets:clip-text (getf e :text) maxc)
+                              x ty
+                              (case (getf e :kind)
+                                (:value (concept-color :method))
+                                (:absent (concept-color :condition))
+                                (:warn *ui-amber*)
+                                (t *ui-dim*)))
+      (incf ty 14))))
+
+(defun draw-stage-body (canvas pane x y w h)
+  "Render a :stage view: the viewport with its sprites, the heads-up line naming what
+   would dispatch next, and the transcript strip along the bottom.
+
+   The stage is told the viewport size here rather than at construction, because the
+   pane is the authority on how much room there is — resize the window and the world
+   gets bigger, which is the behaviour you would want anyway."
+  (let* ((stage (view-data (pane-view pane)))
+         (vh (- h +stage-transcript-h+))
+         (ox x) (oy y))
+    (stage-resize stage (max 80 w) (max 80 vh))
+    (setf *stage-rect* (list x y w vh))
+    (lol.canvas:fill-rect canvas x y w vh !#0E1013)
+    (dolist (b (stage-bodies stage))
+      (draw-stage-sprite canvas b stage ox oy))
+    ;; the heads-up line: compute-applicable-methods asked BEFORE the contact, so the
+    ;; view tells you what will happen rather than only what did
+    (let ((hud (stage-hud-line stage)))
+      (lol.canvas:draw-string canvas *bfont*
+                              (lol.widgets:clip-text hud (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*))))
+                              (+ x 4) (+ y vh -16)
+                              (if (search "will signal" hud) (concept-color :condition) *ui-dim*)))
+    (unless (stage-running stage)
+      (lol.canvas:draw-string canvas *bfont* "PAUSED" (+ x 4) (+ y 4) *ui-amber*))
+    (draw-stage-transcript canvas stage x (+ y vh) w +stage-transcript-h+)))
+
+(defun stage-click (pane px py)
+  "A click in the stage viewport selects the body under the pointer — and a selected
+   body is a subject, so Enter opens the Inspector on the instance itself. NIL when the
+   click missed every sprite (which clears the selection)."
+  (let ((stage (view-data (pane-view pane))))
+    (when *stage-rect*
+      (destructuring-bind (x y w vh) *stage-rect*
+        (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
+          (let ((hit (find-if (lambda (b)
+                                (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
+                                  (<= (+ (* dx dx) (* dy dy))
+                                      (let ((rr (+ (body-r b) 6))) (* rr rr)))))
+                              (reverse (stage-bodies stage)))))
+            (setf (stage-selected stage) hit)
+            t))))))
+
+(defun stage-key (pane key)
+  "The stage's own keys. Returns T when KEY was one of them.
+
+   These are the same verbs COMMANDS-FOR offers on the subject — the keys are the
+   accelerator, the menu is the discoverable form, and neither is the authority."
+  (let ((stage (view-data (pane-view pane))))
+    (case key
+      (#\Space (setf (stage-running stage) (not (stage-running stage))) t)
+      (#\n (step-stage stage) t)
+      (#\s (stage-spawn stage :ship) t)
+      (#\a (stage-spawn stage :asteroid) t)
+      (#\m (stage-spawn stage :missile) t)
+      (#\t (stage-spawn stage :station) t)
+      (#\r (reset-collide-stage)
+           (setf (pane-view pane) (present (pane-subject pane))) t)
+      (t nil))))
+
 (defun matrix-cell-click (pane px py)
   "A click on a dispatch-grid cell -> drill the effective-method onion for that
    (row-class, col-class) pair, building the full argument tuple (T elsewhere) from
@@ -562,13 +720,15 @@
      (lol.textview:tv-draw canvas (pane-tv pane)))
     ((eq (view-kind (pane-view pane)) :matrix)
      (draw-matrix-body canvas pane x y w h))
+    ((eq (view-kind (pane-view pane)) :stage)
+     (draw-stage-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h))))
 
 (defun list-pane-splittable-p (pane)
   "True when PANE is a plain list whose selection has something to preview — the
    condition for the nav split (a list on the left, its selection previewed right)."
   (and (null (pane-tv pane))
-       (not (eq (view-kind (pane-view pane)) :matrix))
+       (not (member (view-kind (pane-view pane)) '(:matrix :stage)))
        (let ((sel (selected-item pane)))
          (and sel (item-subject sel)))))
 
@@ -592,7 +752,7 @@
                               :tint (view-kind-color (pane-view cur))
                               :badge (string-downcase (symbol-name (view-kind (pane-view cur)))))
       (let ((is-list (and (null (pane-tv cur))
-                          (not (eq (view-kind (pane-view cur)) :matrix)))))
+                          (not (member (view-kind (pane-view cur)) '(:matrix :stage))))))
         (cond
           ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right;
           ;; the focused half wears an accent top-rule (SuperL-o moves focus).
@@ -640,6 +800,9 @@
                              ((workspace-pane-p cur)
                               '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
                                 ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")))
+                             ((eq (view-kind (pane-view cur)) :stage)
+                              '(("spc" . "run/pause") ("n" . "step") ("s/a/m/t" . "spawn")
+                                ("r" . "reset") ("click" . "select")))
                              ((editable-pane-p cur) '(("C-c C-c" . "accept")))
                              ((pane-side cur)
                               '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
@@ -912,6 +1075,12 @@
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) :quit)
          (t nil)))
+      ;; --- the stage (§3b): its own verbs, before the list keys, because a stage has
+      ;;     no rows for up/dn to move and letters here mean "spawn one of those". ---
+      ((and (eq (view-kind (pane-view p)) :stage)
+            (not (lol.canvas:ctrl-p state))
+            (stage-key p key))
+       nil)
       ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
       ;;     SuperL-o (above) hands focus back to the list. ---
       ((and *editing-side* (pane-side p)) (edit-pane-key (pane-side p) key state))
@@ -1067,6 +1236,9 @@
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
+      ;; the stage: a click selects the instance under the pointer
+      ((eq (view-kind (pane-view p)) :stage)
+       (stage-click p x y))
       ;; nav-split preview column: a matrix preview is LIVE — clicking a cell drills its
       ;; effective-method onion straight from here (no need to open the matrix first); a
       ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed

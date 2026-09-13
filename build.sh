@@ -60,6 +60,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/model.lisp"        # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
   "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
+  "$INITRAMFS_DIR/stage.lisp"        # the COLLIDE stage (S3b): bodies, both-ways dispatch, eql enact
   "$POC_DIR/canvas.lisp"             # pixel buffer + font + draw-string + modifier predicates
   "$POC_DIR/textview.lisp"           # editable text view (uses canvas)
   "$POC_DIR/widgets.lisp"            # phase 3 toolkit: panel/list/scrollbar/grid/card (uses canvas)
