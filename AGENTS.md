@@ -29,6 +29,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
+| `check-scroll.py` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. Its `Qmp.hold` and `Repl.probe` are the reusable half for any other guest assertion. |
 | `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the `code-browser.org` illustrations (`--scenes` lists them). |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
@@ -176,7 +177,8 @@ protocol in a tiled, keyboard-first shell. Progress:
    list/source/matrix views, and **live editing** (`C-c C-c` compiles a definition
    into the running image and updates the registry). Trail **tabs** and the
    **Spotter** (§4¾) have landed too — `poc/shell.lisp:draw-tabs`,
-   `initramfs/fb-browser.lisp:draw-spotter`.
+   `poc/shell.lisp:draw-spotter-card` (its drawing; only the modal input loop is in
+   `initramfs/fb-browser.lisp`).
 6. **Phase 4a — the Lisp-native views** — *DONE*. Generics: dispatch matrix,
    clickable cells, effective-method onion. Conditions: the *static* face
    (`subj-condition` in `present.lisp`, `condition-info` in `model.lisp`) — anatomy,

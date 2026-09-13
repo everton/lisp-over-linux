@@ -148,6 +148,13 @@ wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugge
 here), and anything about =present-fb= itself. Its module index is correspondingly a
 subset of the guest's.
 
+For the half it cannot reach there is [[file:../check-scroll.py][=check-scroll.py=]] in the project root: it boots
+the real image and asserts what the machine *does* with real input — QMP keys and
+genuine evdev =REL_WHEEL= records — reading =pane-top= / =pane-sel= / =tv-scroll=
+back over the net REPL rather than guessing from pixels. The two harnesses divide
+the work cleanly: =render-frame.lisp= for how a frame looks, =check-scroll.py= for
+how the machine behaves.
+
 * Known rough edges (it is a POC)
 
 - The framebuffer path pushes a *full frame* per present (no damage tracking) and
@@ -159,23 +166,24 @@ subset of the guest's.
 
 ** Browser shell — known gaps / TODO (=shell.lisp=, =run-browser.lisp=)
 
-- *Scrolling — done in the guest, still owed on the host.* PageUp/PageDown and the
-  mouse wheel work on the framebuffer: =tv-wheel= scrolls a text pane's viewport
-  without moving the caret, =move-page= pages the caret, and =read-mouse= decodes
-  =REL_WHEEL= into =browser-scroll= (=+wheel-lines+= = 3 lines a notch). Two gaps
-  The X11 runners handle it too: X delivers the wheel as button 4/5 press events,
-  which =run-browser.lisp= and =run-editor.lisp= now route to =browser-scroll= /
-  =tv-wheel=. /Verified in the booted guest over QMP against the browser's own
-  state — ten assertions, all passing (see [[file:../doc/code-browser.org][code-browser.org]], phase 5)./
-  *A list pane now has a viewport of its own* too, since =lol.widgets:draw-list=
-  landed: the wheel moves the viewport and leaves the selection alone (scrolling is
-  looking), and touching the selection re-attaches the view to it. See
-  [[file:../doc/input.org][doc/input.org]] §6 for the wheel end to end.
+- *Scrolling — DONE, on both backends.* =tv-wheel= scrolls a text pane's viewport
+  without moving the caret, =move-page= pages the caret, and a list pane has a
+  viewport of its own (=lol.widgets:draw-list=): the wheel moves it and leaves the
+  selection alone — scrolling is /looking/ — while touching the selection
+  re-attaches the view to it. The guest decodes evdev =REL_WHEEL= in =read-mouse=;
+  X delivers the wheel as button 4/5 press events, which =run-browser.lisp= and
+  =run-editor.lisp= route to =browser-scroll= / =tv-wheel=. =+wheel-lines+= (3 lines
+  a notch) lives in =shell.lisp= so both backends share it. /Verified in the booted
+  guest over QMP against the browser's own state — twelve assertions, all passing
+  (see [[file:../doc/code-browser.org][code-browser.org]], phase 5)./ See [[file:../doc/input.org][doc/input.org]] §6-7 for the wheel end to
+  end on both backends.
 - Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
-  [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (=draw-spotter=), candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note the
-  Spotter and the debugger are summoned through =fb-browser.lisp=, so they exist
-  only in the *guest*: the host X11 runner reaches them via =(fboundp …)= and
-  simply does nothing if that file was not loaded.
+  =draw-spotter-card= here too, candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note that only the
+  Spotter's *input loop* lives in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] — its drawing moved into
+  =shell.lisp= with the rest of the shell's, which is what lets =render-frame.lisp=
+  render the palette on the host (=--spotter Q=). Summoning it, and the debugger,
+  still needs the guest: the host X11 runner reaches them via =(fboundp …)= and
+  simply does nothing when that file was not loaded.
 - *Jump-to-definition — done for the mouse* (=shell.lisp=: =jump-to-definition=,
   =click-token=, =resolve-symbol=): =Ctrl-click= a symbol in a source pane resolves
   it (=find-symbol=, so a typo can't intern) and drills into its definition on a new

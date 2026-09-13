@@ -676,7 +676,7 @@ Drawn: [[file:../media/agent-indicator-design.html][media/agent-indicator-design
 the whole 1280×800 frame. Two findings from drawing it rather than describing it:
 
 - *The colours need no new palette entries.* Authority maps onto meanings the
-  shell already carries: teal =*sh-accent*= = safe, amber =*sh-amber*= = "a
+  shell already carries: teal =*ui-accent*= = safe, amber =*ui-amber*= = "a
   restart wants you", red =*dbg-red*= = "a condition, look here". Deliberately
   *not* the green of =:method= — the agent is not a kind of definition, and
   stealing a semantic colour would be a lie.

@@ -1,12 +1,11 @@
 #+TITLE: The Code Browser — a Smalltalk browser that is honest about Lisp
 #+STARTUP: showall
 
-Status: *LARGELY IMPLEMENTED AND RUNNING.* Phases 0, 1, 2, 3a, 4, 4a (generics),
-5 and 6 are done: the browser runs full-screen on =/dev/fb0= as PID 1 (=b= at the
-supervisor menu), browses and *edits* its own source, and carries a live
-debugger. Still owed: phase 3's remaining widgets, phase 4a's static condition
-view, and phase 5's scrolling gaps — §8 tracks all of it per phase and is the
-authoritative status.
+Status: *IMPLEMENTED AND RUNNING.* Phases 0-6 are all done: the browser runs
+full-screen on =/dev/fb0= as PID 1 (=b= at the supervisor menu), browses and
+*edits* its own source, scrolls, carries a live debugger, and has a widget
+toolkit under it. Phase 7 (Morphic) is the only one left, and it is open horizon
+rather than a plan. §8 tracks it per phase and is the authoritative status.
 
 /(This line read "PLAN ONLY — nothing implemented" until 2026-08-09, long after
 the fact. The §8 phase list was kept current throughout; the header was not.
@@ -1209,6 +1208,80 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
 - *Resolution* is whatever the firmware set (efifb cannot modeset — [[file:framebuffer.org][framebuffer.org
   §6]]). 1280x800 in QEMU. The layout must be resolution-agnostic; do not hardcode.
 
+** 6.4 What it looks like — the visual conventions
+
+Everything below is one decision applied consistently: *colour carries meaning, and
+nothing else does.* The font has one weight and 256 glyphs, so bold, italic and
+icons are all unavailable; hue, position and a hairline are the entire vocabulary.
+The palette lives in [[file:../poc/widgets.lisp][=poc/widgets.lisp=]] so a widget and its caller cannot drift
+apart, and the concept half comes verbatim from the mock-ups
+([[file:../media/lisp-concepts-visual.html][media/lisp-concepts-visual.html]]).
+
+*The semantic palette — one colour per Lisp concept*, so a package of 350
+definitions reads by colour rather than as a grey wall:
+
+| concept                        | colour     |                                    |
+|--------------------------------+------------+------------------------------------|
+| package, module                | =#FFCB6B=  | gold                               |
+| function, symbol               | =#7FDBCA=  | teal                               |
+| generic function, method       | =#A8FF78=  | green                              |
+| macro, compiler-macro          | =#C792EA=  | purple                             |
+| class, struct, type            | =#89DDFF=  | blue                               |
+| *subclass*                     | =#5E93AD=  | the same blue, dimmed — a class seen from ABOVE |
+| condition                      | =#FF6B6B=  | red                                |
+| restart, variable, constant    | =#FF9F43=  | amber                              |
+
+A kind with no entry falls back to plain text. =subclass= is the one addition to the
+mock-up's list: in a class view the supers are where you came from and the subs are
+where you may go, and the eye should separate those two blocks without reading the
+detail column.
+
+*The chrome palette* is deliberately narrow — =#14161A= page, =#1B1E24= pane,
+=#242931= header band, =#2E343D= hairline, =#D6D3C8= text, =#6B727D= dim,
+=#7FDBCA= accent (focus), =#2F4F4A= selected ground, =#FF9F43= "opens elsewhere".
+
+*One trap, worth stating because it cost a frame to find:* the accent =#7FDBCA= is
+*also* the function concept colour. Highlighting part of a row in the accent
+therefore highlights nothing at all on exactly the rows you most often search —
+which is what the Spotter's matched-character lighting did at first. Emphasis on a
+row must be =*ui-lit*= (white), the one value brighter than every concept colour.
+
+*A row is: stripe · label · detail · marker.* A 3px kind-coloured stripe at the left
+edge; the label in that same colour; the detail right-aligned and dim (or run on
+after the label when it will not fit); and =»= at the right when drilling the row
+opens something — amber when it opens *elsewhere* (a new trail), dim when it opens
+in place. The selected row gets a filled ground plus an accent left edge. An
+inspector row is the exception: it is a name/value *table*, so the value gets its
+own column, a rule, and full-strength text — it is what you came to read.
+
+*Sections are hairlines, not headings.* A view whose items carry a =GROUP= is drawn
+as ruled blocks with the group's name let into the rule. That is what turns
+"superclass, superclass, subclass, subclass, slot" from a wall of near-identical
+lines into three legible groups, and it is how the condition view separates
+anatomy / signallers / handlers / restarts and the onion separates its four phases.
+
+*Rows are 20px* (=lol.widgets:+row-h+=). 17 — the 6x15 cell plus two — was legible
+and airless: forty rows of solid text with nothing for the eye to travel along. The
+text offset is *derived* from the row height and the font's own height rather than
+hard-coded, so retuning it is a one-line change and nothing drifts off its
+highlight.
+
+*Source panes* use the same concept colours where they can: purple for keywords and
+special forms, green for the name a =def= form introduces, teal for a form's head
+symbol, amber for numbers, =#A8D078= for strings. The two pieces of *furniture* are
+deliberately quieter than the code — the line-number gutter is =#3A414B= and
+comments are =#6B727D=, the UI's own dim grey. A comment is prose *about* the code
+and should recede to the level of a detail column rather than compete in a green of
+its own.
+
+*The >255 rule governs every glyph choice.* =draw-glyph= indexes the font by
+=(logand (char-code c) #xff)=, so any codepoint above 255 wraps to a different
+glyph — =…= (8230) blits as =&=. Latin-1 is fully present, so =× » « · ¾= are safe
+and are what the chrome uses; the mock-up's =⌕ ▶ ↳ ↩ ◂ ⊕ ▾ ▷ ⚡= are not, and each is
+rendered as colour, position or a Latin-1 substitute instead. Elisions are =".."=.
+[[file:fonts.org][fonts.org]] has the whole glyph path; [[file:../poc/bdf2font.py][=bdf2font.py=]] can add glyphs if one is ever
+truly needed.
+
 * 7. Prerequisite: we should finally use packages
 
 /(Partly overtaken by events — see §4⅔. Kept because the reasoning still holds
@@ -1382,13 +1455,13 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   form → recompiled into the running image; Accept an invalid form → the error is
   shown. The modifier split keeps it collision-free — Backspace deletes, =SuperL-←=
   steps back (§4¾).
-  [TABS + SPOTTER DONE — =draw-tabs= in [[file:../poc/shell.lisp][poc/shell.lisp]], =draw-spotter= /
-  =spotter-row-at= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]], candidates from =spotter-candidates= /
-  =spotter-filter= in [[file:../initramfs/present.lisp][present.lisp]]] §4¾'s multiple trails are real: a tab strip
+  [TABS + SPOTTER DONE — =draw-tabs= and =draw-spotter-card= / =spotter-row-at*= in
+  [[file:../poc/shell.lisp][poc/shell.lisp]], the modal input loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]], candidates from
+  =spotter-candidates= / =spotter-filter= in [[file:../initramfs/present.lisp][present.lisp]]] §4¾'s multiple trails are real: a tab strip
   across the top (=1 • package common-lisp-user=, =2 • workspace=, =+= for a new
   trail), and the Spotter as a floating palette over the dimmed browser — type to
   filter ranked results, ↵ opens the pick in a trail, Esc dismisses. Clicks route
-  through =*spotter-card*= to the right row.
+  through =*spotter-hits*= — the hit map the draw recorded — to the right row.
   /Milestone reached in part: browse the browser, edit it live./ Confirmed *less*
   work than the old plan: one accordion shell + N =present= methods.
 - *Phase 4a — the two Lisp-native views* (§3), as =present= methods on the
@@ -1405,7 +1478,23 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   gap), and *clicking a cell drills the effective-method onion for that (row,col)
   class pair* — the tuple built from the matrix's arity + axis positions
   (=matrix-cell-click=). A degraded (0/1/3-axis) matrix has no grid to click and
-  stays text. The onion still renders as text in a =:reference= pane.
+  stays text. The grid carries a *caption* directly under it — "click a cell · its
+  effective-method onion · a dim dot is a real gap in the coverage" — because
+  clicking a cell is the *only* way into the onion and an affordance nothing
+  announces may as well not exist; the design mock-up spells out the same line
+  ("effective method — select a cell…"). Overflow is reported on both axes: when
+  the columns or the rows do not fit, the grid gives up a line to say =.. +N=, since
+  a coverage view that simply stops is indistinguishable from one that is complete.
+  *The onion is a browsable list*, sectioned by phase in execution order — around /
+  before / primary / after — with its method count in the title (=· 4 combine=). Two
+  details carry the meaning that a flat list cannot. The *one* primary the call
+  actually enters is marked "THE call — the most specific primary", the rest
+  "next in the chain, only if call-next-method": that is the difference between a
+  list of candidates and a picture of what happens. And a final *unwind* band
+  repeats the =:around= methods in reverse, because an =:around= is the only layer
+  that runs *twice* — once going in, once coming out around its own
+  =call-next-method= — and a list that shows it once cannot say so. The mock-up
+  draws the same closing row (=:around ↩ restore=).
   /Verified in the guest: a 3x4 =demo-op= grid shows the right counts; clicking the
   (integer,string) cell opens its onion — primary chain =(integer string) ->
   (number string)=, the two applicable methods most-specific-first./
@@ -1495,6 +1584,8 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   source pane wheel-down x3 takes =tv-scroll= 0->9 (exactly 3 x =+wheel-lines+=),
   wheel-up x1 back to 6, with =tv-point-line= unmoved at 0 throughout, and PageDown
   then moves point to 39. Twelve assertions, all passing./
+  /The check is reproducible: [[file:../check-scroll.py][=./check-scroll.py=]] boots the image, runs all twelve, and
+  exits non-zero if any fails./
   /Two things that quietly made earlier versions of that test prove nothing, both
   worth remembering when writing the next one: the *module index* was the obvious
   list to test on, and it is nineteen rows — it fits entirely on an 800-line screen,
