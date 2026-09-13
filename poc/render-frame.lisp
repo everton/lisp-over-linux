@@ -298,7 +298,7 @@ OPTIONS
       (if *spotter-query*
           ;; the Spotter draws the browser itself, as its backdrop
           (let* ((cands (spotter-candidates))
-                 (hits (spotter-filter *spotter-query* cands)))
+                 (hits (spotter-results *spotter-query* cands)))
             (draw-spotter-card canvas w h *spotter-query* hits 0))
           (draw-browser canvas w h))
       (write-ppm canvas out)

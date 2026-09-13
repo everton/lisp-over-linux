@@ -120,7 +120,23 @@ matrix cell's onion:
   -k "down S-ret"           # open the selection BESIDE the list (the editable split)
   -k "click:180,92"         # click a dispatch-matrix cell -> its effective-method onion
   -k "s-2"                  # SuperL-2: switch to the Workspace tab
+  -k "wheel:20"             # scroll the viewport (the selection stays where it was)
 #+end_src
+
+*The Spotter too.* =--spotter QUERY= draws the palette over whatever subject you
+named, filtered by QUERY — so the finder can be looked at without booting the guest
+and holding down Super:
+
+#+begin_src sh
+  sbcl --script poc/render-frame.lisp modules --spotter coll   # 9 matches, banded
+  sbcl --script poc/render-frame.lisp modules --spotter ""     # the recents band
+#+end_src
+
+That works because the Spotter's *drawing* lives in =shell.lisp= with the rest of the
+shell's; only its modal input loop is in =fb-browser.lisp=. The same split is why the
+palette's colours could be fixed by looking at a frame rather than by guessing: the
+matched characters were being lit in the accent, which is also every function row's
+colour, so the highlight was invisible on exactly the rows that matter.
 
 The canvas is redrawn between script steps, because clicks hit-test against
 geometry that =draw-browser= records as it draws (=*crumb-rects*=, =*content-top*=,
@@ -128,9 +144,9 @@ geometry that =draw-browser= records as it draws (=*crumb-rects*=, =*content-top
 draw/hit-test agreement a real one does, instead of testing a stale layout.
 
 *What it does NOT cover*, and still needs the guest: input plumbing (evdev, the
-wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the Spotter and the debugger (both live in
-=fb-browser.lisp=, which is not loaded here), and anything about =present-fb= itself.
-Its module index is correspondingly a subset of the guest's.
+wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugger (=fb-browser.lisp=, not loaded
+here), and anything about =present-fb= itself. Its module index is correspondingly a
+subset of the guest's.
 
 * Known rough edges (it is a POC)
 

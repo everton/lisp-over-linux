@@ -186,6 +186,25 @@
   group       ; section label (a string) or NIL; consecutive equal groups are one block
   match)      ; a query string whose characters should be lit inside LABEL, or NIL
 
+(defun light-match (canvas x y label query)
+  "Re-draw, lit, the characters of LABEL that QUERY matched — the same
+   greedy left-to-right subsequence the filter used to accept the row. Showing WHY a
+   row matched is most of what makes a fuzzy finder feel honest rather than magical;
+   the design mock-up bolds them, and with one weight of bitmap type colour is the
+   available emphasis.
+
+   Monospace is assumed, as everywhere else that maps characters to pixels here: the
+   nth character is n advances along. LOL.TEXTVIEW makes the same assumption and says
+   so in the same words."
+  (let ((qi 0) (ql (length query)) (cw (lol.canvas:font-cw *font*)))
+    (when (plusp ql)
+      (loop for i below (length label)
+            while (< qi ql)
+            do (when (char-equal (char label i) (char query qi))
+                 (lol.canvas:draw-string canvas *font* (string (char label i))
+                                         (+ x (* i cw)) y *ui-lit*)
+                 (incf qi))))))
+
 (defun draw-row (canvas x y w row selected &key value-col)
   "One row, at the row's TOP-left. SELECTED paints the ground and a focus edge.
 
@@ -228,25 +247,6 @@
         ;; » = "drilling this opens something"; amber when it opens ELSEWHERE
         (lol.canvas:draw-string canvas *font* (string (code-char #xBB)) marker-x ty
                                 (if (eq (row-marker row) :bright) *ui-amber* *ui-dim*))))))
-
-(defun light-match (canvas x y label query)
-  "Re-draw, lit, the characters of LABEL that QUERY matched — the same
-   greedy left-to-right subsequence the filter used to accept the row. Showing WHY a
-   row matched is most of what makes a fuzzy finder feel honest rather than magical;
-   the design mock-up bolds them, and with one weight of bitmap type colour is the
-   available emphasis.
-
-   Monospace is assumed, as everywhere else that maps characters to pixels here: the
-   nth character is n advances along. LOL.TEXTVIEW makes the same assumption and says
-   so in the same words."
-  (let ((qi 0) (ql (length query)) (cw (lol.canvas:font-cw *font*)))
-    (when (plusp ql)
-      (loop for i below (length label)
-            while (< qi ql)
-            do (when (char-equal (char label i) (char query qi))
-                 (lol.canvas:draw-string canvas *font* (string (char label i))
-                                         (+ x (* i cw)) y *ui-lit*)
-                 (incf qi))))))
 
 (defun draw-section-header (canvas x y w label)
   "A section header: a hairline across the pane, broken by the group's name. The

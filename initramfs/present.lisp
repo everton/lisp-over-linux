@@ -206,14 +206,42 @@
                *registry*))
     (nreverse out)))
 
+(defvar *spotter-recents* '()
+  "The subjects most recently opened, newest first, as Spotter candidate plists. The
+   design mock-up (§1) says the thing you were just reading is always one click away
+   \"as a tab, a breadcrumb crumb, or in the Spotter's recents\" — this is that third
+   answer. Filled by the shell as it opens panes; capped, because a finder's job is to
+   be short.")
+
+(defparameter +recents-kept+ 8)
+
+(defun note-recent (subject label &optional detail)
+  "Record that SUBJECT was just opened, for the Spotter's recents. Deduped by LABEL —
+   revisiting something should move it up the list, not add a second copy."
+  (ignore-errors
+    (setf *spotter-recents*
+          (cons (list :label (string-downcase (princ-to-string label))
+                      :detail (or detail "recent") :group "recent" :subject subject)
+                (remove (string-downcase (princ-to-string label)) *spotter-recents*
+                        :key (lambda (c) (getf c :label)) :test #'string=)))
+    (when (> (length *spotter-recents*) +recents-kept+)
+      (setf *spotter-recents* (subseq *spotter-recents* 0 +recents-kept+)))))
+
 (defun spotter-filter (query candidates &optional (limit 200))
   "The CANDIDATES matching QUERY, best-first, capped at LIMIT. Match is a
    case-insensitive subsequence; rank is exact > prefix > word-boundary > plain, ties
    broken by shorter label then alphabetically. An empty QUERY returns all, sorted
    alphabetically (also capped)."
   (if (zerop (length query))
-      (let ((sorted (sort (copy-list candidates) #'string-lessp
-                          :key (lambda (c) (getf c :label)))))
+      ;; A fresh Spotter opens on your RECENTS, then everything else alphabetically.
+      ;; With no query there is nothing to rank by, and "where was I" is the only
+      ;; question an empty finder can usefully answer.
+      (let* ((recent-labels (mapcar (lambda (c) (getf c :label)) *spotter-recents*))
+             (rest (sort (remove-if (lambda (c) (member (getf c :label) recent-labels
+                                                        :test #'string=))
+                                    (copy-list candidates))
+                         #'string-lessp :key (lambda (c) (getf c :label))))
+             (sorted (append *spotter-recents* rest)))
         (if (> (length sorted) limit) (subseq sorted 0 limit) sorted))
       (let ((scored '()))
         (dolist (c candidates)
@@ -328,8 +356,12 @@
   (let ((name (subj-defn-name d)))
     (remove nil
       (list
+       ;; M-, not M-. — M-. is jump-to-definition (SLIME's meaning, and what the
+       ;; shell actually binds). This command advertised M-. for Senders while the
+       ;; shell used it for the jump, so the one key the status line named was the
+       ;; one key that did something else.
        (when (fboundp name)
-         (make-command :label "Senders" :key "M-." :surfaces '(:menu :key :halo)
+         (make-command :label "Senders" :key "M-," :surfaces '(:menu :key :halo)
                        :target (subj-xref :senders name)))
        (when (fboundp name)
          (make-command :label "Disassemble" :surfaces '(:menu)

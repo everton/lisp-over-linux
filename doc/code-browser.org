@@ -446,7 +446,7 @@ arguments, so its coverage really is a grid — rows and columns are the
 specializer classes, each cell holds the primary-method count, and a dim =·= is a
 genuine gap where nobody wrote a rule:
 
-[[file:../media/screenshots/matrix-2026-08-10.png]]
+[[file:../media/screenshots/matrix-2026-09-13.png]]
 
 /The dispatch matrix for =collide=. Reproduce with
 =./refresh-screenshot.sh --scene matrix=./
@@ -595,7 +595,7 @@ for =*standard-output*= during a Do-it.
 *Built* — =p= at the supervisor menu. The buffer opens on its own cheatsheet, and
 the four verbs sit in the status bar:
 
-[[file:../media/screenshots/workspace-2026-08-10.png]]
+[[file:../media/screenshots/workspace-2026-09-13.png]]
 
 /The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
@@ -684,7 +684,7 @@ the drill path.
 *Built.* A package view is one expanded list with the selected definition's
 source shown beside it — here =CL-USER= (=l= at the supervisor menu):
 
-[[file:../media/screenshots/package-2026-08-10.png]]
+[[file:../media/screenshots/package-2026-09-13.png]]
 
 /The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it.
 =./refresh-screenshot.sh --scene package=./
@@ -825,7 +825,7 @@ Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that ga
   helper that takes a predicate, so the package and module views cannot drift
   apart in look, sort order or tinting — the predicate is their only difference.
 
-[[file:../media/screenshots/modules-2026-08-10.png]]
+[[file:../media/screenshots/modules-2026-09-13.png]]
 
 /The module index — the browser's default root (=b= at the supervisor menu):
 each module with its definition count, the selected one previewed beside. Keys
@@ -935,7 +935,11 @@ next to the tabs that already list them. Future areas — a process/thread monit
 the supervisor, meminfo — arrive the same way and appear as one more pinned tab.
 
 *The FB shell, concretely* (see the mock-up): a single *tab strip* of open trails
-across the top — numbered, ad-hoc and pinned alike — the current trail's
+across the top — numbered, ad-hoc and pinned alike, each with a × and a
+kind-coloured stripe, and each labelled by its *subject* rather than its view title
+(=short-title=: the mock-up's tabs read =draw=, =parse-headers=, =Playground=, and a
+tab that spent its sixteen characters on the word "package" and then clipped the
+package's name would be exactly backwards — the kind is already the stripe) — the current trail's
 *accordion* filling the rest, and the *Spotter* as the one summoned overlay
 (modal, momentary — it earns its float, and is fully opaque over a dimmed stage).
 Everything else is tiled, full width; the mouse is an accelerant, not a
@@ -944,14 +948,44 @@ Spotter is a *dense* palette — results grouped (definitions, packages/files, l
 objects), each with a one-line descriptor and a kind tag, the match highlighted —
 not a sparse box.
 
-*Keybindings — two non-colliding layers, and no permanent hint chrome.* =SuperL=
+*Built, and it is that dense palette now.* =draw-spotter-card= in [[file:../poc/shell.lisp][poc/shell.lisp]]:
+results *banded* into recent / definitions / packages & files / surfaces, each row
+kind-coloured, a live match count in the header, a footer saying what the keys do,
+and *the characters your query matched lit* inside each label. The lighting is the
+mock-up's bold, in the only emphasis a single-weight bitmap font has — and it is
+*white*, not the accent, because the accent (=#7FDBCA=) is also every function row's
+colour, so an accent highlight on a function name highlights nothing. That was
+visible in the first rendered frame and invisible in the description.
+Two structural notes. The banding *does not disturb the ranking*: =spotter-band=
+keeps each group in rank order and orders the GROUPS by their own best member, so
+the top row is still the best match overall — which matters, because that is the row
+=↵= opens. And an *empty* query opens on your *recents* (=note-recent=, filled by
+=trail-push= / =new-trail=), since "where was I" is the only question an empty finder
+can usefully answer.
+The Spotter's *drawing* lives in the shell with the rest of the shell's drawing;
+only the modal input loop is in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]. That is phase 3's rule applied to
+the last surface that ignored it, and it pays immediately: the palette can be
+rendered on the host — =sbcl --script poc/render-frame.lisp modules --spotter coll= —
+instead of being verifiable only by booting the guest and holding down Super.
+
+*Keybindings — two non-colliding layers.* =SuperL=
 (the WM/StumpWM modifier) owns *spatial* navigation; =Ctrl/Meta= owns *editing and
 semantic actions* inside the focused panel. They never fight — the shell layer and
 the Emacs layer are disjoint by modifier. (Chosen with the user, whose StumpWM
-already uses =SuperL-n= this way.) *None of these are shown on screen*: pressing
-=SuperL-?= summons a *cheatsheet overlay styled like the Spotter* listing them all;
-the only persistent hint is the small trail *number badge* on each tab (which maps
-to =SuperL-n=).
+already uses =SuperL-n= this way.) Pressing =SuperL-?= summons a *cheatsheet overlay
+styled like the Spotter* listing them all, and the trail *number badge* on each tab
+maps to =SuperL-n=.
+
+/A deliberate divergence from the mock-up, recorded here because it is a choice and
+not an oversight./ The design says "no permanent hint chrome" and shows a bare
+status area. We kept a *contextual* status line, for two reasons the design could
+not have known: it is where transient results already have to go (an Accept's
+outcome, a Do-it's value, a completion list), so the space is not free to reclaim;
+and the hints it shows are *specific to the focused pane* — a list offers =ret drill=
+where a Workspace offers =C-x C-e Do it= — which is a different thing from a fixed
+cheatsheet bar. The chord tokens are coloured and the prose dim, so it reads as keys
+rather than as a sentence, and =SuperL-?= is one of the hints, pointing at the full
+list where the design puts it.
 
 | =SuperL= — spatial                | does                                  |
 |-----------------------------------+---------------------------------------|
@@ -961,13 +995,18 @@ to =SuperL-n=).
 | =SuperL-Space=                    | the Spotter                           |
 | =SuperL-↵= / =SuperL-click=       | open the selection in a NEW trail      |
 | =↵=                              | drill in place (same trail)            |
-| =SuperL-←= / =SuperL-→=           | back / forward in the drill history    |
+| =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
 | =↑= / =↓=                        | move the selection within a panel      |
 | =SuperL-w= · =Esc=               | close the trail · dismiss the Spotter/overlay |
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
 =C-c C-c= Accept, =C-x C-e= Do it, =C-c C-p= Print it, =C-c C-i= Inspect it, =M-.=
-/ =M-,= jump-to-definition / Senders, and the text-view's own =C-a/C-e/C-k/…=
+/ =M-,= jump-to-definition / Senders (both resolve the token at point through the
+same =token-at-point=, so anything you can jump to you can also ask who calls; note
+=M-.= is SLIME's jump rather than the mock-up's Senders, and =commands-for= used to
+advertise =M-.= for Senders while the shell bound it to the jump — the one key the
+status line named was the one key that did something else), and the text-view's own
+=C-a/C-e/C-k/…=
 editing. *Emacs-native motion and selection are in* [[file:../poc/textview.lisp][poc/textview.lisp]]: =C-←/→= and
 =M-b/M-f= move by word (a whole Lisp token); *Shift + any motion* extends the
 selection; =C-SPC= sets the mark so subsequent motion grows the region until it is
@@ -1222,7 +1261,6 @@ sequence, driven over QMP into a headless QEMU boot:
 
 | scene       | shows                                        | section |
 |-------------+----------------------------------------------+---------|
-| =browser=   | the default root (= the module index)        | README  |
 | =package=   | the flat =CL-USER= list + a source pane      | §4½     |
 | =modules=   | the module index                             | §4⅔     |
 | =matrix=    | =collide='s dispatch grid                    | §3      |
@@ -1231,7 +1269,9 @@ sequence, driven over QMP into a headless QEMU boot:
 | =spotter=   | the find-anything palette                    | §4¾     |
 
 =./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
-rewrites this file's link to the new dated PNG. They are deterministic because
+rewrites this file's link to the new dated PNG. /(README's own two shots are not
+scenes: they come from =--mode repl= and =--mode browser=. An earlier version of
+this table listed a =browser= /scene/, which =--scenes= has never offered.)/ They are deterministic because
 every list here is sorted alphabetically and a fresh pane opens on row 0 — so
 "down three times" always lands in the same place. /Add a definition to
 =examples.lisp= and the =matrix= path shifts; re-check it./

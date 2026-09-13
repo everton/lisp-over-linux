@@ -86,7 +86,9 @@
    from NEW-TRAIL (a spotter hit, SuperL-drill)."
   (setf *trails* (list (list (open-pane subject))) *active* 0))
 (defun trail-push (subject) "Drill into SUBJECT in the active trail."
-  (set-current-trail (append (current-trail) (list (open-pane subject)))))
+  (let ((pane (open-pane subject)))
+    (note-recent subject (view-title (pane-view pane)))     ; for the Spotter's recents
+    (set-current-trail (append (current-trail) (list pane)))))
 (defun trail-pop () "Pop the active trail's deepest pane (back)."
   (when (cdr (current-trail)) (set-current-trail (butlast (current-trail)))))
 (defun trail-goto (n) "Collapse the active trail back to level N (a breadcrumb click)."
@@ -95,19 +97,53 @@
 ;; --- across trails (the tab layer) ---
 (defun new-trail (subject)
   "Open SUBJECT in a NEW trail and focus it — a spotter hit / SuperL-drill."
-  (setf *trails* (append *trails* (list (list (open-pane subject))))
-        *active* (1- (length *trails*))))
+  (let ((pane (open-pane subject)))
+    (note-recent subject (view-title (pane-view pane)))
+    (setf *trails* (append *trails* (list (list pane)))
+          *active* (1- (length *trails*)))))
 (defun close-trail ()
   "Close the focused trail (never the last one); focus the neighbour that slides in."
   (when (cdr *trails*)
     (setf *trails* (append (subseq *trails* 0 *active*) (subseq *trails* (1+ *active*)))
           *active* (min *active* (1- (length *trails*))))))
 (defun activate-trail (n) "Focus trail N if it exists." (when (< -1 n (length *trails*)) (setf *active* n)))
+(defun swap-trail (n)
+  "Move the focused trail to slot N (1-based on screen, 0-based here), swapping with
+   whatever occupies it, and follow the focus. Reordering tabs matters once SuperL-1…9
+   is muscle memory: the number is the address, so you want to choose it."
+  (let ((i (1- n)) (len (length *trails*)))
+    (when (and (< -1 i len) (/= i *active*))
+      (rotatef (nth i *trails*) (nth *active* *trails*))
+      (setf *active* i))))
+
 (defun cycle-trail (dir) "Focus the next (+1) / previous (-1) trail, wrapping."
   (setf *active* (mod (+ *active* dir) (length *trails*))))
+(defparameter +title-kind-words+
+  '("modules" "module" "package" "class" "condition" "matrix" "effective" "definition"
+    "function" "generic-function" "method" "macro" "struct" "type" "senders" "referrers")
+  "Leading words in a view title that name the view's KIND rather than its subject.")
+
+(defun short-title (title)
+  "TITLE reduced to the part that identifies the SUBJECT — what a tab should say.
+
+   View titles are written for a pane header, where a kind word earns its place:
+   \"package COMMON-LISP-USER\", \"modules — every definition, by the file it came
+   from\". On a 16-character tab that spends the whole label on the kind and clips the
+   name — \"modules — ever..\" — which is precisely backwards, because the kind is
+   already there as the tab's colour stripe. So: cut any \" — \" gloss, then drop a
+   leading kind word. The mock-up's tabs read \"draw\", \"parse-headers\",
+   \"Playground\"; these now read the same way."
+  (let* ((t1 (let ((dash (search (format nil " ~c " (code-char #x2014)) title)))
+               (if dash (subseq title 0 dash) title)))
+         (sp (position #\Space t1))
+         (head (and sp (string-downcase (subseq t1 0 sp)))))
+    (if (and head (member head +title-kind-words+ :test #'string=) (< (1+ sp) (length t1)))
+        (subseq t1 (1+ sp))
+        t1)))
+
 (defun trail-title (trail)
-  "The tab label for TRAIL — the ROOT pane's view title (what the tab shows)."
-  (view-title (pane-view (first trail))))
+  "The tab label for TRAIL — the ROOT pane's subject, short enough to be a tab."
+  (short-title (view-title (pane-view (first trail)))))
 
 (defun open-environment (root)
   "Seed the cohesive environment (§4¾): ROOT as the first, focused tab, PLUS a
@@ -344,6 +380,25 @@
       (setf (pane-top pane) top
             *list-rows* hits))))
 
+(defun draw-hints (canvas x y w hints)
+  "Draw HINTS — a list of (CHORD . MEANING) — along the status line, the CHORD in the
+   accent and the meaning dim. Colouring the chord is the whole point: a status line
+   of uniformly grey words is read as prose and therefore not read at all, whereas
+   `ret drill` with `ret` lit reads as a key and its effect. A NIL chord is plain text.
+   Stops when it runs out of width rather than spilling off the edge."
+  (let ((pen x))
+    (dolist (h hints)
+      (destructuring-bind (chord . meaning) h
+        (let* ((cw (if chord (+ (lol.canvas:string-px *bfont* chord) 5) 0))
+               (mw (+ (lol.canvas:string-px *bfont* meaning) 12)))
+          (when (> (+ pen cw mw) (- w 8)) (return))
+          (when chord
+            (lol.canvas:draw-string canvas *bfont* chord pen y *ui-accent*)
+            (incf pen cw))
+          (lol.canvas:draw-string canvas *bfont* meaning pen y *ui-dim*)
+          (incf pen mw))))
+    pen))
+
 ;;; ---- the clickable dispatch matrix (§3) ----------------------------------
 
 (defvar *matrix-cells* '()
@@ -451,25 +506,6 @@
     (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
       (when (> sx (+ x 8))
         (lol.canvas:draw-string canvas *bfont* s sx 3 *ui-dim*)))))
-
-(defun draw-hints (canvas x y w hints)
-  "Draw HINTS — a list of (CHORD . MEANING) — along the status line, the CHORD in the
-   accent and the meaning dim. Colouring the chord is the whole point: a status line
-   of uniformly grey words is read as prose and therefore not read at all, whereas
-   `ret drill` with `ret` lit reads as a key and its effect. A NIL chord is plain text.
-   Stops when it runs out of width rather than spilling off the edge."
-  (let ((pen x))
-    (dolist (h hints)
-      (destructuring-bind (chord . meaning) h
-        (let* ((cw (if chord (+ (lol.canvas:string-px *bfont* chord) 5) 0))
-               (mw (+ (lol.canvas:string-px *bfont* meaning) 12)))
-          (when (> (+ pen cw mw) (- w 8)) (return))
-          (when chord
-            (lol.canvas:draw-string canvas *bfont* chord pen y *ui-accent*)
-            (incf pen cw))
-          (lol.canvas:draw-string canvas *bfont* meaning pen y *ui-dim*)
-          (incf pen mw))))
-    pen))
 
 (defun draw-crumb (canvas y w pane index)
   "A collapsed ancestor bar: a kind-coloured stripe, the subject's title, and what
@@ -600,17 +636,19 @@
 ;;; buys something concrete: the Spotter can be rendered — and therefore looked at —
 ;;; by poc/render-frame.lisp on the host, instead of only by booting the guest.
 
-(defparameter +spotter-groups+ '("definitions" "packages & files" "surfaces" "live")
-  "The bands the design mock-up (media/browser-views-design.html §1) sorts results
-   into. Nine matches spread over three kinds of thing read very differently from
-   nine matches in a heap.")
-
 (defun spotter-band (results)
   "RESULTS regrouped into contiguous bands without disturbing the ranking: each group
    keeps its members in rank order, and the GROUPS are ordered by their own best
    member. So the top row is still the best match overall — which is the row Enter
    opens, and it would be a poor trade to lose that for tidiness — while everything
-   below it is banded."
+   below it is banded.
+
+   The bands themselves come from the candidates (present.lisp gives each a :GROUP):
+   recent · definitions · packages & files · surfaces, which is how the design
+   mock-up bands them (media/browser-views-design.html §1). Nine matches spread over
+   three kinds of thing read very differently from nine matches in a heap. Their
+   ORDER is not hard-coded here on purpose — a fixed list would silently drop any
+   band a future candidate source invents."
   (let ((order '()))
     (dolist (r results)                        ; first appearance = that band's best rank
       (pushnew (or (getf r :group) "other") order :test #'equal))
@@ -618,20 +656,12 @@
     (loop for g in order
           append (remove-if-not (lambda (r) (equal g (or (getf r :group) "other"))) results))))
 
-(defun spotter-rows (results query)
-  "Spotter candidates -> widget rows: the kind's colour, the matched characters lit,
-   and the band as the row's group."
-  (map 'vector
-       (lambda (r)
-         (lol.widgets:make-row
-          (getf r :label)
-          :detail (getf r :detail)
-          :tint (concept-color (spotter-kind r))
-          :stripe (concept-color (spotter-kind r))
-          :group (getf r :group)
-          :match query
-          :marker :bright))                    ; every hit opens in a NEW trail
-       results))
+(defun spotter-results (query candidates &optional (limit 200))
+  "The Spotter's results for QUERY: ranked, then BANDED. One function, because the
+   caller indexes this list with its selection and the renderer draws it in order — if
+   the banding happened at draw time, arrowing to row 3 would open whatever row 3 was
+   before the bands moved it."
+  (spotter-band (spotter-filter query candidates limit)))
 
 (defun spotter-kind (r)
   "The Lisp-concept keyword for a Spotter candidate, from its DETAIL text — which is
@@ -649,18 +679,32 @@
           ((search "surface" d) :restart)
           (t :function))))
 
+(defun spotter-rows (results query)
+  "Spotter candidates -> widget rows: the kind's colour, the matched characters lit,
+   and the band as the row's group."
+  (map 'vector
+       (lambda (r)
+         (lol.widgets:make-row
+          (getf r :label)
+          :detail (getf r :detail)
+          :tint (concept-color (spotter-kind r))
+          :stripe (concept-color (spotter-kind r))
+          :group (getf r :group)
+          :match query
+          :marker :bright))                    ; every hit opens in a NEW trail
+       results))
+
 (defvar *spotter-hits* '() "The hit map of the Spotter's visible rows — see HIT-ROW.")
 (defvar *spotter-rect* nil "The card rect (x0 y0 x1 y1), for click routing / dismissal.")
 
 (defun draw-spotter-card (canvas w h query results sel)
   "The Spotter as a floating palette over the dimmed browser: the browser is drawn as
    the backdrop, scrimmed; the card carries a title, the live match count, the query
-   line, the banded results with the matched characters lit, and a footer of what the
-   keys do. Records *spotter-rect* / *spotter-hits* so a click routes to the row that
-   was actually painted there."
+   line, the results with the matched characters lit, and a footer of what the keys do.
+   RESULTS must already be banded (see SPOTTER-RESULTS) — this only draws. Records
+   *spotter-rect* / *spotter-hits* so a click routes to the row actually painted there."
   (draw-browser canvas w h)                          ; the browser, as backdrop …
-  (let* ((banded (spotter-band results))
-         (rows   (spotter-rows banded query))
+  (let* ((rows   (spotter-rows results query))
          (cw     (min 780 (- w 80)))
          (cx     (floor (- w cw) 2))
          (cy     (+ +bar-h+ 14))
@@ -803,6 +847,11 @@
       ;; M-. — jump to the definition of the symbol at point, the keyboard twin of
       ;; Ctrl-click. Must precede the editable branch, or the "." would self-insert.
       ((and meta (eql key #\.) (pane-tv p)) (jump-at-point (pane-tv p)))
+      ;; M-, — SENDERS of the symbol at point: the other half of the pair the design
+      ;; mock-up names (§1, "M-. / M-, Senders / Implementors"), and the key
+      ;; commands-for has always advertised for it. Same resolution as the jump, so
+      ;; anything you can M-. you can also ask who calls.
+      ((and meta (eql key #\,) (pane-tv p)) (senders-at-point (pane-tv p)))
       ;; Esc alone = the Emacs Meta prefix (sticky for the next key); it must NOT quit
       ;; the browser. Leaving via C-g at the root (below) is the deliberate exit.
       ((eq key :escape) (setf *pending-meta* t) nil)
@@ -824,6 +873,11 @@
          ((eq key :tab) (cycle-trail (if (lol.canvas:shift-p state) -1 1)) nil) ; cycle tabs
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
           (activate-trail (- (char-code key) (char-code #\1))) nil)
+         ;; SuperL-⇧-n moves THIS trail to slot n, swapping with whatever is there —
+         ;; the design's binding table (§1). Shift-digit arrives as the shifted
+         ;; character on any keyboard, so match those rather than a Shift bit.
+         ((and (characterp key) (position key ")!@#$%^&*(" ))
+          (swap-trail (position key ")!@#$%^&*(")) nil)
          ((member key '(#\w #\W)) (close-trail) nil)                           ; close this tab
          ((member key '(#\o #\O)) (toggle-side-focus) nil)                     ; focus list <-> side
          ((eql key #\Space)                                                    ; the Spotter
@@ -902,23 +956,38 @@
   (and (symbolp sym) sym
        (or (fboundp sym) (boundp sym) (find-class sym nil))))
 
+(defun token-at-point (tv)
+  "The source token under TV's caret, or the one just before it — so a gesture fires
+   with the caret resting past the end of a symbol, which is where it usually rests.
+   Shared by M-. and M-, so the two can never disagree about what \"at point\" means."
+  (let ((lines (lol.textview:tv-lines tv))
+        (line  (lol.textview:tv-point-line tv))
+        (col   (lol.textview:tv-point-col tv)))
+    (when (< line (length lines))
+      (let ((s (aref lines line)))
+        (or (click-token s col)
+            (and (> col 0) (click-token s (1- col))))))))
+
 (defun jump-at-point (tv)
   "Resolve the symbol at TV's caret and drill into its definition on a new trail
    level (source if we recorded it, else a reference — PRESENT on a SUBJ-DEFN handles
    both). The keyboard M-. and the Ctrl-click share this once the caret is placed.
    Tries the caret column, then one to its left, so M-. also fires with the caret
    resting just past a symbol. No-op when there's no jumpable symbol there."
-  (let* ((lines (lol.textview:tv-lines tv))
-         (line  (lol.textview:tv-point-line tv))
-         (col   (lol.textview:tv-point-col tv))
-         (tok   (and (< line (length lines))
-                     (let ((s (aref lines line)))
-                       (or (click-token s col)
-                           (and (> col 0) (click-token s (1- col)))))))
-         (sym   (resolve-symbol tok)))
+  (let ((sym (resolve-symbol (token-at-point tv))))
     (when (jumpable-p sym)
       (setf *pending-prefix* nil *browser-status* nil)
       (trail-push (subj-defn sym))
+      t)))
+
+(defun senders-at-point (tv)
+  "M-, — open SENDERS of the symbol at TV's caret. Smalltalk's senders, reached the
+   same way as the jump: resolve the token under (or just before) point, and drill a
+   SUBJ-XREF rather than the definition. No-op when there is no such symbol."
+  (let ((sym (resolve-symbol (token-at-point tv))))
+    (when (and (symbolp sym) sym (fboundp sym))
+      (setf *pending-prefix* nil *browser-status* nil)
+      (trail-push (subj-xref :senders sym))
       t)))
 
 (defun jump-to-definition (tv x y)
