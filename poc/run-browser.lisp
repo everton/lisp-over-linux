@@ -8,7 +8,14 @@
 ;;;; browser: root at CL-USER, drill a definition, read its code, drill its senders.
 ;;;;
 ;;;; Keys: up/down move · Enter drill · Backspace back · click a breadcrumb to pop
-;;;; to that level · q / Esc quits.
+;;;; to that level · PageUp/PageDown and the mouse WHEEL scroll · q quits.
+;;;;
+;;;; Esc does NOT quit — it is the Emacs Meta prefix (so Esc . is M-., jump to
+;;;; definition, and Esc , is M-, Senders). Quit with q, or SuperL-q from anywhere.
+;;;;
+;;;; Not available here: the Spotter, the cheatsheet and the debugger are summoned
+;;;; through fb-browser.lisp, which this runner does not load (it wants /dev/fb0).
+;;;; The shell reaches them via (fboundp …) and does nothing if they are absent.
 
 (require :sb-bsd-sockets) (require :sb-introspect) (require :sb-posix)
 
