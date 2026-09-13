@@ -42,11 +42,16 @@
                                                (lol.x11:event-state e))))
                   (when (eq :quit (browser-key key (lol.x11:event-state e)))
                     (setf quit t))))
+               ;; X has no scroll axis: the wheel is BUTTONS 4 (up) and 5 (down), one
+               ;; press per notch — the host's counterpart of the guest's evdev
+               ;; REL_WHEEL record (doc/input.org §7). Button 1 is a real click.
                (:button-press
-                (when (= 1 (lol.x11:event-detail e))
-                  (browser-click (lol.x11:event-x e) (lol.x11:event-y e)
-                                 (lol.canvas:ctrl-p (lol.x11:event-state e))
-                                 (lol.canvas:super-p (lol.x11:event-state e)))))
+                (case (lol.x11:event-detail e)
+                  (1 (browser-click (lol.x11:event-x e) (lol.x11:event-y e)
+                                    (lol.canvas:ctrl-p (lol.x11:event-state e))
+                                    (lol.canvas:super-p (lol.x11:event-state e))))
+                  (4 (browser-scroll (- +wheel-lines+)))
+                  (5 (browser-scroll +wheel-lines+))))
                (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)))
                (t nil))))
       (unwind-protect

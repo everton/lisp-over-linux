@@ -1355,8 +1355,26 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   right of the pointer was a hit-test bug — =col-at-x= inverted =x-of-col= without the
   line-number gutter that =tv-draw= added; both now fold the gutter into =*gutter-w*=,
   so the caret lands under the arrow tip (verified: a click at column 10's pixel now
-  reads column 10, not 17)./ Still owed: PageUp/Down + wheel scroll
-  ([[file:../poc/README.org][poc/README.org]] gaps).
+  reads column 10, not 17)./
+  [SCROLLING DONE — =tv-wheel= / =move-page= in [[file:../poc/textview.lisp][poc/textview.lisp]], =browser-scroll= in
+  [[file:../poc/shell.lisp][poc/shell.lisp]], =REL_WHEEL= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]'s =read-mouse=, buttons 4/5 in
+  [[file:../poc/run-browser.lisp][poc/run-browser.lisp]]] PageUp/PageDown and the mouse wheel now work on *both*
+  backends. A text pane's wheel scrolls the viewport and leaves point alone
+  (scrolling is looking, not moving); PageUp/Down moves point a screenful. The two
+  backends learn about the wheel very differently — the guest decodes an evdev
+  =REL_WHEEL= record, X11 delivers buttons 4 and 5 — so =+wheel-lines+= (3 lines a
+  notch) lives in =shell.lisp= where both can reach it. The whole input path is
+  written up in [[file:input.org][input.org]].
+  /Verified in the booted guest over QMP, reading the browser's own state back
+  through the net REPL rather than eyeballing pixels: on the module index PageDown
+  moves the selection 0->12 (=+list-page+=) and PageUp returns it, wheel-down x2
+  moves it 0->6 and wheel-up x1 back to 3; in a source pane wheel-down x3 takes
+  =tv-scroll= 0->9 (exactly 3 x =+wheel-lines+=), wheel-up x1 back to 6, with
+  =tv-point-line= unmoved at 0 throughout, and PageDown then moves point to 37. Ten
+  assertions, all passing./ A list pane still moves its *selection* rather than a
+  viewport of its own — =draw-list-body= anchors the visible window to the
+  selection — which is the last piece, and it belongs to phase 3's list/scrollbar
+  widget rather than here.
 - *Phase 6 — the live system.* [DEBUGGER DONE — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]
   (=run-debugger-fb= / =draw-debugger=) + [[file:../initramfs/model.lisp][model.lisp]] + =workspace-debug-it= in
   [[file:../poc/shell.lisp][poc/shell.lisp]]] An unhandled =serious-condition= from *Debug it* opens the live

@@ -26,7 +26,7 @@
 (defconstant +o-rdonly+   0)
 (defconstant +o-nonblock+ #x800)
 (defconstant +pollin+     1)
-(defconstant +wheel-lines+ 3 "Lines the current pane scrolls per mouse-wheel notch.")
+;; +wheel-lines+ (how far a notch scrolls) lives in shell.lisp — both backends share it.
 
 (defun fbb-read-byte (fd)
   "Read one byte from FD; NIL on EOF/error."

@@ -146,13 +146,14 @@ Its module index is correspondingly a subset of the guest's.
   mouse wheel work on the framebuffer: =tv-wheel= scrolls a text pane's viewport
   without moving the caret, =move-page= pages the caret, and =read-mouse= decodes
   =REL_WHEEL= into =browser-scroll= (=+wheel-lines+= = 3 lines a notch). Two gaps
-  remain. (1) *The X11 runner ignores the wheel*: X delivers it as button 4/5
-  press events and =run-browser.lisp= tests =(= 1 (event-detail e))=, so they are
-  dropped — one branch to =browser-scroll= fixes it. (2) *A list pane has no
-  viewport of its own*: =draw-list-body= anchors the visible window to the
-  selection, so scrolling a list drags the selection with it. The real fix is the
-  scrollbar/list widget phase 3 still owes. See [[file:../doc/input.org][doc/input.org]] §6 for the wheel
-  end to end.
+  The X11 runners handle it too: X delivers the wheel as button 4/5 press events,
+  which =run-browser.lisp= and =run-editor.lisp= now route to =browser-scroll= /
+  =tv-wheel=. /Verified in the booted guest over QMP against the browser's own
+  state — ten assertions, all passing (see [[file:../doc/code-browser.org][code-browser.org]], phase 5)./
+  *One gap left:* a list pane has no viewport of its own — =draw-list-body= anchors
+  the visible window to the selection, so scrolling a list drags the selection with
+  it. The real fix is the scrollbar/list widget phase 3 still owes. See
+  [[file:../doc/input.org][doc/input.org]] §6 for the wheel end to end.
 - Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
   [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (=draw-spotter=), candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note the
   Spotter and the debugger are summoned through =fb-browser.lisp=, so they exist

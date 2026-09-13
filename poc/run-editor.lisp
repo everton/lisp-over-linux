@@ -151,7 +151,11 @@
                      (setf pending-c-c nil)
                      (when (eq :accept (lol.textview:tv-key tv key st))
                        (accept tv))))))
+               ;; buttons 4/5 are the wheel under X (doc/input.org §7), not clicks
                (:button-press
+                (case (lol.x11:event-detail e)
+                  (4 (lol.textview:tv-wheel tv -3))
+                  (5 (lol.textview:tv-wheel tv 3)))
                 (when (= 1 (lol.x11:event-detail e))
                   (let ((x (lol.x11:event-x e)) (y (lol.x11:event-y e)))
                     (cond

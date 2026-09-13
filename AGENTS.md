@@ -179,8 +179,11 @@ protocol in a tiled, keyboard-first shell. Progress:
    *static* face as a browsable view (the live debugger already exists).
 7. **Phase 5 — into the machine** — *DONE* (`initramfs/fb-browser.lisp`): the same
    shell full-screen on `/dev/fb0` as PID 1 (menu `b`), keyboard **and** evdev
-   mouse via `poll(2)`, `M-.`/Ctrl-click jump-to-definition. Still owed:
-   PageUp/Down + wheel scroll.
+   mouse via `poll(2)`, `M-.`/Ctrl-click jump-to-definition, and **scrolling**
+   (PageUp/Down + the wheel) on both backends — evdev `REL_WHEEL` in the guest,
+   buttons 4/5 under X11; `+wheel-lines+` lives in `poc/shell.lisp` because both
+   need it. Verified in the guest over QMP against the browser's own state (ten
+   assertions). The input path end to end: `doc/input.org`.
 8. **Phase 6 — the live system** — *DONE*: the framebuffer debugger (restarts +
    `sb-di` backtrace + frame locals + `M-.` on a frame), and the **change set**
    (menu `c`). *File-out is deferred* to its own future session — it needs a

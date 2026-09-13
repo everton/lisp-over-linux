@@ -136,6 +136,11 @@
 (defparameter +bar-h+ 20)
 (defparameter +row-h+ 17)
 (defparameter +list-page+ 12 "Rows a list pane moves its selection on PageUp/PageDown.")
+(defparameter +wheel-lines+ 3
+  "Lines the current pane scrolls per mouse-wheel notch. Lives here, not in a
+   backend, because BOTH backends need it and they learn about the wheel very
+   differently: the guest decodes an evdev REL_WHEEL record, the X11 host receives
+   a ButtonPress on button 4/5 (doc/input.org §6-7).")
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
 (defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
 (defvar *split-x* nil    "left screen-x of the nav-split preview column when a list pane is
