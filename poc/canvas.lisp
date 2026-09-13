@@ -14,7 +14,7 @@
 (defpackage :lol.canvas
   (:use :cl)
   (:export #:canvas #:make-canvas #:canvas-w #:canvas-h #:canvas-pixels
-           #:fill-rect #:draw-rect #:blit-rgba
+           #:fill-rect #:draw-rect #:draw-line #:draw-poly #:draw-circle #:blit-rgba
            #:font #:load-psf #:load-font #:font-cw #:font-ch #:draw-string #:string-px
            #:rgb #:shift-p #:ctrl-p #:meta-p #:super-p))
 
@@ -88,6 +88,65 @@
   (fill-rect canvas x (+ y h -1) w 1 color)
   (fill-rect canvas x y 1 h color)
   (fill-rect canvas (+ x w -1) y 1 h color))
+
+(defun draw-line (canvas x0 y0 x1 y1 color)
+  "One-pixel line from X0,Y0 to X1,Y1 — integer Bresenham, clipped per pixel.
+
+   Added for the stage (§3b): a sprite is a silhouette, and a silhouette is lines.
+   Per-pixel clipping rather than a clip-to-rect pass up front, because the lines are
+   short and the loop is already a bounds check away from being one."
+  (declare (optimize (speed 3) (safety 1)) (fixnum x0 y0 x1 y1)
+           ((unsigned-byte 32) color))
+  (let* ((cw (canvas-w canvas)) (ch (canvas-h canvas))
+         (px (canvas-pixels canvas))
+         (dx (abs (- x1 x0))) (dy (- (abs (- y1 y0))))
+         (sx (if (< x0 x1) 1 -1)) (sy (if (< y0 y1) 1 -1))
+         (err (+ dx dy)))
+    (declare (type pixmap px) (fixnum cw ch dx dy sx sy err))
+    (loop
+      (when (and (< -1 x0 cw) (< -1 y0 ch))
+        (setf (aref px (+ (* y0 cw) x0)) color))
+      (when (and (= x0 x1) (= y0 y1)) (return))
+      (let ((e2 (* 2 err)))
+        (declare (fixnum e2))
+        (when (>= e2 dy) (incf err dy) (incf x0 sx))
+        (when (<= e2 dx) (incf err dx) (incf y0 sy))))))
+
+(defun draw-poly (canvas points color &key (close t))
+  "Outline through POINTS — a list of (x . y) conses — closing the loop unless
+   :CLOSE NIL. The stage's sprites are all one call to this."
+  (loop for (p . rest) on points
+        while rest
+        do (draw-line canvas (car p) (cdr p) (car (first rest)) (cdr (first rest)) color))
+  (when (and close (cdr points))
+    (let ((a (first points)) (z (car (last points))))
+      (draw-line canvas (car z) (cdr z) (car a) (cdr a) color))))
+
+(defun draw-circle (canvas cx cy r color &key fill)
+  "Circle outline (or a disc with :FILL t), clipped. Midpoint algorithm; the filled
+   form spans each scanline rather than plotting twice."
+  (declare (optimize (speed 3) (safety 1)) (fixnum cx cy r))
+  (when (plusp r)
+    (let ((x r) (y 0) (err 0))
+      (declare (fixnum x y err))
+      (loop while (>= x y) do
+        (if fill
+            (progn (fill-rect canvas (- cx x) (- cy y) (* 2 x) 1 color)
+                   (fill-rect canvas (- cx x) (+ cy y) (* 2 x) 1 color)
+                   (fill-rect canvas (- cx y) (- cy x) (* 2 y) 1 color)
+                   (fill-rect canvas (- cx y) (+ cy x) (* 2 y) 1 color))
+            (dolist (p (list (cons (+ cx x) (+ cy y)) (cons (+ cx y) (+ cy x))
+                             (cons (- cx y) (+ cy x)) (cons (- cx x) (+ cy y))
+                             (cons (- cx x) (- cy y)) (cons (- cx y) (- cy x))
+                             (cons (+ cx y) (- cy x)) (cons (+ cx x) (- cy y))))
+              (let ((px* (car p)) (py (cdr p)))
+                (when (and (< -1 px* (canvas-w canvas)) (< -1 py (canvas-h canvas)))
+                  (setf (aref (canvas-pixels canvas) (+ (* py (canvas-w canvas)) px*)) color)))))
+        (incf y)
+        (incf err (1+ (* 2 y)))
+        (when (> (* 2 (- err x)) 1)
+          (decf x)
+          (incf err (- 1 (* 2 x))))))))
 
 (defun blit-rgba (canvas bytes iw ih x y &key (threshold 128))
   "Composite a raw RGBA image (top-to-bottom, 4 bytes/px) at X,Y.

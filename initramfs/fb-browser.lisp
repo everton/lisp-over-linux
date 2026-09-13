@@ -43,11 +43,18 @@
     (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 1 timeout-ms)
     (logbitp 0 (sb-alien:deref fds 6))))
 
-(defun fbb-wait (kb-fd mouse-fd kev-fd)
-  "Block until KB-FD (console), MOUSE-FD, or KEV-FD (keyboard evdev) is readable.
+(defun fbb-wait (kb-fd mouse-fd kev-fd &optional (timeout-ms -1))
+  "Block until KB-FD (console), MOUSE-FD, or KEV-FD (keyboard evdev) is readable, or
+   until TIMEOUT-MS elapses (-1, the default, waits forever).
    Absent fds are passed NIL. Returns (values kb-ready mouse-ready kev-ready).
    Three fixed pollfd slots; an absent slot stays zeroed (fd 0 / events 0), which
-   poll simply never reports ready — so the revents offsets never shift."
+   poll simply never reports ready — so the revents offsets never shift.
+
+   The timeout exists for the stage (§3b). Every other view in the browser is a
+   function of state that only input changes, so sleeping until a key or a click is
+   exactly right and costs nothing. A stage advances on its own, which means the loop
+   needs a way to wake on a frame deadline instead. This is that way, and it is the
+   only concession the input layer makes to a view that moves."
   (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 24)))
     (dotimes (i 24) (setf (sb-alien:deref fds i) 0))
     (flet ((set-pfd (n fd)
@@ -55,7 +62,7 @@
                (setf (sb-alien:deref fds (* n 8))       (logand fd #xff)
                      (sb-alien:deref fds (+ (* n 8) 4)) +pollin+))))
       (set-pfd 0 kb-fd) (set-pfd 1 mouse-fd) (set-pfd 2 kev-fd)
-      (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 3 -1)
+      (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 3 timeout-ms)
       (values (logbitp 0 (sb-alien:deref fds 6))
               (and mouse-fd (logbitp 0 (sb-alien:deref fds 14)))
               (and kev-fd   (logbitp 0 (sb-alien:deref fds 22)))))))
@@ -270,6 +277,61 @@
 ;; without threading them through every call.
 (defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
 (defvar *fb-mouse* nil)  (defvar *fb-kbd* nil)
+;;; ---- the stage's heartbeat (§3b) -----------------------------------------
+;;; The browser has always been a pure function of state that only input changes, and
+;;; the poll that sleeps forever is how it stays at zero CPU on an idle console. A
+;;; stage breaks that, so it is allowed to — but ONLY while one is actually on screen
+;;; and running. The moment you drill away from it the loop is back to sleeping until
+;;; a key, which is why the timeout is computed per iteration rather than set once.
+
+(defparameter +stage-frame-ms+ 33
+  "Milliseconds between stage ticks — about thirty a second. Fast enough that motion
+   reads as motion, slow enough that a whole repaint in Lisp keeps up on the guest.")
+
+(defun current-stage ()
+  "The stage on screen right now, or NIL. Reaches through the shell rather than
+   holding its own reference, so closing the tab really does stop the clock."
+  (let ((p (ignore-errors (current-pane))))
+    (when (and p (eq (view-kind (pane-view p)) :stage))
+      (view-data (pane-view p)))))
+
+(defun live-stage-timeout ()
+  "The poll timeout for this iteration: a frame deadline when a running stage is on
+   screen, -1 (sleep until input) otherwise."
+  (let ((st (current-stage)))
+    (if (and st (stage-running st)) +stage-frame-ms+ -1)))
+
+(defvar *stage-last-tick* 0
+  "Internal-real-time at the previous tick, so the stage advances by WALL CLOCK.")
+
+(defparameter +stage-max-catchup+ 6
+  "Most ticks one frame may run. Without a cap, a stage left behind a modal debugger
+   would try to replay the whole pause in a single frame the moment it came back.")
+
+(defun tick-live-stage ()
+  "Advance the on-screen stage by however many ticks the wall clock says are due.
+
+   Not one tick per frame: a full 1280x800 repaint in Lisp costs more than a frame
+   period, so one-per-frame would make the world's speed a function of how expensive
+   the pane is to draw — motion that slows down when you open a bigger window. Taking
+   the elapsed time and stepping the arrears keeps the simulation rate fixed at
+   +STAGE-FRAME-MS+ regardless of what the renderer manages.
+
+   A contact here can signal — that is the point of the whole view — and the signal
+   travels through *debugger-hook* into RUN-DEBUGGER-FB exactly as one from the
+   Workspace does, with the stack still standing and the stage's own restarts on the
+   rail. Nothing special is needed to make that work, which is the best evidence that
+   the stage belongs in this browser rather than beside it."
+  (let ((st (current-stage)))
+    (when (and st (stage-running st))
+      (let* ((now (get-internal-real-time))
+             (elapsed (round (* 1000 (- now *stage-last-tick*))
+                             internal-time-units-per-second))
+             (due (max 1 (min +stage-max-catchup+ (floor elapsed +stage-frame-ms+)))))
+        (setf *stage-last-tick* now)
+        (dotimes (i due) (step-stage st))))))
+
+
 
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. Blocks until you
@@ -303,7 +365,11 @@
                        (draw-browser canvas xres yres)
                        (when mouse (draw-cursor canvas *cursor-x* *cursor-y*))
                        (lol.fb:present-fb canvas)
-                       (multiple-value-bind (kb ms kev) (fbb-wait 0 mouse kbd)
+                       ;; A running stage (§3b) is the one thing on screen that changes
+                       ;; without being asked, so it — and only it — makes the loop
+                       ;; wake on a deadline rather than sleeping until input.
+                       (multiple-value-bind (kb ms kev)
+                           (fbb-wait 0 mouse kbd (live-stage-timeout))
                          (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift/Super first
                          (when kb
                            (multiple-value-bind (key state) (fb-read-key 0)
@@ -325,7 +391,9 @@
                              (unless (zerop wheel)
                                (browser-scroll (* (- wheel) +wheel-lines+)))
                              (when clicked
-                               (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*))))))))
+                               (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*))))
+                         ;; nothing was ready: the deadline fired, so advance the world
+                         (unless (or kb ms kev) (tick-live-stage))))))
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
