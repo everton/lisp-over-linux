@@ -443,10 +443,16 @@
   (let* ((type (subj-condition-name s))
          (i (condition-info type)))
     (if (null i)
-        (make-view :title (format nil "~(~a~) — not a condition class" type)
+        (make-view :title (format nil "~(~a~) ~c not a condition class"
+                                  type (code-char #x2014))
                    :kind :list :subject s)
         (make-view
-         :title (format nil "condition ~(~a~)" (getf i :name))
+         ;; NOT "condition <name>" — that is exactly what (present (c class)) titles
+         ;; ITS view, since CLASS-KIND reports a condition class as :condition. Two
+         ;; different views of the same type with the same header is a way to get lost
+         ;; one drill in. The " — " gloss also shortens cleanly for the tab strip.
+         :title (format nil "~(~a~) ~c signallers, handlers & restarts"
+                        (getf i :name) (code-char #x2014))
          :kind :list :subject s
          :items
          (append
