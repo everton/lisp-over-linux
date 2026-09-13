@@ -13,45 +13,27 @@
 
 (in-package :cl-user)
 
-;;; palette (the tool's own colours, from scene.lisp)
-(defparameter *sh-bg*     !#14161A)
-(defparameter *sh-panel*  !#1B1E24)
-(defparameter *sh-hi*     !#242931)
-(defparameter *sh-rule*   !#2E343D)
-(defparameter *sh-text*   !#D6D3C8)
-(defparameter *sh-dim*    !#6B727D)
-(defparameter *sh-accent* !#7FDBCA)
-(defparameter *sh-sel*    !#2F4F4A)
-(defparameter *sh-amber*  !#FF9F43)
+;;; The palette, the row metrics and the widgets themselves now live in
+;;; poc/widgets.lisp (lol.widgets) — phase 3's toolkit. They are IMPORTED rather
+;;; than package-qualified because this file mentions them on nearly every line of
+;;; drawing code, and `lol.widgets:*ui-dim*` a hundred times reads worse than it
+;;; informs. fb-browser.lisp, also CL-USER, inherits the same names for free.
+(eval-when (:compile-toplevel :load-toplevel :execute)
+  (import '(lol.widgets:*ui-bg* lol.widgets:*ui-panel* lol.widgets:*ui-hi*
+            lol.widgets:*ui-rule* lol.widgets:*ui-text* lol.widgets:*ui-dim*
+            lol.widgets:*ui-accent* lol.widgets:*ui-sel* lol.widgets:*ui-amber*
+            lol.widgets:concept-color lol.widgets:*concept-colors*
+            lol.widgets:+row-h+ lol.widgets:+bar-h+ lol.widgets:clip-text)))
 
-;; per-Lisp-concept colours (the mockups' semantic scheme, media/lisp-concepts-visual.html):
-;; the browser tints each row by its KIND so a package of 350 defs reads by colour,
-;; not as a grey wall. Kinds without an entry fall back to *sh-text*.
-(defparameter *concept-colors*
-  (list :package          !#FFCB6B   ; gold
-        :function         !#7FDBCA   ; teal
-        :generic-function !#A8FF78   ; green
-        :method           !#A8FF78   ; green
-        :macro            !#C792EA   ; purple
-        :compiler-macro   !#C792EA   ; purple
-        :class            !#89DDFF   ; blue
-        :subclass         !#5E93AD   ; blue, dimmed — a class seen from ABOVE. Same hue,
-                                     ; less light: in a class view the supers are where
-                                     ; you came from and the subs are where you may go,
-                                     ; and the eye should be able to tell the two groups
-                                     ; apart without reading the detail column.
-        :struct           !#89DDFF   ; blue
-        :type             !#89DDFF   ; blue
-        :condition        !#FF6B6B   ; red
-        :variable         !#FF9F43   ; amber
-        :constant         !#FF9F43)) ; amber
+(defvar *bfont* nil
+  "The browser font (a lol.canvas:font), set at startup. SET-BROWSER-FONT keeps
+   lol.widgets:*font* in step — the widgets need it and must not reach into CL-USER.")
 
-(defun concept-color (kind)
-  "The colour for a definition KIND (:function :class :macro …), or *sh-text* when the
-   kind has no semantic colour (a slot, a plain item)."
-  (or (getf *concept-colors* kind) *sh-text*))
-
-(defvar *bfont* nil "The browser font (a lol.canvas:font), set at startup.")
+(defun set-browser-font (font)
+  "Install FONT for both the shell and the widget toolkit. Every entry point
+   (run-browser.lisp, run-browser-fb, render-frame.lisp) goes through here, so there
+   is exactly one place the two can get out of sync — namely none."
+  (setf *bfont* font lol.widgets:*font* font))
 ;; The cohesive environment (§4¾): several concurrent TRAILS, shown as tabs, one
 ;; active. A trail is a list of PANEs (root first, deepest last) — one investigation,
 ;; or a pinned surface (Workspace, change set). *ACTIVE* indexes the focused trail;
@@ -63,7 +45,11 @@
 (defstruct pane
   subject view
   (sel 0)                 ; selected item index (list views)
-  (top 0)                 ; first visible item (list scrolling)
+  (top 0)                 ; first visible LAYOUT SLOT (section headers occupy one too)
+  (follow t)              ; should the viewport chase the selection on the next draw?
+                          ; Arrow keys say yes (move the selection, bring it into view);
+                          ; the wheel says no, because scrolling is LOOKING — the whole
+                          ; point of a viewport independent of the selection.
   tv                      ; a lol.textview for :source/:reference panes, else NIL
   side)                   ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
 
@@ -132,14 +118,25 @@
   (unless (typep root 'subj-workspace) (new-trail (subj-workspace)))
   (setf *active* 0))
 
+(defun set-pane-sel (pane n)
+  "Move PANE's selection to N (clamped) and re-arm FOLLOW, so the next draw brings
+   the selection back into view. Every selection move goes through here — including
+   the ones that land after a wheel scroll, which is the point: the wheel detaches
+   the viewport from the selection, and touching the selection reattaches it.
+
+   Re-arming must NOT happen in the draw, however tempting: the framebuffer loop
+   redraws on every event, mouse motion included, so a list scrolled with the wheel
+   would snap back the instant the pointer twitched."
+  (let ((n-items (length (view-items (pane-view pane)))))
+    (setf (pane-sel pane) (max 0 (min n (max 0 (1- n-items))))
+          (pane-follow pane) t)))
+
 (defun selected-item (pane)
   (let ((items (view-items (pane-view pane))))
     (and items (< (pane-sel pane) (length items)) (nth (pane-sel pane) items))))
 
 ;;; ---- geometry: where each breadcrumb bar lives (for click hit-testing) ----
 
-(defparameter +bar-h+ 20)
-(defparameter +row-h+ 17)
 (defparameter +list-page+ 12 "Rows a list pane moves its selection on PageUp/PageDown.")
 (defparameter +wheel-lines+ 3
   "Lines the current pane scrolls per mouse-wheel notch. Lives here, not in a
@@ -294,174 +291,84 @@
 ;;; ---- drawing -------------------------------------------------------------
 
 (defun item-color (item)
-  "The stripe/label colour for ITEM — its concept colour, except an effective-method row
-   (kind :method) is tinted by its run PHASE, read from the detail text, so the onion
-   reads as a waterfall: around gold, before blue, primary green, after a cool blue."
-  (let ((d (item-detail item)))
-    (or (and (eq (item-kind item) :method) (stringp d)
-             (cond ((eql 0 (search "around"  d)) !#FFCB6B)
-                   ((eql 0 (search "before"  d)) !#89DDFF)
-                   ((eql 0 (search "after"   d)) !#5A8CA0)))
+  "The stripe/label colour for ITEM — its concept colour, except an effective-method
+   row (kind :method) is tinted by its run PHASE, so the onion reads as a waterfall:
+   around gold, before blue, primary green, after a cool blue.
+
+   The phase is read from the item's GROUP. It used to be read by string-matching the
+   DETAIL text, which meant the colour silently depended on how a sentence started —
+   exactly the coupling the GROUP slot was added to remove."
+  (let ((g (item-group item)))
+    (or (and (eq (item-kind item) :method) (stringp g)
+             (cond ((string= g "around") !#FFCB6B)
+                   ((string= g "before") !#89DDFF)
+                   ((string= g "after")  !#5A8CA0)))
         (concept-color (item-kind item)))))
 
-(defun draw-item (canvas x y w item selected)
-  (when selected
-    (lol.canvas:fill-rect canvas x (- y 2) w +row-h+ *sh-sel*)
-    (lol.canvas:fill-rect canvas x (- y 2) 2 +row-h+ *sh-accent*))
-  (let* ((kc (item-color item))
-         (label (item-label item))
-         (drill-x (- (+ x w) 16)))
-    ;; a slim kind-coloured stripe + the label in that colour: the row reads by kind
-    ;; (function teal, class blue, macro purple, an onion layer by its phase) at a glance.
-    (when (item-kind item)
-      (lol.canvas:fill-rect canvas (+ x 3) (- y 2) 3 +row-h+ kc))
-    (lol.canvas:draw-string canvas *bfont* label (+ x 8) y kc)
-    (when (item-detail item)
-      ;; right-align the detail into its own column when it fits, else inline after the label
-      (let* ((dt (princ-to-string (item-detail item)))
-             (label-px (lol.canvas:string-px *bfont* label))
-             (rx (- drill-x (lol.canvas:string-px *bfont* dt) 8)))
-        (if (> rx (+ x 8 label-px 14))
-            (lol.canvas:draw-string canvas *bfont* dt rx y *sh-dim*)
-            (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" dt)
-                                    (+ x 8 label-px) y *sh-dim*))))
-    (when (item-subject item)                     ; » drill affordance (amber = opens elsewhere)
-      (lol.canvas:draw-string canvas *bfont* (string (code-char #xBB))
-                              drill-x y (if (eq (item-disposition item) :in-place) *sh-dim* *sh-amber*)))))
+(defun item->row (item)
+  "ITEM (the present protocol's) -> a LOL.WIDGETS:ROW (the toolkit's). This little
+   adapter is the whole boundary between the two layers: the widget never learns what
+   a subject or a disposition is, and the protocol never learns what a stripe is."
+  (let ((kc (item-color item)))
+    (lol.widgets:make-row
+     (item-label item)
+     :detail (and (item-detail item) (princ-to-string (item-detail item)))
+     :tint kc
+     ;; the kind stripe: a row reads by kind (function teal, class blue, macro
+     ;; purple, an onion layer by its phase) before it is read at all
+     :stripe (and (item-kind item) kc)
+     ;; » = drilling opens something; amber when it opens ELSEWHERE than in place
+     :marker (and (item-subject item)
+                  (if (eq (item-disposition item) :in-place) :dim :bright))
+     :group (item-group item))))
 
 (defvar *list-rows* '()
-  "alist ((y-top . item-index) …) of the rows DRAW-LIST-BODY last painted, so a click
-   maps to the item that was actually drawn there. It cannot be computed from y any
-   more: a sectioned view spends rows on GROUP HEADERS, so screen row N is no longer
-   item N. Same discipline as *crumb-rects* and *matrix-cells* — the draw records
-   what it did, and the hit-test reads that back.")
-
-(defun list-layout (items)
-  "ITEMS -> a vector of ROWS, each either (:header . LABEL) or (:item . INDEX).
-   A header is emitted wherever the GROUP changes, so a view that sets no groups
-   lays out exactly one row per item and nothing changes for it."
-  (let ((rows '()) (prev :none))
-    (loop for it in items for i from 0
-          do (let ((g (item-group it)))
-               (unless (equal g prev)
-                 (when g (push (cons :header g) rows))
-                 (setf prev g))
-               (push (cons :item i) rows)))
-    (coerce (nreverse rows) 'vector)))
-
-(defun row-of-item (layout index)
-  "Which LAYOUT row shows item INDEX (or 0 if it is not laid out)."
-  (or (position-if (lambda (r) (and (eq (car r) :item) (eql (cdr r) index))) layout) 0))
-
-(defun draw-group-header (canvas x y w label)
-  "A section header: a hairline rule across the pane and the group's name, both dim.
-   The rule is what does the work — it turns 'superclass, superclass, subclass' from
-   a wall of near-identical rows into three legible blocks."
-  (lol.canvas:fill-rect canvas (+ x 3) (+ y 8) (- w 6) 1 *sh-rule*)
-  (let ((px (lol.canvas:string-px *bfont* label)))
-    (lol.canvas:fill-rect canvas (+ x 8) (+ y 8) (+ px 8) 1 *sh-panel*)   ; gap for the text
-    (lol.canvas:draw-string canvas *bfont* label (+ x 12) (+ y 3) *sh-dim*)))
+  "The hit map LOL.WIDGETS:DRAW-LIST returned for the pane drawn last — ((y . index) …).
+   A click reads it back rather than computing an index from y, because with section
+   headers in the layout screen row N is no longer item N.")
 
 (defun draw-list-body (canvas pane x y w h)
-  "Render a list view's items with selection, group sections and scrolling.
-   PANE-TOP indexes the LAYOUT (rows), not the item list, because a header occupies
-   a row of its own; ROW-OF-ITEM converts when the selection has to be kept in view."
-  (let* ((items (view-items (pane-view pane)))
-         (layout (list-layout items))
-         (nrows (length layout))
-         (rows (max 1 (floor h +row-h+)))
-         (sel (pane-sel pane))
-         (sel-row (row-of-item layout sel)))
-    ;; keep the SELECTED ROW in view (and never scroll past the end)
-    (setf (pane-top pane) (max 0 (min (pane-top pane) (max 0 (- nrows rows)))))
-    (when (< sel-row (pane-top pane)) (setf (pane-top pane) sel-row))
-    (when (>= sel-row (+ (pane-top pane) rows)) (setf (pane-top pane) (- sel-row rows -1)))
-    (setf *list-rows* '())
-    (loop for r from (pane-top pane) below (min nrows (+ (pane-top pane) rows))
-          for iy from y by +row-h+
-          for row = (aref layout r)
-          do (if (eq (car row) :header)
-                 (draw-group-header canvas x iy w (cdr row))
-                 (progn
-                   (draw-item canvas x (+ iy 4) w (nth (cdr row) items) (= (cdr row) sel))
-                   (push (cons iy (cdr row)) *list-rows*))))
-    (when (> nrows rows)                          ; a scroll hint
-      (lol.canvas:draw-string canvas *bfont*
-                              (format nil "~a-~a/~a" (1+ (pane-top pane))
-                                      (min nrows (+ (pane-top pane) rows)) nrows)
-                              (- (+ x w) 90) (+ y h -14) *sh-dim*))))
+  "Render a list view: the widget does rows, sections, selection and the scrollbar;
+   this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
+   (a layout slot, headers included) and is written back so it persists across frames."
+  (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
+    (multiple-value-bind (top hits)
+        (lol.widgets:draw-list canvas x y w h rows
+                               :sel (pane-sel pane) :top (pane-top pane)
+                               :follow-sel (pane-follow pane)
+                               ;; the inspector is a name/value TABLE, not a list with
+                               ;; annotations: the value is what you came to read, so it
+                               ;; gets its own column and full-strength text
+                               :value-col (when (eq (view-kind (pane-view pane)) :inspector)
+                                            (min 300 (floor w 2))))
+      (setf (pane-top pane) top
+            *list-rows* hits))))
 
 ;;; ---- the clickable dispatch matrix (§3) ----------------------------------
 
 (defvar *matrix-cells* '()
-  "alist ((x y w h row-name col-name) …) of the dispatch grid's clickable cells,
-   rebuilt each draw so a click and the draw can never disagree (like *crumb-rects*).")
-(defparameter +mx-cell-w+ 78)
-(defparameter +mx-row-h+  18)
-
-(defun mx-short (name maxlen)
-  "A class/specializer name trimmed to MAXLEN chars for a matrix header or cell. The
-   elision is \"..\" (ASCII) — the single-glyph … is codepoint 8230, which the 8-bit font
-   would blit as a stray & (8230 & 255 = 38)."
-  (let ((s (string-downcase (princ-to-string name))))
-    (if (> (length s) maxlen)
-        (concatenate 'string (subseq s 0 (max 1 (- maxlen 2))) "..")
-        s)))
+  "The hit map LOL.WIDGETS:DRAW-GRID returned for the dispatch grid drawn last, so a
+   click and the drawing can never disagree (same discipline as *crumb-rects*).")
 
 (defun draw-matrix-body (canvas pane x y w h)
-  "Render a 2-axis dispatch matrix as a clickable grid: the row/col headers are the
-   specializer classes, each cell shows how many PRIMARY methods cover that (row,col)
-   pair (a dim 0 is a real gap — the whole point of the view). A cell click drills
-   the effective-method onion for that class pair; cells are recorded in
-   *matrix-cells* so the hit-test always matches what was drawn."
-  (setf *matrix-cells* '())
-  (let* ((m     (view-data (pane-view pane)))
-         (rows  (getf m :rows))
-         (cols  (getf m :cols))
-         (cells (getf m :cells))
-         (hdr-w 130)                                        ; row-header column width
-         (x0    (+ x hdr-w))                                ; where the cell grid starts
-         (ncols (max 1 (floor (- w hdr-w) +mx-cell-w+))))   ; how many columns fit
-    ;; column headers — specializer classes, in the class blue
-    (loop for c in cols for ci from 0 below ncols
-          for cx = (+ x0 (* ci +mx-cell-w+))
-          do (lol.canvas:draw-string canvas *bfont* (mx-short c 12) (+ cx 2) y
-                                     (concept-color :class)))
-    (when (> (length cols) ncols)
-      (lol.canvas:draw-string canvas *bfont* (format nil ".. +~a" (- (length cols) ncols))
-                              (- (+ x w) 48) y *sh-dim*))
-    ;; rows, each a header (teal, the dispatch axis) + its cells
-    (loop with green = (concept-color :generic-function)
-          for r in rows for cellrow in cells for ri from 0
-          for ry = (+ y +mx-row-h+ (* ri +mx-row-h+))
-          while (< ry (- (+ y h) 4))
-          do (lol.canvas:draw-string canvas *bfont* (mx-short r 20) x ry (concept-color :function))
-             (loop for cell in cellrow for c in cols for ci from 0 below ncols
-                   for cx = (+ x0 (* ci +mx-cell-w+))
-                   for n = (length cell)
-                   do (when (plusp n)                    ; a covered pair: green-tinted, green left edge
-                        (lol.canvas:fill-rect canvas (1+ cx) (- ry 1) (- +mx-cell-w+ 1)
-                                              (- +mx-row-h+ 1) !#1E2A22)
-                        (lol.canvas:fill-rect canvas (1+ cx) (- ry 1) 2 (- +mx-row-h+ 1) green))
-                      (lol.canvas:draw-rect canvas cx (- ry 2) +mx-cell-w+ +mx-row-h+ *sh-rule*)
-                      (lol.canvas:draw-string canvas *bfont*
-                        (if (zerop n) "·" (format nil "~c~d" (code-char 215) n))  ; ×N methods
-                        (+ cx (floor +mx-cell-w+ 2) (if (zerop n) -3 -9)) ry
-                        (if (zerop n) *sh-dim* green))
-                      (push (list cx (- ry 2) +mx-cell-w+ +mx-row-h+ r c) *matrix-cells*)))))
+  "Render a 2-axis dispatch matrix as a clickable grid. The widget draws the cells,
+   the header band and the column overflow; this turns the model's cell CONTENTS
+   (lists of methods) into the counts the grid shows — a dim mark for a real gap,
+   which is the whole point of the view."
+  (let* ((m (view-data (pane-view pane)))
+         (rows (getf m :rows))
+         (cols (getf m :cols))
+         (counts (mapcar (lambda (cellrow) (mapcar #'length cellrow)) (getf m :cells))))
+    (setf *matrix-cells*
+          (lol.widgets:draw-grid canvas x y w h rows cols counts))))
 
 (defun matrix-cell-click (pane px py)
   "A click on a dispatch-grid cell -> drill the effective-method onion for that
    (row-class, col-class) pair, building the full argument tuple (T elsewhere) from
    the matrix's arity and axis positions. NIL when the click missed every cell."
-  (let ((hit (find-if (lambda (cell)
-                        (destructuring-bind (cx cy cw ch r c) cell
-                          (declare (ignore r c))
-                          (and (<= cx px (+ cx cw)) (<= cy py (+ cy ch)))))
-                      *matrix-cells*)))
+  (let ((hit (lol.widgets:hit-cell *matrix-cells* px py)))
     (when hit
-      (destructuring-bind (cx cy cw ch r c) hit
-        (declare (ignore cx cy cw ch))
+      (destructuring-bind (r . c) hit
         (let* ((m (view-data (pane-view pane)))
                (arity (or (getf m :arity) 2))
                (rp (getf m :row-pos)) (cp (getf m :col-pos))
@@ -474,7 +381,7 @@
   "The semantic tint for a VIEW — the concept colour of what it opens on, so a Workspace,
    a package, a class, a generic function each read by colour in the chrome."
   (case (view-kind view)
-    (:workspace *sh-amber*)
+    (:workspace *ui-amber*)
     ((:source :reference) (concept-color :function))
     ((:matrix :generic) (concept-color :generic-function))
     (:class (concept-color :class))
@@ -495,52 +402,71 @@
    / *tab-close-rect* / *tab-plus-rect* so clicks and drawing can't disagree; the app
    name sits at the right when there's room."
   (setf *tab-rects* '() *tab-close-rect* nil *tab-plus-rect* nil)
-  (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
   (let ((x 8) (multi (cdr *trails*)))                        ; align with the 8px gutter below
     (loop for trail in *trails* for i from 0
           for active = (= i *active*)
           for closer = (and active multi)        ; only the active tab shows ×, if >1
           for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
-          for title = (format nil "~a " (mx-short (trail-title trail) 16))
+          for title = (format nil "~a " (clip-text (trail-title trail) 16))
           for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
           for tw = (+ lw (if closer 14 0))
           while (< (+ x tw) (- w 26))             ; leave room for the + button
           do (progn
-               (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *sh-hi* *sh-panel*))
+               (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
                (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
                ;; number quiet, title bright (active accent, inactive plain text)
-               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) 3 *sh-dim*)))
+               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) 3 *ui-dim*)))
                  (lol.canvas:draw-string canvas *bfont* title pen 3
-                                         (if active *sh-accent* *sh-text*)))
+                                         (if active *ui-accent* *ui-text*)))
                (when closer
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
-                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3 *sh-dim*)
+                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3 *ui-dim*)
                    (setf *tab-close-rect* (cons cx (+ cx 14)))))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
                (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
     (let ((px (+ x 2)))
-      (lol.canvas:fill-rect canvas px 0 14 +bar-h+ *sh-panel*)
-      (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) 3 *sh-accent*)
+      (lol.canvas:fill-rect canvas px 0 14 +bar-h+ *ui-panel*)
+      (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) 3 *ui-accent*)
       (setf *tab-plus-rect* (cons px (+ px 14)))
       (setf x (+ px 14)))
     ;; a hairline seam under the whole strip
-    (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *sh-rule*)
+    (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
     ;; app name, right-aligned, if it still fits
     (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
       (when (> sx (+ x 8))
-        (lol.canvas:draw-string canvas *bfont* s sx 3 *sh-dim*)))))
+        (lol.canvas:draw-string canvas *bfont* s sx 3 *ui-dim*)))))
+
+(defun draw-hints (canvas x y w hints)
+  "Draw HINTS — a list of (CHORD . MEANING) — along the status line, the CHORD in the
+   accent and the meaning dim. Colouring the chord is the whole point: a status line
+   of uniformly grey words is read as prose and therefore not read at all, whereas
+   `ret drill` with `ret` lit reads as a key and its effect. A NIL chord is plain text.
+   Stops when it runs out of width rather than spilling off the edge."
+  (let ((pen x))
+    (dolist (h hints)
+      (destructuring-bind (chord . meaning) h
+        (let* ((cw (if chord (+ (lol.canvas:string-px *bfont* chord) 5) 0))
+               (mw (+ (lol.canvas:string-px *bfont* meaning) 12)))
+          (when (> (+ pen cw mw) (- w 8)) (return))
+          (when chord
+            (lol.canvas:draw-string canvas *bfont* chord pen y *ui-accent*)
+            (incf pen cw))
+          (lol.canvas:draw-string canvas *bfont* meaning pen y *ui-dim*)
+          (incf pen mw))))
+    pen))
 
 (defun draw-crumb (canvas y w pane index)
-  "A collapsed ancestor bar: subject title + what was picked inside it."
-  (lol.canvas:fill-rect canvas 8 y (- w 16) +bar-h+ *sh-hi*)
-  (lol.canvas:draw-string canvas *bfont* ">" 16 (+ y 3) *sh-dim*)
-  (lol.canvas:draw-string canvas *bfont* (view-title (pane-view pane)) 34 (+ y 3) *sh-text*)
-  (let ((sel (selected-item pane)))
-    (when sel
-      (let ((s (format nil "picked ~a" (item-label sel))))
-        (lol.canvas:draw-string canvas *bfont* s
-                                (- w 8 (lol.canvas:string-px *bfont* s)) (+ y 3) *sh-accent*))))
+  "A collapsed ancestor bar: a kind-coloured stripe, the subject's title, and what
+   was picked inside it. The stripe is what makes a deep trail readable at a glance —
+   four grey bars say nothing, but gold/blue/green says package, class, generic."
+  (let ((tint (view-kind-color (pane-view pane)))
+        (sel (selected-item pane)))
+    (lol.widgets:draw-bar canvas 8 y (- w 16)
+                          :marker ">" :label (view-title (pane-view pane)) :tint tint
+                          :right (and sel (format nil "picked ~a" (item-label sel))))
+    (lol.canvas:fill-rect canvas 8 y 3 +bar-h+ tint))       ; the kind stripe
   (push (cons index y) *crumb-rects*))
 
 (defun preview-for (subject)
@@ -579,7 +505,7 @@
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
   (setf *split-x* nil)
-  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   ;; the tab strip replaces the old static title bar
   (draw-tabs canvas w)
   (let* ((ancestors (butlast (current-trail)))
@@ -591,16 +517,10 @@
     ;; the expanded current pane
     (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 24)))
       (setf *content-top* body-y)                 ; remember it for click hit-testing
-      (lol.canvas:fill-rect canvas 8 y (- w 16) (- h y 24) *sh-panel*)
-      (lol.canvas:draw-rect canvas 8 y (- w 16) (- h y 24) *sh-rule*)
-      (lol.canvas:fill-rect canvas 9 y (- w 18) +bar-h+ *sh-hi*)
-      (lol.canvas:fill-rect canvas 9 (+ y +bar-h+ -1) (- w 18) 1 *sh-rule*)   ; header/body seam
-      (let ((kc (view-kind-color (pane-view cur)))
-            (badge (string-downcase (symbol-name (view-kind (pane-view cur))))))
-        (lol.canvas:draw-string canvas *bfont* "v" 16 (+ y 3) kc)             ; title in its kind colour
-        (lol.canvas:draw-string canvas *bfont* (view-title (pane-view cur)) 34 (+ y 3) kc)
-        (lol.canvas:draw-string canvas *bfont* badge                          ; right-aligned kind badge
-                                (- (+ w -10) (lol.canvas:string-px *bfont* badge)) (+ y 3) *sh-dim*))
+      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y 24)
+                              :title (view-title (pane-view cur))
+                              :tint (view-kind-color (pane-view cur))
+                              :badge (string-downcase (symbol-name (view-kind (pane-view cur)))))
       (let ((is-list (and (null (pane-tv cur))
                           (not (eq (view-kind (pane-view cur)) :matrix)))))
         (cond
@@ -611,15 +531,15 @@
                   (gap 12) (sx (+ 12 list-w gap)) (sw (- w sx 12)) (side (pane-side cur)))
              (setf *split-x* sx)
              (draw-list-body canvas cur 12 body-y list-w body-h)
-             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *sh-rule*)
+             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
              (lol.canvas:draw-string canvas *bfont*
                (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
                        (if *editing-side* "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
-               sx (- body-y 15) (if *editing-side* *sh-accent* *sh-dim*))
+               sx (- body-y 15) (if *editing-side* *ui-accent* *ui-dim*))
              ;; accent top-rule over whichever half has focus
              (if *editing-side*
-                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *sh-accent*)
-                 (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *sh-accent*))
+                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
+                 (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *ui-accent*))
              (draw-pane-body canvas side sx body-y sw body-h)))
           ;; NAV SPLIT: list left, a live READ-ONLY preview of the selection right.
           ((and is-list (selected-item cur) (item-subject (selected-item cur)))
@@ -628,32 +548,37 @@
                   (preview (preview-for (item-subject (selected-item cur)))))
              (setf *split-x* prev-x)
              (draw-list-body canvas cur 12 body-y list-w body-h)
-             (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *sh-rule*)
+             (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *ui-rule*)
              (if preview
                  (progn
                    (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
-                                           prev-x (- body-y 15) *sh-dim*)
+                                           prev-x (- body-y 15) *ui-dim*)
                    (draw-pane-body canvas preview prev-x body-y prev-w body-h))
                  (lol.canvas:draw-string canvas *bfont* "(no preview)"
-                                         prev-x (+ body-y 4) *sh-dim*))))
+                                         prev-x (+ body-y 4) *ui-dim*))))
           ;; single pane, full width (source / matrix / a list with nothing to preview)
           (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))
     ;; status line
     (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
-      (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *sh-hi*)
+      (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *ui-hi*)
       (if *browser-status*
-          (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *sh-accent*)
-          (lol.canvas:draw-string canvas *bfont*
-            (format nil "~a  SuperL-< back  SuperL-q quit~@[   commands: ~a~]"
-                    (cond ((and *editing-side* (pane-side cur))
-                           "editing beside: C-c C-c accept  ·  SuperL-o back to list")
-                          ((workspace-pane-p cur)
-                           "C-x C-e Do it  C-c C-p Print  C-c C-i Inspect  C-c C-d Debug")
-                          ((editable-pane-p cur) "editing: C-c C-c accepts")
-                          ((pane-side cur) "up/dn move  ret drill  S-ret beside  SuperL-o edit")
-                          (t "up/dn move  ret drill  S-ret beside"))
-                    (and cmds (format nil "~{~a~^ · ~}" (mapcar #'command-label cmds))))
-            10 (- h 18) *sh-dim*)))))
+          (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *ui-accent*)
+          (draw-hints canvas 10 (- h 18) w
+                      (append
+                       (cond ((and *editing-side* (pane-side cur))
+                              '(("C-c C-c" . "accept") ("SuperL-o" . "back to list")))
+                             ((workspace-pane-p cur)
+                              '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
+                                ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")))
+                             ((editable-pane-p cur) '(("C-c C-c" . "accept")))
+                             ((pane-side cur)
+                              '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
+                                ("SuperL-o" . "edit")))
+                             (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
+                       '(("SuperL-<" . "back") ("SuperL-q" . "quit"))
+                       (when cmds
+                         (list (cons nil (format nil "commands: ~{~a~^ · ~}"
+                                                 (mapcar #'command-label cmds)))))))))))
 
 ;;; ---- input ---------------------------------------------------------------
 
@@ -801,14 +726,10 @@
       (t
        (cond
          ((eql key #\q) :quit)
-         ((eq key :up)   (setf (pane-sel p) (max 0 (1- (pane-sel p)))))
-         ((eq key :down) (setf (pane-sel p)
-                               (min (max 0 (1- (length (view-items (pane-view p)))))
-                                    (1+ (pane-sel p)))))
-         ((eq key :page-up)   (setf (pane-sel p) (max 0 (- (pane-sel p) +list-page+))))
-         ((eq key :page-down) (setf (pane-sel p)
-                                    (min (max 0 (1- (length (view-items (pane-view p)))))
-                                         (+ (pane-sel p) +list-page+))))
+         ((eq key :up)   (set-pane-sel p (1- (pane-sel p))))
+         ((eq key :down) (set-pane-sel p (1+ (pane-sel p))))
+         ((eq key :page-up)   (set-pane-sel p (- (pane-sel p) +list-page+)))
+         ((eq key :page-down) (set-pane-sel p (+ (pane-sel p) +list-page+)))
          ((eq key :return)
           (if (lol.canvas:shift-p state)
               (open-beside p)                            ; ⇧↵ — open BESIDE (editable split)
@@ -877,16 +798,17 @@
     (jump-at-point tv)))
 
 (defun browser-scroll (lines)
-  "Scroll the current pane by LINES (+ down / toward the end) — the mouse wheel. A
-   text pane scrolls its viewport, leaving the caret put; a list pane moves the
-   selection instead (its scroll position is anchored to the selection, so the view
-   follows). No-op past the ends."
+  "Scroll the current pane by LINES (+ down / toward the end) — the mouse wheel.
+   BOTH kinds of pane now scroll their VIEWPORT and leave the cursor alone, which is
+   what scrolling means: you are looking somewhere else, not moving. A text pane does
+   it with tv-wheel (point stays put); a list pane does it by moving PANE-TOP with
+   PANE-FOLLOW off for that frame, so the widget does not immediately drag the view
+   back to the selection. The widget clamps, so this cannot run off either end."
   (let ((p (current-pane)))
     (if (pane-tv p)
         (lol.textview:tv-wheel (pane-tv p) lines)
-        (let ((n (length (view-items (pane-view p)))))
-          (when (plusp n)
-            (setf (pane-sel p) (max 0 (min (1- n) (+ (pane-sel p) lines)))))))))
+        (setf (pane-top p) (max 0 (+ (pane-top p) lines))
+              (pane-follow p) nil))))
 
 (defun browser-click (x y &optional ctrl super)
   "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
@@ -950,10 +872,9 @@
        ;; which row was actually painted here? *list-rows* answers; a click on a group
        ;; header hits no row and is correctly inert.
        (let* ((items (view-items (pane-view p)))
-              (hit (find-if (lambda (e) (<= (car e) y (+ (car e) +row-h+))) *list-rows*))
-              (i (and hit (cdr hit))))
+              (i (lol.widgets:hit-row *list-rows* y)))
          (when (and i (< i (length items)))
-           (setf (pane-sel p) i)
+           (set-pane-sel p i)
            (let ((it (nth i items)))
              (when (item-subject it)
                (if super (new-trail (item-subject it)) (trail-push (item-subject it)))))))))))

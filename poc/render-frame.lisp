@@ -50,6 +50,7 @@
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
     "poc/textview.lisp"           ; the editable, syntax-colouring text view
+    "poc/widgets.lisp"            ; phase 3 toolkit: panel / list / scrollbar / grid
     "initramfs/ansi.lisp"         ; needed by line-editor
     "initramfs/line-editor.lisp"  ; token-start / longest-common-prefix, used by the shell
     "poc/shell.lisp"              ; draw-browser itself
@@ -101,7 +102,8 @@ OPTIONS
   -s WxH      canvas size (default 1280x720; the QEMU guest is 1280x800)
   -k \"KEYS\"   replay a script before drawing, so a frame can be a DRILLED state:
               tokens are up down left right ret tab bs esc space pgup pgdn,
-              a bare character, or click:X,Y — each may take C- M- S- s- prefixes
+              a bare character, click:X,Y, or wheel:N (+N lines toward the end) —
+              each may take C- M- S- s- prefixes
               (Ctrl / Meta / Shift / Super).  e.g. -k \"down down ret S-ret\"
   -h          this text
 ")
@@ -209,6 +211,11 @@ OPTIONS
             ((starts-with "s-" tok) (setf state (logior state 64) tok (subseq tok 2)))
             (t (return))))
     (cond
+      ((starts-with "wheel:" tok)
+       ;; a wheel notch count: + scrolls toward the end. The real wheel arrives as
+       ;; evdev/X11 events the harness has no way to synthesise, so replay the line
+       ;; count BROWSER-SCROLL would have been handed.
+       (values :wheel (parse-integer (subseq tok 6)) state))
       ((starts-with "click:" tok)
        (let ((xy (split-on #\, (subseq tok 6))))
          (values :click (cons (parse-integer (first xy)) (parse-integer (second xy))) state)))
@@ -226,10 +233,11 @@ OPTIONS
   (dolist (tok (split-on #\Space script))
     (multiple-value-bind (key arg state) (parse-key-token tok)
       (draw-browser canvas w h)
-      (if (eq key :click)
-          (browser-click (car arg) (cdr arg)
-                         (lol.canvas:ctrl-p state) (lol.canvas:super-p state))
-          (browser-key key state)))))
+      (case key
+        (:click (browser-click (car arg) (cdr arg)
+                               (lol.canvas:ctrl-p state) (lol.canvas:super-p state)))
+        (:wheel (browser-scroll arg))
+        (t (browser-key key state))))))
 
 ;;; ---- PPM out -------------------------------------------------------------
 
@@ -274,7 +282,7 @@ OPTIONS
                ((null subject-spec) (setf subject-spec a))
                (t (error "unexpected argument ~s — see -h" a))))
     (unless subject-spec (write-string *usage*) (return-from main 1))
-    (setf *bfont* (lol.canvas:load-font (merge-pathnames "cozette.lolf" *poc-dir*)))
+    (set-browser-font (lol.canvas:load-font (merge-pathnames "cozette.lolf" *poc-dir*)))
     (let ((canvas (lol.canvas:make-canvas w h)))
       (open-environment (parse-subject subject-spec))
       (when script (replay-keys script canvas w h))

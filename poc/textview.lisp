@@ -324,7 +324,10 @@
 
 (defparameter *c-text*    !#D6D3C8)
 (defparameter *c-string*  !#A8D078)
-(defparameter *c-comment* !#5A6355)
+(defparameter *c-comment* !#6B727D)   ; the UI's own dim grey — a comment is prose
+                                      ; ABOUT the code, so it should recede to the
+                                      ; same level as a detail column, not compete
+                                      ; with the code in a green of its own
 (defparameter *c-keyword* !#C792EA)   ; :keywords AND special forms / macros — purple
 (defparameter *c-number*  !#FF9F43)
 (defparameter *c-operator* !#7FDBCA)  ; a form's head symbol (a call) — function teal
@@ -424,7 +427,9 @@
 ;;; ---- drawing -------------------------------------------------------------
 
 (defparameter *bg*      !#1B1E24)
-(defparameter *gutter*  !#4A524D)
+(defparameter *gutter*  !#3A414B)     ; line numbers: cooler and darker than before
+                                      ; (#4A524D was a warm green-grey that read as
+                                      ; content). Furniture should sit UNDER the text.
 (defparameter *sel*     !#2F4F6A)
 (defparameter *caret*   !#7FDBCA)
 (defparameter *cur-ln*  !#21252C)

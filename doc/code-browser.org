@@ -542,7 +542,7 @@ and the selected frame's locals in a strip along the bottom. The stack is *still
 standing* — this is =handler-bind=, not =handler-case= — so invoking a restart
 genuinely transfers control rather than unwinding first:
 
-[[file:../media/screenshots/debugger-2026-08-10.png]]
+[[file:../media/screenshots/debugger-2026-09-13.png]]
 
 /The live debugger on =(/ 1 0)=. Note the whole chain is visible —
 =INTEGER-/-INTEGER → / → EVAL → WORKSPACE-DEBUG-IT → RUN-BROWSER-FB →
@@ -903,7 +903,7 @@ filters the whole candidate set (every recorded definition, every package, every
 module, plus the named surfaces) by fuzzy *subsequence*, ranked exact > prefix >
 word-boundary > plain:
 
-[[file:../media/screenshots/spotter-2026-08-10.png]]
+[[file:../media/screenshots/spotter-2026-09-13.png]]
 
 /The Spotter on "coll" — =collide= ranked first, ahead of =collapse= and the
 merely-subsequence matches like =colorize-lisp=.
@@ -1260,9 +1260,38 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   primitives, bitmap font + blitter, event loop, and the pure-Lisp X11 client
   (§6.1). /Demo delivered: a window on your desktop, drawn entirely by our own
   Lisp, and the identical buffer on =/dev/fb0=./ Remaining: damage tracking.
-- *Phase 3 — the toolkit.* [text view DONE in [[file:../poc/textview.lisp][poc/textview.lisp]]] Still owed:
-  panes, lists, scrollbars, menus. The text view subsumes
-  [[file:../initramfs/line-editor.lisp][line-editor.lisp]]'s buffer logic and already reuses a run-based lexer.
+- *Phase 3 — the toolkit.* [DONE — [[file:../poc/textview.lisp][poc/textview.lisp]] + [[file:../poc/widgets.lisp][poc/widgets.lisp]]] The text
+  view subsumes [[file:../initramfs/line-editor.lisp][line-editor.lisp]]'s buffer logic and reuses a run-based lexer. The
+  panes/lists/scrollbars/menus this phase also owed are now =lol.widgets=:
+  =draw-panel= (a framed pane with its header band), =draw-bar= (a collapsed
+  breadcrumb), =draw-list= (rows, sections, selection, viewport, scrollbar),
+  =draw-scrollbar=, =draw-grid= (the dispatch matrix's cells) and =draw-card= (a
+  floating surface over a dimmed page). The palette and the row metrics moved there
+  too, so a widget and its caller cannot drift apart.
+  *The rule that makes them widgets and not just moved code: a widget knows nothing
+  about the browser.* It never sees an =ITEM=, a =VIEW=, a =PANE= or a =SUBJECT= —
+  it is handed geometry and a vector of =ROW=s and hands back where it drew them. So
+  the Spotter's candidates, the debugger's restarts and a package's definitions can
+  all be the same widget with different rows. =shell.lisp='s =item->row= is the
+  entire boundary between the two layers.
+  *And: draw records what it did.* Every clickable widget returns a hit map instead
+  of letting the caller re-derive geometry from a formula. That is not ceremony —
+  the browser has already shipped two bugs of exactly that shape (a click landing a
+  gutter-width right of the pointer; a click computing row /N/ from /y/ after section
+  headers made screen row /N/ no longer item /N/). A hit map cannot disagree with the
+  picture, because it *is* the picture's own record.
+  /The refactor was proved neutral by rendering the standard frame set before and
+  after with [[file:../poc/render-frame.lisp][render-frame.lisp]] and diffing: every difference was either a deliberate
+  addition (the scrollbar, the grid's header band) or the harness's own new module
+  appearing in the module index./
+  *This also closes the last scrolling gap.* A list pane now has a viewport
+  independent of its selection: the wheel moves =PANE-TOP= with =PANE-FOLLOW= off,
+  so scrolling is /looking/, and touching the selection re-attaches the view. The
+  re-arming deliberately does NOT happen in the draw — the framebuffer loop redraws
+  on every event, mouse motion included, so a wheel-scrolled list would snap back the
+  instant the pointer twitched. /Verified: after =wheel:20= the viewport has moved and
+  the selection is off-screen; a click then lands on the row under the pointer (row 5,
+  not row 0), because the hit map moved with the view; one =down= re-attaches./
 - *Phase 3a — the Workspace* (§3a). [DONE — [[file:../initramfs/present.lisp][present.lisp]] (subj-workspace) +
   [[file:../poc/shell.lisp][poc/shell.lisp]] (the verbs) + supervisor menu =p)=] A =:workspace= pane reuses the
   editable text view, but its verbs eval the form before point instead of Accepting

@@ -18,14 +18,14 @@
       (load (f "../initramfs/registry.lisp"))          ; defines load-recording (plain load)
       ;; everything else is loaded AND source-captured, so it is all browsable:
       (dolist (m '("../initramfs/model.lisp" "../initramfs/present.lisp"
-                   "canvas.lisp" "x11.lisp" "textview.lisp" "shell.lisp"
+                   "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp" "shell.lisp"
                    "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"))
         (load-recording (f m))))))
 
-(setf *bfont*
-      (lol.canvas:load-font
-       (merge-pathnames "cozette.lolf"
-                        (make-pathname :directory (pathname-directory *load-truename*)))))
+(set-browser-font
+ (lol.canvas:load-font
+  (merge-pathnames "cozette.lolf"
+                   (make-pathname :directory (pathname-directory *load-truename*)))))
 
 (let* ((w 1000) (h 720)
        (canvas (lol.canvas:make-canvas w h))

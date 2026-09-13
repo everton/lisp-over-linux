@@ -543,13 +543,28 @@
                    :kind :reference :subject s
                    :text (format-matrix m)))))
 
-(defun onion-role (m)
-  "A one-line note on WHEN a method in the combination runs, from its qualifier."
+(defun onion-phase (m)
+  "Which phase of the combination M belongs to: \"around\" / \"before\" / \"primary\"
+   / \"after\". Used as the row's GROUP, so the onion renders as four ruled bands in
+   execution order — the waterfall the view is trying to show."
   (case (first (getf m :qualifiers))
-    (:around "around · wraps the call")
-    (:before "before · runs first")
-    (:after  "after · runs last")
-    (t       "primary · the call-next-method chain")))
+    (:around "around")
+    (:before "before")
+    (:after  "after")
+    (t       "primary")))
+
+(defun onion-role (m &optional invoked)
+  "A one-line note on WHEN M runs. INVOKED marks the ONE primary the call actually
+   enters — the others in the chain run only if it calls CALL-NEXT-METHOD, which is a
+   choice, not a certainty. Saying so is the difference between a list of candidates
+   and a picture of what happens."
+  (case (first (getf m :qualifiers))
+    (:around "wraps the call")
+    (:before "runs first")
+    (:after  "runs last")
+    (t (if invoked
+           "THE call — the most specific primary"
+           "next in the chain, only if call-next-method"))))
 
 (defmethod present ((s subj-onion))
   "The effective method for one argument tuple, as a BROWSABLE LIST in execution order
@@ -559,16 +574,19 @@
   (let* ((o    (apply #'effective-method-onion (subj-onion-name s) (subj-onion-tuple s)))
          (name (getf o :name))
          (items '()))
-    (flet ((add (m)
+    (flet ((add (m &optional invoked)
              (push (make-item :label (method-tuple-label m)
-                              :detail (onion-role m)
+                              :detail (onion-role m invoked)
                               :kind :method
+                              :group (onion-phase m)
                               :subject (subj-method name (getf m :qualifiers)
                                                     (getf m :specializers)))
                    items)))
       (dolist (m (getf o :around))  (add m))
       (dolist (m (getf o :before))  (add m))
-      (dolist (m (getf o :primary)) (add m))
+      ;; the primaries come most-specific-first, so the FIRST one is the method the
+      ;; call actually enters; the rest are reachable only through call-next-method
+      (loop for m in (getf o :primary) for first = t then nil do (add m first))
       (dolist (m (getf o :after))   (add m)))
     (make-view
      :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})" name (subj-onion-tuple s))

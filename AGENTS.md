@@ -163,8 +163,11 @@ protocol in a tiled, keyboard-first shell. Progress:
 2. **Phase 1 — the CLOS/model layer** — *DONE* (`initramfs/model.lisp`): class DAG,
    GF/method graph, `applicable-methods`, `categorize`, object inspector. Headless.
 3. **Phase 2/3 UI toolkit** — *DONE* in `poc/` (pure-Lisp X11 client, `/dev/fb0`
-   backend, an editable syntax-colouring text view). Host-runnable. Still owed
-   from phase 3: generic panes/lists/scrollbars/menus as reusable widgets.
+   backend, an editable syntax-colouring text view, and `poc/widgets.lisp` —
+   `lol.widgets`: panel, bar, list (sections + selection + viewport + scrollbar),
+   scrollbar, grid, card, plus the palette and row metrics). Host-runnable. A widget
+   knows nothing about the browser: it takes geometry and `ROW`s and returns a hit
+   map, so the same list draws a package, the Spotter and the debugger's restarts.
 4. **Phase 3a — the Workspace** — *DONE* (`initramfs/present.lisp` +
    `poc/shell.lisp`, supervisor menu `p`): Do it / Print it / Inspect it /
    Debug it, with the printed transcript woven back into the buffer.
@@ -200,11 +203,10 @@ protocol in a tiled, keyboard-first shell. Progress:
    `lol.*` toolkit modules (`canvas`, `textview`, `fb`, `shell`) that a CL-USER
    root cannot list at all — which is why it replaced CL-USER as the default.
    The flat package view is still menu `l`.
-10. **Next:** phase 3's remaining widgets — generic panes/lists/scrollbars/menus,
-    which is also what a list pane needs before it can scroll a viewport instead of
-    dragging its selection. Then the visual-polish backlog. Phase 7 (Morphic) is
-    open horizon. See the Phases section of `doc/code-browser.org` — that doc is
-    the truth here.
+10. **Next:** compare the running browser against the design mock-up
+    (`media/browser-views-design.html`) and close the gaps that matter. Phase 7
+    (Morphic) is open horizon. See the Phases section of `doc/code-browser.org` —
+    that doc is the truth here.
 11. **Verifying a visual change:** `sbcl --script poc/render-frame.lisp SUBJECT`
     renders one real browser frame to a PPM headless in about a second — no QEMU,
     no X, no `/dev/fb0`. `-h` lists the subject forms; `-k` replays keys and clicks

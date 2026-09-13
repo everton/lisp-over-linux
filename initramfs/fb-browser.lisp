@@ -285,7 +285,7 @@
    any package is reachable through the Spotter."
   (handler-case
       (progn
-        (unless *bfont* (setf *bfont* (lol.canvas:load-font "/cozette.lolf")))
+        (unless *bfont* (set-browser-font (lol.canvas:load-font "/cozette.lolf")))
         (open-environment (or root (subj-modules)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
@@ -362,7 +362,7 @@
    a wide value can't run off-screen. Placeholder when the frame has no debug vars."
   (if (null locals)
       (lol.canvas:draw-string canvas *bfont* "(no locals — no debug vars here)"
-                              x0 y0 *sh-dim*)
+                              x0 y0 *ui-dim*)
       (let ((y y0)
             (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*)))))  ; chars that fit
         (dolist (v locals)
@@ -377,11 +377,11 @@
               (if (> (length full) maxc)
                   (lol.canvas:draw-string canvas *bfont*
                     (concatenate 'string (subseq full 0 (max 1 (- maxc 2))) "..")
-                    x0 y (if unavail *sh-dim* *sh-text*))
+                    x0 y (if unavail *ui-dim* *ui-text*))
                   (let ((pen (lol.canvas:draw-string canvas *bfont* name x0 y
-                                                     (if unavail *sh-dim* *sh-accent*))))
+                                                     (if unavail *ui-dim* *ui-accent*))))
                     (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
-                                            (if unavail *sh-dim* *sh-text*))))
+                                            (if unavail *ui-dim* *ui-text*))))
               (incf y 15)))))))
 
 ;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
@@ -408,7 +408,7 @@
    !; the RESTARTS stand in an amber rail on the right (invoking one is the unwind).
    The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
    :backtrace) says which rail the arrows drive."
-  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   (lol.canvas:fill-rect canvas 0 0 w 24 *dbg-title-bg*)
   (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
                           10 5 *dbg-title-fg*)
@@ -419,12 +419,12 @@
     (incf y 32)
     ;; the report is often multi-line (draw-string has no newline handling): split it.
     (dolist (line (split-lines (princ-to-string condition)))
-      (lol.canvas:draw-string canvas *bfont* (dbg-fit line (- w 24)) 12 y *sh-text*)
+      (lol.canvas:draw-string canvas *bfont* (dbg-fit line (- w 24)) 12 y *ui-text*)
       (incf y 16))
     (incf y 2)
     (lol.canvas:draw-string canvas *bfont*
       "no handler claimed it — caught here with the whole stack still standing."
-      12 y *sh-dim*)
+      12 y *ui-dim*)
     (incf y 26)
     ;; --- the triptych ---
     (let* ((split   (floor (* w 52) 100))
@@ -434,18 +434,18 @@
            (bottom  (- h +dbg-locals-h+ 6)))
       ;; column headers — the section title bright in its side colour, the key-hint dim
       (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
-                                         (if (eq focus :backtrace) *sh-accent* *sh-dim*))))
-        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *sh-dim*))
+                                         (if (eq focus :backtrace) *ui-accent* *ui-dim*))))
+        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *ui-dim*))
       (let ((pen (lol.canvas:draw-string canvas *bfont* "RESTARTS" (+ split 8) top
-                                         (if (eq focus :restarts) *sh-amber* *sh-dim*))))
+                                         (if (eq focus :restarts) *ui-amber* *ui-dim*))))
         (lol.canvas:draw-string canvas *bfont* "  ·  0-9 · Enter (asks for a value) · unwinds"
-                                pen top *sh-dim*))
+                                pen top *ui-dim*))
       (incf top 20)
       ;; a rule divides the two sides; a SOLID teal signal rail (the stack stands) faces a
       ;; mirrored dim-amber restart rail (the unwind) — §3's two forces, left and right.
-      (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *sh-rule*)
+      (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *ui-rule*)
       (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
-                     *sh-accent*)
+                     *ui-accent*)
       (draw-dbg-rail canvas split top (min bottom (+ top (* +dbg-row+ (length restarts))))
                      !#8A5A28)
       ;; --- centre: the call stack; frame 0 (innermost) is where it was signalled ---
@@ -454,33 +454,33 @@
         (loop for fr in backtrace for i from 0 while (< fy bottom) do
           (when (= i fsel)
             (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) (- split frame-x 6) +dbg-frame-row+
-                                  (if (eq focus :backtrace) *sh-sel* *sh-hi*))
+                                  (if (eq focus :backtrace) *ui-sel* *ui-hi*))
             (when (eq focus :backtrace)
-              (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) 2 +dbg-frame-row+ *sh-accent*)))
+              (lol.canvas:fill-rect canvas (- frame-x 6) (- fy 2) 2 +dbg-frame-row+ *ui-accent*)))
           (when (zerop i)                                    ; the signal frame
-            (lol.canvas:draw-string canvas *bfont* "!" (- frame-x 16) fy *sh-amber*))
+            (lol.canvas:draw-string canvas *bfont* "!" (- frame-x 16) fy *ui-amber*))
           (lol.canvas:draw-string canvas *bfont*
             (dbg-fit (format nil "~2d ~a" i fr) (- split frame-x 12))
-            frame-x fy (if (= i fsel) *sh-text* *sh-dim*))
+            frame-x fy (if (= i fsel) *ui-text* *ui-dim*))
           (incf fy +dbg-frame-row+)))
       ;; --- right: the restart rail (amber — invoking is the unwind) ---
       (setf *dbg-restart-top* top *dbg-restart-x0* split *dbg-restart-x1* (- w 8))
       (let ((ry top))
         (loop for r in restarts for i from 0 while (< ry bottom) do
           (when (= i rsel)
-            (lol.canvas:fill-rect canvas split (- ry 2) (- w split 8) +dbg-row+ *sh-sel*)
-            (lol.canvas:fill-rect canvas split (- ry 2) 2 +dbg-row+ *sh-amber*))
+            (lol.canvas:fill-rect canvas split (- ry 2) (- w split 8) +dbg-row+ *ui-sel*)
+            (lol.canvas:fill-rect canvas split (- ry 2) 2 +dbg-row+ *ui-amber*))
           (lol.canvas:draw-string canvas *bfont*
             (dbg-fit (format nil "~d  ~@[[~(~a~)]  ~]~a" i (getf r :name) (getf r :report))
                      (- w split 16))
-            (+ split 10) ry (if (= i rsel) *sh-text* *sh-dim*))
+            (+ split 10) ry (if (= i rsel) *ui-text* *ui-dim*))
           (incf ry +dbg-row+)))
       ;; --- bottom strip: the locals of the selected frame ---
       (let ((ly (- h +dbg-locals-h+)))
-        (lol.canvas:fill-rect canvas 0 ly w 1 *sh-rule*)
+        (lol.canvas:fill-rect canvas 0 ly w 1 *ui-rule*)
         (lol.canvas:draw-string canvas *bfont*
           (dbg-fit (format nil "locals of frame ~d  ·  ~a" fsel (nth fsel backtrace)) (- w 24))
-          12 (+ ly 7) *sh-accent*)
+          12 (+ ly 7) *ui-accent*)
         (draw-dbg-locals canvas 12 (+ ly 28) w h locals)))))
 
 (defun dbg-restart-at (x y n)
@@ -525,11 +525,11 @@
     (lol.textview:tv-set-text tv text)
     (lol.textview:tv-geometry tv 12 32 (- w 24) (- h 44))
     (loop
-      (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
-      (lol.canvas:fill-rect canvas 0 0 w 24 *sh-hi*)
+      (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+      (lol.canvas:fill-rect canvas 0 0 w 24 *ui-hi*)
       (lol.canvas:draw-string canvas *bfont*
         (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
-        12 5 *sh-accent*)
+        12 5 *ui-accent*)
       (lol.textview:tv-draw canvas tv)
       (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
       (lol.fb:present-fb canvas)
@@ -555,12 +555,12 @@
    NIL if cancelled. Draws its bar over the current debugger frame (already on canvas)."
   (let ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
     (loop
-      (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *sh-hi*)
-      (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *sh-amber*)
+      (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *ui-hi*)
+      (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *ui-amber*)
       (lol.canvas:draw-string canvas *bfont*
         (format nil "value for [~(~a~)] — an expression, Enter invokes, Esc cancels:" name)
-        12 (- h 38) *sh-amber*)
-      (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *sh-text*)
+        12 (- h 38) *ui-amber*)
+      (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *ui-text*)
       (lol.fb:present-fb canvas)
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
         (declare (ignore ms))
@@ -723,21 +723,21 @@
 (defun draw-cheatsheet (canvas w h)
   "Render *cheatsheet* as a full-screen two-column overlay. Group titles in amber,
    the keys in accent, the descriptions in text."
-  (lol.canvas:fill-rect canvas 0 0 w h *sh-bg*)
-  (lol.canvas:fill-rect canvas 0 0 w 22 *sh-hi*)
+  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w 22 *ui-hi*)
   (lol.canvas:draw-string canvas *bfont*
-    "Keys  —  press any key or click to dismiss" 12 4 *sh-accent*)
+    "Keys  —  press any key or click to dismiss" 12 4 *ui-accent*)
   (let ((col-x (vector 40 (+ (floor w 2) 20)))
         (col-y (vector 44 44))
         (half  (ceiling (length *cheatsheet*) 2)))
     (loop for g in *cheatsheet* for i from 0
           for c = (if (< i half) 0 1)
           do (let ((x (aref col-x c)) (y (aref col-y c)))
-               (lol.canvas:draw-string canvas *bfont* (car g) x y *sh-amber*)
+               (lol.canvas:draw-string canvas *bfont* (car g) x y *ui-amber*)
                (incf y 20)
                (dolist (row (cdr g))
-                 (lol.canvas:draw-string canvas *bfont* (first row)  (+ x 12)  y *sh-accent*)
-                 (lol.canvas:draw-string canvas *bfont* (second row) (+ x 168) y *sh-text*)
+                 (lol.canvas:draw-string canvas *bfont* (first row)  (+ x 12)  y *ui-accent*)
+                 (lol.canvas:draw-string canvas *bfont* (second row) (+ x 168) y *ui-text*)
                  (incf y 16))
                (incf y 12)
                (setf (aref col-y c) y)))))
@@ -798,33 +798,33 @@
          (ch   (+ 56 (* rows +spotter-row+) 12)))
     (setf *spotter-card* (list cx cy (+ cx cw) (+ cy ch)) *spotter-rows* rows)
     (lol.canvas:fill-rect canvas (+ cx 5) (+ cy 6) cw ch !#080A0C)   ; drop shadow
-    (lol.canvas:fill-rect canvas cx cy cw ch *sh-panel*)             ; the card
-    (lol.canvas:fill-rect canvas cx cy cw 2 *sh-accent*)             ; accent top rule
-    (lol.canvas:draw-rect canvas cx cy cw ch *sh-rule*)
+    (lol.canvas:fill-rect canvas cx cy cw ch *ui-panel*)             ; the card
+    (lol.canvas:fill-rect canvas cx cy cw 2 *ui-accent*)             ; accent top rule
+    (lol.canvas:draw-rect canvas cx cy cw ch *ui-rule*)
     (lol.canvas:draw-string canvas *bfont*
       "Spotter — type to find · Enter opens a new tab · Esc closes"
-      (+ cx 12) (+ cy 8) *sh-dim*)
+      (+ cx 12) (+ cy 8) *ui-dim*)
     (let ((qy (+ cy 26)))                            ; the query line
-      (lol.canvas:fill-rect canvas (+ cx 8) qy (- cw 16) 20 *sh-hi*)
-      (lol.canvas:draw-rect canvas (+ cx 8) qy (- cw 16) 20 *sh-rule*)
+      (lol.canvas:fill-rect canvas (+ cx 8) qy (- cw 16) 20 *ui-hi*)
+      (lol.canvas:draw-rect canvas (+ cx 8) qy (- cw 16) 20 *ui-rule*)
       (lol.canvas:draw-string canvas *bfont* (format nil "> ~a_" query)
-                              (+ cx 14) (+ qy 3) *sh-accent*)
+                              (+ cx 14) (+ qy 3) *ui-accent*)
       (let ((y (+ qy 30)))                           ; the results
         (setf *spotter-top* y)
         (if (null results)
-            (lol.canvas:draw-string canvas *bfont* "(no matches)" (+ cx 16) y *sh-dim*)
+            (lol.canvas:draw-string canvas *bfont* "(no matches)" (+ cx 16) y *ui-dim*)
             (loop for r in results for i from 0 while (< i rows)
                   do (when (= i sel)
-                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) (- cw 12) +spotter-row+ *sh-sel*)
-                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) 2 +spotter-row+ *sh-accent*))
+                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) (- cw 12) +spotter-row+ *ui-sel*)
+                       (lol.canvas:fill-rect canvas (+ cx 6) (- y 2) 2 +spotter-row+ *ui-accent*))
                      (let ((pen (lol.canvas:draw-string canvas *bfont* (getf r :label) (+ cx 14) y
-                                                        (if (= i sel) *sh-text* *sh-dim*))))
+                                                        (if (= i sel) *ui-text* *ui-dim*))))
                        (lol.canvas:draw-string canvas *bfont* (format nil "  ~a" (getf r :detail))
-                                               pen y *sh-dim*))
+                                               pen y *ui-dim*))
                      (incf y +spotter-row+)))
         (when (> (length results) rows)              ; a count of what didn't fit
           (lol.canvas:draw-string canvas *bfont* (format nil ".. +~d more" (- (length results) rows))
-                                  (+ cx 14) y *sh-dim*))))))
+                                  (+ cx 14) y *ui-dim*))))))
 
 (defun spotter-row-at (x y n)
   "The VISIBLE result-row index at screen X,Y within the card, or NIL. N = result count."

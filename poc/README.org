@@ -30,6 +30,7 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
 | =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. Drives the real =initramfs/= registry+model+present. |
+| =widgets.lisp=   | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map. |
 | =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
@@ -150,9 +151,9 @@ Its module index is correspondingly a subset of the guest's.
   which =run-browser.lisp= and =run-editor.lisp= now route to =browser-scroll= /
   =tv-wheel=. /Verified in the booted guest over QMP against the browser's own
   state — ten assertions, all passing (see [[file:../doc/code-browser.org][code-browser.org]], phase 5)./
-  *One gap left:* a list pane has no viewport of its own — =draw-list-body= anchors
-  the visible window to the selection, so scrolling a list drags the selection with
-  it. The real fix is the scrollbar/list widget phase 3 still owes. See
+  *A list pane now has a viewport of its own* too, since =lol.widgets:draw-list=
+  landed: the wheel moves the viewport and leaves the selection alone (scrolling is
+  looking), and touching the selection re-attaches the view to it. See
   [[file:../doc/input.org][doc/input.org]] §6 for the wheel end to end.
 - Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
   [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (=draw-spotter=), candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note the
