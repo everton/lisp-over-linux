@@ -30,7 +30,7 @@
   (:export
    ;; theme
    #:*font* #:*ui-bg* #:*ui-panel* #:*ui-hi* #:*ui-rule* #:*ui-text* #:*ui-dim*
-   #:*ui-accent* #:*ui-sel* #:*ui-amber*
+   #:*ui-accent* #:*ui-sel* #:*ui-amber* #:*ui-lit*
    #:*concept-colors* #:concept-color
    ;; metrics
    #:+row-h+ #:+bar-h+ #:+scrollbar-w+
@@ -39,6 +39,7 @@
    #:row-group
    ;; widgets
    #:draw-panel #:draw-bar #:draw-scrollbar #:draw-list #:draw-grid #:draw-card
+   #:draw-query-line #:scrim #:row-match
    ;; hit testing
    #:hit-row #:hit-cell #:clip-text))
 
@@ -60,6 +61,11 @@
 (defparameter *ui-accent* !#7FDBCA "focus: the selected row's edge, the active tab")
 (defparameter *ui-sel*    !#2F4F4A "the selected row's ground")
 (defparameter *ui-amber*  !#FF9F43 "an affordance that opens somewhere ELSE")
+(defparameter *ui-lit*    !#FFFFFF
+  "The characters a search actually matched. Deliberately NOT the accent: the accent
+   is #7FDBCA, which is also the colour of every function row, so lighting a function
+   name in the accent lights nothing. White is the one value brighter than every
+   concept colour, which is what \"this is the part you typed\" needs to be.")
 
 (defparameter *concept-colors*
   (list :package          !#FFCB6B   ; gold
@@ -168,7 +174,7 @@
 
 ;;; ---- list: rows, sections, selection, viewport ---------------------------
 
-(defstruct (row (:constructor make-row (label &key detail tint stripe marker group)))
+(defstruct (row (:constructor make-row (label &key detail tint stripe marker group match)))
   "One line in a list widget. Deliberately NOT the browser's ITEM: a widget that
    only spoke ITEM could not draw the Spotter's candidates or the debugger's
    restarts, which are not items and never will be."
@@ -177,7 +183,8 @@
   (tint *ui-text*)  ; the label's colour
   stripe      ; colour of the 3px kind stripe at the left edge, or NIL for none
   marker      ; NIL, :dim or :bright — the » "this opens something" affordance
-  group)      ; section label (a string) or NIL; consecutive equal groups are one block
+  group       ; section label (a string) or NIL; consecutive equal groups are one block
+  match)      ; a query string whose characters should be lit inside LABEL, or NIL
 
 (defun draw-row (canvas x y w row selected &key value-col)
   "One row, at the row's TOP-left. SELECTED paints the ground and a focus edge.
@@ -199,6 +206,7 @@
       (when (row-stripe row)
         (lol.canvas:fill-rect canvas (+ x 3) by 3 +row-h+ (row-stripe row)))
       (lol.canvas:draw-string canvas *font* label (+ x 8) ty tint)
+      (when (row-match row) (light-match canvas (+ x 8) ty label (row-match row)))
       (when (row-detail row)
         (let* ((dt (princ-to-string (row-detail row)))
                (label-px (lol.canvas:string-px *font* label)))
@@ -220,6 +228,25 @@
         ;; » = "drilling this opens something"; amber when it opens ELSEWHERE
         (lol.canvas:draw-string canvas *font* (string (code-char #xBB)) marker-x ty
                                 (if (eq (row-marker row) :bright) *ui-amber* *ui-dim*))))))
+
+(defun light-match (canvas x y label query)
+  "Re-draw, lit, the characters of LABEL that QUERY matched — the same
+   greedy left-to-right subsequence the filter used to accept the row. Showing WHY a
+   row matched is most of what makes a fuzzy finder feel honest rather than magical;
+   the design mock-up bolds them, and with one weight of bitmap type colour is the
+   available emphasis.
+
+   Monospace is assumed, as everywhere else that maps characters to pixels here: the
+   nth character is n advances along. LOL.TEXTVIEW makes the same assumption and says
+   so in the same words."
+  (let ((qi 0) (ql (length query)) (cw (lol.canvas:font-cw *font*)))
+    (when (plusp ql)
+      (loop for i below (length label)
+            while (< qi ql)
+            do (when (char-equal (char label i) (char query qi))
+                 (lol.canvas:draw-string canvas *font* (string (char label i))
+                                         (+ x (* i cw)) y *ui-lit*)
+                 (incf qi))))))
 
 (defun draw-section-header (canvas x y w label)
   "A section header: a hairline across the pane, broken by the group's name. The
@@ -293,27 +320,48 @@
 
 ;;; ---- card: a floating surface over a dimmed page -------------------------
 
-(defun draw-card (canvas x y w h &key title (dim-behind nil) (canvas-w 0) (canvas-h 0))
-  "A raised surface — the Spotter, a cheatsheet, a modal. With DIM-BEHIND, first
-   knock the whole page back (a cheap 50% by painting every other row) so the card
-   reads as floating above it rather than pasted into it. Returns the body's Y.
+(defun scrim (canvas factor)
+  "Darken every pixel of CANVAS to FACTOR/256 of its brightness — a modal scrim. The
+   canvas has no alpha channel (one pixel format, no compositor — poc/README.org), so
+   \"behind a floating panel\" is spelled by multiplying the whole buffer down. Only
+   ever run when an overlay is up, so a full-buffer pass is affordable."
+  (declare (type (integer 0 256) factor))
+  (let ((px (lol.canvas:canvas-pixels canvas)))
+    (declare (type (simple-array (unsigned-byte 32) (*)) px)
+             (optimize (speed 3) (safety 0)))
+    (dotimes (i (length px))
+      (let ((p (aref px i)))
+        (setf (aref px i)
+              (logior (ash (ash (* (ldb (byte 8 16) p) factor) -8) 16)
+                      (ash (ash (* (ldb (byte 8 8) p) factor) -8) 8)
+                      (ash (* (ldb (byte 8 0) p) factor) -8)))))))
 
-   The dimming is scanline-striped rather than blended because the canvas has no
-   alpha: one pixel format, no compositor (poc/README.org). At 6x15 type the stripe
-   reads as a shade, not as lines."
-  (when dim-behind
-    (loop for yy from 0 below canvas-h by 2
-          do (lol.canvas:fill-rect canvas 0 yy canvas-w 1 *ui-bg*)))
-  (lol.canvas:fill-rect canvas (+ x 3) (+ y 3) w h *ui-bg*)        ; a hard drop shadow
+(defun draw-card (canvas x y w h &key title right dim)
+  "A raised surface — the Spotter, the cheatsheet, a modal. With DIM (a 0..256
+   factor), first knock the whole page back with SCRIM so the card reads as floating
+   ABOVE what it covers rather than pasted into it. TITLE goes top-left, RIGHT
+   top-right (a match count, a hint). Returns the Y where the body starts."
+  (when dim (scrim canvas dim))
+  (lol.canvas:fill-rect canvas (+ x 5) (+ y 6) w h !#080A0C)   ; a hard drop shadow
   (lol.canvas:fill-rect canvas x y w h *ui-panel*)
-  (lol.canvas:draw-rect canvas x y w h *ui-accent*)
-  (if title
-      (progn
-        (lol.canvas:fill-rect canvas (1+ x) (1+ y) (- w 2) +bar-h+ *ui-hi*)
-        (lol.canvas:draw-string canvas *font* (princ-to-string title)
-                                (+ x 10) (+ y 4) *ui-accent*)
-        (+ y +bar-h+ 2))
-      (1+ y)))
+  (lol.canvas:fill-rect canvas x y w 2 *ui-accent*)            ; accent top rule
+  (lol.canvas:draw-rect canvas x y w h *ui-rule*)
+  (when title
+    (lol.canvas:draw-string canvas *font* (princ-to-string title) (+ x 12) (+ y 8) *ui-dim*))
+  (when right
+    (let ((r (princ-to-string right)))
+      (lol.canvas:draw-string canvas *font* r
+                              (- (+ x w) (lol.canvas:string-px *font* r) 12) (+ y 8) *ui-dim*)))
+  (+ y 24))
+
+(defun draw-query-line (canvas x y w text)
+  "The Spotter's (or any finder's) input line: a sunken field with a prompt, the text
+   so far, and a block cursor. There is no caret widget because there is no editing —
+   a finder only ever appends and backspaces."
+  (lol.canvas:fill-rect canvas x y w 20 *ui-hi*)
+  (lol.canvas:draw-rect canvas x y w 20 *ui-rule*)
+  (lol.canvas:draw-string canvas *font* (format nil "> ~a_" text) (+ x 6) (+ y 3) *ui-accent*)
+  (+ y 20))
 
 ;;; ---- grid: a 2-axis matrix of counted cells ------------------------------
 
@@ -327,11 +375,14 @@
    mark — a real gap in the coverage is the whole point of the view, so it must be
    visible rather than blank.
 
-   Returns HITS: a list of (cx cy cw ch ROW-LABEL COL-LABEL) for every cell drawn."
+   Returns (values HITS BOTTOM-Y): a list of (cx cy cw ch ROW-LABEL COL-LABEL) for
+   every cell drawn, and the Y just below the last row — so a caller can put a caption
+   under the grid without knowing the cell metrics."
   (let* ((x0 (+ x header-w))
          (ncols (max 1 (floor (- w header-w) +cell-w+)))
          (green (concept-color :generic-function))
-         (hits '()))
+         (hits '())
+         (bottom (+ y +cell-h+)))
     ;; a header band, so the column names read as headings and not as a first row
     (lol.canvas:fill-rect canvas x y (- w 2) (- +cell-h+ 2) *ui-hi*)
     (lol.canvas:fill-rect canvas x (+ y +cell-h+ -3) (- w 2) 1 *ui-rule*)
@@ -371,8 +422,9 @@
                         (push (list cx ry +cell-w+ +cell-h+ r col) hits)))
       (when (< shown nrows)
         (lol.canvas:draw-string canvas *font* (format nil ".. +~a" (- nrows shown))
-                                x (+ y +cell-h+ (* shown +cell-h+) 2) *ui-dim*)))
-    hits))
+                                x (+ y +cell-h+ (* shown +cell-h+) 2) *ui-dim*))
+      (setf bottom (+ y +cell-h+ (* shown +cell-h+) (if (< shown nrows) +cell-h+ 0))))
+    (values hits bottom)))
 
 (defun hit-cell (hits px py)
   "The (ROW-LABEL . COL-LABEL) of the grid cell at PX,PY, or NIL."

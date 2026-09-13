@@ -352,15 +352,24 @@
 
 (defun draw-matrix-body (canvas pane x y w h)
   "Render a 2-axis dispatch matrix as a clickable grid. The widget draws the cells,
-   the header band and the column overflow; this turns the model's cell CONTENTS
+   the header band and the overflow notes; this turns the model's cell CONTENTS
    (lists of methods) into the counts the grid shows — a dim mark for a real gap,
-   which is the whole point of the view."
+   which is the whole point of the view — and adds the line that says what a cell is
+   FOR. Clicking a cell is the only way into the effective-method onion, and an
+   affordance nothing announces may as well not exist (design mock-up §2 spells the
+   same line out: \"effective method — select a cell…\")."
   (let* ((m (view-data (pane-view pane)))
          (rows (getf m :rows))
          (cols (getf m :cols))
          (counts (mapcar (lambda (cellrow) (mapcar #'length cellrow)) (getf m :cells))))
-    (setf *matrix-cells*
-          (lol.widgets:draw-grid canvas x y w h rows cols counts))))
+    (multiple-value-bind (hits bottom)
+        (lol.widgets:draw-grid canvas x y (- w 2) (- h 20) rows cols counts)
+      (setf *matrix-cells* hits)
+      ;; the caption sits directly under the grid, where the design puts it — at the
+      ;; foot of a mostly-empty pane it would be furniture nobody reads
+      (draw-hints canvas x (+ bottom 6) w
+                  '(("click a cell" . "its effective-method onion")
+                    (nil . "a dim dot is a real gap in the coverage"))))))
 
 (defun matrix-cell-click (pane px py)
   "A click on a dispatch-grid cell -> drill the effective-method onion for that
@@ -392,7 +401,11 @@
   "The semantic tint for TRAIL's tab — from its ROOT view (see VIEW-KIND-COLOR)."
   (view-kind-color (pane-view (first trail))))
 
-(defvar *tab-close-rect* nil "x-range (x0 . x1) of the active tab's × close hit-box, or NIL.")
+(defvar *tab-close-rects* '()
+  "alist ((trail-index . (x0 . x1)) …) of every tab's × close hit-box. The design
+   mock-up (media/browser-views-design.html §1) puts a × on EVERY tab, not only the
+   focused one — closing a tab you are not in is the common case, and having to focus
+   it first is a step the picture does not ask for.")
 (defvar *tab-plus-rect* nil  "x-range (x0 . x1) of the + new-tab hit-box, or NIL.")
 
 (defun draw-tabs (canvas w)
@@ -401,12 +414,12 @@
    an × close), and a + after the last tab opens a fresh Workspace. Records *tab-rects*
    / *tab-close-rect* / *tab-plus-rect* so clicks and drawing can't disagree; the app
    name sits at the right when there's room."
-  (setf *tab-rects* '() *tab-close-rect* nil *tab-plus-rect* nil)
+  (setf *tab-rects* '() *tab-close-rects* '() *tab-plus-rect* nil)
   (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
   (let ((x 8) (multi (cdr *trails*)))                        ; align with the 8px gutter below
     (loop for trail in *trails* for i from 0
           for active = (= i *active*)
-          for closer = (and active multi)        ; only the active tab shows ×, if >1
+          for closer = multi                     ; every tab gets a ×, once there are >1
           for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
           for title = (format nil "~a " (clip-text (trail-title trail) 16))
           for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
@@ -421,8 +434,9 @@
                                          (if active *ui-accent* *ui-text*)))
                (when closer
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
-                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3 *ui-dim*)
-                   (setf *tab-close-rect* (cons cx (+ cx 14)))))
+                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3
+                                           (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
+                   (push (cons i (cons cx (+ cx 14))) *tab-close-rects*)))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
                (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
@@ -575,10 +589,126 @@
                               '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
                                 ("SuperL-o" . "edit")))
                              (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
-                       '(("SuperL-<" . "back") ("SuperL-q" . "quit"))
+                       '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
                        (when cmds
                          (list (cons nil (format nil "commands: ~{~a~^ · ~}"
                                                  (mapcar #'command-label cmds)))))))))))
+
+;;; ---- the Spotter card (§4¾) ----------------------------------------------
+;;; The DRAWING lives here, in the backend-blind layer, and only the input loop lives
+;;; in fb-browser.lisp. That is the same split as everything else in the shell, and it
+;;; buys something concrete: the Spotter can be rendered — and therefore looked at —
+;;; by poc/render-frame.lisp on the host, instead of only by booting the guest.
+
+(defparameter +spotter-groups+ '("definitions" "packages & files" "surfaces" "live")
+  "The bands the design mock-up (media/browser-views-design.html §1) sorts results
+   into. Nine matches spread over three kinds of thing read very differently from
+   nine matches in a heap.")
+
+(defun spotter-band (results)
+  "RESULTS regrouped into contiguous bands without disturbing the ranking: each group
+   keeps its members in rank order, and the GROUPS are ordered by their own best
+   member. So the top row is still the best match overall — which is the row Enter
+   opens, and it would be a poor trade to lose that for tidiness — while everything
+   below it is banded."
+  (let ((order '()))
+    (dolist (r results)                        ; first appearance = that band's best rank
+      (pushnew (or (getf r :group) "other") order :test #'equal))
+    (setf order (nreverse order))
+    (loop for g in order
+          append (remove-if-not (lambda (r) (equal g (or (getf r :group) "other"))) results))))
+
+(defun spotter-rows (results query)
+  "Spotter candidates -> widget rows: the kind's colour, the matched characters lit,
+   and the band as the row's group."
+  (map 'vector
+       (lambda (r)
+         (lol.widgets:make-row
+          (getf r :label)
+          :detail (getf r :detail)
+          :tint (concept-color (spotter-kind r))
+          :stripe (concept-color (spotter-kind r))
+          :group (getf r :group)
+          :match query
+          :marker :bright))                    ; every hit opens in a NEW trail
+       results))
+
+(defun spotter-kind (r)
+  "The Lisp-concept keyword for a Spotter candidate, from its DETAIL text — which is
+   how the candidate list already describes itself, and cheaper than threading a
+   second field through it."
+  (let ((d (or (getf r :detail) "")))
+    (cond ((search "generic" d) :generic-function)
+          ((search "package" d) :package)
+          ((search "module"  d) :package)
+          ((search "macro"   d) :macro)
+          ((search "class"   d) :class)
+          ((search "condition" d) :condition)
+          ((search "variable" d) :variable)
+          ((search "constant" d) :constant)
+          ((search "surface" d) :restart)
+          (t :function))))
+
+(defvar *spotter-hits* '() "The hit map of the Spotter's visible rows — see HIT-ROW.")
+(defvar *spotter-rect* nil "The card rect (x0 y0 x1 y1), for click routing / dismissal.")
+
+(defun draw-spotter-card (canvas w h query results sel)
+  "The Spotter as a floating palette over the dimmed browser: the browser is drawn as
+   the backdrop, scrimmed; the card carries a title, the live match count, the query
+   line, the banded results with the matched characters lit, and a footer of what the
+   keys do. Records *spotter-rect* / *spotter-hits* so a click routes to the row that
+   was actually painted there."
+  (draw-browser canvas w h)                          ; the browser, as backdrop …
+  (let* ((banded (spotter-band results))
+         (rows   (spotter-rows banded query))
+         (cw     (min 780 (- w 80)))
+         (cx     (floor (- w cw) 2))
+         (cy     (+ +bar-h+ 14))
+         ;; the card grows with the results, up to what the screen can hold
+         (nslots (+ (length rows) (length (remove-duplicates
+                                           (map 'list #'lol.widgets:row-group rows)
+                                           :test #'equal))))
+         (maxrows (max 3 (min nslots (floor (- h cy 96) +row-h+))))
+         (list-h  (* maxrows +row-h+))
+         (ch      (+ 24 20 8 list-h 24)))
+    (setf *spotter-rect* (list cx cy (+ cx cw) (+ cy ch)))
+    (let* ((body (lol.widgets:draw-card canvas cx cy cw ch
+                                        :title "Spotter"
+                                        ;; not ~:p — "match" pluralises to "matches",
+                                        ;; and ~:p would cheerfully write "9 matchs"
+                                        :right (case (length results)
+                                                 (0 "no matches")
+                                                 (1 "1 match")
+                                                 (t (format nil "~d matches" (length results))))
+                                        :dim 105))
+           (qy (lol.widgets:draw-query-line canvas (+ cx 8) (+ body 2) (- cw 16) query))
+           (ly (+ qy 8)))
+      (if (zerop (length rows))
+          (lol.canvas:draw-string canvas *bfont*
+                                  "nothing matches — Backspace to widen the query"
+                                  (+ cx 16) (+ ly 4) *ui-dim*)
+          (multiple-value-bind (top hits)
+              (lol.widgets:draw-list canvas (+ cx 6) ly (- cw 12) list-h rows
+                                     :sel sel :top 0 :follow-sel t)
+            (declare (ignore top))
+            (setf *spotter-hits* hits)))
+      ;; the footer says what the keys do, because the palette is modal and nothing
+      ;; else on screen can say it
+      (draw-hints canvas (+ cx 12) (+ cy ch -16) (- cw 16)
+                  '(("up/dn" . "move") ("ret" . "open in a new tab") ("Esc" . "close"))))))
+
+(defun spotter-row-at* (x y)
+  "The visible Spotter row index at X,Y, or NIL — read back from what the draw
+   recorded, so a banded list's section headers are correctly inert."
+  (and *spotter-rect*
+       (<= (first *spotter-rect*) x (third *spotter-rect*))
+       (lol.widgets:hit-row *spotter-hits* y)))
+
+(defun spotter-outside-p* (x y)
+  "True when X,Y is outside the Spotter card — a click there dismisses the palette."
+  (or (null *spotter-rect*)
+      (destructuring-bind (x0 y0 x1 y1) *spotter-rect*
+        (not (and (<= x0 x x1) (<= y0 y y1))))))
 
 ;;; ---- input ---------------------------------------------------------------
 
@@ -822,8 +952,11 @@
     (cond
       ((and *tab-plus-rect* (<= (car *tab-plus-rect*) x (cdr *tab-plus-rect*)))
        (new-trail (subj-workspace)))
-      ((and *tab-close-rect* (<= (car *tab-close-rect*) x (cdr *tab-close-rect*)))
-       (close-trail))
+      ((find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*)
+       ;; close THAT tab, not merely the focused one
+       (let ((hit (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*)))
+         (activate-trail (car hit))
+         (close-trail)))
       (t (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
            (when tab (activate-trail (car tab))))))
     (return-from browser-click))

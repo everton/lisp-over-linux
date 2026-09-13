@@ -155,27 +155,35 @@
 
 (defun spotter-candidates ()
   "A fresh list of everything the Spotter can jump to — each a plist
-   (:label STRING :detail STRING :subject SUBJECT): the named surfaces (Workspace,
-   change set), every package, and every recorded definition (deduped by name, its
-   newest kind as the detail). Every row is guarded, since this feeds a live finder
-   in PID 1 and one malformed entry must not break the list."
+   (:label STRING :detail STRING :group STRING :subject SUBJECT): the named surfaces
+   (Workspace, change set), every package, and every recorded definition (deduped by
+   name, its newest kind as the detail). Every row is guarded, since this feeds a live
+   finder in PID 1 and one malformed entry must not break the list.
+
+   GROUP is the design mock-up's banding (media/browser-views-design.html §1):
+   \"definitions\", \"packages & files\", \"surfaces\" — nine matches spread over three
+   kinds of thing read very differently from nine matches in a heap."
   (let ((out '()))
     (ignore-errors
-      (push (list :label "workspace"  :detail "surface" :subject (subj-workspace))  out)
-      (push (list :label "change set" :detail "surface" :subject (subj-change-set)) out)
-      (push (list :label "modules"    :detail "surface" :subject (subj-modules))    out))
+      (push (list :label "workspace"  :detail "surface" :group "surfaces"
+                  :subject (subj-workspace))  out)
+      (push (list :label "change set" :detail "surface" :group "surfaces"
+                  :subject (subj-change-set)) out)
+      (push (list :label "modules"    :detail "surface" :group "surfaces"
+                  :subject (subj-modules))    out))
     ;; each module by name, so typing "net" finds net.lisp itself and not only the
     ;; definitions inside it — the index is a destination, not just a waypoint.
     (dolist (e (ignore-errors (module-index)))
       (ignore-errors
         (push (list :label (string-downcase (symbol-name (car e)))
                     :detail (format nil "module · ~d definition~:p" (cdr e))
+                    :group "packages & files"
                     :subject (subj-module (car e)))
               out)))
     (dolist (p (ignore-errors (list-all-packages)))
       (ignore-errors
         (push (list :label (string-downcase (package-name p))
-                    :detail "package" :subject p)
+                    :detail "package" :group "packages & files" :subject p)
               out)))
     (ignore-errors
       (maphash (lambda (name defns)
@@ -192,6 +200,7 @@
                                    :detail (cond (gf "generic function")
                                                  (kind (string-downcase (symbol-name kind)))
                                                  (t "definition"))
+                                   :group "definitions"
                                    :subject (if gf (fdefinition name) (subj-defn name)))
                              out)))))
                *registry*))
@@ -587,9 +596,25 @@
       ;; the primaries come most-specific-first, so the FIRST one is the method the
       ;; call actually enters; the rest are reachable only through call-next-method
       (loop for m in (getf o :primary) for first = t then nil do (add m first))
-      (dolist (m (getf o :after))   (add m)))
+      (dolist (m (getf o :after))   (add m))
+      ;; The RETURN leg. An :around method is the only layer that runs TWICE — once on
+      ;; the way in and once on the way out, around its own call-next-method — and a
+      ;; list that shows it once cannot say so. The design mock-up (§2) draws the same
+      ;; closing row. Outermost-last on the way out, so the order really is a loop.
+      (dolist (m (reverse (getf o :around)))
+        (push (make-item :label (method-tuple-label m)
+                         :detail "resumes here, after everything inside it returned"
+                         :kind :method
+                         :group "unwind"
+                         :subject (subj-method name (getf m :qualifiers)
+                                               (getf m :specializers)))
+              items)))
     (make-view
-     :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})" name (subj-onion-tuple s))
+     :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})~@[ ~c ~d combine~]"
+                    name (subj-onion-tuple s) (code-char #xB7)
+                    (let ((n (+ (length (getf o :around)) (length (getf o :before))
+                                (length (getf o :primary)) (length (getf o :after)))))
+                      (and (plusp n) n)))
      :kind :list :subject s
      ;; open focused on the PRIMARY (what actually runs) — it sits after the :around and
      ;; :before layers, so its row index is however many of those there are.

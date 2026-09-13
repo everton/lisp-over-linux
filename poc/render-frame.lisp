@@ -41,6 +41,10 @@
 ;;; draw). The shell degrades gracefully without fb-browser — it reaches the Spotter
 ;;; and the debugger through (fboundp …).
 
+(defvar *spotter-query* nil
+  "When set by --spotter, render the Spotter palette over the subject instead of the
+   plain browser.")
+
 (defparameter *poc-dir* (make-pathname :directory (pathname-directory *load-truename*)))
 (defparameter *root-dir* (merge-pathnames "../" *poc-dir*))
 
@@ -105,6 +109,7 @@ OPTIONS
               a bare character, click:X,Y, or wheel:N (+N lines toward the end) —
               each may take C- M- S- s- prefixes
               (Ctrl / Meta / Shift / Super).  e.g. -k \"down down ret S-ret\"
+  --spotter Q draw the Spotter palette, filtered by Q, over the chosen subject
   -h          this text
 ")
 
@@ -270,12 +275,16 @@ OPTIONS
   (let ((subject-spec nil)
         (out (merge-pathnames "out/frame.ppm" *poc-dir*))
         (w 1280) (h 720) (script nil))
+    (setf *spotter-query* nil)
     (loop while argv
           for a = (pop argv)
           do (cond
                ((string= a "-h") (write-string *usage*) (return-from main 0))
                ((string= a "-o") (setf out (pop argv)))
                ((string= a "-k") (setf script (pop argv)))
+               ;; --spotter QUERY renders the Spotter palette over the chosen subject,
+               ;; which is otherwise reachable only by booting the guest
+               ((string= a "--spotter") (setf *spotter-query* (or (pop argv) "")))
                ((string= a "-s")
                 (let ((parts (split-on #\x (string-downcase (pop argv)))))
                   (setf w (parse-integer (first parts)) h (parse-integer (second parts)))))
@@ -286,7 +295,12 @@ OPTIONS
     (let ((canvas (lol.canvas:make-canvas w h)))
       (open-environment (parse-subject subject-spec))
       (when script (replay-keys script canvas w h))
-      (draw-browser canvas w h)
+      (if *spotter-query*
+          ;; the Spotter draws the browser itself, as its backdrop
+          (let* ((cands (spotter-candidates))
+                 (hits (spotter-filter *spotter-query* cands)))
+            (draw-spotter-card canvas w h *spotter-query* hits 0))
+          (draw-browser canvas w h))
       (write-ppm canvas out)
       (format t "~&~a  ~dx~d  ~a~@[  keys: ~a~]~%"
               out w h (view-title (pane-view (current-pane))) script))
