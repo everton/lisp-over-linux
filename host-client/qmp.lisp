@@ -113,6 +113,11 @@
                                   (#\? "slash") (#\~ "grave_accent") (#\| "backslash")
                                   (#\{ "bracket_left") (#\} "bracket_right"))))
                       (when base (keys "shift" base))))
+                   ;; a capital is shift + the letter's own key. Without this a
+                   ;; capital was silently typed as lower case, which a test then
+                   ;; reported as a FAILING ASSERTION rather than as mistyping —
+                   ;; found exactly that way.
+                   ((upper-case-p ch) (keys "shift" (string-downcase (string ch))))
                    (t (key (string-downcase (string ch))))))
            (sleep cps)))
 

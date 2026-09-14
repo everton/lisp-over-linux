@@ -656,7 +656,9 @@
       (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *ui-hi*)
       (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *ui-amber*)
       (lol.canvas:draw-string canvas *bfont*
-        (format nil "value for [~(~a~)] — an expression, Enter invokes, Esc cancels:" name)
+        ;; "accepts", not "invokes": this line is shared now — a restart INVOKES with
+        ;; the value, the inspector SETS a field to it (shell.lisp's set-field)
+        (format nil "value for [~(~a~)] — an expression, Enter accepts, Esc cancels:" name)
         12 (- h 38) *ui-amber*)
       (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *ui-text*)
       (lol.fb:present-fb canvas)
