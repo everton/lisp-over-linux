@@ -775,7 +775,8 @@
   '(("Navigate"
      ("up / down"          "move the selection / caret")
      ("Enter"              "drill into the selection")
-     ("Backspace / C-g"    "back  (C-g at the root leaves)")
+     ("right"              "focus the right column (edit / walk it)")
+     ("Backspace / C-g"    "back  (C-g also un-focuses the right column)")
      ("PageUp / PageDown"  "page the list / source")
      ("mouse wheel"        "scroll the pane")
      ("q"                  "quit  (list & reference panes)"))

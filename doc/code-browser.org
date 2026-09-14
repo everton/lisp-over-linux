@@ -608,7 +608,7 @@ stack standing.
 
 [[file:../media/screenshots/stage-2026-09-13.png]]
 
-/=Kestrel= has just docked with =Anvil=, and the transcript records BOTH
+/The =Lambda= has just docked with =Genera=, and the transcript records BOTH
 directions of the call agreeing. =./refresh-screenshot.sh --scene stage=./
 
 *Why a moving picture belongs in a strictly textual instrument.* Every other view
@@ -617,8 +617,8 @@ stops short: it counts methods per cell, which is a fact about the source, not a
 anything that ever happened. =collide= is the one specimen in the image whose whole
 point is /behaviour at a pair of types/, and reading its ten methods teaches multiple
 dispatch the way reading a recipe teaches cooking. Watching a missile reach a ship and
-seeing =(:DESTROYED "Kestrel")= come back — then watching the same missile reach a
-station and get =(:DENTED "Anvil")= instead, from the same call site — teaches it in
+seeing =(:DESTROYED "Lambda")= come back — then watching the same missile reach a
+station and get =(:DENTED "Genera")= instead, from the same call site — teaches it in
 one gesture.
 
 It is *not a game* and must not grow into one. It is a presentation of *instances*,
@@ -631,7 +631,7 @@ subject happens to want.
 four readable lines in a class view must not sprout =x/y/vx/vy= for a demo's benefit,
 so positions live in =body= structs in [[file:../initramfs/stage.lisp][=stage.lisp=]] — the instance is a slot OF the
 body, never the other way round. Nothing on screen can tell you it has ever been on a
-stage, and =(stage-find s "Kestrel")= hands you an ordinary =ship=.
+stage, and =(stage-find s "Lambda")= hands you an ordinary =ship=.
 
 *2. Both directions, every contact.* Contact is symmetric and =collide= is not, so
 rather than inventing an argument order the stage calls it *both ways* and records
@@ -697,11 +697,11 @@ not a debugger, it is a trap. The other four restarts are the ways to actually s
 it.
 
 A footnote the debugger earned: =space-object= now has a =print-object=, so SBCL's own
-report reads =(#<MISSILE Hornet> #<MISSILE Wasp>)= instead of
+report reads =(#<MISSILE Scavenger> #<MISSILE Sweep>)= instead of
 =(#<LOL.EXAMPLES:MISSILE {1202AD5303}> …)=. It prints the class-name SYMBOL rather
 than =:type t= — =princ= drops the package qualifier, and it avoids handing the
 printer one shared string twice, which under the locals strip's =*print-circle*= had
-been rendering a pair of missiles as =#<#1=MISSILE Hornet> #<#1# Wasp>=.
+been rendering a pair of missiles as =#<#1=MISSILE Scavenger> #<#1# Sweep>=.
 
 ** What it cost
 
@@ -736,9 +736,41 @@ keep meaning what it means in every other pane.
 Decided 2026-09-13: argument order is *call both, show agreement* (above); the layout
 is *the editable preview pane* — the Stage is the one subject whose side pane accepts
 =C-c C-c=; and the transcript is *its own strip*, so the Workspace buffer holds only
-what you typed. Still open: whether the proper nouns (=Kestrel=, =Anvil=, =Hornet=)
-are the right tone — they earn their place now that every contact prints two lines,
-but it is a rename away and adjacent to the "space"-themed naming idea (§4¾).
+what you typed. And the naming question is settled too — see below.
+
+** The names — §4¾'s space joke, landing
+
+The sprites were =Kestrel=, =Anvil=, =Hornet=: invented naval birds with nothing to do
+with this project. They are now drawn from its own world, which is the joke §4¾ parked
+("do not rename unprompted") finally being asked for. Each class takes the register
+that fits what it DOES:
+
+| class      | register                    | names                                      |
+|------------+-----------------------------+--------------------------------------------|
+| =ship=     | Lisp machines               | Lambda, CADR, Ivory, Dorado, Explorer      |
+| =station=  | the environments they docked with | Genera, Medley, Zetalisp             |
+| =missile=  | garbage-collector phases    | Scavenger, Sweep, Compact, Reclaim         |
+| =asteroid= | the numeric tower as debris | Bignum, Flonum, Cons, Ratio                |
+
+Crewed, mobile, fragile, would rather dock than collide — that is =ship='s own
+docstring and it is also LMI's Lambda, MIT's CADR, Symbolics' Ivory, Xerox's Dorado and
+TI's Explorer, names that were already half starship. A station is big and fixed and
+shrugs off impacts, so it is what those machines docked with. A missile is guided,
+single-purpose, and the only thing here that destroys a ship — which is what a
+collector does to an object nobody references any more. And "a dumb rock, massive,
+unguided" is =asteroid='s docstring and very nearly the definition of a bignum.
+
+So the transcript reads as a small history rather than a bird-watching log:
+
+#+begin_src
+(collide #<SHIP Lambda> #<STATION Genera>)         -> (:DOCK "Lambda" "Genera")
+(collide #<MISSILE Scavenger> #<ASTEROID Bignum>)  -> (:DEFLECTED "Scavenger")
+#+end_src
+
+The Land-of-Lisp alien (=draw-alien=, the mascot §4¾ names) presides over it without
+appearing: there is no alien class, and inventing one to force the reference would be
+exactly the unrelated fiction this rename removes. Nothing depends on any of it — the
+names live in one =*stage-names*= table and the four seeds in =make-collide-stage=.
 
 The full design spec, with a running prototype of the same view, is in
 [[file:../media/stage-design.html][media/stage-design.html]].
@@ -794,7 +826,7 @@ scripted =Tab= can.
 
 [[file:../media/screenshots/stage-inspect-2026-09-13.png]]
 
-/=Tab= twice, then =Enter=: the Inspector on =#<SHIP Kestrel>=, its NAME slot beside
+/=Tab= twice, then =Enter=: the Inspector on =#<SHIP Lambda>=, its NAME slot beside
 it, and =stage collide= still in the trail behind. Note the title — =print-object= is
 why it reads as a ship and not as a hex address.
 =./refresh-screenshot.sh --scene stage-inspect=./
@@ -1197,6 +1229,7 @@ list where the design puts it.
 | =↵=                              | drill in place (same trail)            |
 | =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
 | =↑= / =↓=                        | move the selection within a panel      |
+| =→=                              | focus the RIGHT-hand column (see below) |
 | =SuperL-w= · =Esc=               | close the trail · dismiss the Spotter/overlay |
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
@@ -1221,6 +1254,26 @@ line-editor.lisp's =token-start= / =longest-common-prefix=): one match fills in,
 several extend the common prefix or list in the status line, and Tab at whitespace
 indents. Inspect it is =C-c=-prefixed (=C-c C-i=, delivered as =C-c= then Tab since
 Ctrl-I *is* Tab), so a bare Tab and the Inspect chord never collide.
+
+*Focusing the right-hand column — =→=, and why it is not navigation.* The nav
+split shows the selected item beside the list, but until recently it was only ever
+a *look*: read-only, unfocused, and =→= did nothing at all. It now moves focus
+there and makes the thing usable — your own code becomes editable, a builtin
+scrolls, a list can be walked with =↑↓= and drilled with =↵=. Mechanically it
+promotes the preview to the same pinned pane =⇧↵= builds; unlike =⇧↵= it never
+toggles, because =→= should mean "go right" every time.
+
+The important property is that *focus is not navigation*: =→= does not touch the
+trail. So coming back — =C-g=, or =←= when the right column is a list — lands you
+on the identical frame you left, same pane, same selection, same preview, verified
+pixel-for-pixel. A side merely FOCUSED by =→= disappears again when it loses focus;
+one deliberately PINNED with =⇧↵= stays, because pinning is a decision and =C-g=
+should not quietly undo one (=pane-side-pinned= is the difference).
+
+Note =→= and =←= are *not* a pair here. =←= remains "back" — it leaves the frame
+you are looking at, while =→= goes deeper into it. And in a *text* right column =←=
+is the editor's, moving the caret, per the modifier split below; =C-g= is the
+portable way back out of anything.
 
 *Editing a definition in place — the modifier split is what prevents the
 collision.* A source pane backed by the registry (*your* code) is an *editable*
