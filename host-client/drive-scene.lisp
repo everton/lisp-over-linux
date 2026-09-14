@@ -110,6 +110,31 @@
                            (:wait 1.0) (:key "down") (:key "ret") (:wait 1.0)
                            (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
                            (:wait 8.0)))
+    ;; beat 4 of §3b's loop: the hole hands you a method, you Accept it, the world
+    ;; changes. Drill to the stage, spawn missiles until two meet (the debugger opens),
+    ;; pick restart 4 [define-method], and the template lands in the Workspace BESIDE
+    ;; the stage with the specialisers already filled — then C-c C-c compiles it into
+    ;; the image. The template's :?? tag is left as-is on purpose: it is a valid
+    ;; keyword, so Accept succeeds without any typing and stage-enact falls to its
+    ;; default. The scene proves the WIRING; filling the tag in is the human's part.
+    ("stage-accept" "b" ((:key "down") (:key "down") (:key "ret")
+                         (:key "down") (:key "down") (:key "ret")
+                         (:wait 1.0) (:key "down") (:key "ret") (:wait 1.0)
+                         (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
+                         (:wait 8.0)
+                         (:key "4") (:key "ret") (:wait 1.5)
+                         (:chord "ctrl" "c") (:chord "ctrl" "c") (:wait 1.5)))
+    ;; keyboard selection + inspect on the stage: Tab twice picks a sprite, Enter
+    ;; opens the Inspector on the INSTANCE — an ordinary object view, no stage in it.
+    ;; Scripted with the keyboard on purpose: a click cannot be driven reliably over
+    ;; QMP (see the note above), and a stage reachable only by mouse would fail the
+    ;; project's own rule that the pointer is an accelerator, not a requirement.
+    ("stage-inspect" "b" ((:key "down") (:key "down") (:key "ret")
+                          (:key "down") (:key "down") (:key "ret")
+                          (:wait 1.0) (:key "down") (:key "ret") (:wait 2.0)
+                          (:key "spc")                       ; pause, so it holds still
+                          (:key "tab") (:key "tab") (:wait 0.5)
+                          (:key "ret") (:wait 1.5)))
     ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).

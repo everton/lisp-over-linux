@@ -318,7 +318,7 @@ footer{
     <div class="eyebrow">
       <span>lisp-over-linux</span><span class="sep">/</span>
       <span>code-browser §3b</span><span class="sep">/</span>
-      <span class="flag">design settled — not built</span>
+      <span class="flag">built — 2026-09-13</span>
     </div>
     <h1>The Stage <span class="thin">— collide, live</span></h1>
     <p class="lede">
@@ -327,11 +327,19 @@ footer{
       real <code>collide</code> call, and every blank cell in the matrix is a
       <code class="c">no-applicable-method</code> waiting to open the debugger.
     </p>
+    <p class="lede" style="font-size:16px;color:var(--ink-soft);margin-top:14px">
+      <span style="color:var(--c-method);font-weight:600">Built.</span> Everything below shipped
+      on 2026-09-13 and is recorded in <code>doc/code-browser.org</code> §3b. Three things the
+      implementation taught that this document could not: sub-pixel velocities truncate to zero
+      and strand every slow body; the tick has to advance by wall clock, not per frame; and a
+      resize must scale velocities as well as positions or the scene's timing becomes a function
+      of window size.
+    </p>
     <div class="standfirst">
       <span>subject <b>lol.examples::collide</b></span>
       <span>pane kind <b>:stage</b> (proposed)</span>
       <span>pairs with <b>the Workspace</b></span>
-      <span>decisions <b>3 of 4 settled</b></span>
+      <span>status <b>shipped, §3b</b></span>
     </div>
   </header>
 
@@ -673,47 +681,54 @@ footer{
       <tbody>
         <tr>
           <td class="mono">pane kind <code>:stage</code></td>
-          <td><span class="pill new">new</span></td>
+          <td><span class="pill have">shipped</span></td>
           <td>A <code>present</code> method on a <code>subj-stage</code> subject, beside
-            <code>:list :source :matrix :class</code>. Slots into the accordion unchanged.</td>
+            <code>:list :source :matrix :class</code>. Slotted into the accordion unchanged,
+            as predicted.</td>
         </tr>
         <tr>
           <td class="mono">a tick in the poll loop</td>
-          <td><span class="pill small">1-line change</span></td>
-          <td><strong>The only real obstacle.</strong> <code>fbb-wait</code> hardcodes a
-            <code>-1</code> timeout at <code>fb-browser.lisp:58</code>, so the browser sleeps until
-            input. It needs a millisecond timeout argument so the loop can wake on a frame
-            deadline. Everything else follows from that.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td>Correctly predicted as the only real obstacle, and it did stay a one-line change.
+            What the design missed: <em>one tick per frame is wrong</em>. A full 1280×800 repaint
+            in Lisp costs more than a frame period — the first guest run managed ~13 ticks/s
+            against a nominal 30 — so the world's speed became a function of how expensive the
+            pane was to draw. It now steps the arrears from <code>get-internal-real-time</code>.</td>
         </tr>
         <tr>
           <td class="mono">canvas primitives</td>
-          <td><span class="pill small">small</span></td>
-          <td><code>fill-rect</code> and <code>draw-rect</code> exist. A stage wants
-            <code>draw-line</code> and a filled convex polygon; both are a dozen lines against the
-            same pixel buffer.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td><code>draw-line</code> (Bresenham), <code>draw-poly</code>, <code>draw-circle</code>.
+            About as small as expected.</td>
         </tr>
         <tr>
           <td class="mono">the debugger</td>
-          <td><span class="pill have">have it</span></td>
-          <td><code>run-debugger-fb</code> already does everything beat 2 needs. The stage only has
-            to wrap its call in <code>restart-case</code>.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td>True, but with a trap the design did not see: the tick has to <em>arm</em> the
+            debugger with <code>handler-bind</code>. Without it the condition reached the
+            <code>handler-case</code> around <code>run-browser-fb</code>, which catches by
+            unwinding — dropping you at the supervisor menu with the stack gone.</td>
         </tr>
         <tr>
           <td class="mono">inspect a sprite</td>
-          <td><span class="pill have">have it</span></td>
-          <td>Click → the existing Inspector pane on that instance. No new view.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td>No new view, as predicted — but a click is not enough. <code>Tab</code> cycles the
+            selection so the path works without a pointer, which is both the project's rule and
+            the only way the path is testable (a click cannot be scripted over QMP).</td>
         </tr>
         <tr>
           <td class="mono">live redefinition</td>
-          <td><span class="pill have">have it</span></td>
-          <td>Workspace <kbd>C-c C-c</kbd>, <code>accept-source</code>, the change set — all
-            shipped. Beat 4 is assembly, not construction.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td>Nearly assembly, but two pieces were missing. <kbd>C-c C-c</kbd> did nothing in a
+            Workspace (only source panes Accepted), and the change set tested for a prior version
+            — so a method written from scratch never appeared in it. Both fixed; see §3b.</td>
         </tr>
         <tr>
           <td class="mono">headless frames</td>
-          <td><span class="pill small">small</span></td>
-          <td><code>poc/render-frame.lisp</code> can render a stage frame for the docs if the tick
-            is seeded and frame-counted, keeping the screenshot discipline intact.</td>
+          <td><span class="pill have">shipped</span></td>
+          <td><code>render-frame.lisp stage[:TICKS]</code>. Four QMP scenes cover the rest:
+            <code>stage</code>, <code>stage-debugger</code>, <code>stage-accept</code>,
+            <code>stage-inspect</code>.</td>
         </tr>
       </tbody>
     </table>

@@ -740,13 +740,64 @@ what you typed. Still open: whether the proper nouns (=Kestrel=, =Anvil=, =Horne
 are the right tone — they earn their place now that every contact prints two lines,
 but it is a rename away and adjacent to the "space"-themed naming idea (§4¾).
 
-*Not built:* the editable side pane is settled but not yet wired — the Stage currently
-opens as a full pane, and the Workspace is a separate tab. =[define-method]= records
-its template in =stage-pending= and =stage-defmethod-template= hands it over; nothing
-consumes it yet.
-
 The full design spec, with a running prototype of the same view, is in
 [[file:../media/stage-design.html][media/stage-design.html]].
+
+** Beat 4: the method you write from the debugger
+
+The loop closes. =w= opens the Workspace *beside* the stage — the Stage is the one
+subject whose side pane is editable rather than a read-only preview, and =SuperL-o=
+moves focus between the two halves. =[define-method]= opens it for you, already
+holding the =defmethod= the debugger knew how to write: its specialisers come from the
+two objects that failed to dispatch, so you never retype what the system already
+worked out.
+
+[[file:../media/screenshots/stage-accept-2026-09-13.png]]
+
+/Two missiles found the hole; =[define-method]= wrote the template and =C-c C-c=
+compiled it — "Accepted: collide" in the status line, and the heads-up now says the
+pair dispatches. =./refresh-screenshot.sh --scene stage-accept=./
+
+Three things had to change for that to work, and each is worth its own line.
+
+*=C-c C-c= now Accepts in a Workspace, not only in a source pane.* A source pane is
+editing a definition that already exists, so =accept-pane= hands =accept-source= the
+subject's name/kind/label as fallbacks — the specializer label especially, or an
+edited method would overwrite a sibling's source. A Workspace is not editing anything:
+whatever definition the text names is the one being made, so the form is the only
+authority and the fallbacks are NIL. =accept-source= already created a registry record
+when it found no existing one; nothing but a caller was missing.
+
+*The change set now shows what you ADDED, not only what you edited.* It tested for a
+non-empty VERSIONS list, which is exactly "edited since boot" — and exactly wrong for
+a method written from scratch, which has no prior version and so looked identical to a
+build-time one. =defn= gains a =born= flag that =accept-source= sets when it creates a
+record, and the view says "new this session" instead of a version count. Smalltalk's
+Changes has always included additions; ours quietly did not.
+
+*The world stops while you write.* The pair that could not dispatch is still on the
+stage, still moving, and everything else is still colliding — leaving it running means
+the debugger reopens over the half-written method it just asked you for. Taking the
+=[define-method]= restart pauses the stage; =spc= resumes it, which is also the moment
+you see the difference your method made.
+
+** Selecting without a mouse
+
+A sprite is an instance, and an instance is a subject: =Enter= opens the Inspector on
+it — an ordinary object view with no trace of a stage in it. Getting *to* one is =Tab=,
+which cycles the selection through the bodies, because a click is an accelerator here
+and not the way in. §1's rule about keeping full keyboard accelerators is not
+decoration: the pointer is the part of this system least likely to come up on real
+hardware, and a view you can only select on by clicking is a view that fails first.
+It also means the path is testable — a scripted click cannot be landed over QMP, a
+scripted =Tab= can.
+
+[[file:../media/screenshots/stage-inspect-2026-09-13.png]]
+
+/=Tab= twice, then =Enter=: the Inspector on =#<SHIP Kestrel>=, its NAME slot beside
+it, and =stage collide= still in the trail behind. Note the title — =print-object= is
+why it reads as a ship and not as a hex address.
+=./refresh-screenshot.sh --scene stage-inspect=./
 
 * 4. The browser itself
 
@@ -1482,16 +1533,18 @@ we already have. But the UI is pixel-native from its very first line.
 named *scene* in [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] — a menu key plus a deterministic key
 sequence, driven over QMP into a headless QEMU boot:
 
-| scene            | shows                                        | section |
-|------------------+----------------------------------------------+---------|
-| =package=        | the flat =CL-USER= list + a source pane      | §4½     |
-| =modules=        | the module index                             | §4⅔     |
-| =matrix=         | =collide='s dispatch grid                    | §3      |
-| =debugger=       | the live debugger on =(lol.examples:launch)= | §3      |
-| =stage=          | the COLLIDE stage, running                   | §3b     |
-| =stage-debugger= | the stage meeting a hole in the matrix       | §3b     |
-| =workspace=      | the scratch buffer and its verbs             | §3a     |
-| =spotter=        | the find-anything palette                    | §4¾     |
+| scene            | shows                                         | section |
+|------------------+-----------------------------------------------+---------|
+| =package=        | the flat =CL-USER= list + a source pane       | §4½     |
+| =modules=        | the module index                              | §4⅔     |
+| =matrix=         | =collide='s dispatch grid                     | §3      |
+| =debugger=       | the live debugger on =(lol.examples:launch)=  | §3      |
+| =stage=          | the COLLIDE stage, running                    | §3b     |
+| =stage-debugger= | the stage meeting a hole in the matrix        | §3b     |
+| =stage-accept=   | beat 4 — define the missing method, Accept it | §3b     |
+| =stage-inspect=  | Tab to a sprite, Enter for the Inspector      | §3b     |
+| =workspace=      | the scratch buffer and its verbs              | §3a     |
+| =spotter=        | the find-anything palette                     | §4¾     |
 
 =./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
 rewrites this file's link to the new dated PNG. /(README's own two shots are not

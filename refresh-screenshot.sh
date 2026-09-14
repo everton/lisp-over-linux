@@ -71,7 +71,7 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger"
+SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
@@ -160,7 +160,10 @@ ln -sfn "screenshots/$BASENAME-$STAMP.png" "$LINK"   # relative -> portable
 # Each mode owns its own link line, matched on the basename it writes.
 README="$MICRO/README.org"
 if [ -f "$README" ] && [ "$MODE" != scene ]; then
-  sed -i -E "s#\[\[\./media/screenshots/$BASENAME-[^]]*\.png\]\]#[[./media/screenshots/$BASENAME-$STAMP.png]]#" "$README"
+  # The date is matched digit-by-digit, not as [^]]*, because scene names share
+  # prefixes: with a loose pattern, --scene stage rewrote the link to
+  # stage-debugger-<date>.png, silently repointing a different illustration.
+  sed -i -E "s#\[\[\./media/screenshots/$BASENAME-[0-9]{4}-[0-9]{2}-[0-9]{2}\.png\]\]#[[./media/screenshots/$BASENAME-$STAMP.png]]#" "$README"
   # first run of a mode: the README may still point at the pre-archive path
   [ "$MODE" = repl ] && \
     sed -i -E "s#\[\[\./media/screenshot\.png\]\]#[[./media/screenshots/screenshot-$STAMP.png]]#" "$README"
@@ -174,7 +177,7 @@ fi
 # concrete dated file, never the symlink, so it renders on github.com.
 CB="$MICRO/doc/code-browser.org"
 if [ -f "$CB" ]; then
-  sed -i -E "s#\[\[file:\.\./media/screenshots/$BASENAME-[^]]*\.png\]\]#[[file:../media/screenshots/$BASENAME-$STAMP.png]]#" "$CB"
+  sed -i -E "s#\[\[file:\.\./media/screenshots/$BASENAME-[0-9]{4}-[0-9]{2}-[0-9]{2}\.png\]\]#[[file:../media/screenshots/$BASENAME-$STAMP.png]]#" "$CB"
 fi
 
 say "Wrote $DATED ($(stat -c%s "$DATED") bytes)"
