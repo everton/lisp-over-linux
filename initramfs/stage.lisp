@@ -80,6 +80,25 @@
    machine docking with Genera, and (:DESTROYED \"Lambda\") is the Scavenger reclaiming
    one. Nothing depends on the joke; it is a rename away if it wears thin.")
 
+(defparameter +dock-ticks+ 420
+  "Ticks a ship stays docked — about fourteen seconds.
+
+   A dock that lasted forever turned the demo's most mobile object into scenery, and
+   :DOCK is the FIRST event the seeded scene produces (the Lambda is aimed straight at
+   Genera). The stage was killing itself with its own opening move: by tick ~1200 the
+   ship was parked, the missile had been deflected away, and nothing happened again.")
+
+(defparameter +stage-floor+ 4
+  "Keep at least this many bodies on the stage.
+
+   Frankly a demo convenience, and labelled as one rather than dressed up as physics:
+   the population is otherwise monotonically non-increasing — :DESTROYED and :DEFLECTED
+   remove, :SHATTER breaks even, and nothing adds — so a view whose whole job is to
+   show dispatch happening runs out of things to dispatch on and becomes a screensaver.")
+
+(defparameter +stage-respawn-every+ 120
+  "Ticks between replenishments, so arrivals trickle in rather than swarm.")
+
 (defparameter +stage-transcript-max+ 64
   "Transcript lines kept. The pane shows the tail; the rest is dropped, not scrolled —
    this is a running log, not a document.")
@@ -102,6 +121,7 @@
   (flash 0)               ; ticks left on the impact highlight
   (flash-kind :method)    ; :method or :condition — which colour the flash wears
   (docked nil)            ; a body this one is parked on, or NIL
+  (undock-at 0)           ; the tick a docked ship departs on
   (breached nil)          ; a ship that survived a hull breach wears a mark
   (poly nil))             ; per-instance rock silhouette: radius multipliers, percent
 
@@ -336,11 +356,13 @@
           (setf (body-r f) 15))))))
 
 (defmethod stage-enact ((tag (eql :dock)) stage a b)
-  "Not a collision at all — the ship parks on the station's rim and stays there."
-  (declare (ignore tag stage))
+  "Not a collision at all — the ship parks on the station's rim, and leaves again
+   +DOCK-TICKS+ later."
+  (declare (ignore tag))
   (let ((ship (if (eq (body-kind a) :ship) a b))
         (stn  (if (eq (body-kind a) :ship) b a)))
-    (setf (body-docked ship) stn (body-vx ship) 0 (body-vy ship) 0)))
+    (setf (body-docked ship) stn (body-vx ship) 0 (body-vy ship) 0
+          (body-undock-at ship) (+ (stage-ticks stage) +dock-ticks+))))
 
 (defmethod stage-enact ((tag (eql :hull-breach)) stage a b)
   "The ship survives, wearing the breach."
@@ -432,6 +454,44 @@
       (format nil "(defmethod lol.examples:collide~%    ((a lol.examples:~(~a~))~%     (b lol.examples:~(~a~)))~%  (list :?? (lol.examples:name a) (lol.examples:name b)))"
               (first p) (second p)))))
 
+(defun stage-undock (stage b)
+  "A docked ship departs: clear of the station, on a heading away from it.
+
+   Pushed just past contact range first, or it would re-dock on the very next tick —
+   it is sitting ON the rim, which is exactly the condition that triggered the dock."
+  (let* ((st (body-docked b))
+         (dir (if st (aim (body-x st) (body-y st) (body-x b) (body-y b))
+                  (stage-rand stage 6283)))
+         (spd (getf *stage-speed* (body-kind b))))
+    (setf (body-docked b) nil
+          (body-vx b) (round (* spd (cos (/ dir 1000.0))))
+          (body-vy b) (round (* spd (sin (/ dir 1000.0)))))
+    (when st
+      ;; clear of the rim by a margin, along the departure heading
+      (let ((gap (+ (body-r st) (body-r b) 8)))
+        (setf (body-x b) (+ (body-x st) (round (* gap (cos (/ dir 1000.0)))))
+              (body-y b) (+ (body-y st) (round (* gap (sin (/ dir 1000.0))))))))
+    (push (cons (stage-pair-key b (or st b)) 90) (stage-cooldown stage))
+    (stage-log stage (format nil "~a undocked" (lol.examples:name (body-obj b))) :note)))
+
+(defun stage-replenish (stage)
+  "Keep the stage above +STAGE-FLOOR+ bodies, one arrival every so often.
+
+   A demo convenience and nothing more — see the parameter. It prefers whichever kind
+   has run out, and never a station: stations are the one thing no method removes, so
+   spawning them would only silt the stage up."
+  (when (and (< (length (stage-bodies stage)) +stage-floor+)
+             (zerop (mod (stage-ticks stage) +stage-respawn-every+)))
+    (let* ((kinds '(:missile :ship :asteroid))
+           (missing (remove-if (lambda (k) (find k (stage-bodies stage) :key #'body-kind))
+                               kinds))
+           (kind (if missing
+                     (nth (stage-rand stage (length missing)) missing)
+                     (nth (stage-rand stage (length kinds)) kinds)))
+           (b (stage-spawn stage kind)))
+      (stage-log stage (format nil "~a arrived" (lol.examples:name (body-obj b))) :note)
+      b)))
+
 (defun step-stage (stage)
   "Advance STAGE one tick: move, bounce off the walls, then resolve AT MOST ONE
    contact.
@@ -450,9 +510,11 @@
          ;; parked on the station's rim, BELOW it rather than beside it: a station
          ;; draws its own name to its right, and a ship docked there sits on top of
          ;; the word. Underneath, both names have their own row.
-         (let ((s (body-docked b)))
-           (setf (body-x b) (body-x s)
-                 (body-y b) (+ (body-y s) (body-r s) (body-r b) -4))))
+         (let ((st (body-docked b)))
+           (if (> (stage-ticks stage) (body-undock-at b))
+               (stage-undock stage b)
+               (setf (body-x b) (body-x st)
+                     (body-y b) (+ (body-y st) (body-r st) (body-r b) -4)))))
         (t
          (incf (body-ax b) (body-vx b))
          (incf (body-ay b) (body-vy b))
@@ -467,6 +529,7 @@
   ;; cooldowns
   (setf (stage-cooldown stage)
         (remove-if (lambda (c) (<= (decf (cdr c)) 0)) (stage-cooldown stage)))
+  (stage-replenish stage)
   ;; one contact
   (loop for (a . rest) on (stage-bodies stage) do
     (dolist (b rest)

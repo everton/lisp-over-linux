@@ -738,6 +738,35 @@ is *the editable preview pane* — the Stage is the one subject whose side pane 
 =C-c C-c=; and the transcript is *its own strip*, so the Workspace buffer holds only
 what you typed. And the naming question is settled too — see below.
 
+** Keeping the world alive
+
+A stage that runs down is a screensaver, and this one did. Six thousand ticks of the
+seeded scene produced *eight events, all of them before tick 1200*, and then a hundred
+seconds of nothing. Three causes, each of them a decision that looked right in
+isolation:
+
+- *Docking was permanent.* A docked ship has velocity zero forever — and =:DOCK= is the
+  FIRST event the opening scene produces, because the Lambda is aimed straight at
+  Genera. The demo was killing itself with its own opening move, taking its most mobile
+  object out of play within seconds.
+- *Nothing replaced what the methods removed.* =:DESTROYED= and =:DEFLECTED= delete;
+  =:SHATTER= breaks even; nothing adds. The population is monotonically non-increasing.
+- Between them, the mobile fraction trends to zero and the survivors settle into orbits
+  that never touch.
+
+So a ship now *undocks* after =+dock-ticks+= and departs on a heading away from the
+station (pushed clear of the rim first, or it re-docks on the very next tick — it is
+sitting exactly where the dock triggered). And =stage-replenish= keeps the population
+at =+stage-floor+=, one arrival at a time, preferring whichever kind has run out and
+never a station — stations are the one thing no method removes, so spawning them would
+only silt the stage up.
+
+That is *frankly a demo convenience* and the parameter's docstring says so rather than
+dressing it up as physics. The same six thousand ticks now run 49 events and are still
+going, about one every four seconds, with the population steady at four. Both are
+seeded through the stage's own RNG, so a headless frame still replays byte-identically
+— verified by rendering =stage:500= twice and diffing.
+
 ** The names — §4¾'s space joke, landing
 
 The sprites were =Kestrel=, =Anvil=, =Hornet=: invented naval birds with nothing to do

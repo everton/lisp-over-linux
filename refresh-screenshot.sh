@@ -31,6 +31,11 @@
 # HOW IT WORKS (two channels into one QEMU boot):
 #   * The framebuffer console (what the screendump captures) is driven purely by
 #     QMP `send-key` — we type keystrokes into the guest over the QMP socket.
+#   LOL_REPL_PORT=<n> (default 4005) moves the host side of that hostfwd, so a
+#   headless capture can run while an INTERACTIVE QEMU (./build.sh --interactive) is
+#   already holding 4005. Without it the boot silently produced no QMP socket, which
+#   reads as a mysterious tooling failure rather than "the port is taken".
+#
 #   * The network REPL on host port 4005 (the hostfwd) is used ONLY out-of-band
 #     to lower the kernel printk level, so a late 'random: crng init done' printk
 #     (entropy stirred up by our own keystroke interrupts) can't interleave into
@@ -56,6 +61,16 @@ ISO_ROOT="$MICRO/iso_root"
 # media/screenshot.png (what the README links) is a symlink to the latest — so
 # the project's visual evolution is browsable over time. See the memory note.
 SHOTS="$MICRO/media/screenshots"
+
+REPL_PORT="${LOL_REPL_PORT:-4005}"        # host side of the net-REPL hostfwd
+
+# A busy port is the one failure mode that does not announce itself: QEMU exits, no
+# QMP socket ever appears, and the driver reports only that. Say so up front instead.
+if command -v ss >/dev/null 2>&1 && ss -ltn 2>/dev/null | grep -q ":$REPL_PORT "; then
+  echo "port $REPL_PORT is already in use (an interactive QEMU?)." >&2
+  echo "  re-run with:  LOL_REPL_PORT=4105 $0 $*" >&2
+  exit 1
+fi
 
 OVMF_CODE="/usr/share/OVMF/OVMF_CODE_4M.fd"
 OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
@@ -127,7 +142,7 @@ qemu-system-x86_64 -machine q35 -m 2048 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$WORK/vars.fd" \
   -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
-  -netdev user,id=net0,hostfwd=tcp::4005-:4005 \
+  -netdev user,id=net0,hostfwd=tcp::$REPL_PORT-:4005 \
   -device virtio-net-pci,netdev=net0 \
   -serial file:"$WORK/serial.log" -display none -no-reboot \
   -qmp unix:"$QMP",server,nowait 2>"$WORK/qemu.err" &

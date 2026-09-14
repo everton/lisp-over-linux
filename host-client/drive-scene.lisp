@@ -164,7 +164,13 @@
     (loop while (< (get-universal-time) deadline)
           do (let ((s (make-instance 'sb-bsd-sockets:inet-socket
                                      :type :stream :protocol :tcp)))
-               (if (not (ignore-errors (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005) t))
+               (if (not (ignore-errors
+                          (sb-bsd-sockets:socket-connect
+                           s #(127 0 0 1)
+                           (or (ignore-errors
+                                 (parse-integer (or (sb-ext:posix-getenv "LOL_REPL_PORT") "4005")))
+                               4005))
+                          t))
                    (sleep 1.5)                     ; refused: the REPL is not up yet
                    (let ((stream (sb-bsd-sockets:socket-make-stream
                                   s :input t :output t :buffering :none
