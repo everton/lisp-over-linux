@@ -523,11 +523,18 @@
       (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
                               (+ (body-r b) 8) *ui-accent*))
     ;; NAME is a slot reader, not a caption — it is drawn because the transcript names
-    ;; the same string, and the eye has to be able to join the two.
-    (lol.canvas:draw-string canvas *bfont* (lol.examples:name (body-obj b))
-                            (+ ox (body-x b) (body-r b) 6)
-                            (+ oy (body-y b) -6)
-                            (if (eq b (stage-selected stage)) *ui-accent* *ui-dim*))))
+    ;; the same string, and the eye has to be able to join the two. It sits to the
+    ;; right of the sprite unless that would run it off the viewport, in which case it
+    ;; flips to the left: a body drifting into the right-hand wall was pushing its
+    ;; label out of the pane and into the divider beside it.
+    (let* ((nm    (lol.examples:name (body-obj b)))
+           (npx   (lol.canvas:string-px *bfont* nm))
+           (right (+ ox (body-x b) (body-r b) 6))                  ; the usual side
+           (left  (- (+ ox (body-x b)) (body-r b) 6 npx))          ; ends before the sprite
+           (nx    (if (> (+ right npx) (+ ox (stage-w stage))) left right)))
+      (lol.canvas:draw-string canvas *bfont* nm
+                              (max ox nx) (+ oy (body-y b) -6)
+                              (if (eq b (stage-selected stage)) *ui-accent* *ui-dim*)))))
 
 (defun draw-stage-transcript (canvas stage x y w h)
   "The tail of the transcript, oldest at the top. Each line is coloured by what it
@@ -593,11 +600,51 @@
             (setf (stage-selected stage) hit)
             t))))))
 
+(defun stage-open-workspace (pane &optional text)
+  "Open (or reuse) the Workspace BESIDE the stage and focus it, optionally replacing
+   its text.
+
+   The stage is the one subject whose side pane is editable rather than a read-only
+   preview (§3b) — the whole point is to type a form and watch what it does to the
+   world next to it. open-beside can't serve here because it works off a selected
+   LIST ROW and a stage has no rows, so this is the stage's own way in."
+  (unless (pane-side pane)
+    (setf (pane-side pane) (open-pane (subj-workspace))))
+  (setf *editing-side* t)
+  (when text
+    (let ((tv (pane-tv (pane-side pane))))
+      (when tv (lol.textview:tv-set-text tv text))))
+  (pane-side pane))
+
+(defun stage-take-template (pane)
+  "Deliver the [define-method] restart's template, if the debugger left one.
+
+   stage-defmethod-template hands back the defmethod the debugger already knew how to
+   write — its specialisers come from the two objects that failed to dispatch — and it
+   lands in the Workspace beside the stage with focus, ready for C-c C-c. The point is
+   that you never retype what the system already worked out."
+  (let* ((stage (view-data (pane-view pane)))
+         (tpl (stage-defmethod-template stage)))
+    (when tpl
+      (stage-open-workspace
+       pane
+       (format nil ";; from [define-method] — fill in the tag, then C-c C-c to define it.~%~a~%" tpl))
+      ;; and STOP the world while you write it. The pair that could not dispatch is
+      ;; still on the stage and still moving, and everything else is still colliding;
+      ;; leaving it running means the debugger reopens over the half-written method it
+      ;; just asked you for. Space resumes when you are ready to see the difference.
+      (setf (stage-running stage) nil)
+      (stage-log stage "paused — writing a method for this pair" :note)
+      (setf *browser-status* "defmethod template — edit the tag, C-c C-c to Accept, spc to resume")
+      t)))
+
 (defun stage-key (pane key)
   "The stage's own keys. Returns T when KEY was one of them.
 
    These are the same verbs COMMANDS-FOR offers on the subject — the keys are the
-   accelerator, the menu is the discoverable form, and neither is the authority."
+   accelerator, the menu is the discoverable form, and neither is the authority.
+   Reached only when focus is NOT on the side pane, or 's' would spawn a ship every
+   time you typed one into the Workspace."
   (let ((stage (view-data (pane-view pane))))
     (case key
       (#\Space (setf (stage-running stage) (not (stage-running stage))) t)
@@ -606,8 +653,30 @@
       (#\a (stage-spawn stage :asteroid) t)
       (#\m (stage-spawn stage :missile) t)
       (#\t (stage-spawn stage :station) t)
+      (#\w (if (pane-side pane)                    ; toggle the Workspace beside
+                (setf (pane-side pane) nil *editing-side* nil)
+                (stage-open-workspace pane))
+           t)
       (#\r (reset-collide-stage)
            (setf (pane-view pane) (present (pane-subject pane))) t)
+      ;; Tab cycles the selection through the bodies. The mouse is an ACCELERATOR here,
+      ;; not the way in (doc §1's rule, and the reason every list has arrow keys): a
+      ;; stage you can only select on by clicking is a stage you cannot use on hardware
+      ;; whose pointer has not been brought up yet.
+      (:tab (let* ((bs (stage-bodies stage))
+                   (i (position (stage-selected stage) bs)))
+              (setf (stage-selected stage)
+                    (when bs (nth (if i (mod (1+ i) (length bs)) 0) bs))))
+            t)
+      ;; a sprite is an INSTANCE, and an instance is a subject: Enter opens the
+      ;; Inspector on it, the same view any other object gets. Nothing selected yet?
+      ;; Select the first, so Enter is never simply inert.
+      ((:return #\Return)
+       (let ((sel (or (stage-selected stage) (first (stage-bodies stage)))))
+         (if (eq sel (stage-selected stage))
+             (when sel (trail-push (body-obj sel)))
+             (setf (stage-selected stage) sel)))
+       t)
       (t nil))))
 
 (defun matrix-cell-click (pane px py)
@@ -754,6 +823,26 @@
       (let ((is-list (and (null (pane-tv cur))
                           (not (member (view-kind (pane-view cur)) '(:matrix :stage))))))
         (cond
+          ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
+          ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
+          ;; but driven by 'w' rather than a selected row, and the stage keeps the
+          ;; larger half because it is the thing you are watching.
+          ((and (eq (view-kind (pane-view cur)) :stage) (pane-side cur))
+           (let* ((full-w (- w 24)) (stage-w* (max 300 (floor (* full-w 58) 100)))
+                  (gap 12) (sx (+ 12 stage-w* gap)) (sw (- w sx 12)) (side (pane-side cur)))
+             (setf *split-x* sx)
+             (draw-stage-body canvas cur 12 body-y stage-w* body-h)
+             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
+             (lol.canvas:draw-string canvas *bfont*
+               (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
+                       (if *editing-side*
+                           "editing — C-c C-c define · SuperL-o stage"
+                           "SuperL-o to edit"))
+               sx (- body-y 15) (if *editing-side* *ui-accent* *ui-dim*))
+             (if *editing-side*
+                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
+                 (lol.canvas:fill-rect canvas 12 (- body-y 2) stage-w* 2 *ui-accent*))
+             (draw-pane-body canvas side sx body-y sw body-h)))
           ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right;
           ;; the focused half wears an accent top-rule (SuperL-o moves focus).
           ((and is-list (pane-side cur))
@@ -799,10 +888,12 @@
                               '(("C-c C-c" . "accept") ("SuperL-o" . "back to list")))
                              ((workspace-pane-p cur)
                               '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
-                                ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")))
+                                ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")
+                                ("C-c C-c" . "define")))
                              ((eq (view-kind (pane-view cur)) :stage)
                               '(("spc" . "run/pause") ("n" . "step") ("s/a/m/t" . "spawn")
-                                ("r" . "reset") ("click" . "select")))
+                                ("w" . "workspace") ("r" . "reset")
+                                ("tab" . "select") ("ret" . "inspect")))
                              ((editable-pane-p cur) '(("C-c C-c" . "accept")))
                              ((pane-side cur)
                               '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
@@ -979,13 +1070,23 @@
                              shown (and (> (length cands) 15) (length cands)))))))))))
 
 (defun accept-pane (pane)
-  "Compile the edited source buffer into the live image + update the registry
-   (accept-source), for any editable subject — a whole definition (subj-defn) or a
-   single method (subj-method). Sets *browser-status* to the outcome."
+  "Compile the buffer into the live image + update the registry (accept-source).
+
+   Two cases. A SOURCE pane is editing a definition that already exists, and hands
+   accept-source the subject's name/kind/label as fallbacks so an edit lands on the
+   right one — the specializer label especially, or an edited method would overwrite
+   a sibling's source. A WORKSPACE pane is not editing anything: whatever definition
+   the text names is the one being made, so the form is the only authority and the
+   fallbacks are NIL. That is what makes C-c C-c in the Workspace mean 'define this',
+   which is how a method written at the stage's debugger gets into the image AND into
+   the change set (§3b, beat 4).
+
+   Sets *browser-status* to the outcome."
   (let ((text (lol.textview:tv-text (pane-tv pane)))
         (subj (pane-subject pane)))
     (handler-case
-        (multiple-value-bind (name kind label) (accept-target subj)
+        (multiple-value-bind (name kind label)
+            (if (workspace-pane-p pane) (values nil nil nil) (accept-target subj))
           (let ((n (accept-source text name kind label)))
             (setf *browser-status* (format nil "Accepted: ~(~a~)" n))))
       (serious-condition (c)
@@ -1002,7 +1103,9 @@
        (let ((prefix *pending-prefix*))
          (setf *pending-prefix* nil)
          (cond
-           ((and (eq prefix :c-c) c (eql key #\c) (editable-pane-p p)) (accept-pane p))
+           ((and (eq prefix :c-c) c (eql key #\c)
+                 (or (editable-pane-p p) (workspace-pane-p p)))
+            (accept-pane p))
            ((and (eq prefix :c-c) c (eql key #\p) (workspace-pane-p p)) (workspace-print-it p))
            ;; C-c C-i Inspect it: Ctrl-I *is* Tab (byte 9) on any tty, so the console
            ;; delivers this chord as C-c then :tab — accept both.
@@ -1075,15 +1178,17 @@
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) :quit)
          (t nil)))
+      ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
+      ;;     SuperL-o (above) hands focus back to the list/stage. This MUST precede the
+      ;;     stage branch: a stage's letters spawn things, and typing "ship" into the
+      ;;     Workspace beside it would otherwise launch four objects. ---
+      ((and *editing-side* (pane-side p)) (edit-pane-key (pane-side p) key state))
       ;; --- the stage (§3b): its own verbs, before the list keys, because a stage has
       ;;     no rows for up/dn to move and letters here mean "spawn one of those". ---
       ((and (eq (view-kind (pane-view p)) :stage)
             (not (lol.canvas:ctrl-p state))
             (stage-key p key))
        nil)
-      ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
-      ;;     SuperL-o (above) hands focus back to the list. ---
-      ((and *editing-side* (pane-side p)) (edit-pane-key (pane-side p) key state))
       ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go
       ;;     through *pending-prefix*: C-c then {C-c Accept | C-p Print | C-i Inspect},
       ;;     C-x then C-e Do it. Any other key edits. ---

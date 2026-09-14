@@ -347,7 +347,14 @@
             ;; not a debugger, it is a trap. The rail's other restarts (pass-through,
             ;; remove-both, use-value, define-method) are the ways to actually settle it.
             (setf (stage-running st) nil)
-            (stage-log st "aborted — stage paused; the contact is unresolved" :warn)))))))
+            (stage-log st "aborted — stage paused; the contact is unresolved" :warn)))
+        ;; [define-method] left a template behind: hand it to the Workspace beside the
+        ;; stage. Done HERE rather than inside the restart because the restart's job is
+        ;; to unwind, and the pane it wants does not exist until we are back in the
+        ;; browser's own world.
+        (let ((p (current-pane)))
+          (when (and p (eq (view-kind (pane-view p)) :stage))
+            (stage-take-template p)))))))
 
 
 

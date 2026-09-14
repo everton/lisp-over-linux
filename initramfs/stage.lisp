@@ -409,7 +409,9 @@
   (let ((p (stage-pending stage)))
     (when p
       (setf (stage-pending stage) nil)
-      (format nil "(defmethod lol.examples:collide ((a lol.examples:~(~a~)) (b lol.examples:~(~a~)))~%  (list :?? (lol.examples:name a) (lol.examples:name b)))"
+      ;; broken across lines because the Workspace beside the stage is a narrow pane
+      ;; and the textview does not wrap — one long defmethod line simply ran off it.
+      (format nil "(defmethod lol.examples:collide~%    ((a lol.examples:~(~a~))~%     (b lol.examples:~(~a~)))~%  (list :?? (lol.examples:name a) (lol.examples:name b)))"
               (first p) (second p)))))
 
 (defun step-stage (stage)
@@ -477,12 +479,18 @@
         "applicable: nothing in range"
         (let* ((a (body-obj (first pair))) (b (body-obj (second pair)))
                (ab (collide-applicable-p a b)) (ba* (collide-applicable-p b a)))
-          (format nil "applicable: (~(~a~) ~(~a~)) ~a  (~(~a~) ~(~a~)) ~a~a"
-                  (body-kind (first pair)) (body-kind (second pair)) (if ab "yes" "no")
-                  (body-kind (second pair)) (body-kind (first pair)) (if ba* "yes" "no")
-                  (cond ((and ab ba*) "")
-                        ((or ab ba*) "   one side only")
-                        (t "   will signal")))))))
+          (if (eq (body-kind (first pair)) (body-kind (second pair)))
+              ;; a same-class pair has only ONE direction to report; printing
+              ;; "(missile missile) yes  (missile missile) yes" says nothing twice.
+              (format nil "applicable: (~(~a~) ~(~a~)) ~a~a"
+                      (body-kind (first pair)) (body-kind (second pair))
+                      (if ab "yes" "no") (if ab "" "   will signal"))
+              (format nil "applicable: (~(~a~) ~(~a~)) ~a  (~(~a~) ~(~a~)) ~a~a"
+                      (body-kind (first pair)) (body-kind (second pair)) (if ab "yes" "no")
+                      (body-kind (second pair)) (body-kind (first pair)) (if ba* "yes" "no")
+                      (cond ((and ab ba*) "")
+                            ((or ab ba*) "   one side only")
+                            (t "   will signal"))))))))
 
 ;;; ---- the subject, and its view ------------------------------------------------
 ;;; A stage is presented like anything else: a subject in, a VIEW out, no pixels. The
