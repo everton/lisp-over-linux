@@ -8,8 +8,9 @@
 ;;;; root). Esc is left free for a future Meta prefix, so it does not quit.
 ;;;;
 ;;;; Keyboard: raw fd 0, signals OFF (so C-c C-c Accepts). Mouse: /dev/input/eventN
-;;;; (the pointer, found via /proc/bus/input/devices) — relative (PS/2) or absolute
-;;;; (usb-tablet), left button drills. CL-USER, loaded after the toolkit + line-editor.
+;;;; (the pointer, found via /proc/bus/input/devices) — relative (PS/2 / USB), absolute
+;;;; (usb-tablet) or a laptop touchpad, whose absolute finger position is integrated
+;;;; rather than mapped, left button drills. CL-USER, after the toolkit + line-editor.
 
 (in-package :cl-user)
 
@@ -22,6 +23,11 @@
 (sb-alien:define-alien-routine ("close" %fbb-close) sb-alien:int (fd sb-alien:int))
 (sb-alien:define-alien-routine ("poll"  %fbb-poll)  sb-alien:int
   (fds (sb-alien:* sb-alien:unsigned-char)) (nfds sb-alien:unsigned-long) (timeout sb-alien:int))
+;; ioctl is variadic in C; for EVIOCGABS the 3rd arg is a struct input_absinfo *.
+;; (net.lisp has its own %ioctl for the SIOC* calls, but it is loaded after us.)
+(sb-alien:define-alien-routine ("ioctl" %fbb-ioctl) sb-alien:int
+  (fd sb-alien:int) (request sb-alien:unsigned-long)
+  (argp (sb-alien:* sb-alien:unsigned-char)))
 
 (defconstant +o-rdonly+   0)
 (defconstant +o-nonblock+ #x800)
@@ -136,22 +142,40 @@
 (defvar *super-down* nil "Is a Super/Meta (Windows) key held? Tracked from the
   keyboard's evdev — the spatial layer's modifier, and what SuperL-? needs.")
 
-(defun scan-input-device (mask-ok-p)
-  "The /dev/input/eventN of the first device in /proc/bus/input/devices whose
-   capability mask (the 'B: EV=' line, hex) satisfies MASK-OK-P, or NIL.
+(defun scan-input-device (device-ok-p)
+  "The first device in /proc/bus/input/devices that DEVICE-OK-P accepts, as
+   (values \"/dev/input/eventN\" EV PROP) — EV is the 'B: EV=' capability mask and
+   PROP the 'B: PROP=' property mask, both hex in the file. NIL if none matches.
 
    We read the EV mask rather than grepping Handlers for 'mouse'/'kbd': mousedev
    isn't loaded, so a plain PS/2 mouse shows only 'Handlers=eventN' with no 'mouseN'
-   token. The EV bits are what actually classify the device."
+   token. The EV bits are what actually classify the device.
+
+   PROP is the second half of the story and the reason a touchpad works at all:
+   EV says a device emits absolute positions, PROP says whether those positions
+   are *on the screen* (INPUT_PROP_DIRECT — a tablet) or *on a small pad under
+   your hand* (INPUT_PROP_POINTER / INPUT_PROP_BUTTONPAD). Both print here, so
+   neither costs an open(2).
+
+   The predicate runs at the end of a device's block, because PROP is printed
+   before EV and we want both in hand before deciding."
   (ignore-errors
     (with-open-file (s "/proc/bus/input/devices" :if-does-not-exist nil)
       (when s
-        (let ((ev nil) (ok nil))
-          (flet ((finish ()                       ; end of a device block
-                   (when (and ev ok)
+        (let ((node nil) (ev nil) (prop 0))
+          (flet ((hex (line key)
+                   (let ((p (search key line)))
+                     (when p
+                       (let* ((start (+ p (length key)))
+                              (end (or (position #\Space line :start start)
+                                       (length line))))
+                         (ignore-errors
+                           (parse-integer line :start start :end end :radix 16))))))
+                 (finish ()                       ; end of a device block
+                   (when (and node ev (funcall device-ok-p ev prop))
                      (return-from scan-input-device
-                       (format nil "/dev/input/~a" ev)))
-                   (setf ev nil ok nil)))
+                       (values (format nil "/dev/input/~a" node) ev prop)))
+                   (setf node nil ev nil prop 0)))
             (loop for line = (read-line s nil nil) do
               (cond
                 ((null line) (finish) (return))               ; EOF: flush last block
@@ -160,23 +184,68 @@
                  (let ((p (search "event" line)))
                    (when p
                      (let ((end (or (position #\Space line :start p) (length line))))
-                       (setf ev (subseq line p end))))))
-                ((search "EV=" line)
-                 (let* ((p (+ (search "EV=" line) 3))
-                        (end (or (position #\Space line :start p) (length line)))
-                        (mask (ignore-errors
-                                (parse-integer line :start p :end end :radix 16))))
-                   (when (and mask (funcall mask-ok-p mask))
-                     (setf ok t))))))))))))
+                       (setf node (subseq line p end))))))
+                ((search "PROP=" line) (setf prop (or (hex line "PROP=") 0)))
+                ((search "EV=" line)   (setf ev   (hex line "EV=")))))))))))
+
+;;; What kind of pointer we found, decided once at open time and consulted by
+;;; READ-MOUSE on every packet. EV bit 2 = EV_REL, bit 3 = EV_ABS; PROP bit 0 =
+;;; INPUT_PROP_POINTER, bit 2 = INPUT_PROP_BUTTONPAD — either one means "a pad
+;;; under your hand", not "a surface you point at".
+(defvar *pointer-abs-p* nil "Does the pointer report positions (EV_ABS) rather than deltas?")
+(defvar *pointer-pad-p* nil "Is that absolute pointer a touchpad rather than a tablet?")
+(defvar *abs-x-min* 0) (defvar *abs-x-max* 32767)
+(defvar *abs-y-min* 0) (defvar *abs-y-max* 32767)
+
+;;; Touchpad state: where the finger was last packet, and the fractions of a pixel
+;;; its motion has not yet paid out. See PAD-MOTION.
+(defvar *pad-x* nil "Last ABS_X the touchpad reported, or NIL for 'no finger yet'.")
+(defvar *pad-y* nil "Last ABS_Y, likewise.")
+(defvar *pad-fingers* 0 "How many fingers the pad says are down (BTN_TOOL_*).")
+(defvar *pad-rx* 0 "Sub-pixel remainder of horizontal pad motion, an exact rational.")
+(defvar *pad-ry* 0 "Sub-pixel remainder of vertical pad motion.")
+(defvar *pad-scroll* 0 "Two-finger motion not yet worth a wheel notch, in pad units.")
+
+(defvar *pad-speed* 3/2
+  "How far the cursor travels for a full sweep of the pad, in screens. 1 means the
+   pad maps one-to-one onto the display, which is accurate but makes you cross the
+   whole pad to cross the whole screen; 3/2 asks for about two thirds of a sweep.")
+
+(defun pointer-pad-p (ev prop)
+  "EV/PROP describe a touchpad: absolute, not relative, and a POINTER/BUTTONPAD."
+  (and (logbitp 3 ev) (not (logbitp 2 ev))
+       (or (logbitp 0 prop) (logbitp 2 prop))))
 
 (defun find-mouse-device ()
-  "A pointer: EV_REL (bit 2, mouse/touchpad) or EV_ABS (bit 3, tablet)."
-  (scan-input-device (lambda (m) (or (logbitp 2 m) (logbitp 3 m)))))
+  "The pointer, best candidate first, as (values PATH EV PROP):
+
+   1. a *direct* absolute device — QEMU's '-device usb-tablet'. Nobody has one by
+      accident, its 0..32767 maps straight onto the screen, and it is the only
+      pointer a scripted click can aim, so it wins when present.
+   2. a *relative* mouse — the QEMU default PS/2 mouse, any USB mouse, or the
+      relative node a HID touchpad exposes while it is still in mouse mode.
+   3. a *touchpad* — correct, but its raw position needs interpreting
+      (see READ-MOUSE), so we only reach for it when there is nothing simpler.
+
+   Ranking rather than taking the first match matters on real hardware: a laptop
+   has no mouse, so the touchpad is the only pointer there is, while in QEMU the
+   ranking changes nothing."
+  (dolist (want '(:tablet :mouse :pad))
+    (multiple-value-bind (path ev prop)
+        (scan-input-device
+         (lambda (ev prop)
+           (ecase want
+             (:tablet (and (logbitp 3 ev) (not (logbitp 2 ev))
+                           (not (pointer-pad-p ev prop))))
+             (:mouse  (logbitp 2 ev))
+             (:pad    (pointer-pad-p ev prop)))))
+      (when path (return (values path ev prop))))))
 
 (defun find-keyboard-device ()
   "The real keyboard: EV_KEY (bit 1) and EV_REP (bit 20, autorepeat). The EV_REP
    bit is what separates it from the Power Button (also a 'kbd' handler, EV=3)."
-  (scan-input-device (lambda (m) (and (logbitp 1 m) (logbitp 20 m)))))
+  (scan-input-device (lambda (m prop) (declare (ignore prop))
+                       (and (logbitp 1 m) (logbitp 20 m)))))
 
 (defun open-evdev (path)
   "Open an evdev node non-blocking; NIL on failure or no PATH."
@@ -184,7 +253,46 @@
     (let ((fd (%fbb-open path (logior +o-rdonly+ +o-nonblock+))))
       (and (>= fd 0) fd))))
 
-(defun open-mouse ()    (open-evdev (find-mouse-device)))
+(defun evdev-abs-range (fd axis)
+  "The (values MIN MAX) an absolute AXIS actually reports, via EVIOCGABS.
+
+   This is the whole bug fix in one function. A 'struct input_absinfo' is six
+   __s32s — value, minimum, maximum, fuzz, flat, resolution — and we want the
+   middle two; EVIOCGABS(axis) is _IOR('E', 0x40+axis, 24) = #x80184540 + axis.
+   Assuming 0..32767 instead (usb-tablet's range, which every emulated tablet
+   happens to share) squeezes a real touchpad — a Synaptics pad reports roughly
+   1472..5472 by 1408..4448 — into the top-left eighth of the screen.
+
+   Falls back to 0..32767 when the ioctl fails or the axis is degenerate."
+  (sb-alien:with-alien ((info (sb-alien:array sb-alien:unsigned-char 24)))
+    (dotimes (i 24) (setf (sb-alien:deref info i) 0))
+    (if (minusp (%fbb-ioctl fd (+ #x80184540 axis)
+                            (sb-alien:cast info (sb-alien:* sb-alien:unsigned-char))))
+        (values 0 32767)
+        (flet ((s32 (off)
+                 (let ((v (logior (sb-alien:deref info off)
+                                  (ash (sb-alien:deref info (+ off 1)) 8)
+                                  (ash (sb-alien:deref info (+ off 2)) 16)
+                                  (ash (sb-alien:deref info (+ off 3)) 24))))
+                   (if (>= v #x80000000) (- v #x100000000) v))))
+          (let ((lo (s32 4)) (hi (s32 8)))
+            (if (> hi lo) (values lo hi) (values 0 32767)))))))
+
+(defun open-mouse ()
+  "Open the pointer and remember how to read it: *pointer-abs-p* / *pointer-pad-p*
+   and, for an absolute device, the axis ranges READ-MOUSE scales against."
+  (multiple-value-bind (path ev prop) (find-mouse-device)
+    (let ((fd (open-evdev path)))
+      (when fd
+        (setf *pointer-abs-p* (and (logbitp 3 ev) (not (logbitp 2 ev)))
+              *pointer-pad-p* (pointer-pad-p ev prop)
+              *pad-x* nil *pad-y* nil *pad-fingers* 0
+              *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0)
+        (when *pointer-abs-p*
+          (multiple-value-setq (*abs-x-min* *abs-x-max*) (evdev-abs-range fd 0))
+          (multiple-value-setq (*abs-y-min* *abs-y-max*) (evdev-abs-range fd 1))))
+      fd)))
+
 (defun open-keyboard () (open-evdev (find-keyboard-device)))
 
 (defun read-keyboard-evdev (fd)
@@ -209,13 +317,78 @@
               ((or (= code 125) (= code 126))            ; KEY_LEFTMETA / KEY_RIGHTMETA (Super)
                (setf *super-down* (plusp val))))))))))
 
+(defun abs-to-screen (val lo hi res)
+  "Map an absolute reading in LO..HI onto 0..RES-1."
+  (max 0 (min (1- res) (floor (* (- val lo) res) (max 1 (- hi lo))))))
+
+(defun pad-motion (nx ny xres yres)
+  "One touchpad packet's worth of finger position; returns the wheel notches it
+   produced (0 when it moved the cursor instead).
+
+   A pad is about 90mm wide and the screen is 1920px, so the finger's position on
+   the pad is not a position on the screen — we difference successive positions
+   and move the cursor by the difference, scaled so that crossing the whole pad
+   crosses the whole screen (times *PAD-SPEED*). Scaling each axis by its own
+   range also fixes the aspect: a pad is wider than it is tall in device units
+   too, so the two factors come out nearly equal and motion stays isotropic.
+
+   Two things keep it from teleporting. A finger landing or lifting, or a second
+   finger joining, clears *PAD-X* (READ-MOUSE does that on any BTN_TOUCH /
+   BTN_TOOL_* transition), so the first packet of a new contact yields no delta.
+   And any jump over a quarter of the pad is discarded outright, which covers
+   hardware that does not bother to report BTN_TOUCH at all."
+  (let* ((xrange (max 1 (- *abs-x-max* *abs-x-min*)))
+         (yrange (max 1 (- *abs-y-max* *abs-y-min*)))
+         (dx (and nx *pad-x* (- nx *pad-x*)))
+         (dy (and ny *pad-y* (- ny *pad-y*)))
+         (wheel 0))
+    (when nx (setf *pad-x* nx))
+    (when ny (setf *pad-y* ny))
+    (when (and dx (> (abs dx) (floor xrange 4))) (setf dx nil))
+    (when (and dy (> (abs dy) (floor yrange 4))) (setf dy nil))
+    (if (>= *pad-fingers* 2)
+        ;; two fingers = the wheel this hardware does not have. Dragging them
+        ;; toward you is the same gesture as rolling a wheel toward you, so it
+        ;; makes the same negative notches (see §6 of doc/input.org).
+        (when dy
+          (incf *pad-scroll* dy)
+          (let ((notch (max 1 (floor yrange 24))))
+            (loop while (>= (abs *pad-scroll*) notch)
+                  do (let ((s (signum *pad-scroll*)))
+                       (decf *pad-scroll* (* s notch))
+                       (decf wheel s)))))
+        (macrolet ((glide (d span res remainder cursor limit)
+                     ;; Exact rationals, not truncated pixels: at ~0.7px per pad
+                     ;; unit a slow drag is a string of deltas that each round to
+                     ;; zero, and dropping those would stall the cursor. Carry the
+                     ;; fraction over to the next packet instead.
+                     `(let* ((acc (+ ,remainder (/ (* ,d ,res *pad-speed*) ,span)))
+                             (whole (truncate acc)))
+                        (setf ,remainder (- acc whole)
+                              ,cursor (max 0 (min ,limit (+ ,cursor whole)))))))
+          (setf *pad-scroll* 0)
+          (when dx (glide dx xrange xres *pad-rx* *cursor-x* (1- xres)))
+          (when dy (glide dy yrange yres *pad-ry* *cursor-y* (1- yres)))))
+    wheel))
+
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*. Returns
    (values CLICKED WHEEL): CLICKED is T on a left-button press; WHEEL is the summed
    scroll notches this drain (REL_WHEEL, + = up / away from the user, - = down), 0
    when there was none. Callers that want only the click keep working on the first
-   value. Handles EV_ABS (usb-tablet, 0..32767) and EV_REL (PS/2 + wheel)."
-  (let ((clicked nil) (wheel 0))
+   value.
+
+   Three kinds of pointer, sorted out once by OPEN-MOUSE:
+
+   - EV_REL — a mouse. The values are deltas; add them.
+   - EV_ABS, direct — a usb-tablet. The values are positions on the screen; scale
+     them from the device's *own* range (EVDEV-ABS-RANGE), not an assumed one.
+   - EV_ABS, INPUT_PROP_POINTER — a laptop touchpad. The values are positions on
+     the pad, which is not the screen; hand them to PAD-MOTION.
+
+   Absolute axes are gathered across the packet and applied at SYN_REPORT rather
+   than record by record, so X and Y move together and one drag is one delta."
+  (let ((clicked nil) (wheel 0) (nx nil) (ny nil))
     (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
       (loop
         (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
@@ -228,15 +401,34 @@
             (cond
               ((= type 3)                       ; EV_ABS
                (case code
-                 (0 (setf *cursor-x* (min (1- xres) (floor (* val xres) 32768))))
-                 (1 (setf *cursor-y* (min (1- yres) (floor (* val yres) 32768))))))
+                 (0 (if *pointer-pad-p*
+                        (setf nx val)
+                        (setf *cursor-x* (abs-to-screen val *abs-x-min* *abs-x-max* xres))))
+                 (1 (if *pointer-pad-p*
+                        (setf ny val)
+                        (setf *cursor-y* (abs-to-screen val *abs-y-min* *abs-y-max* yres))))))
               ((= type 2)                       ; EV_REL
                (case code
                  (0 (setf *cursor-x* (max 0 (min (1- xres) (+ *cursor-x* val)))))
                  (1 (setf *cursor-y* (max 0 (min (1- yres) (+ *cursor-y* val)))))
                  (8 (incf wheel val))))          ; REL_WHEEL: +1 up / -1 down
-              ((and (= type 1) (= code #x110) (= val 1))    ; EV_KEY BTN_LEFT press
-               (setf clicked t)))))))
+              ((= type 1)                       ; EV_KEY — a button is just a key
+               (case code
+                 (#x110 (when (= val 1) (setf clicked t)))       ; BTN_LEFT press
+                 ;; BTN_TOUCH / BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP} only change
+                 ;; value when the contact does: a finger landed, lifted, or was
+                 ;; joined by another. All three move the point the pad reports, so
+                 ;; all three must forget the previous one rather than subtract it.
+                 ((#x14a #x145 #x14d #x14e)
+                  (setf *pad-x* nil *pad-y* nil *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0)
+                  (case code
+                    (#x14a (unless (plusp val) (setf *pad-fingers* 0)))    ; BTN_TOUCH
+                    (#x145 (when (plusp val) (setf *pad-fingers* 1)))      ; one finger
+                    (#x14d (when (plusp val) (setf *pad-fingers* 2)))      ; two
+                    (#x14e (when (plusp val) (setf *pad-fingers* 3))))))) ; three
+              ((and (= type 0) (= code 0) *pointer-pad-p*)   ; EV_SYN/SYN_REPORT
+               (incf wheel (pad-motion nx ny xres yres))
+               (setf nx nil ny nil)))))))
     (values clicked wheel)))
 
 (defparameter *cursor-bits*
