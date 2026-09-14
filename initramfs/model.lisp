@@ -335,36 +335,75 @@
 ;;; The Inspector — every value browsable (the (present (x t)) fallback)
 ;;; ======================================================================
 
+(defun inspect-places (obj)
+  "The 'fields' of any OBJ as PLACES, not just values: a list of plists
+   (:label L :value V :set FN), where FN writes a new value back, or NIL when the
+   field is not settable.
+
+   The distinction is the whole reason this function exists. A VALUE has no identity
+   as a location — you cannot write to \"the string it happens to hold\", only to the
+   CELL that holds it — so an inspector that means to edit has to carry the cell
+   along, and a closure is the smallest honest way to say \"here is how to put
+   something back\".
+
+   Order matters below: hash-table, package (and others) ARE structure-objects in
+   SBCL, so their specific clauses must precede the general object clause or they
+   would show SBCL's internal slots instead of their real contents."
+  (flet ((ro (label value) (list :label label :value value :set nil)))
+    (typecase obj
+      (hash-table
+       (let (fields)
+         (maphash (lambda (k v)
+                    (push (list :label k :value v
+                                :set (lambda (new) (setf (gethash k obj) new)))
+                          fields))
+                  obj)
+         (nreverse fields)))
+      (package
+       (list (ro :name (package-name obj))
+             (ro :nicknames (package-nicknames obj))
+             (ro :use-list (mapcar #'package-name (package-use-list obj)))))
+      (symbol                                    ; a symbol's cells — deeply Lispy
+       (list (ro :name (symbol-name obj))
+             (ro :package (symbol-package obj))
+             (list :label :value :value (if (boundp obj) (symbol-value obj) :unbound)
+                   :set (lambda (new) (setf (symbol-value obj) new)))
+             ;; :function is deliberately NOT settable here. It is writable —
+             ;; (setf (fdefinition sym) …) works — but redefining a function by
+             ;; typing an expression into a one-line prompt is a worse version of
+             ;; something the browser already does properly: open its source and
+             ;; C-c C-c, which also records the old text in the change set.
+             (ro :function (if (fboundp obj) (fdefinition obj) :unbound))
+             (list :label :plist :value (symbol-plist obj)
+                   :set (lambda (new) (setf (symbol-plist obj) new)))))
+      (cons                                      ; a cons: its two halves
+       (list (list :label :car :value (car obj) :set (lambda (new) (setf (car obj) new)))
+             (list :label :cdr :value (cdr obj) :set (lambda (new) (setf (cdr obj) new)))))
+      ((and vector (not string))
+       (loop for i below (length obj)
+             collect (let ((i i))
+                       (list :label i :value (aref obj i)
+                             :set (lambda (new) (setf (aref obj i) new))))))
+      ((or standard-object structure-object)     ; general: slots by name (LAST)
+       (mapcar (lambda (s)
+                 (let ((n (sb-mop:slot-definition-name s)))
+                   (list :label n
+                         :value (if (slot-boundp obj n) (slot-value obj n) :unbound)
+                         :set (lambda (new) (setf (slot-value obj n) new)))))
+               (sb-mop:class-slots (class-of obj))))
+      ;; The fallback shows what a thing IS, and neither field is a place: we were
+      ;; handed the value, not the cell it came from. A string lands here — which is
+      ;; the right answer, because the way to change a string is to replace the cell
+      ;; holding it (inspect the SYMBOL and set its :value), not to mutate the string.
+      ;; Mutating one in place is undefined behaviour that happens to work: SBCL may
+      ;; coalesce equal literals in compiled code, so editing a string could silently
+      ;; change an unrelated function that shares it.
+      (t (list (ro :value obj) (ro :type (type-of obj)))))))
+
 (defun inspect-fields (obj)
-  "The 'fields' of any OBJ, as a list of (LABEL . VALUE) — the model an inspector
-   pane renders, and what makes 'everything browsable from everywhere' mechanical:
-   each VALUE is itself inspectable, so drilling never dead-ends."
-  ;; Order matters: hash-table, package (and others) ARE structure-objects in
-  ;; SBCL, so their specific clauses must precede the general object clause or
-  ;; they'd show SBCL's internal slots instead of their real contents.
-  (typecase obj
-    (hash-table
-     (let (fields) (maphash (lambda (k v) (push (cons k v) fields)) obj) (nreverse fields)))
-    (package
-     (list (cons :name (package-name obj))
-           (cons :nicknames (package-nicknames obj))
-           (cons :use-list (mapcar #'package-name (package-use-list obj)))))
-    (symbol                                      ; a symbol's cells — deeply Lispy
-     (list (cons :name (symbol-name obj))
-           (cons :package (symbol-package obj))
-           (cons :value (if (boundp obj) (symbol-value obj) :unbound))
-           (cons :function (if (fboundp obj) (fdefinition obj) :unbound))
-           (cons :plist (symbol-plist obj))))
-    (cons                                        ; a cons: its two halves (drill the cdr to walk)
-     (list (cons :car (car obj)) (cons :cdr (cdr obj))))
-    ((and vector (not string))
-     (loop for i below (length obj) collect (cons i (aref obj i))))
-    ((or standard-object structure-object)       ; general: slots by name (LAST)
-     (mapcar (lambda (s)
-               (let ((n (sb-mop:slot-definition-name s)))
-                 (cons n (if (slot-boundp obj n) (slot-value obj n) :unbound))))
-             (sb-mop:class-slots (class-of obj))))
-    (t (list (cons :value obj) (cons :type (type-of obj))))))
+  "The 'fields' of any OBJ, as a list of (LABEL . VALUE) — the simple view, over
+   INSPECT-PLACES. Each VALUE is itself inspectable, so drilling never dead-ends."
+  (mapcar (lambda (p) (cons (getf p :label) (getf p :value))) (inspect-places obj)))
 
 (defun show-inspect (obj)
   "Print OBJ's fields (the REPL inspector)."

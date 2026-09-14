@@ -225,6 +225,13 @@
    so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
    cleared on the next keystroke.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
+(defvar *value-prompt* nil
+  "A hook: (funcall *value-prompt* LABEL) -> the string the user typed, or NIL if they
+   cancelled. Reading a line is a modal input loop, which only a BACKEND can run — so
+   the backend installs one (fb-browser.lisp does) and the shell merely asks. Same
+   shape as *COMPLETER*, which repl.lisp fills in for Tab completion. When no backend
+   has set it, a gesture that needs a value says so in the status line instead of
+   silently doing nothing.")
 (defvar *editing-side* nil
   "T when keyboard focus is on the current pane's editable SIDE pane (⇧↵ beside) rather
    than the list. SuperL-o toggles it; guarded everywhere by (pane-side (current-pane)).")
@@ -975,6 +982,9 @@
                              ((pane-side cur)
                               '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
                                 ("SuperL-o" . "edit")))
+                             ((let ((it (selected-item cur))) (and it (item-edit it)))
+                              '(("up/dn" . "move") ("ret" . "drill")
+                                ("C-c C-c" . "set this field")))
                              (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
                        '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
                        (when cmds
@@ -1146,6 +1156,47 @@
                      (format nil "~{~a~^  ~}~@[  … (~d)~]"
                              shown (and (> (length cands) 15) (length cands)))))))))))
 
+(defun set-field (pane)
+  "Write a new value into the place the selected inspector row shows.
+
+   The row carries the SETTER (item-edit, from model.lisp's INSPECT-PLACES); the
+   shell supplies the gesture, the prompt and the error handling. The typed text is
+   READ and EVALUATED, so you can put any expression in — \"a string\", 42, (list 1 2),
+   or something computed — which is the whole point of an inspector in a live image
+   rather than a form with typed boxes.
+
+   The pane is rebuilt afterwards, not patched: the view is a rendering of the object,
+   and re-presenting it is how the new value (and anything else that changed with it)
+   shows up honestly."
+  (let ((it (selected-item pane)))
+    (cond
+      ((or (null it) (null (item-edit it)))
+       (setf *browser-status* "that field is not settable"))
+      ((null *value-prompt*)
+       (setf *browser-status* "no input available on this backend"))
+      (t
+       (let ((text (funcall *value-prompt* (item-label it))))
+         ;; Cancelling must CLEAR the status line, not leave it. Without this the
+         ;; previous message stays up and reads as the outcome of the cancel — in
+         ;; testing, an Esc appeared to report "that field is not settable".
+         (unless text (setf *browser-status* nil))
+         (when text
+           (handler-case
+               (let ((new (eval (read-from-string text))))
+                 (funcall (item-edit it) new)
+                 ;; re-present: the row, its neighbours and the title all come from
+                 ;; the object, so read them back rather than editing the old view
+                 (let ((sel (pane-sel pane)))
+                   (setf (pane-view pane) (present (pane-subject pane)))
+                   (set-pane-sel pane sel))
+                 (setf *preview-subject* nil)          ; the cached preview is stale
+                 (setf *browser-status*
+                       (let ((*print-length* 20) (*print-level* 3))
+                         (format nil "~a = ~s" (item-label it) new))))
+             (serious-condition (c)
+               (setf *browser-status* (format nil "set failed: ~a" c)))))))))
+  nil)
+
 (defun accept-pane (pane)
   "Compile the buffer into the live image + update the registry (accept-source).
 
@@ -1300,6 +1351,17 @@
               (open-beside p)                            ; ⇧↵ — open BESIDE (editable split)
               (let ((it (selected-item p)))              ; ↵ — drill in place
                 (when (and it (item-subject it)) (trail-push (item-subject it))))))
+         ;; C-c C-c — Accept, which everywhere else in the browser means "write this
+         ;; into the running image". On an inspector row it writes a value into the
+         ;; place that row shows. Arrives as a chord through *pending-prefix*, the
+         ;; same way the editable panes take it.
+         ((and *pending-prefix* (eq *pending-prefix* :c-c))
+          (setf *pending-prefix* nil)
+          (when (and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
+            (set-field p))
+          nil)
+         ((and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
+          (setf *pending-prefix* :c-c) nil)
          ;; -> moves focus into the right-hand column (see FOCUS-SIDE). <- stays
          ;; "back", so the two arrows are not a pair here: -> goes deeper into the
          ;; frame you are looking at, <- leaves it.

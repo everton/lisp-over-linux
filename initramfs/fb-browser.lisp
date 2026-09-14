@@ -373,6 +373,9 @@
   (handler-case
       (progn
         (unless *bfont* (set-browser-font (lol.canvas:load-font "/cozette.lolf")))
+        ;; installed by NAME, not by #', because run-browser-fb is compiled before
+        ;; fb-prompt-value is defined further down this same file
+        (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
         (open-environment (or root (subj-modules)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
@@ -671,6 +674,12 @@
               ((and (characterp key) (graphic-char-p key))
                (setf buf (concatenate 'string buf (string key)))))))))))
 
+(defun fb-prompt-value (label)
+  "The shell's *VALUE-PROMPT* on this backend: read one expression, modally, over
+   whatever is on screen. The debugger's restart prompt and the inspector's \"set this
+   field\" want exactly the same thing, so they are the same loop."
+  (dbg-prompt-value label))
+
 (defun dbg-invoke-with-value (restarts i)
   "Prompt for a value and invoke restart I with it — the way to answer a restart that
    takes an argument (USE-VALUE, our USE-HEADING, …). The typed text is READ then EVAL'd,
@@ -792,6 +801,7 @@
     ("Edit  (source / workspace)"
      ("Tab"                "complete the symbol  (else indent)")
      ("C-c C-c"            "Accept — compile into the image")
+     ("C-c C-c (inspector)" "set the selected field to a new value")
      ("C-x C-e"            "Do it — eval, value to status")
      ("C-c C-p"            "Print it — weave result inline")
      ("C-c C-i"            "Inspect it — open the value")

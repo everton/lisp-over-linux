@@ -28,6 +28,12 @@
                          ; and heads each one. Declarative like everything else here —
                          ; content says "these belong together", the shell decides how
                          ; that looks. Views that need no sections simply leave it NIL.
+  edit                   ; a function of ONE argument that writes a new value into the
+                         ; place this row shows, or NIL when the row is not settable.
+                         ; Content declares HOW to write; it never asks the user for
+                         ; anything and never performs the write itself — the shell
+                         ; owns the gesture and the prompt (§4½, "content that talks
+                         ; back": content DECLARES, the shell disposes).
   subject                ; what drilling opens — (present subject) — or NIL
   (disposition :in-place); :in-place | :new-trail | :beside | :replace (a HINT)
   action)                ; a thunk to run instead of drilling, or NIL
@@ -779,13 +785,18 @@
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 
 (defmethod present ((x t))
+  "The inspector, and the reason nothing is ever a dead end. Each row drills into its
+   VALUE — and, where the field is a real place, carries the setter that writes a new
+   one back (INSPECT-PLACES). So the inspector is a view of LOCATIONS, not just of
+   contents, which is what lets the shell offer to change one."
   (make-view :title (format nil "~s" x) :kind :inspector :subject x
-             :items (mapcar (lambda (f)
-                              (make-item :label  (format nil "~s" (car f))
+             :items (mapcar (lambda (p)
+                              (make-item :label  (format nil "~s" (getf p :label))
                                          :detail (let ((*print-length* 6) (*print-level* 3))
-                                                   (format nil "~s" (cdr f)))
-                                         :subject (cdr f)))     ; drill into the value
-                            (inspect-fields x))))
+                                                   (format nil "~s" (getf p :value)))
+                                         :edit (getf p :set)
+                                         :subject (getf p :value)))   ; drill the value
+                            (inspect-places x))))
 
 (defmethod commands-for ((x t))
   (list (make-command :label "Inspect" :key "C-c C-i" :surfaces '(:menu :halo) :target x)))

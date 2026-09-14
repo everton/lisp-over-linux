@@ -1255,6 +1255,40 @@ several extend the common prefix or list in the status line, and Tab at whitespa
 indents. Inspect it is =C-c=-prefixed (=C-c C-i=, delivered as =C-c= then Tab since
 Ctrl-I *is* Tab), so a bare Tab and the Inspect chord never collide.
 
+*Editing a value from the inspector — =C-c C-c= (§4a).* The inspector shows an
+object's fields; it can now *change* one. Select a row and =C-c C-c= prompts for an
+expression, which is READ and EVALUATED and written into the place that row shows —
+so you can put a literal, a computed value, or anything else the image can produce
+into a variable, a slot, a hash entry, a cons cell or an array element, and watch
+the pane redraw around it.
+
+The design turn that makes this possible is in the MODEL, not the UI. =inspect-fields=
+returned =(LABEL . VALUE)= pairs, and a value has no identity as a location — you
+cannot write to "the string it happens to hold", only to the CELL that holds it. So
+=inspect-places= (model.lisp) returns =(:label :value :set FN)= instead, =:set= being
+a closure that writes back, or NIL where the field is not a place. The inspector
+became a view of *locations*; the value view is derived from it, so =show-inspect=
+and every other caller are unchanged.
+
+The protocol keeps its rule: content DECLARES, the shell disposes. An item carries
+=EDIT= — how to write — and never prompts and never writes. Reading a line is a modal
+input loop that only a *backend* can run, so the shell asks through =*VALUE-PROMPT*=,
+a hook the framebuffer installs (the same loop the debugger's "restart that needs a
+value" already used) and the X11 runner leaves unset, where the gesture says so
+rather than silently doing nothing. Same shape as =*COMPLETER*=.
+
+Two deliberate refusals. =:function= is *not* settable from here — it is writable,
+but redefining a function by typing into a one-line prompt is a worse version of
+opening its source and pressing =C-c C-c=, which also records the old text in the
+change set. And a *string* is not editable in place: it lands on the inspector's
+=(T)= fallback, which is the right answer, because the way to change a string is to
+replace the cell holding it — inspect the SYMBOL and set its =:value=. Mutating a
+string in place is undefined behaviour that happens to work; SBCL may coalesce equal
+literals in compiled code, so editing one could silently change an unrelated
+function that shares it. /(Measured on this build: two separately compiled functions
+returning ="shared"= were NOT coalesced, so the hazard did not fire here — which is
+an implementation detail, not a guarantee.)/
+
 *Focusing the right-hand column — =→=, and why it is not navigation.* The nav
 split shows the selected item beside the list, but until recently it was only ever
 a *look*: read-only, unfocused, and =→= did nothing at all. It now moves focus
