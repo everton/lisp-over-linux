@@ -594,13 +594,23 @@
     ;; right of the sprite unless that would run it off the viewport, in which case it
     ;; flips to the left: a body drifting into the right-hand wall was pushing its
     ;; label out of the pane and into the divider beside it.
-    (let* ((nm    (lol.examples:name (body-obj b)))
-           (npx   (lol.canvas:string-px *bfont* nm))
-           (right (+ ox (body-x b) (body-r b) 6))                  ; the usual side
-           (left  (- (+ ox (body-x b)) (body-r b) 6 npx))          ; ends before the sprite
-           (nx    (if (> (+ right npx) (+ ox (stage-w stage))) left right)))
-      (lol.canvas:draw-string canvas *bfont* nm
-                              (max ox nx) (+ oy (body-y b) -6)
+    (let* ((nm     (lol.examples:name (body-obj b)))
+           (npx    (lol.canvas:string-px *bfont* nm))
+           (docked (body-docked b))
+           (right  (+ ox (body-x b) (body-r b) 6))                 ; the usual side
+           (left   (- (+ ox (body-x b)) (body-r b) 6 npx))         ; ends before the sprite
+           ;; A DOCKED ship sits on the station's rim, so a label beside it lands on
+           ;; top of the station's own and the two read as one garbled word
+           ;; ("GeneraLambda"). Docking is the only overlap that PERSISTS — collisions
+           ;; are over in a frame — so it is the only one worth moving out of the way:
+           ;; the ship's name goes underneath, where the radii keep the rows apart.
+           (nx     (cond (docked (- (+ ox (body-x b)) (floor npx 2)))
+                         ((> (+ right npx) (+ ox (stage-w stage))) left)
+                         (t right)))
+           (ny     (if docked
+                       (+ oy (body-y b) (body-r b) 4)
+                       (+ oy (body-y b) -6))))
+      (lol.canvas:draw-string canvas *bfont* nm (max ox nx) ny
                               (if (eq b (stage-selected stage)) *ui-accent* *ui-dim*)))))
 
 (defun draw-stage-transcript (canvas stage x y w h)

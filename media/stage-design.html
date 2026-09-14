@@ -374,7 +374,7 @@ footer{
             <div class="dbgtitle">! DEBUGGER — an unhandled condition</div>
             <div class="dbghead">
               <div class="type">sb-pcl::no-applicable-method-error</div>
-              <div class="report" id="dbgreport">There is no applicable method for the generic function COLLIDE when called with arguments (#&lt;SHIP Kestrel&gt; #&lt;SHIP Wren&gt;).</div>
+              <div class="report" id="dbgreport">There is no applicable method for the generic function COLLIDE when called with arguments (#&lt;SHIP Lambda&gt; #&lt;SHIP CADR&gt;).</div>
               <div class="caught">no handler claimed it — caught here with the whole stack still standing.</div>
             </div>
             <div class="dbgcols">
@@ -480,8 +480,8 @@ footer{
         <code class="cls">collide</code> is the one specimen in the image whose whole point is
         <em>behaviour at a pair of types</em>. Reading its ten methods teaches multiple dispatch
         the way reading a recipe teaches cooking. Watching a missile reach a ship and seeing
-        <code class="m">(:DESTROYED "Kestrel")</code> come back — then watching that same missile
-        reach a station and get <code class="m">(:DENTED "Anvil")</code> instead, from the same
+        <code class="m">(:DESTROYED "Lambda")</code> come back — then watching that same missile
+        reach a station and get <code class="m">(:DENTED "Genera")</code> instead, from the same
         call site — teaches it in one gesture.
       </p>
       <p>
@@ -541,7 +541,7 @@ footer{
         drives the whole structure.</p>
       <p>
         <code class="cls">collide</code> returns data and touches nothing:
-        <code class="m">(:HULL-BREACH "Kestrel")</code>. It stays exactly as written in
+        <code class="m">(:HULL-BREACH "Lambda")</code>. It stays exactly as written in
         <code>initramfs/examples.lisp</code> — a clean multiple-dispatch specimen with no idea a
         stage exists.
       </p>
@@ -574,8 +574,8 @@ footer{
         written to delegate to <code>(asteroid ship)</code>, and seeing the two calls return the
         same value is the only way that intent is ever visible. Where they <em>don't</em> agree,
         the transcript flags it amber — and one pair already doesn't:
-        <code class="m">(:SHATTER "Ceres-9" "Vesta-4")</code> against
-        <code class="m">(:SHATTER "Vesta-4" "Ceres-9")</code>. Harmless, and exactly the kind of
+        <code class="m">(:SHATTER "Bignum" "Flonum")</code> against
+        <code class="m">(:SHATTER "Flonum" "Bignum")</code>. Harmless, and exactly the kind of
         thing you would never notice reading the source.
       </p>
       <p>
@@ -611,7 +611,7 @@ footer{
         wreck a class whose entire job is to be a small readable specimen in a class view. The
         stage keeps a <code>weak :key</code> hash table from instance to a
         <code>body</code> struct. The objects on screen are the same objects you get from
-        <code>(find-obj "Kestrel")</code> in the Workspace, and they carry no trace of having
+        <code>(find-obj "Lambda")</code> in the Workspace, and they carry no trace of having
         been on a stage.
       </p>
     </section>
@@ -774,13 +774,17 @@ footer{
           seconds.</p>
       </div>
 
-      <div class="q" style="border-left-color:var(--dim)">
-        <h4>Naming → still open</h4>
-        <p>No preference recorded, so the mock keeps <code>Kestrel</code>, <code>Anvil</code>,
-          <code>Hornet</code>. They earn their place in the transcript now that every contact
-          prints two lines — <code class="m">(:DESTROYED "Kestrel")</code> reads;
-          <code>(:DESTROYED "ship-2")</code> does not. <span class="rec">Nothing depends on
-          it</span>, and it is a rename away whenever the "space"-themed naming idea lands.</p>
+      <div class="q">
+        <h4>Naming → settled: the project's own nouns</h4>
+        <p>The sprites were invented naval birds. They now come from this project's world, each
+          class taking the register that fits what it does: ships are <b>Lisp machines</b>
+          (Lambda, CADR, Ivory, Dorado, Explorer), stations are the <b>environments they docked
+          with</b> (Genera, Medley, Zetalisp), missiles are <b>garbage-collector phases</b>
+          (Scavenger, Sweep, Compact, Reclaim) — the only thing here that destroys a ship, which
+          is what a collector does — and asteroids are the <b>numeric tower as debris</b>
+          (Bignum, Flonum, Cons, Ratio), since "a dumb rock, massive, unguided" is very nearly
+          the definition of a bignum. <span class="rec">The transcript now reads as a small
+          history</span>: <code class="m">(:DOCK "Lambda" "Genera")</code>.</p>
       </div>
 
     </section>
@@ -814,10 +818,10 @@ var passThrough = {};        /* pair key -> permanently ignored */
 var stars = [];
 
 var NAMES = {
-  ship:["Kestrel","Wren","Petrel","Fulmar","Shrike"],
-  asteroid:["Ceres-9","Vesta-4","Juno-7","Pallas-2"],
-  missile:["Hornet","Wasp","Dart","Sting"],
-  station:["Anvil","Bastion","Keystone"]
+  ship:["Lambda","CADR","Ivory","Dorado","Explorer"],
+  asteroid:["Bignum","Flonum","Cons","Ratio"],
+  missile:["Scavenger","Sweep","Compact","Reclaim"],
+  station:["Genera","Medley","Zetalisp"]
 };
 var used = {};
 function pickName(cls){
@@ -875,10 +879,10 @@ function spawn(cls, opts){
 function reset(){
   objs = []; nextId = 1; used = {}; cooldown = {}; passThrough = {};
   selected = null;
-  spawn("station",  {name:"Anvil",   x:W*0.60, y:H*0.44});
-  spawn("ship",     {name:"Kestrel", x:W*0.18, y:H*0.24, dir:0.42});
-  spawn("asteroid", {name:"Ceres-9", x:W*0.80, y:H*0.78, dir:3.6});
-  spawn("missile",  {name:"Hornet",  x:W*0.10, y:H*0.86, dir:-0.72});
+  spawn("station",  {name:"Genera",   x:W*0.60, y:H*0.44});
+  spawn("ship",     {name:"Lambda", x:W*0.18, y:H*0.24, dir:0.42});
+  spawn("asteroid", {name:"Bignum", x:W*0.80, y:H*0.78, dir:3.6});
+  spawn("missile",  {name:"Scavenger",  x:W*0.10, y:H*0.86, dir:-0.72});
   logLine("stage collide", "4 objects seeded", "plain");
 }
 
@@ -1060,14 +1064,14 @@ function hl(src){
 }
 
 var FORMS = [
-  { src: '(spawn \'missile "Wasp")',
-    run: function(){ var o = spawn("missile",{name:"Wasp"}); return pp(o); } },
-  { src: '(spawn \'ship "Wren")',
-    run: function(){ var o = spawn("ship",{name:"Wren"}); return pp(o); } },
-  { src: '(collide (find-obj "Hornet") (find-obj "Kestrel"))',
+  { src: '(spawn \'missile "Sweep")',
+    run: function(){ var o = spawn("missile",{name:"Sweep"}); return pp(o); } },
+  { src: '(spawn \'ship "CADR")',
+    run: function(){ var o = spawn("ship",{name:"CADR"}); return pp(o); } },
+  { src: '(collide (find-obj "Scavenger") (find-obj "Lambda"))',
     run: function(){
-      var a = find("Hornet"), b = find("Kestrel");
-      if(!a || !b) return {err:"no object named \"" + (a ? "Kestrel" : "Hornet") + "\""};
+      var a = find("Scavenger"), b = find("Lambda");
+      if(!a || !b) return {err:"no object named \"" + (a ? "Lambda" : "Scavenger") + "\""};
       var m = METHODS[keyFor(a,b)];
       if(!m) return {err:"no applicable method"};
       flashCell(keyFor(a,b));
@@ -1075,10 +1079,10 @@ var FORMS = [
       return ppv(m(a,b));
     },
     after: "  ;; a call you made \u2014 returns data, enacts nothing" },
-  { src: '(collide (find-obj "Kestrel") (find-obj "Hornet"))',
+  { src: '(collide (find-obj "Lambda") (find-obj "Scavenger"))',
     run: function(){
-      var a = find("Kestrel"), b = find("Hornet");
-      if(!a || !b) return {err:"no object named \"" + (a ? "Hornet" : "Kestrel") + "\""};
+      var a = find("Lambda"), b = find("Scavenger");
+      if(!a || !b) return {err:"no object named \"" + (a ? "Scavenger" : "Lambda") + "\""};
       var m = METHODS[keyFor(a,b)];
       if(!m) return {err:"\u2298 no applicable method \u2014 nothing specialises B on missile"};
       return ppv(m(a,b));
@@ -1349,7 +1353,7 @@ document.getElementById("k-reset").addEventListener("click", function(){
   closeDebugger(); reset();
 });
 document.getElementById("k-force").addEventListener("click", function(){
-  var a = find("Kestrel"), b = null, i;
+  var a = find("Lambda"), b = null, i;
   for(i=0;i<objs.length;i++) if(objs[i].cls==="ship" && objs[i]!==a){ b = objs[i]; break; }
   if(!a){ a = spawn("ship"); }
   if(!b){ b = spawn("ship", {x:a.x+90, y:a.y+30}); }

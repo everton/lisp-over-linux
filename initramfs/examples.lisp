@@ -36,7 +36,7 @@
   (:documentation "Anything that can drift through space and bump into things."))
 
 (defmethod print-object ((o space-object) stream)
-  "Print as #<MISSILE Hornet> rather than #<LOL.EXAMPLES:MISSILE {1202AD5303}>.
+  "Print as #<MISSILE Scavenger> rather than #<LOL.EXAMPLES:MISSILE {1202AD5303}>.
 
    Worth the four lines: SBCL builds its own messages out of this. A
    no-applicable-method report on two of these is the first thing you read in the
@@ -47,7 +47,7 @@
    package qualifier (these are nearly always printed from CL-USER, where
    LOL.EXAMPLES:MISSILE is just noise), and it avoids handing the printer the same
    string object twice — SYMBOL-NAME returns the symbol's own string, so under
-   *print-circle* a pair of missiles came out as #<#1=MISSILE Hornet> #<#1# Wasp>."
+   *print-circle* a pair of missiles came out as #<#1=MISSILE Scavenger> #<#1# Sweep>."
   (print-unreadable-object (o stream)
     (format stream "~a ~a" (class-name (class-of o)) (name o))))
 

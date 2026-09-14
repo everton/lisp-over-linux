@@ -55,12 +55,30 @@
    enough to see the point.")
 
 (defparameter *stage-names*
-  '(:ship     ("Kestrel" "Wren" "Petrel" "Fulmar" "Shrike")
-    :asteroid ("Ceres-9" "Vesta-4" "Juno-7" "Pallas-2")
-    :missile  ("Hornet" "Wasp" "Dart" "Sting")
-    :station  ("Anvil" "Bastion" "Keystone"))
-  "Proper nouns, so a transcript line reads. (:DESTROYED \"Kestrel\") tells you which
-   ship at a glance; (:DESTROYED \"ship-2\") does not.")
+  '(:ship     ("Lambda" "CADR" "Ivory" "Dorado" "Explorer")
+    :station  ("Genera" "Medley" "Zetalisp")
+    :missile  ("Scavenger" "Sweep" "Compact" "Reclaim")
+    :asteroid ("Bignum" "Flonum" "Cons" "Ratio"))
+  "Proper nouns, so a transcript line reads: (:DESTROYED \"Lambda\") tells you which
+   ship at a glance where (:DESTROYED \"ship-2\") does not.
+
+   And they are the project's own nouns rather than invented ones, which is the =space=
+   joke §4¾ parked finally landing. The environment is a space; these are the things in
+   it, and each class draws from the register that fits what it DOES:
+
+     ships     — Lisp machines. Crewed, mobile, fragile, would rather dock than
+                 collide: LMI's Lambda, MIT's CADR, Symbolics' Ivory, Xerox's Dorado,
+                 TI's Explorer. Names that were already half starship.
+     stations  — the environments they docked WITH. Big, fixed, shrug off impacts.
+     missiles  — garbage-collector phases. Guided, single-purpose, and the only thing
+                 here that destroys a ship, which is exactly what a collector does to
+                 an object nobody references any more.
+     asteroids — the numeric tower as debris. A bignum is massive and unguided, which
+                 is the class's own docstring almost word for word.
+
+   So the transcript reads as a small history: (:DOCK \"Lambda\" \"Genera\") is a Lisp
+   machine docking with Genera, and (:DESTROYED \"Lambda\") is the Scavenger reclaiming
+   one. Nothing depends on the joke; it is a rename away if it wears thin.")
 
 (defparameter +stage-transcript-max+ 64
   "Transcript lines kept. The pane shows the tail; the rest is dropped, not scrolled —
@@ -144,7 +162,7 @@
   "Make a KIND instance, give it a body, and put it on STAGE. Returns the body.
 
    The instance is constructed exactly as anyone would at the REPL — (make-instance
-   'lol.examples:ship :name \"Kestrel\") — which is the point: these are not sprites
+   'lol.examples:ship :name \"Lambda\") — which is the point: these are not sprites
    that happen to wrap objects, they are objects that happen to be drawn."
   (let* ((cls (ecase kind
                 (:asteroid 'lol.examples:asteroid)
@@ -180,8 +198,8 @@
   (round (* 1000 (atan (- to-y from-y) (- to-x from-x)))))
 
 (defun make-collide-stage (&key (w 800) (h 520))
-  "The opening scene: a station to dock with, a ship aimed at it, a rock drifting
-   across, and a missile aimed at the rock.
+  "The opening scene: Genera to dock with, the Lambda aimed at it, a Bignum drifting
+   across, and the Scavenger aimed at the Bignum.
 
    Every pair here resolves in at least one direction, so the stage runs without
    meeting the debugger until you ask it to — spawn a second ship and the (ship ship)
@@ -192,14 +210,14 @@
    missile."
   (flet ((pct (n p) (floor (* n p) 100)))
     (let* ((s (%make-stage :w w :h h))
-           (ax (pct w 62)) (ay (pct h 45))          ; Anvil, the station
-           (kx (pct w 22)) (ky (pct h 26))          ; Kestrel, aimed at it
-           (cx (pct w 84)) (cy (pct h 74))          ; Ceres-9, drifting across
-           (hx (pct w 10)) (hy (pct h 80)))         ; Hornet, aimed at the rock
-      (stage-spawn s :station  :name "Anvil"   :x ax :y ay)
-      (stage-spawn s :ship     :name "Kestrel" :x kx :y ky :dir (aim kx ky ax ay))
-      (stage-spawn s :asteroid :name "Ceres-9" :x cx :y cy :dir (aim cx cy (pct w 30) (pct h 42)))
-      (stage-spawn s :missile  :name "Hornet"  :x hx :y hy :dir (aim hx hy cx cy))
+           (ax (pct w 62)) (ay (pct h 45))          ; Genera, the station
+           (kx (pct w 22)) (ky (pct h 26))          ; Lambda, aimed at it
+           (cx (pct w 84)) (cy (pct h 74))          ; Bignum, drifting across
+           (hx (pct w 10)) (hy (pct h 80)))         ; Scavenger, aimed at the rock
+      (stage-spawn s :station  :name "Genera"    :x ax :y ay)
+      (stage-spawn s :ship     :name "Lambda"    :x kx :y ky :dir (aim kx ky ax ay))
+      (stage-spawn s :asteroid :name "Bignum"    :x cx :y cy :dir (aim cx cy (pct w 30) (pct h 42)))
+      (stage-spawn s :missile  :name "Scavenger" :x hx :y hy :dir (aim hx hy cx cy))
       (stage-log s "stage collide — 4 objects seeded" :note)
       s)))
 
@@ -235,7 +253,7 @@
   body)
 
 (defun stage-find (stage name)
-  "The INSTANCE named NAME, or NIL — what (find-obj \"Kestrel\") gives you in the
+  "The INSTANCE named NAME, or NIL — what (find-obj \"Lambda\") gives you in the
    Workspace. Deliberately returns the object, not the body: the body is the stage's
    business, the object is yours."
   (let ((b (find name (stage-bodies stage)
@@ -429,9 +447,12 @@
       (incf (body-rot b) (body-spin b))
       (cond
         ((body-docked b)
+         ;; parked on the station's rim, BELOW it rather than beside it: a station
+         ;; draws its own name to its right, and a ship docked there sits on top of
+         ;; the word. Underneath, both names have their own row.
          (let ((s (body-docked b)))
-           (setf (body-x b) (+ (body-x s) (body-r s) (body-r b) -4)
-                 (body-y b) (body-y s))))
+           (setf (body-x b) (body-x s)
+                 (body-y b) (+ (body-y s) (body-r s) (body-r b) -4))))
         (t
          (incf (body-ax b) (body-vx b))
          (incf (body-ay b) (body-vy b))
