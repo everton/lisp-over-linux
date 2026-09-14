@@ -819,6 +819,20 @@ worked out.
 compiled it — "Accepted: collide" in the status line, and the heads-up now says the
 pair dispatches. =./refresh-screenshot.sh --scene stage-accept=./
 
+*The Workspace beside the stage is its OWN buffer* — not the one on tab 2, and not
+shared with any other. =subj-workspace= takes no arguments and reads like a singleton,
+but presenting it twice builds two independent buffers, which is the one place in this
+browser where presenting the same subject twice does not give you the same thing. Here
+that is deliberate rather than accidental: =[define-method]= *replaces* the buffer's
+text, and a shared Workspace would mean the debugger silently destroying whatever notes
+you had going on another tab. Smalltalk lets you open as many Playgrounds as you like
+for the same reason.
+
+What it must NOT do is destroy its own contents, and it did: =w= closed the side pane
+outright, so pressing it twice threw away a half-written =defmethod= and gave you back
+a blank cheatsheet. =w= now HIDES the pane — =pane-side-stash= holds it and the next
+=w= puts the same buffer back.
+
 Three things had to change for that to work, and each is worth its own line.
 
 *=C-c C-c= now Accepts in a Workspace, not only in a source pane.* A source pane is

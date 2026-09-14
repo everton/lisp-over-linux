@@ -52,6 +52,9 @@
                           ; point of a viewport independent of the selection.
   tv                      ; a lol.textview for :source/:reference panes, else NIL
   side                    ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
+  side-stash              ; a side pane HIDDEN rather than closed, so re-opening it
+                          ; restores the buffer instead of a blank one. Hiding an
+                          ; EDITABLE pane must not destroy what you typed into it.
   side-pinned)            ; did the USER pin that side pane (⇧↵), or did -> merely
                           ; focus the preview? A pinned side outlives losing focus;
                           ; a focused preview must not, or leaving it would strand you
@@ -693,7 +696,8 @@
    world next to it. open-beside can't serve here because it works off a selected
    LIST ROW and a stage has no rows, so this is the stage's own way in."
   (unless (pane-side pane)
-    (setf (pane-side pane) (open-pane (subj-workspace))))
+    (setf (pane-side pane) (or (pane-side-stash pane) (open-pane (subj-workspace)))
+          (pane-side-stash pane) nil))
   (setf *editing-side* t)
   (when text
     (let ((tv (pane-tv (pane-side pane))))
@@ -737,8 +741,13 @@
       (#\a (stage-spawn stage :asteroid) t)
       (#\m (stage-spawn stage :missile) t)
       (#\t (stage-spawn stage :station) t)
-      (#\w (if (pane-side pane)                    ; toggle the Workspace beside
-                (setf (pane-side pane) nil *editing-side* nil)
+      ;; w HIDES the Workspace rather than closing it: it holds text you typed, and
+      ;; very likely a defmethod the debugger just handed you. Stash the pane and put
+      ;; the SAME buffer back on the next w.
+      (#\w (if (pane-side pane)
+                (setf (pane-side-stash pane) (pane-side pane)
+                      (pane-side pane) nil
+                      *editing-side* nil)
                 (stage-open-workspace pane))
            t)
       (#\r (reset-collide-stage)
