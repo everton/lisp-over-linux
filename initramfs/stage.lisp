@@ -281,6 +281,17 @@
                  :test #'string-equal)))
     (and b (body-obj b))))
 
+(defun stage-any (stage kind)
+  "The first INSTANCE of KIND on STAGE, or NIL — the short way to get hold of
+   something that is currently on screen without knowing what it is called.
+
+   STAGE-FIND wants a name, which is precise and also perishable: the ship you meant is
+   destroyed, undocked or replenished under a different name a few seconds later. For
+   a form you are typing INTO a running world, \"whatever ship is out there\" is usually
+   what you meant."
+  (let ((b (find kind (stage-bodies stage) :key #'body-kind)))
+    (and b (body-obj b))))
+
 (defun stage-body-of (stage obj)
   (find obj (stage-bodies stage) :key #'body-obj))
 
@@ -586,6 +597,66 @@
    the general case because the moment a second specimen wants one, nothing here
    changes."
   name)
+
+(defstruct (subj-stage-workspace (:constructor subj-stage-workspace ()))
+  "The Workspace that opens beside the stage.
+
+   A subject of its own rather than a plain SUBJ-WORKSPACE, purely so it can open on
+   something worth reading: the generic scratch-buffer cheatsheet is the right text for
+   tab 2 and a wasted screen here, where you already know what a Workspace is and what
+   you want is the handful of forms that reach INTO the world next to it.
+
+   It still presents as :KIND :WORKSPACE, so every verb — Do it, Print it, Inspect it,
+   Accept — works exactly as it does anywhere else. Only the opening text differs.")
+
+(defparameter *stage-workspace-text*
+  ";; Workspace — beside the stage (§3b). The same verbs as any other:
+;;   C-x C-e   Do it       eval, value to the status line
+;;   C-c C-p   Print it    eval and weave the result in after the form
+;;   C-c C-i   Inspect it  eval and open the value in the Inspector
+;;   C-c C-c   Accept      compile a definition below into the image
+;;   SuperL-o  back to the stage          w  hide this pane
+
+;; Every sprite is an ordinary instance. Reach one by kind:
+
+(stage-any (collide-stage) :ship)
+
+;; or by the name printed beside it (NIL once it has left the stage):
+
+(stage-find (collide-stage) \"Genera\")
+
+;; Ask what WOULD dispatch, without calling. This is the question the
+;; heads-up line at the foot of the stage answers on every tick:
+
+(compute-applicable-methods #'lol.examples:collide
+                            (list (stage-any (collide-stage) :missile)
+                                  (stage-any (collide-stage) :ship)))
+
+;; Make the call yourself. It returns data and enacts NOTHING — only the
+;; stage's own tick feeds a value to stage-enact, so poking here is safe:
+
+(lol.examples:collide (stage-any (collide-stage) :missile)
+                      (stage-any (collide-stage) :ship))
+
+;; Put something else out there to watch:
+
+(stage-spawn (collide-stage) :asteroid)
+
+;; Two ships have no method, and that hole is what opens the debugger.
+;; Accept this with C-c C-c, press s for a second ship, and watch the
+;; matrix grow a cell while the collision stops signalling:
+
+(defmethod lol.examples:collide
+    ((a lol.examples:ship) (b lol.examples:ship))
+  (list :near-miss (lol.examples:name a) (lol.examples:name b)))
+"
+  "What the stage's Workspace opens on. Every form here runs against the live stage as
+   written — no placeholders to fill in first, because a primer you have to repair
+   before it works teaches the repair and not the point.")
+
+(defmethod present ((s subj-stage-workspace))
+  (make-view :title "workspace" :kind :workspace :subject s
+             :text *stage-workspace-text*))
 
 (defvar *the-collide-stage* nil
   "The one live stage. A stage is a running world, not a query — reopening the pane

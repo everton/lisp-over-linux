@@ -135,6 +135,14 @@
                           (:key "spc")                       ; pause, so it holds still
                           (:key "tab") (:key "tab") (:wait 0.5)
                           (:key "ret") (:wait 1.5)))
+    ;; the Workspace beside the stage (§3b): 'w' opens it on a primer written for the
+    ;; stage rather than the generic scratch-buffer cheatsheet. The only coverage of
+    ;; the w path, and the only place the editable side pane is shown holding something
+    ;; other than a defmethod template.
+    ("stage-workspace" "b" ((:key "down") (:key "down") (:key "ret")
+                            (:key "down") (:key "down") (:key "ret")
+                            (:wait 1.0) (:key "down") (:key "ret") (:wait 2.0)
+                            (:key "w") (:wait 1.5)))
     ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).

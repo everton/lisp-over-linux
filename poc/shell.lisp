@@ -696,7 +696,8 @@
    world next to it. open-beside can't serve here because it works off a selected
    LIST ROW and a stage has no rows, so this is the stage's own way in."
   (unless (pane-side pane)
-    (setf (pane-side pane) (or (pane-side-stash pane) (open-pane (subj-workspace)))
+    (setf (pane-side pane) (or (pane-side-stash pane)
+                               (open-pane (subj-stage-workspace)))
           (pane-side-stash pane) nil))
   (setf *editing-side* t)
   (when text
@@ -978,7 +979,15 @@
           (draw-hints canvas 10 (- h 18) w
                       (append
                        (cond ((and *editing-side* (pane-side cur))
-                              '(("C-c C-c" . "accept") ("SuperL-o" . "back to list")))
+                              ;; name the half you go BACK to, and the verb the pane's
+                              ;; own header advertises — a stage is not a list, and a
+                              ;; Workspace defines rather than accepts an edit.
+                              (list (cons "C-c C-c"
+                                          (if (workspace-pane-p (pane-side cur))
+                                              "define" "accept"))
+                                    (cons "SuperL-o"
+                                          (if (eq (view-kind (pane-view cur)) :stage)
+                                              "back to stage" "back to list"))))
                              ((workspace-pane-p cur)
                               '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
                                 ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")

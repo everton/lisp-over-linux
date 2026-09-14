@@ -828,6 +828,25 @@ text, and a shared Workspace would mean the debugger silently destroying whateve
 you had going on another tab. Smalltalk lets you open as many Playgrounds as you like
 for the same reason.
 
+Being its own buffer, it can open on something worth reading. =subj-stage-workspace=
+presents as =:kind :workspace= — so every verb behaves exactly as it does anywhere
+else — but its text is a primer for *this* pane rather than the generic scratch-buffer
+cheatsheet, which is the right text for tab 2 and a wasted screen here:
+
+[[file:../media/screenshots/stage-workspace-2026-09-13.png]]
+
+/=w= beside the stage. =./refresh-screenshot.sh --scene stage-workspace=./
+
+It walks the things you can only do from here: reach a sprite by kind (=stage-any=) or
+by the name printed next to it (=stage-find=); ask =compute-applicable-methods= what
+WOULD dispatch, which is the question the heads-up line answers every tick; make the
+call yourself and see that it returns data and enacts nothing; spawn something; and
+finally the =(ship ship)= method to Accept, which is beat 4 in one keystroke. Every
+form runs against the live stage exactly as written — a primer you have to repair
+before it works teaches the repair and not the point — and the text lives in
+=*stage-workspace-text*= rather than being reproduced here, so it cannot drift from
+what the pane actually shows.
+
 What it must NOT do is destroy its own contents, and it did: =w= closed the side pane
 outright, so pressing it twice threw away a half-written =defmethod= and gave you back
 a blank cheatsheet. =w= now HIDES the pane — =pane-side-stash= holds it and the next
@@ -1663,18 +1682,19 @@ we already have. But the UI is pixel-native from its very first line.
 named *scene* in [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] — a menu key plus a deterministic key
 sequence, driven over QMP into a headless QEMU boot:
 
-| scene            | shows                                         | section |
-|------------------+-----------------------------------------------+---------|
-| =package=        | the flat =CL-USER= list + a source pane       | §4½     |
-| =modules=        | the module index                              | §4⅔     |
-| =matrix=         | =collide='s dispatch grid                     | §3      |
-| =debugger=       | the live debugger on =(lol.examples:launch)=  | §3      |
-| =stage=          | the COLLIDE stage, running                    | §3b     |
-| =stage-debugger= | the stage meeting a hole in the matrix        | §3b     |
-| =stage-accept=   | beat 4 — define the missing method, Accept it | §3b     |
-| =stage-inspect=  | Tab to a sprite, Enter for the Inspector      | §3b     |
-| =workspace=      | the scratch buffer and its verbs              | §3a     |
-| =spotter=        | the find-anything palette                     | §4¾     |
+| scene             | shows                                         | section |
+|-------------------+-----------------------------------------------+---------|
+| =package=         | the flat =CL-USER= list + a source pane       | §4½     |
+| =modules=         | the module index                              | §4⅔     |
+| =matrix=          | =collide='s dispatch grid                     | §3      |
+| =debugger=        | the live debugger on =(lol.examples:launch)=  | §3      |
+| =stage=           | the COLLIDE stage, running                    | §3b     |
+| =stage-debugger=  | the stage meeting a hole in the matrix        | §3b     |
+| =stage-workspace= | the Workspace beside the stage, on its primer | §3b     |
+| =stage-accept=    | beat 4 — define the missing method, Accept it | §3b     |
+| =stage-inspect=   | Tab to a sprite, Enter for the Inspector      | §3b     |
+| =workspace=       | the scratch buffer and its verbs              | §3a     |
+| =spotter=         | the find-anything palette                     | §4¾     |
 
 =./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
 rewrites this file's link to the new dated PNG. /(README's own two shots are not
