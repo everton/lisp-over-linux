@@ -355,7 +355,21 @@ target laptop.
   lsblk -o NAME,SIZE,TRAN,MODEL        # find the USB, e.g. /dev/sdX (NOT a partition)
 #+end_src
 
-** Partition (GPT, one ESP) + format FAT32 + copy the kernel
+*TWO files, not one.* Since the Lisp userland landed the image ships as a
+*separate initrd* ([[file:sbcl-init.org][sbcl-init.org]]): the kernel finds it through its built-in command
+line, =CONFIG_CMDLINE="… initrd=initramfs.cpio"=, which resolves relative to the
+ESP root. So the stick needs
+
+#+begin_example
+  \EFI\BOOT\BOOTX64.EFI    the kernel (~2.8 MB), an EFI app in its own right
+  \initramfs.cpio          the SBCL world (~45 MB), loaded by EFISTUB at boot
+#+end_example
+
+Copy only the kernel and it boots to a *panic* — "No working init found" — because
+there is no userland to run. Both files come out of =iso_root/= after =./build.sh=,
+already laid out in that shape, so the copy is a straight mirror of that directory.
+
+** Partition (GPT, one ESP) + format FAT32 + copy BOTH files
 #+begin_src sh
   DEV=/dev/sdX                          # <-- set this to YOUR usb stick, double-check!
   sudo sgdisk --zap-all "$DEV"
@@ -363,9 +377,13 @@ target laptop.
   sudo mkfs.vfat -F32 "${DEV}1"
   sudo mount "${DEV}1" /mnt
   sudo mkdir -p /mnt/EFI/BOOT
-  sudo cp ~/lisp-over-linux/linux/arch/x86/boot/bzImage /mnt/EFI/BOOT/BOOTX64.EFI
+  sudo cp ~/lisp-over-linux/iso_root/efi/boot/bootx64.efi /mnt/EFI/BOOT/BOOTX64.EFI
+  sudo cp ~/lisp-over-linux/iso_root/initramfs.cpio       /mnt/initramfs.cpio
   sync; sudo umount /mnt
 #+end_src
+
+/Refreshing a stick you already made is just those two =cp= lines — no repartition
+needed. =./build.sh= prints them for you when it finishes./
 
 ** Alternative without mounting (mtools)
 #+begin_src sh
@@ -374,7 +392,8 @@ target laptop.
   sudo sgdisk -n1:0:0 -t1:ef00 -c1:"EFI" "$DEV"
   sudo mkfs.vfat -F32 "${DEV}1"
   mmd   -i "${DEV}1" ::/EFI ::/EFI/BOOT
-  mcopy -i "${DEV}1" ~/lisp-over-linux/linux/arch/x86/boot/bzImage ::/EFI/BOOT/BOOTX64.EFI
+  mcopy -i "${DEV}1" ~/lisp-over-linux/iso_root/efi/boot/bootx64.efi ::/EFI/BOOT/BOOTX64.EFI
+  mcopy -i "${DEV}1" ~/lisp-over-linux/iso_root/initramfs.cpio       ::/initramfs.cpio
 #+end_src
 
 ** Boot it on the laptop
@@ -388,13 +407,19 @@ target laptop.
   1. Firmware boot menu key is vendor-specific (F12/F9/F10/Esc at power-on).
   2. Must select the *UEFI* device entry (not legacy/CSM).
   3. Secure Boot must be OFF (this kernel is unsigned).
-  4. Expected result: a few kernel log lines, then the banner
-       Hello from EFISTUB micro-linux!
-       Kernel booted directly by UEFI, no bootloader.
-     It then sits forever (init loops by design) — that is SUCCESS, not a
-     hang. Power off to exit.
+  4. Expected result: a few kernel log lines, then the *supervisor menu* — the
+     Lisp machine is up and PID 1 is SBCL. Pick =b= for the code browser, =r= for
+     a REPL, =s= to power off. /(The original micro-distro printed "Hello from
+     EFISTUB micro-linux!" and looped forever; that was before the userland.)/
+  5. Booted to a panic, "No working init found"? The kernel is fine and the
+     =initramfs.cpio= is missing from the ESP root — see the two-files note above.
 
 ** Troubleshooting by where it stops (tells you the failing layer)
+  - Panic: "No working init found" / "Kernel panic - not syncing"
+      -> the kernel booted but found no userland: =\initramfs.cpio= is missing
+         from the ESP ROOT (not in a subdirectory), or was copied short. It is
+         ~45 MB — check the size on the stick, and that the FAT32 filesystem had
+         room.
   - Stick not listed in the boot menu
       -> ESP / partition-type issue (need GPT + type ef00 + FAT32), or Secure
          Boot is hiding/blocking it.
