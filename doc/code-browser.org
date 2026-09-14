@@ -812,7 +812,7 @@ The full design spec, with a running prototype of the same view, is in
 
 The loop closes. =w= opens the Workspace *beside* the stage — the Stage is the one
 subject whose side pane is editable rather than a read-only preview, and =SuperL-o=
-moves focus between the two halves. =[define-method]= opens it for you, already
+— or a click in either half — moves focus between the two. =[define-method]= opens it for you, already
 holding the =defmethod= the debugger knew how to write: its specialisers come from the
 two objects that failed to dispatch, so you never retype what the system already
 worked out.
@@ -1296,6 +1296,7 @@ list where the design puts it.
 | =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
 | =↑= / =↓=                        | move the selection within a panel      |
 | =→=                              | focus the RIGHT-hand column (see below) |
+| a plain *click* in the other half | move focus there — the pointer's =SuperL-o= (see below) |
 | =SuperL-w= · =Esc=               | close the trail · dismiss the Spotter/overlay |
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
@@ -1374,6 +1375,33 @@ Note =→= and =←= are *not* a pair here. =←= remains "back" — it leaves t
 you are looking at, while =→= goes deeper into it. And in a *text* right column =←=
 is the editor's, moving the caret, per the modifier split below; =C-g= is the
 portable way back out of anything.
+
+*The same rule for the pointer.* A plain click in the half that does not have focus
+is a focus move and nothing more — =SuperL-o= with a mouse. It still positions you
+inside that half (the caret where you clicked in text, the selection on the row you
+clicked in a list), because that is what you pointed at, but it does *not* drill:
+crossing the split is not navigation, and a focus move that navigated would throw
+away the very split you were working in. A click in the half that already has focus
+behaves as it always did. =Ctrl-click= and =SuperL-click= keep their meanings on
+either side, because a modified click is an explicit command rather than a "put me
+over there".
+
+Three things were wrong before, and they are worth naming because each looked like a
+different bug:
+
+1. Clicking the read-only preview *drilled* it. The one focus state the keyboard had
+   (=→=) was unreachable by pointer, and the gesture that felt like "look over there"
+   navigated instead. It now performs exactly the promotion =→= performs — and the
+   round trip is verifiably free: click the preview, click back on the same row, and
+   the frame is byte-for-byte the one you started from.
+2. Clicking back on the list *also* drilled. You clicked to retrieve focus and the
+   browser took you somewhere else.
+3. *The Workspace beside the stage could not be clicked at all.* The =:stage= branch
+   of =browser-click= tested only the view kind, so it swallowed every click in the
+   frame — including the ones aimed at the other half — and =stage-click='s own
+   "did I hit a sprite?" answer was discarded. =SuperL-o= was the only way in, and
+   clicking to place the caret in that Workspace did nothing whatsoever. The stage
+   now owns its own half and only its own half.
 
 *Editing a definition in place — the modifier split is what prevents the
 collision.* A source pane backed by the registry (*your* code) is an *editable*
