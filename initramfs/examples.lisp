@@ -35,6 +35,22 @@
   ((name :initarg :name :reader name :initform "?"))
   (:documentation "Anything that can drift through space and bump into things."))
 
+(defmethod print-object ((o space-object) stream)
+  "Print as #<MISSILE Hornet> rather than #<LOL.EXAMPLES:MISSILE {1202AD5303}>.
+
+   Worth the four lines: SBCL builds its own messages out of this. A
+   no-applicable-method report on two of these is the first thing you read in the
+   debugger, and unreadable there it names neither which class went unmatched nor
+   which object it was.
+
+   ~A on the class-name SYMBOL rather than :type t, for two reasons: princ omits the
+   package qualifier (these are nearly always printed from CL-USER, where
+   LOL.EXAMPLES:MISSILE is just noise), and it avoids handing the printer the same
+   string object twice — SYMBOL-NAME returns the symbol's own string, so under
+   *print-circle* a pair of missiles came out as #<#1=MISSILE Hornet> #<#1# Wasp>."
+  (print-unreadable-object (o stream)
+    (format stream "~a ~a" (class-name (class-of o)) (name o))))
+
 (defclass asteroid (space-object) ()
   (:documentation "A dumb rock. Massive, unguided."))
 

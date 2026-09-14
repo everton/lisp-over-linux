@@ -675,6 +675,34 @@ needed to make the debugger appear: the signal travels through =*debugger-hook*=
 =run-debugger-fb= exactly as one from the Workspace does, which is the best evidence
 that the stage belongs in this browser rather than beside it.
 
+[[file:../media/screenshots/stage-debugger-2026-09-13.png]]
+
+/Two missiles meet. =(missile missile)= is one of COLLIDE's three total absences, so
+it signals for real: the rail carries the stage's four restarts above SBCL's own, and
+the stack runs =STAGE-SIGNAL → STEP-STAGE → TICK-LIVE-STAGE → RUN-BROWSER-FB= down to
+PID 1. =./refresh-screenshot.sh --scene stage-debugger=./
+
+*And it has to be ARMED, which was a real bug.* =tick-live-stage= first shipped with
+no handler at all, so a hole reached the =handler-case= wrapped around
+=run-browser-fb= — which catches by *unwinding*. You were dropped at the supervisor
+menu with the error printed and the stack, the restarts and the browser all gone. The
+fix is the one =workspace-debug-it= already made for the same reason: =handler-bind=,
+whose handler runs BEFORE the unwind. The scene =stage-debugger= walks that exact path
+and is kept as the regression test.
+
+Its wrapping =abort= *pauses* the stage rather than merely returning to it. Nothing
+resolved the contact and the two bodies are still overlapping, so resuming would
+re-signal a second later and keep re-signalling; a modal that reopens on a timer is
+not a debugger, it is a trap. The other four restarts are the ways to actually settle
+it.
+
+A footnote the debugger earned: =space-object= now has a =print-object=, so SBCL's own
+report reads =(#<MISSILE Hornet> #<MISSILE Wasp>)= instead of
+=(#<LOL.EXAMPLES:MISSILE {1202AD5303}> …)=. It prints the class-name SYMBOL rather
+than =:type t= — =princ= drops the package qualifier, and it avoids handing the
+printer one shared string twice, which under the locals strip's =*print-circle*= had
+been rendering a pair of missiles as =#<#1=MISSILE Hornet> #<#1# Wasp>=.
+
 ** What it cost
 
 - *A poll timeout* — the only real obstacle, and the one concession the input layer
@@ -1454,15 +1482,16 @@ we already have. But the UI is pixel-native from its very first line.
 named *scene* in [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] — a menu key plus a deterministic key
 sequence, driven over QMP into a headless QEMU boot:
 
-| scene       | shows                                        | section |
-|-------------+----------------------------------------------+---------|
-| =package=   | the flat =CL-USER= list + a source pane      | §4½     |
-| =modules=   | the module index                             | §4⅔     |
-| =matrix=    | =collide='s dispatch grid                    | §3      |
-| =debugger=  | the live debugger on =(lol.examples:launch)= | §3      |
-| =stage=     | the COLLIDE stage, running                   | §3b     |
-| =workspace= | the scratch buffer and its verbs             | §3a     |
-| =spotter=   | the find-anything palette                    | §4¾     |
+| scene            | shows                                        | section |
+|------------------+----------------------------------------------+---------|
+| =package=        | the flat =CL-USER= list + a source pane      | §4½     |
+| =modules=        | the module index                             | §4⅔     |
+| =matrix=         | =collide='s dispatch grid                    | §3      |
+| =debugger=       | the live debugger on =(lol.examples:launch)= | §3      |
+| =stage=          | the COLLIDE stage, running                   | §3b     |
+| =stage-debugger= | the stage meeting a hole in the matrix       | §3b     |
+| =workspace=      | the scratch buffer and its verbs             | §3a     |
+| =spotter=        | the find-anything palette                    | §4¾     |
 
 =./refresh-screenshot.sh --scenes= lists them; =--scene NAME= re-captures one and
 rewrites this file's link to the new dated PNG. /(README's own two shots are not

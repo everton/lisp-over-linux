@@ -329,7 +329,25 @@
                              internal-time-units-per-second))
              (due (max 1 (min +stage-max-catchup+ (floor elapsed +stage-frame-ms+)))))
         (setf *stage-last-tick* now)
-        (dotimes (i due) (step-stage st))))))
+        ;; ARMED, exactly as workspace-debug-it arms an eval, and for the same reason:
+        ;; HANDLER-BIND runs its handler BEFORE the unwind, so run-debugger-fb sees the
+        ;; live restarts and the standing stack. The outer handler-case around
+        ;; run-browser-fb would catch this too — but it catches by UNWINDING, which
+        ;; drops you out of the browser to the supervisor menu with the error printed,
+        ;; and by then the stack the debugger exists to show is gone.
+        (restart-case
+            (handler-bind ((serious-condition
+                             (lambda (c) (funcall 'run-debugger-fb c))))
+              (dotimes (i due) (step-stage st)))
+          (abort ()
+            :report "Return to the stage (paused)"
+            ;; Pausing is the honest outcome: nothing resolved the contact, and the two
+            ;; bodies are still overlapping. Resuming without pausing would re-signal a
+            ;; second later and keep re-signalling — a modal that reopens on a timer is
+            ;; not a debugger, it is a trap. The rail's other restarts (pass-through,
+            ;; remove-both, use-value, define-method) are the ways to actually settle it.
+            (setf (stage-running st) nil)
+            (stage-log st "aborted — stage paused; the contact is unresolved" :warn)))))))
 
 
 

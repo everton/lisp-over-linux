@@ -124,10 +124,6 @@
       (setf (stage-transcript stage) (subseq tr 0 +stage-transcript-max+))))
   text)
 
-(defun ppo (obj)
-  "An instance the way the transcript names it: #<SHIP Kestrel>."
-  (format nil "#<~a ~a>" (class-name (class-of obj)) (lol.examples:name obj)))
-
 ;;; ---- building a stage --------------------------------------------------------
 
 (defun class-keyword (obj)
@@ -353,8 +349,7 @@
   (let ((a (body-obj ba)) (b (body-obj bb)))
     (setf (body-flash ba) 20 (body-flash-kind ba) :condition
           (body-flash bb) 20 (body-flash-kind bb) :condition)
-    (stage-log stage (format nil "(collide ~a ~a) -> no applicable method (either way)"
-                            (ppo a) (ppo b)) :absent)
+    (stage-log stage (format nil "(collide ~a ~a) -> no applicable method (either way)" a b) :absent)
     (restart-case (lol.examples:collide a b)
       (pass-through ()
         :report "Let them drift through each other."
@@ -391,13 +386,11 @@
        (let ((va (when ab (lol.examples:collide a b)))
              (vb (when ba* (lol.examples:collide b a))))
          (if ab
-             (stage-log stage (format nil "(collide ~a ~a) -> ~s" (ppo a) (ppo b) va) :value)
-             (stage-log stage (format nil "(collide ~a ~a) -> no applicable method"
-                                     (ppo a) (ppo b)) :absent))
+             (stage-log stage (format nil "(collide ~a ~a) -> ~s" a b va) :value)
+             (stage-log stage (format nil "(collide ~a ~a) -> no applicable method" a b) :absent))
          (if ba*
-             (stage-log stage (format nil "(collide ~a ~a) -> ~s" (ppo b) (ppo a) vb) :value)
-             (stage-log stage (format nil "(collide ~a ~a) -> no applicable method"
-                                     (ppo b) (ppo a)) :absent))
+             (stage-log stage (format nil "(collide ~a ~a) -> ~s" b a vb) :value)
+             (stage-log stage (format nil "(collide ~a ~a) -> no applicable method" b a) :absent))
          ;; The pairs the author wrote symmetrically agree. Where they do not — and
          ;; (asteroid asteroid) already does not, since :SHATTER keeps argument order —
          ;; say so rather than silently picking one.

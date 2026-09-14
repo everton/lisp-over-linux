@@ -96,6 +96,20 @@
     ("stage"     "b" ((:key "down") (:key "down") (:key "ret")
                       (:key "down") (:key "down") (:key "ret")
                       (:wait 1.0) (:key "down") (:key "ret") (:wait 13.0)))
+    ;; the stage meeting a HOLE (§3b): drill to the stage, then spawn missiles until
+    ;; two of them meet. (missile missile) is one of the three total absences in
+    ;; COLLIDE — nothing specialises either argument on a missile — so it signals for
+    ;; real and the debugger opens on the standing stack.
+    ;;
+    ;; This scene exists because the path it walks was BROKEN once: the tick had no
+    ;; handler-bind, so the condition reached run-browser-fb's outer handler-case,
+    ;; which caught it by unwinding and dropped the user at the supervisor menu with
+    ;; the error printed and the stack gone. Keep the scene; it is the regression test.
+    ("stage-debugger" "b" ((:key "down") (:key "down") (:key "ret")
+                           (:key "down") (:key "down") (:key "ret")
+                           (:wait 1.0) (:key "down") (:key "ret") (:wait 1.0)
+                           (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
+                           (:wait 8.0)))
     ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).
