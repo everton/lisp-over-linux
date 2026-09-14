@@ -1479,7 +1479,16 @@
    list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
    symbol in a source pane jumps to its definition. Uses the geometry DRAW-BROWSER
    recorded (*tab-rects*, *crumb-rects*, *content-top*), so click and draw can never
-   disagree."
+   disagree.
+
+   In a side-by-side, a plain click in the half that does NOT have keyboard focus is
+   a focus move and nothing more — SuperL-o with a pointer. It still positions you
+   inside that half (the caret in text, the selection on a row), because that is what
+   you pointed at, but it does not drill: crossing the split is not navigation, and a
+   focus move that navigated would throw away the split you were working in. A click
+   in the half that already has focus behaves as it always did, and Ctrl-click /
+   SuperL-click keep their meanings either side, because a modified click is an
+   explicit command rather than a 'put me over there'."
   ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
   ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
   (when (< y +bar-h+)
@@ -1510,9 +1519,17 @@
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
-      ;; the stage: a click selects the instance under the pointer
-      ((eq (view-kind (pane-view p)) :stage)
-       (stage-click p x y))
+      ;; the stage: a click in the stage's OWN half selects the instance under the
+      ;; pointer (a miss clears the selection) and brings focus back to that half.
+      ;; The half test is the point — a stage with its Workspace beside it (§3b) is a
+      ;; side-by-side, and this clause used to swallow every click in the frame,
+      ;; including the ones aimed at the Workspace. That made the other half
+      ;; unreachable by pointer: SuperL-o was the only way in, and clicking to place
+      ;; the caret did nothing at all.
+      ((and (eq (view-kind (pane-view p)) :stage)
+            (not (and *split-x* (>= x *split-x*))))
+       (stage-click p x y)
+       (setf *editing-side* nil))
       ;; nav-split preview column: a matrix preview is LIVE — clicking a cell drills its
       ;; effective-method onion straight from here (no need to open the matrix first); a
       ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed
@@ -1539,18 +1556,36 @@
                (or (matrix-cell-click pv x y)               ; a cell -> its onion
                    (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
               ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
+              ;; A plain click on the preview means "put me over there" — exactly the
+              ;; promotion -> performs, and until now the only focus state the pointer
+              ;; could not reach. It does not drill: the row it would have opened is
+              ;; one click away on the left, and crossing the split is a focus move.
+              ;; FOCUS-SIDE is NIL when there is nothing previewable, so a click on an
+              ;; empty column falls through rather than swallowing itself.
+              ((and (not super) (focus-side p)))
               ((and sel (item-subject sel))
                (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))))
       ;; else an item in the current list view — SuperL-click opens it in a NEW trail; a
       ;; plain click here also returns focus to the list (away from any side pane).
       ((>= y *content-top*)
-       (setf *editing-side* nil)
-       ;; which row was actually painted here? *list-rows* answers; a click on a group
-       ;; header hits no row and is correctly inert.
-       (let* ((items (view-items (pane-view p)))
-              (i (lol.widgets:hit-row *list-rows* y)))
-         (when (and i (< i (length items)))
-           (set-pane-sel p i)
-           (let ((it (nth i items)))
-             (when (item-subject it)
-               (if super (new-trail (item-subject it)) (trail-push (item-subject it)))))))))))
+       (let ((came-from-side *editing-side*))
+         ;; UNFOCUS-SIDE rather than a bare (setf *editing-side* nil): a side the
+         ;; pointer or -> merely FOCUSED goes away again and you are looking at the
+         ;; live preview you started from, while one you PINNED with <S-Return> stays.
+         ;; Same rule C-g follows, so the two ways back agree.
+         (unfocus-side p)
+         ;; which row was actually painted here? *list-rows* answers; a click on a group
+         ;; header hits no row and is correctly inert.
+         (let* ((items (view-items (pane-view p)))
+                (i (lol.widgets:hit-row *list-rows* y)))
+           (when (and i (< i (length items)))
+             (set-pane-sel p i)
+             ;; If the side pane had focus, taking it back WAS this click's job.
+             ;; Select the row and stop — drilling as well would navigate out of the
+             ;; split you were working in, which is the one thing a focus move must
+             ;; never do. SuperL-click stays an explicit "open in a new trail".
+             (unless (and came-from-side (not super))
+               (let ((it (nth i items)))
+                 (when (item-subject it)
+                   (if super (new-trail (item-subject it))
+                       (trail-push (item-subject it)))))))))))))
