@@ -455,6 +455,37 @@ the =:around= / =:before= / primary / =:after= layers, indented so the
 indentation is the call stack. The =(missile ship)= pair carries the full trio
 precisely so this view has something to show.
 
+*An axis is not always classes, and that used to be fatal.* =dispatch-axes=
+collects whatever specializer appears at each argument position, so a generic
+function that dispatches on values puts EQL specializers on the axis — and an EQL
+specializer is the LIST =(EQL OBJECT)=, not a symbol. =draw-grid= called =STRING=
+on its labels, which accepts only string designators, so =matrix:DOCUMENTATION=
+— eleven EQL columns — did not merely look wrong: it *signalled* =(EQL
+ALIEN-CALLABLE) is not a string designator= and took the whole frame with it. Any
+GF with an =eql= method was unopenable as a matrix.
+
+[[file:../media/screenshots/matrix-documentation-2026-09-14.png]]
+
+/=documentation='s matrix: eleven EQL columns beside the class =t=, and the gap at
+=symbol= × ='t= is real. Reproduce with
+=sbcl --script poc/render-frame.lisp matrix:DOCUMENTATION -s 1280x800=./
+
+The repair is =label-text= in [[file:../poc/widgets.lisp][=poc/widgets.lisp=]], and it does two things. It
+prints what =STRING= refuses. And it draws an EQL specializer as ='object= rather
+than =(eql object)=, because a column heading is twelve characters and the word
+=EQL= spends five of them: the honest spelling clipped every column of that matrix
+to =(eql compi..=, =(eql decla..=, =(eql funct..= — a row of identical-looking
+headings over a grid whose entire job is to tell you which pair is which, the same
+failure the widget already refuses when it runs out of rows. The quote costs one
+character, says the same thing to a Lisp reader, and keeps ='t= distinct from the
+class =t=, which really is a column of its own there.
+
+Only the *drawing* shortens. =draw-grid='s hit map still carries the label it was
+handed, so the cell you click and the onion it opens are untouched — clicking
+=alien-value= × ='alien-callable= still titles itself =effective documentation
+(alien-value (eql alien-callable))=. Grids whose labels were already symbols
+render pixel-for-pixel as before.
+
 /No screenshot of the onion here, and the reason is itself worth recording: a
 =:matrix= pane has no keyboard cell cursor — =matrix-cell-click= in [[file:../poc/shell.lisp][=poc/shell.lisp=]]
 is the *only* way into a cell — so capturing it needs a scripted mouse click, and
