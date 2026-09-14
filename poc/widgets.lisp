@@ -368,6 +368,32 @@
 (defparameter +cell-w+ 78 "Width of one grid cell.")
 (defparameter +cell-h+ 18 "Height of one grid row.")
 
+(defun label-text (label)
+  "A grid axis label as the text to draw.
+
+   Usually a symbol, and STRING is right for one: it gives the bare name, where
+   PRINC would add the package prefix that turns \"condition-class\" into
+   \"sb-pcl::condition-class\". But an axis label is whatever DISPATCH-AXES found at
+   that argument position, and an EQL specializer arrives as the LIST (EQL OBJECT)
+   — not a string designator at all, so STRING signalled instead of drawing.
+
+   Those render as 'OBJECT, quote and all, rather than (EQL OBJECT). A column
+   heading is twelve characters and the word EQL spends five of them: a generic
+   function that dispatches on symbols came out as \"(eql compi..\", \"(eql decla..\",
+   \"(eql funct..\" — a row of headings that all look the same over a grid whose
+   entire job is to show you which pair is which. The quote costs one character,
+   says the same thing to a Lisp reader, and keeps 'T distinct from the class T,
+   which in DOCUMENTATION's matrix is a real column of its own.
+
+   Only the drawing shortens. DRAW-GRID's hit map still carries the label it was
+   handed, so the cell you click and the onion it opens are unchanged."
+  (cond ((or (symbolp label) (stringp label) (characterp label))
+         (string-downcase (string label)))
+        ((and (consp label) (eq (car label) 'eql)
+              (consp (cdr label)) (null (cddr label)))
+         (concatenate 'string "'" (label-text (second label))))
+        (t (string-downcase (princ-to-string label)))))
+
 (defun draw-grid (canvas x y w h row-labels col-labels counts
                   &key (header-w 130) (empty-mark (string (code-char 183))))
   "A 2-axis grid: COL-LABELS across the top, ROW-LABELS down the left, and COUNTS
@@ -388,7 +414,7 @@
     (lol.canvas:fill-rect canvas x (+ y +cell-h+ -3) (- w 2) 1 *ui-rule*)
     (loop for c in col-labels for ci from 0 below ncols
           for cx = (+ x0 (* ci +cell-w+))
-          do (lol.canvas:draw-string canvas *font* (clip-text (string-downcase c) 12)
+          do (lol.canvas:draw-string canvas *font* (clip-text (label-text c) 12)
                                      (+ cx 2) (+ y 2) (concept-color :class)))
     (when (> (length col-labels) ncols)
       (lol.canvas:draw-string canvas *font*
@@ -405,7 +431,7 @@
             for cellrow in counts
             for ri from 0 below shown
             for ry = (+ y +cell-h+ (* ri +cell-h+))
-            do (lol.canvas:draw-string canvas *font* (clip-text (string-downcase r) 20)
+            do (lol.canvas:draw-string canvas *font* (clip-text (label-text r) 20)
                                        x (+ ry 2) (concept-color :function))
                (loop for n in cellrow for ci from 0 below ncols
                      for cx = (+ x0 (* ci +cell-w+))
