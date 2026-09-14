@@ -1547,13 +1547,16 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   s32 value); we open them non-blocking and =poll(2)= the console tty (fd 0), the
   mouse and the keyboard's *own* evdev together, so the loop sleeps until one of
   the three has something. We decode =EV_REL= (relative — QEMU's PS/2 mouse, plus
-  =REL_WHEEL= for scroll), =EV_ABS= (absolute 0..32767 — a =usb-tablet=) and
-  =EV_KEY=/=BTN_LEFT=; a cursor is drawn each frame and left-click calls
-  =browser-click=. /Finding the device:/ do *not* assume =eventN= or grep the
+  =REL_WHEEL= for scroll), =EV_ABS= (absolute — a =usb-tablet=, or a laptop
+  touchpad) and =EV_KEY=/=BTN_LEFT=; a cursor is drawn each frame and left-click
+  calls =browser-click=. /Finding the device:/ do *not* assume =eventN= or grep the
   Handlers line for =mouse= — =mousedev= is not built, so a plain PS/2 mouse shows
   only =Handlers=eventN= with no =mouseN= token. =find-mouse-device= instead reads
-  =/proc/bus/input/devices= and picks the block whose =B: EV=- capability mask has
-  EV_REL (bit 2) or EV_ABS (bit 3) set (here: =/dev/input/event2=).
+  =/proc/bus/input/devices= and ranks the blocks by their =B: EV=- capability mask
+  (EV_REL bit 2, EV_ABS bit 3) and =B: PROP=- property mask: tablet, then mouse,
+  then touchpad. /On real hardware the pointer is a touchpad/, whose absolute
+  readings are in the pad's own units and describe a pad, not a screen — they get
+  differenced rather than mapped ([[file:input.org][input.org]] §4½).
 - *A bare modifier needs the keyboard's own evdev.* The cooked tty reports Ctrl
   only once it has been folded into a key (=C-g= is byte 7); it says nothing at all
   while Ctrl is merely *held*. So Ctrl-click and the SuperL layer need a third

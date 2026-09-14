@@ -126,15 +126,23 @@ Of the ~30 event types, the browser needs four. Constants from
 | =2= =EV_REL=    | =0= =REL_X=         | delta, signed      | =(incf *cursor-x* val)=, clamped  |
 | =2= =EV_REL=    | =1= =REL_Y=         | delta, signed      | =(incf *cursor-y* val)=, clamped  |
 | =2= =EV_REL=    | =8= =REL_WHEEL=     | notches, ±1        | sum into =wheel= (see §6)         |
-| =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, 0..32767 | scale onto the screen, assign     |
+| =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½) |
 | =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: =browser-click=    |
+| =1= =EV_KEY=    | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up | a contact changed: forget the last pad position (§4½) |
 | =1= =EV_KEY=    | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta | =1= down =2= repeat =0= up | set =*ctrl-down*= / =*shift-down*= / =*super-down*= |
+| =0= =EV_SYN=    | =0= =SYN_REPORT=    | —                  | end of packet: apply the gathered position |
 
-Relative *and* absolute are both handled because the two ways we run differ:
-QEMU's default PS/2 mouse is relative, while =-device usb-tablet= is absolute and
-reports a fixed 0..32767 range that we rescale to the real resolution. Absolute
-is what makes a scripted click land predictably, which matters for the QMP
-screenshot harness ([[file:code-browser.org][code-browser.org]] §8).
+Relative *and* absolute are both handled because the three ways we run differ:
+QEMU's default PS/2 mouse is relative; =-device usb-tablet= is absolute and maps
+onto the screen (which is what makes a scripted click land predictably, and so
+matters for the QMP screenshot harness — [[file:code-browser.org][code-browser.org]] §8); and a real
+laptop has a *touchpad*, which is absolute but is emphatically not a screen.
+That third case is §4½, and it is the one that took a rewrite.
+
+Note that =EV_SYN= earns a row now. A packet is several records — =ABS_X=, then
+=ABS_Y=, then perhaps =BTN_TOUCH= — and =SYN_REPORT= is the kernel saying "that
+was one coherent report". Acting record by record moves an absolute pointer in an
+L instead of a straight line, so we gather and act at the =SYN=.
 
 Note =EV_KEY= covers *both* buttons and keys — a mouse button is just a key whose
 code happens to be =0x110=. That is the input subsystem's view, not a quirk.
@@ -180,6 +188,36 @@ So the rules are one line each:
 - *keyboard* — EV_KEY (bit 1) *and* EV_REP (bit =0x14= = 20, autorepeat):
   [[file:../initramfs/fb-browser.lisp::defun find-keyboard-device][=find-keyboard-device=]]
 
+** The other bitmask on the line above: =B: PROP=
+
+=EV= says *what kinds of event* a device emits. It does not say what they mean,
+and for an absolute device that is the entire question. =B: PROP=- answers it, and
+we spent a while ignoring it:
+
+| bit | property               | what the positions mean                           |
+|-----+------------------------+---------------------------------------------------|
+|   0 | =INPUT_PROP_POINTER=   | a surface *under* your hand — a touchpad          |
+|   1 | =INPUT_PROP_DIRECT=    | the surface *is* the screen — touchscreen, tablet  |
+|   2 | =INPUT_PROP_BUTTONPAD= | the whole pad is the button (a clickpad)          |
+
+=usb-tablet= prints =PROP=0=. A PS/2 Synaptics pad prints =PROP=9=, the I2C one
+=PROP=5= — both have bit 0. Same =EV=, opposite meaning.
+
+** Ranking, not first-match
+
+There is usually more than one pointer, so =find-mouse-device= asks for three
+kinds in order rather than taking the first thing that moves:
+
+1. a *direct* absolute device — a =usb-tablet=. Nobody has one by accident, and
+   it is the only pointer a scripted click can aim, so it wins when present.
+2. a *relative* mouse — QEMU's default PS/2 mouse, any USB mouse, or the relative
+   node a HID touchpad exposes while it is still in mouse mode.
+3. a *touchpad* — correct, but its readings need interpreting (§4½), so we reach
+   for it only when there is nothing simpler.
+
+In QEMU the ranking changes nothing. On a laptop it is the whole game: there is
+no mouse, so rule 3 is the only rule that fires.
+
 The =EV_REP= half of the keyboard rule is not decoration. The ACPI *power button*
 also registers as a keyboard-ish device (it emits =KEY_POWER=), and it also gets a
 =kbd= handler — but it cannot autorepeat. Without the EV_REP bit we would happily
@@ -191,6 +229,79 @@ above. Our parser reads hex up to the first space, i.e. only the first word. For
 =EV= that is exactly right and always will be: =EV_MAX= is =0x1f=, so the whole
 mask is a single word and there is never a second one to miss. (Do not copy the
 same parse for =B: KEY=, where it would silently read the wrong end.)
+
+* 4½. The touchpad: absolute, but not a position
+
+A laptop has no mouse. It has a pad about 90mm wide under your palm, and the
+kernel describes that pad the way it describes a drawing tablet: =EV_ABS=,
+=ABS_X=, =ABS_Y=, one position per packet. Read it the way we read a
+=usb-tablet= and you get the most baffling-looking bug this project has had — the
+cursor sits in the *top-left corner*, moves coherently inside a box a couple of
+hundred pixels wide, barely moves vertically at all, and jumps whenever you lift
+a finger. Every one of those symptoms has a cause, and there are two causes.
+
+** Cause one: 0..32767 is not a range, it is one device's range
+
+=usb-tablet= reports 0..32767 on both axes. That is *its* choice, not a property
+of the protocol — and we had it written into the scaling as if it were. A PS/2
+Synaptics pad reports roughly 1472..5472 across by 1408..4448 down. Scale those
+as though they ran to 32767 and a full sweep of the pad reaches
+
+: 5472 * 1920 / 32768 =  320 px   of 1920 across
+: 4448 * 1080 / 32768 =  146 px   of 1080 down
+
+— a box in the top-left corner, more than twice as wide as it is tall. That is
+the bug report, arithmetic included: /it never goes down significantly/.
+
+The fix is to stop assuming and *ask*. =EVIOCGABS(axis)= fills a
+=struct input_absinfo= — six =__s32=: value, minimum, maximum, fuzz, flat,
+resolution — and the middle two are the answer. One ioctl per axis, once, at open
+time ([[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]). The request number is =_IOR('E', 0x40+axis, 24)= =
+=#x80184540 + axis=.
+
+** Cause two: a pad is not a small screen
+
+Fixing the range alone would map the pad onto the display one-to-one, and that is
+still wrong — in a way that is harder to see, because it *looks* like it works.
+On a directly-mapped pad the cursor is wherever your finger is: lift it, put it
+down 3cm left, and the cursor teleports. There is no way to reach a far corner
+with a short motion, and no way to nudge the cursor by two pixels at all.
+
+A tablet genuinely wants that behaviour; a pad never does. =B: PROP=- is what
+tells the two apart (§4 above), and bit 0 or bit 2 — POINTER or BUTTONPAD — means
+*difference the positions, do not map them*.
+
+** Differencing without the jumps
+
+[[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] remembers the last position and moves the cursor by the change,
+scaled so that one full sweep of the pad crosses =*pad-speed*= screens (=3/2= by
+default). Each axis is scaled by its own range, which quietly fixes the aspect
+too: pads are wider than they are tall in device units in roughly the same
+proportion as screens are, so the two factors come out nearly equal and motion
+stays isotropic without a second constant.
+
+Three details carry the whole thing:
+
+1. *Per packet, not per record.* =ABS_X= and =ABS_Y= arrive as two records.
+   Applying each as it lands moves the cursor in an L rather than along the line
+   your finger drew. We gather them and act on =SYN_REPORT=, which is exactly
+   what that event is for.
+
+2. *Forget the last position whenever the contact changes.* =BTN_TOUCH= and
+   =BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP}= change value only when a finger lands,
+   lifts, or is joined by another — and all three of those move the point the pad
+   reports. Each clears the remembered position, so the first packet of a new
+   contact yields *no* delta instead of a jump across the screen. A
+   quarter-of-the-pad sanity limit backs it up for hardware that never bothers to
+   report =BTN_TOUCH=.
+
+3. *Carry the fraction.* At around 0.7px per pad unit, a slow drag is a run of
+   deltas that each round to zero. Truncate them and the cursor simply refuses to
+   move slowly; we keep the remainder as an exact rational and pay it out on
+   later packets.
+
+The first two are why the old code jumped, and the third is why differencing done
+carelessly feels worse than the bug it replaces.
 
 * 5. Waiting on three things at once: =poll(2)=
 
@@ -248,6 +359,19 @@ which is not what a scroll should do. Fixing it properly means giving lists a
 viewport independent of the selection — i.e. a real scrollbar widget, which is
 what phase 3's remaining toolkit work is for ([[file:code-browser.org][code-browser.org]] §8).
 
+** The wheel a laptop does not have
+
+A touchpad has no wheel. What it has is a second finger, and it says so:
+=BTN_TOOL_DOUBLETAP=. While that is down, [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] stops moving the cursor
+and turns vertical motion into notches instead — one per 1/24th of the pad's
+height, about 2mm of travel.
+
+The sign falls out of the convention above rather than needing a second one.
+Dragging two fingers *toward* you is the same gesture as rolling a wheel toward
+you, so it produces the same negative notch, and the same =(- wheel)= in the
+caller turns it into "further down the document". Nothing downstream of
+=read-mouse= can tell that there was no wheel.
+
 * 7. The same gesture on the host: X11 buttons 4 and 5
 
 On the dev host there is no evdev in play at all. The X server owns the devices
@@ -282,6 +406,23 @@ framebuffer and does nothing in the X11 window. Closing it is one branch to
 | =CONFIG_SERIO= + =KEYBOARD_ATKBD= | y     | the PS/2 keyboard QEMU gives us                        |
 | =CONFIG_USB_HID= / =CONFIG_HID=   | y     | a USB mouse or keyboard                                |
 | =CONFIG_I2C_HID= + =_ACPI=        | y     | internal laptop touchpads/keyboards on the I2C-HID bus |
+| =CONFIG_MOUSE_PS2_SYNAPTICS=      | y     | the laptop touchpad the way we actually get it — see below |
+| =CONFIG_I2C_DESIGNWARE_PLATFORM=  | *n*   | not built, which is *why* we get it that way            |
+| =CONFIG_RMI4_CORE=                | *n*   | not built either, so there is no SMBus hand-off         |
+
+*Why the laptop's touchpad arrives over PS/2.* =CONFIG_I2C_HID=y= is there and
+looks sufficient, but I2C-HID needs an I2C *bus*, and on an Intel laptop that
+controller wants =CONFIG_I2C_DESIGNWARE_PLATFORM=. Only the Designware *core* is
+built (=i2c-designware-common.o= and =-master.o= exist under
+=linux/drivers/i2c/busses/=; =i2c-designware-platdrv.o= does not), so the bus
+never appears and neither does the I2C touchpad. =psmouse= picks the pad up over
+the legacy i8042 port instead — and with =CONFIG_RMI4_CORE= off it cannot hand
+over to SMBus either, so it stays in the *absolute* Synaptics PS/2 protocol. That
+is the device §4½ is about.
+
+Enabling the platform driver would additionally give the pad a relative node and
+is a fair thing to do later, but it would not make §4½ optional: the PS/2 absolute
+fallback is what every machine without that driver gets, and it has to be right.
 
 Full table and the reasoning: [[file:kernel-config.org][kernel-config.org]]. Device nodes appear without us
 listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initramfs/preinit.c][=preinit.c=]]
@@ -293,7 +434,9 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 |------------------------------------------+-----------------------------------------------------------|
 | open a node non-blocking                 | [[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]                                     |
 | find the pointer / the keyboard          | [[file:../initramfs/fb-browser.lisp::defun scan-input-device][=scan-input-device=]], =find-mouse-device=, =find-keyboard-device= |
+| ask an axis its real range (EVIOCGABS)   | [[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]                               |
 | decode motion / buttons / wheel          | [[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]                                     |
+| turn finger positions into cursor motion | [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]]                                     |
 | track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
 | wait on tty + mouse + keyboard           | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]                                       |
 | notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |
