@@ -801,6 +801,10 @@ appearing: there is no alien class, and inventing one to force the reference wou
 exactly the unrelated fiction this rename removes. Nothing depends on any of it — the
 names live in one =*stage-names*= table and the four seeds in =make-collide-stage=.
 
+This is also where the joke *stops*. The environment itself was considered for a space
+name in the same pass and deliberately keeps the one it has — see
+[[*Naming — "environment", settled][§4¾, Naming]].
+
 The full design spec, with a running prototype of the same view, is in
 [[file:../media/stage-design.html][media/stage-design.html]].
 
@@ -1395,19 +1399,28 @@ plain keys may navigate freely (Backspace-back is fine there).
 A static, self-contained map of these flows — the two motions, and which routes end
 read-only vs. editable — lives at [[file:../media/navigation-flows.html][media/navigation-flows.html]] (open it in any browser).
 
-** Naming — "environment", for now (and a future joke)
+** Naming — "environment", settled
 
-We call this whole thing the *environment*. It is the word that stuck, and it has real
-Lisp-machine pedigree — Interlisp-D and Symbolics Genera both called the whole live
-thing "the environment". The Smalltalk terms, for when we revisit: the persistent live
+We call this whole thing the *environment*, and as of 2026-09-14 that is a decision
+rather than an absence of one. It is the word that stuck, and it has the strongest
+pedigree of anything considered: Interlisp-D and Symbolics Genera both called the whole
+live thing "the environment". The Smalltalk terms, for the record: the persistent live
 world is the *image* (and =save-lisp-and-die= literally writes one); the multi-pane code
 browser is the *System Browser* (Pharo's modern one is *Calypso*); the scratch buffer is
-the *Workspace* → *Playground*. Self calls its live world "the world".
+the *Workspace* → *Playground*. Self calls its live world "the world" — that was the
+recorded fallback, and it was weighed.
 
-/Future — do not rename unprompted./ There is a joke waiting in a *space* theme: it
-plays off the Land-of-Lisp alien (=draw-alien=) and the =COLLIDE= example, which already
-lives in space (asteroid / ship / station / missile). "world" is the fallback term.
-Revisit on a naming/polish pass.
+*The space joke did land — on the sprites, not here.* §4¾ held it open for two months
+on the strength of the Land-of-Lisp alien (=draw-alien=) and the fact that =COLLIDE=
+already lives in space. When the naming pass finally ran, the joke went where it had
+something to bite on: the Stage's objects are now Lisp machines, the environments they
+docked with, garbage-collector phases and the numeric tower (§3b). Applying it a second
+time, to the environment itself, would have been the same joke told twice — and the
+alternatives on the table (=orrery=, =mothership=, =world=) each cost the Genera
+lineage to buy a pun.
+
+So this is closed, not parked: *the environment keeps its name.* The reasoning is here
+so nobody reopens it in a year believing it was never considered.
 
 * 5. Persistence — and the kernel gap
 
