@@ -753,22 +753,28 @@
 "))
 
 (defmethod present ((s subj-change-set))
-  "The change set: every definition Accepted this session, each drilling to its
-   (now current) source. Empty until you edit — C-c C-c in a source pane Accepts."
+  "The change set: every definition Accepted this session — EDITED or newly DEFINED —
+   each drilling to its (now current) source. Empty until you Accept something."
   (let ((changes (changed-definitions)))
     (make-view
-     :title "change set — definitions edited this session"
+     :title "change set — definitions accepted this session"
      :kind :list :subject s
      :items (if changes
-                (mapcar (lambda (pair)
-                          (destructuring-bind (name . n) pair
+                (mapcar (lambda (entry)
+                          (destructuring-bind (name n born) entry
                             (make-item :label (string-downcase (princ-to-string name))
-                                       :detail (format nil "~d prior version~:p" n)
+                                       ;; a definition can be both: written from scratch
+                                       ;; this session and then edited again.
+                                       :detail (cond ((and born (plusp n))
+                                                      (format nil "new this session · ~d revision~:p" n))
+                                                     (born "new this session")
+                                                     (t (format nil "~d prior version~:p" n)))
+                                       :kind (when born :method)
                                        :subject (subj-defn name))))
                         changes)
                 (list (make-item
-                       :label "(nothing edited yet)"
-                       :detail "C-c C-c in a source pane Accepts an edit"))))))
+                       :label "(nothing accepted yet)"
+                       :detail "C-c C-c Accepts — an edit in a source pane, or a new definition in the Workspace"))))))
 
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 

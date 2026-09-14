@@ -27,7 +27,11 @@
   source        ; the verbatim text, comments and formatting intact
   file          ; build-time provenance (the host path — for reference only)
   label         ; for methods: qualifiers + specializers, to tell them apart
-  versions)     ; previously-accepted source strings, most-recent first (Smalltalk Versions)
+  versions      ; previously-accepted source strings, most-recent first (Smalltalk Versions)
+  born)         ; T when this definition did not exist at boot — Accepted into being at
+                ; runtime rather than edited. A new method has no prior version, so
+                ; VERSIONS alone cannot tell it from a build-time one, and without this
+                ; flag Smalltalk's Changes would silently omit everything you ADDED.
 
 (defvar *registry* (make-hash-table :test 'equal)
   "Maps a definition NAME to a list of DEFN records (most-recent first). One name
@@ -144,7 +148,8 @@
                 (progn
                   (push (defn-source existing) (defn-versions existing))
                   (setf (defn-source existing) trimmed))
-                (push (make-defn :name the-name :kind the-kind :label the-label :source trimmed)
+                (push (make-defn :name the-name :kind the-kind :label the-label
+                                 :source trimmed :born t)
                       (gethash the-name *registry*)))))
         (or the-name result)))))
 
@@ -235,14 +240,21 @@
 ;;; disappoint on built-in CL functions, which is expected.
 
 (defun changed-definitions ()
-  "The session's CHANGE SET (Smalltalk's Changes): every name whose source has been
-   Accepted — a live edit that pushed the old text onto its VERSIONS. At boot every
-   defn carries only its build-time source (no versions), so a non-empty VERSIONS is
-   exactly 'edited since boot'. Returns (NAME . VERSION-COUNT) pairs."
+  "The session's CHANGE SET (Smalltalk's Changes): everything Accepted since boot,
+   whether EDITED or newly DEFINED.
+
+   At boot every defn carries only its build-time source and no versions, so a
+   non-empty VERSIONS is exactly 'edited since boot'. That test alone misses the other
+   half: a definition Accepted into being at runtime — the (ship ship) method you write
+   from the stage's debugger, say — has no prior version either, and looked exactly
+   like a build-time one until ACCEPT-SOURCE started marking it BORN.
+
+   Returns (NAME VERSION-COUNT BORN-P) triples."
   (let (out)
     (maphash (lambda (name defns)
-               (let ((vers (reduce #'+ defns :key (lambda (d) (length (defn-versions d))))))
-                 (when (plusp vers) (push (cons name vers) out))))
+               (let ((vers (reduce #'+ defns :key (lambda (d) (length (defn-versions d)))))
+                     (born (some #'defn-born defns)))
+                 (when (or (plusp vers) born) (push (list name vers born) out))))
              *registry*)
     (sort out #'string-lessp :key (lambda (p) (princ-to-string (car p))))))
 
