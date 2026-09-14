@@ -51,7 +51,11 @@
                           ; the wheel says no, because scrolling is LOOKING — the whole
                           ; point of a viewport independent of the selection.
   tv                      ; a lol.textview for :source/:reference panes, else NIL
-  side)                   ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
+  side                    ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
+  side-pinned)            ; did the USER pin that side pane (⇧↵), or did -> merely
+                          ; focus the preview? A pinned side outlives losing focus;
+                          ; a focused preview must not, or leaving it would strand you
+                          ; in a different layout from the one you arrived in.
 
 (defun open-pane (subject)
   "Build a PANE for SUBJECT: present it, and for text views wrap the body in a
@@ -233,8 +237,63 @@
     (when (and it (item-subject it))
       (if (and (pane-side pane)
                (eq (pane-subject (pane-side pane)) (item-subject it)))
-          (setf (pane-side pane) nil *editing-side* nil)      ; toggle closed
-          (setf (pane-side pane) (open-pane (item-subject it)) *editing-side* t)))))
+          (setf (pane-side pane) nil (pane-side-pinned pane) nil
+                *editing-side* nil)                          ; toggle closed
+          (setf (pane-side pane) (open-pane (item-subject it))
+                (pane-side-pinned pane) t                    ; ⇧↵ pins it
+                *editing-side* t)))))
+
+(defun focus-side (pane)
+  "-> on a list row: move focus INTO the right-hand column and make it usable.
+
+   The nav split already SHOWS the selection over there, but read-only and
+   unfocused — a look, not a place you can be, and until now -> did nothing at all.
+   This promotes that preview to the same pinned pane <S-Return> builds, so your own
+   code becomes editable, a builtin scrolls, and a list can be walked; then it puts
+   focus there. Unlike <S-Return> it never toggles: -> means go right, every time.
+
+   Crucially it does NOT touch the trail. Focus is not navigation, so C-g (or
+   SuperL-o) hands it straight back and what you return to is the identical
+   side-by-side you left — same pane, same selection, same preview."
+  (let ((it (selected-item pane)))
+    (when (and it (item-subject it))
+      (unless (and (pane-side pane)
+                   (eq (pane-subject (pane-side pane)) (item-subject it)))
+        (setf (pane-side pane) (open-pane (item-subject it))
+              (pane-side-pinned pane) nil))     ; focused, not pinned — see UNFOCUS-SIDE
+      (setf *editing-side* t)
+      t)))
+
+(defun unfocus-side (pane)
+  "Give focus back to the list. If the right column was merely FOCUSED (by ->), it
+   goes away again and you are looking at the read-only preview you started from —
+   the identical frame, down to the pixel. If you PINNED it with <S-Return>, it stays:
+   pinning is a decision, and C-g should not quietly undo one."
+  (setf *editing-side* nil)
+  (unless (pane-side-pinned pane)
+    (setf (pane-side pane) nil)))
+
+(defun side-list-key (pane side key state)
+  "Keys for a focused side pane that is a LIST rather than text. EDIT-PANE-KEY only
+   knows how to type, so without this a list in the right column is focusable and
+   completely inert. Same meanings as the main list: up/down move, Return drills —
+   into the MAIN trail, because Return means the same thing everywhere."
+  (declare (ignore state))
+  (cond
+    ;; <- comes back, which it can only mean HERE: in a text side pane the same key
+    ;; is the editor's, moving the caret (§4¾'s modifier split)
+    ((eq key :left)      (unfocus-side pane))
+    ((eq key :up)        (set-pane-sel side (1- (pane-sel side))))
+    ((eq key :down)      (set-pane-sel side (1+ (pane-sel side))))
+    ((eq key :page-up)   (set-pane-sel side (- (pane-sel side) +list-page+)))
+    ((eq key :page-down) (set-pane-sel side (+ (pane-sel side) +list-page+)))
+    ((eq key :return)
+     (let ((it (selected-item side)))
+       (when (and it (item-subject it))
+         (setf *editing-side* nil)               ; the trail moves; focus comes home
+         (trail-push (item-subject it)))))
+    (t nil))
+  nil)
 
 (defun toggle-side-focus ()
   "SuperL-o: move keyboard focus between the list and its editable side pane."
@@ -384,15 +443,23 @@
                   (if (eq (item-disposition item) :in-place) :dim :bright))
      :group (item-group item))))
 
+(defvar *side-rows* '()
+  "The hit map for a LIST drawn in the right-hand column. Separate from *LIST-ROWS*
+   because the split draws two lists in one frame, and whichever went second used to
+   overwrite the other's map — so a click in the left list hit-tested against the
+   right one's rows. Reachable much more easily now that -> focuses the side.")
+
 (defvar *list-rows* '()
   "The hit map LOL.WIDGETS:DRAW-LIST returned for the pane drawn last — ((y . index) …).
    A click reads it back rather than computing an index from y, because with section
    headers in the layout screen row N is no longer item N.")
 
-(defun draw-list-body (canvas pane x y w h)
+(defun draw-list-body (canvas pane x y w h &optional (into :main))
   "Render a list view: the widget does rows, sections, selection and the scrollbar;
    this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
-   (a layout slot, headers included) and is written back so it persists across frames."
+   (a layout slot, headers included) and is written back so it persists across frames.
+   INTO says which hit map to record — :MAIN for the expanded pane, :SIDE for the
+   right-hand column, which is drawn in the same frame and must not overwrite it."
   (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
     (multiple-value-bind (top hits)
         (lol.widgets:draw-list canvas x y w h rows
@@ -403,8 +470,8 @@
                                ;; gets its own column and full-strength text
                                :value-col (when (eq (view-kind (pane-view pane)) :inspector)
                                             (min 300 (floor w 2))))
-      (setf (pane-top pane) top
-            *list-rows* hits))))
+      (setf (pane-top pane) top)
+      (if (eq into :side) (setf *side-rows* hits) (setf *list-rows* hits)))))
 
 (defun draw-hints (canvas x y w hints)
   "Draw HINTS — a list of (CHORD . MEANING) — along the status line, the CHORD in the
@@ -779,10 +846,10 @@
         (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
     *preview-pane*))
 
-(defun draw-pane-body (canvas pane x y w h)
+(defun draw-pane-body (canvas pane x y w h &optional (into :main))
   "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
    into the rect. The one place that knows how each view kind paints, so the expanded
-   pane and the nav-split preview stay identical."
+   pane and the nav-split preview stay identical. INTO is passed to DRAW-LIST-BODY."
   (cond
     ((pane-tv pane)
      (lol.textview:tv-geometry (pane-tv pane) x y w h)
@@ -791,7 +858,7 @@
      (draw-matrix-body canvas pane x y w h))
     ((eq (view-kind (pane-view pane)) :stage)
      (draw-stage-body canvas pane x y w h))
-    (t (draw-list-body canvas pane x y w h))))
+    (t (draw-list-body canvas pane x y w h into))))
 
 (defun list-pane-splittable-p (pane)
   "True when PANE is a plain list whose selection has something to preview — the
@@ -842,7 +909,7 @@
              (if *editing-side*
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) stage-w* 2 *ui-accent*))
-             (draw-pane-body canvas side sx body-y sw body-h)))
+             (draw-pane-body canvas side sx body-y sw body-h :side)))
           ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right;
           ;; the focused half wears an accent top-rule (SuperL-o moves focus).
           ((and is-list (pane-side cur))
@@ -859,7 +926,7 @@
              (if *editing-side*
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *ui-accent*))
-             (draw-pane-body canvas side sx body-y sw body-h)))
+             (draw-pane-body canvas side sx body-y sw body-h :side)))
           ;; NAV SPLIT: list left, a live READ-ONLY preview of the selection right.
           ((and is-list (selected-item cur) (item-subject (selected-item cur)))
            (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
@@ -872,7 +939,7 @@
                  (progn
                    (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
                                            prev-x (- body-y 15) *ui-dim*)
-                   (draw-pane-body canvas preview prev-x body-y prev-w body-h))
+                   (draw-pane-body canvas preview prev-x body-y prev-w body-h :side))
                  (lol.canvas:draw-string canvas *bfont* "(no preview)"
                                          prev-x (+ body-y 4) *ui-dim*))))
           ;; single pane, full width (source / matrix / a list with nothing to preview)
@@ -1149,7 +1216,12 @@
       ;; only, so a stray C-g can't drop you out by accident.
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
-       (when (cdr (current-trail)) (trail-pop))
+       (cond
+         ;; focus is in the right column: hand it back to the list and STOP. Popping
+         ;; the trail as well would throw away the split you are standing in, when
+         ;; all you asked for was to stop editing.
+         ((and *editing-side* (pane-side p)) (unfocus-side p))
+         ((cdr (current-trail)) (trail-pop)))
        nil)
       ;; --- SuperL layer: tab navigation, the Spotter + the cheatsheet, over ANY pane
       ;;     (never the editor's). Super arrives via the keyboard's evdev (folded into
@@ -1182,7 +1254,10 @@
       ;;     SuperL-o (above) hands focus back to the list/stage. This MUST precede the
       ;;     stage branch: a stage's letters spawn things, and typing "ship" into the
       ;;     Workspace beside it would otherwise launch four objects. ---
-      ((and *editing-side* (pane-side p)) (edit-pane-key (pane-side p) key state))
+      ((and *editing-side* (pane-side p))
+       (if (pane-tv (pane-side p))
+           (edit-pane-key (pane-side p) key state)
+           (side-list-key p (pane-side p) key state)))
       ;; --- the stage (§3b): its own verbs, before the list keys, because a stage has
       ;;     no rows for up/dn to move and letters here mean "spawn one of those". ---
       ((and (eq (view-kind (pane-view p)) :stage)
@@ -1215,6 +1290,10 @@
               (open-beside p)                            ; ⇧↵ — open BESIDE (editable split)
               (let ((it (selected-item p)))              ; ↵ — drill in place
                 (when (and it (item-subject it)) (trail-push (item-subject it))))))
+         ;; -> moves focus into the right-hand column (see FOCUS-SIDE). <- stays
+         ;; "back", so the two arrows are not a pair here: -> goes deeper into the
+         ;; frame you are looking at, <- leaves it.
+         ((eq key :right) (focus-side p))
          ((member key '(:backspace :left)) (trail-pop))
          (t nil))))))
 
@@ -1353,9 +1432,15 @@
          ;; ⇧↵ editable side pane: a click focuses it and places the caret (Ctrl jumps).
          ((pane-side p)
           (setf *editing-side* t)
-          (let ((tv (pane-tv (pane-side p))))
-            (when (and tv (lol.textview:tv-hit-p tv x y))
-              (if ctrl (jump-to-definition tv x y) (lol.textview:tv-click tv x y)))))
+          (let* ((side (pane-side p)) (tv (pane-tv side)))
+            (cond
+              ((and tv (lol.textview:tv-hit-p tv x y))
+               (if ctrl (jump-to-definition tv x y) (lol.textview:tv-click tv x y)))
+              ;; a list in the right column: select the row that was drawn there,
+              ;; read back from its OWN hit map (see *SIDE-ROWS*)
+              ((null tv)
+               (let ((i (lol.widgets:hit-row *side-rows* y)))
+                 (when i (set-pane-sel side i)))))))
          (t
           (let ((sel (selected-item p))
                 (pv *preview-pane*))

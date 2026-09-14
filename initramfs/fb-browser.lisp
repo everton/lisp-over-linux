@@ -811,7 +811,15 @@
      ("Tab"                "focus the backtrace, walk frames")
      ("M-."                "view the selected frame's source")
      ("Enter / click"      "invoke the selected restart")
-     ("C-g"                "abort")))
+     ("C-g"                "abort"))
+    ("Stage  (§3b)"
+     ("Space"              "run / pause the world")
+     ("n"                  "one tick")
+     ("s / a / m / t"      "spawn ship / asteroid / missile / station")
+     ("Tab / click"        "select a sprite")
+     ("Enter"              "inspect the selected instance")
+     ("w"                  "the Workspace beside (C-c C-c defines)")
+     ("r"                  "reset the stage")))
   "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET
    lays it out in two columns.")
 
