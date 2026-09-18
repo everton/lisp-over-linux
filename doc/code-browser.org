@@ -480,6 +480,13 @@ failure the widget already refuses when it runs out of rows. The quote costs one
 character, says the same thing to a Lisp reader, and keeps ='t= distinct from the
 class =t=, which really is a column of its own there.
 
+The object itself is printed with =PRIN1=, not =STRING= or =PRINC=. Both of those
+drop the marks that say /which/ object it is: =STRING= takes a symbol's bare name,
+so the stage's own =stage-enact= — which dispatches on =(eql :hull-breach)= and
+four more keywords — would draw ='hull-breach=, naming a different specializer
+entirely. An axis may compact a class NAME; it may not misreport the object a
+method dispatches on.
+
 Only the *drawing* shortens. =draw-grid='s hit map still carries the label it was
 handed, so the cell you click and the onion it opens are untouched — clicking
 =alien-value= × ='alien-callable= still titles itself =effective documentation

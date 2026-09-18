@@ -391,8 +391,19 @@
          (string-downcase (string label)))
         ((and (consp label) (eq (car label) 'eql)
               (consp (cdr label)) (null (cddr label)))
-         (concatenate 'string "'" (label-text (second label))))
-        (t (string-downcase (princ-to-string label)))))
+         ;; PRIN1 the object, not STRING or PRINC. Both of those drop the marks
+         ;; that say WHICH object it is: STRING takes the bare name of a symbol,
+         ;; so :hull-breach draws as 'hull-breach — a different specializer —
+         ;; and PRINC drops a string's quotes the same way. An axis may compact a
+         ;; class NAME; it may not misreport the object a method dispatches on.
+         ;; Only a symbol is downcased, since for anything else the case is part
+         ;; of the value.
+         (let ((obj (second label)))
+           (concatenate 'string "'"
+                        (if (symbolp obj)
+                            (string-downcase (prin1-to-string obj))
+                            (prin1-to-string obj)))))
+        (t (princ-to-string label))))
 
 (defun draw-grid (canvas x y w h row-labels col-labels counts
                   &key (header-w 130) (empty-mark (string (code-char 183))))
