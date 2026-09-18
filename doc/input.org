@@ -68,8 +68,8 @@ Reading the device gives back a whole number of =struct input_event= records
 
 | offset | size | field   | meaning                              |
 |--------+------+---------+--------------------------------------|
-|      0 |    8 | =tv_sec=  | timestamp, seconds — we ignore it    |
-|      8 |    8 | =tv_usec= | timestamp, microseconds — ignored    |
+|      0 |    8 | =tv_sec=  | timestamp, seconds — read by the tap gesture (§4½) |
+|      8 |    8 | =tv_usec= | timestamp, microseconds — likewise   |
 |     16 |    2 | =type=    | *what kind* of event (a key? motion?) |
 |     18 |    2 | =code=    | *which* one (which key, which axis)   |
 |     20 |    4 | =value=   | signed 32-bit: how much / pressed?   |
@@ -128,7 +128,7 @@ Of the ~30 event types, the browser needs four. Constants from
 | =2= =EV_REL=    | =8= =REL_WHEEL=     | notches, ±1        | sum into =wheel= (see §6)         |
 | =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½) |
 | =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: =browser-click=    |
-| =1= =EV_KEY=    | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up | a contact changed: forget the last pad position (§4½) |
+| =1= =EV_KEY=    | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up | a contact changed: forget the last pad position, and open or close a *tap* (§4½) |
 | =1= =EV_KEY=    | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta | =1= down =2= repeat =0= up | set =*ctrl-down*= / =*shift-down*= / =*super-down*= |
 | =0= =EV_SYN=    | =0= =SYN_REPORT=    | —                  | end of packet: apply the gathered position |
 
@@ -303,6 +303,38 @@ Three details carry the whole thing:
 The first two are why the old code jumped, and the third is why differencing done
 carelessly feels worse than the bug it replaces.
 
+** The click that sends no button
+
+A clickpad's physical press is a =BTN_LEFT= like any mouse button's, and that half
+always worked. A *tap* sends no button at all: the finger lands, lifts, and the only
+trace is =BTN_TOUCH= going =1= and then =0=. Everywhere else, =libinput= is the
+thing that decides those two events were a click. There is no =libinput= here.
+
+So =read-mouse= decides. A contact becomes a click when three things hold:
+
+1. *It was brief* — under =*tap-max-us*=, 180ms, which is the figure libinput
+   settled on. Longer and you were resting a finger, not tapping.
+2. *It did not travel* — no further from where it landed than =*tap-travel*=, a
+   fortieth of the pad (about 2mm on a Synaptics pad), which forgives the roll of a
+   finger lifting without admitting a drag.
+3. *It was one finger, and pressed nothing.* A second finger means scroll — or a
+   right-click we have no second button for — and either way the contact stops being
+   a tap. A real =BTN_LEFT= disarms it too, so a press and the finger resting on the
+   pad cannot fire twice.
+
+*This is what the timestamps were for.* Every record has carried a =struct timeval=
+since §2 and we had never read one — the rule above is the first thing that needs
+to know /how long/ rather than /what/. [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]] reads the 16 bytes; the
+gesture only ever takes a *difference* of two of them, so the clock behind it
+(evdev's default is =CLOCK_REALTIME=) never has to mean anything absolute.
+
+Two honest limits. *There is no tap-and-drag* — tap, then press-and-hold to drag —
+because that needs a click the browser can hold open, and =read-mouse= returns a
+click as a boolean. For the same reason *two clicks inside one drain collapse into
+one*; a drain is one =poll(2)= wake, so two taps that fast are not reachable by
+hand, and a double-click gesture would need a real press/release pair rather than
+this flag.
+
 * 5. Waiting on three things at once: =poll(2)=
 
 Three input sources, all of which may be idle. Busy-polling would spin PID 1 at
@@ -437,6 +469,7 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 | ask an axis its real range (EVIOCGABS)   | [[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]                               |
 | decode motion / buttons / wheel          | [[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]                                     |
 | turn finger positions into cursor motion | [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]]                                     |
+| the record's timestamp, for the tap      | [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]]                                  |
 | track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
 | wait on tty + mouse + keyboard           | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]                                       |
 | notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |

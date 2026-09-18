@@ -206,6 +206,22 @@
 (defvar *pad-ry* 0 "Sub-pixel remainder of vertical pad motion.")
 (defvar *pad-scroll* 0 "Two-finger motion not yet worth a wheel notch, in pad units.")
 
+;;; Tap-to-click. A clickpad's physical press arrives as BTN_LEFT and always
+;;; worked; a TAP is a contact that sends no button at all, and libinput is what
+;;; normally turns one into a click. There is no libinput here, so we do it.
+(defvar *tap-down-us* nil "When the finger landed, in microseconds, or NIL for no contact.")
+(defvar *tap-x* nil "Where it landed, in pad units — the origin the travel test measures from.")
+(defvar *tap-y* nil)
+(defvar *tap-live* nil "Is this contact still a tap candidate?")
+
+(defvar *tap-max-us* 180000
+  "The longest contact still counted as a tap, in microseconds. Past it you were
+   resting a finger, not tapping — 180ms is what libinput settled on.")
+(defvar *tap-travel* 1/40
+  "How far the finger may wander and still tap, as a fraction of the pad's own axis
+   range. A tap is a contact that did not travel; this is the slop that forgives a
+   finger rolling slightly as it lifts.")
+
 (defvar *pad-speed* 3/2
   "How far the cursor travels for a full sweep of the pad, in screens. 1 means the
    pad maps one-to-one onto the display, which is accurate but makes you cross the
@@ -287,7 +303,8 @@
         (setf *pointer-abs-p* (and (logbitp 3 ev) (not (logbitp 2 ev)))
               *pointer-pad-p* (pointer-pad-p ev prop)
               *pad-x* nil *pad-y* nil *pad-fingers* 0
-              *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0)
+              *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0
+              *tap-down-us* nil *tap-x* nil *tap-y* nil *tap-live* nil)
         (when *pointer-abs-p*
           (multiple-value-setq (*abs-x-min* *abs-x-max*) (evdev-abs-range fd 0))
           (multiple-value-setq (*abs-y-min* *abs-y-max*) (evdev-abs-range fd 1))))
@@ -321,6 +338,18 @@
   "Map an absolute reading in LO..HI onto 0..RES-1."
   (max 0 (min (1- res) (floor (* (- val lo) res) (max 1 (- hi lo))))))
 
+(defun evdev-time-us (buf)
+  "The struct timeval at the head of an input_event, as microseconds.
+
+   Seconds then microseconds, 8 bytes each on x86-64 — the 16 bytes every record has
+   carried and we have ignored since the beginning (doc/input.org §2). Only the tap
+   gesture reads them, and only to take a difference, so the clock they come from
+   (evdev's default is CLOCK_REALTIME) never has to mean anything absolute."
+  (let ((sec 0) (usec 0))
+    (dotimes (i 8) (incf sec  (ash (sb-alien:deref buf i) (* 8 i))))
+    (dotimes (i 8) (incf usec (ash (sb-alien:deref buf (+ 8 i)) (* 8 i))))
+    (+ (* sec 1000000) usec)))
+
 (defun pad-motion (nx ny xres yres)
   "One touchpad packet's worth of finger position; returns the wheel notches it
    produced (0 when it moved the cursor instead).
@@ -344,6 +373,14 @@
          (wheel 0))
     (when nx (setf *pad-x* nx))
     (when ny (setf *pad-y* ny))
+    ;; A tap is a contact that did not travel. BTN_TOUCH may land in a packet with
+    ;; no position of its own, so take the origin from the first one that has it.
+    (when *tap-live*
+      (when (and nx (null *tap-x*)) (setf *tap-x* nx))
+      (when (and ny (null *tap-y*)) (setf *tap-y* ny))
+      (when (or (and nx *tap-x* (> (abs (- nx *tap-x*)) (round (* xrange *tap-travel*))))
+                (and ny *tap-y* (> (abs (- ny *tap-y*)) (round (* yrange *tap-travel*)))))
+        (setf *tap-live* nil)))
     (when (and dx (> (abs dx) (floor xrange 4))) (setf dx nil))
     (when (and dy (> (abs dy) (floor yrange 4))) (setf dy nil))
     (if (>= *pad-fingers* 2)
@@ -373,7 +410,8 @@
 
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*. Returns
-   (values CLICKED WHEEL): CLICKED is T on a left-button press; WHEEL is the summed
+   (values CLICKED WHEEL): CLICKED is T on a left-button press — or, on a touchpad,
+   on a TAP, which reports no button at all (see *TAP-MAX-US*); WHEEL is the summed
    scroll notches this drain (REL_WHEEL, + = up / away from the user, - = down), 0
    when there was none. Callers that want only the click keep working on the first
    value.
@@ -414,7 +452,10 @@
                  (8 (incf wheel val))))          ; REL_WHEEL: +1 up / -1 down
               ((= type 1)                       ; EV_KEY — a button is just a key
                (case code
-                 (#x110 (when (= val 1) (setf clicked t)))       ; BTN_LEFT press
+                 (#x110 (when (= val 1) (setf clicked t))        ; BTN_LEFT press
+                        ;; a real press is not also a tap — a clickpad reports both
+                        ;; the button and the finger resting on it
+                        (setf *tap-live* nil))
                  ;; BTN_TOUCH / BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP} only change
                  ;; value when the contact does: a finger landed, lifted, or was
                  ;; joined by another. All three move the point the pad reports, so
@@ -422,10 +463,32 @@
                  ((#x14a #x145 #x14d #x14e)
                   (setf *pad-x* nil *pad-y* nil *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0)
                   (case code
-                    (#x14a (unless (plusp val) (setf *pad-fingers* 0)))    ; BTN_TOUCH
+                    (#x14a                                               ; BTN_TOUCH
+                     (if (plusp val)
+                         ;; a finger landed: open a tap candidate. NX/NY are this
+                         ;; packet's position — EV_ABS precedes EV_KEY in a packet,
+                         ;; so it is already here — and PAD-MOTION fills them in
+                         ;; from the next packet if it was not.
+                         (setf *tap-down-us* (evdev-time-us
+                                              (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
+                               *tap-x* nx *tap-y* ny
+                               *tap-live* *pointer-pad-p*)
+                         ;; it left: a candidate that was brief enough IS the click.
+                         ;; No button was ever reported — on a pad, that is the whole
+                         ;; gesture, and the reason libinput exists elsewhere.
+                         (let ((dt (and *tap-down-us*
+                                        (- (evdev-time-us
+                                            (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
+                                           *tap-down-us*))))
+                           (when (and *tap-live* dt (<= 0 dt *tap-max-us*))
+                             (setf clicked t))
+                           (setf *pad-fingers* 0 *tap-live* nil
+                                 *tap-down-us* nil *tap-x* nil *tap-y* nil))))
+                    ;; a second finger means scroll, or a right-click we have no
+                    ;; button for — either way this contact stopped being a tap
                     (#x145 (when (plusp val) (setf *pad-fingers* 1)))      ; one finger
-                    (#x14d (when (plusp val) (setf *pad-fingers* 2)))      ; two
-                    (#x14e (when (plusp val) (setf *pad-fingers* 3))))))) ; three
+                    (#x14d (when (plusp val) (setf *pad-fingers* 2 *tap-live* nil)))   ; two
+                    (#x14e (when (plusp val) (setf *pad-fingers* 3 *tap-live* nil))))))) ; three
               ((and (= type 0) (= code 0) *pointer-pad-p*)   ; EV_SYN/SYN_REPORT
                (incf wheel (pad-motion nx ny xres yres))
                (setf nx nil ny nil)))))))
