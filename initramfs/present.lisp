@@ -527,10 +527,21 @@
 
 ;;; ---- generic functions: methods, coverage, combination ------------------
 
+(defun specializer-text (spec)
+  "SPECIALIZER-LABEL (registry.lisp) in the browser's lowercase — for DISPLAY, where
+   the matching labels are upper. Binding *PRINT-CASE* rather than STRING-DOWNCASEing
+   the result is the difference between lowering a symbol's name and lowering the
+   contents of a string the method dispatches on."
+  (let ((*print-case* :downcase)) (specializer-label spec)))
+
+(defun specializer-tuple-text (specs)
+  "A specializer tuple as \"(missile ship)\" / \"((eql :hull-breach) t t t)\"."
+  (format nil "(~{~a~^ ~})" (mapcar #'specializer-text specs)))
+
 (defun method-tuple-label (m)
-  "A method as its qualifiers + specializer tuple, e.g. \":around (button surface)\"."
-  (format nil "~@[~{~(~a~) ~}~](~{~(~a~)~^ ~})"
-          (getf m :qualifiers) (getf m :specializers)))
+  "A method as its qualifiers + specializer tuple, e.g. \"around (button surface)\"."
+  (format nil "~@[~{~(~a~) ~}~]~a"
+          (getf m :qualifiers) (specializer-tuple-text (getf m :specializers))))
 
 (defun format-matrix (m)
   "Render dispatch-matrix data (model.lisp) as a monospace grid / degraded list."
@@ -538,8 +549,8 @@
     (ecase (getf m :mode)
       (:matrix
        (let* ((rows (getf m :rows)) (cols (getf m :cols)) (cells (getf m :cells))
-              (rowlab (mapcar (lambda (r) (string-downcase (princ-to-string r))) rows))
-              (collab (mapcar (lambda (c) (string-downcase (princ-to-string c))) cols))
+              (rowlab (mapcar #'specializer-text rows))
+              (collab (mapcar #'specializer-text cols))
               (rw (reduce #'max rowlab :key #'length :initial-value 6))
               (cw (max 3 (reduce #'max collab :key #'length :initial-value 3))))
          (format s "dispatch matrix — ~(~a~)~%arg ~d (rows) x arg ~d (cols)~%~%"
@@ -664,8 +675,8 @@
                                                (getf m :specializers)))
               items)))
     (make-view
-     :title (format nil "effective ~(~a~) (~{~(~a~)~^ ~})~@[ ~c ~d combine~]"
-                    name (subj-onion-tuple s) (code-char #xB7)
+     :title (format nil "effective ~(~a~) ~a~@[ ~c ~d combine~]"
+                    name (specializer-tuple-text (subj-onion-tuple s)) (code-char #xB7)
                     (let ((n (+ (length (getf o :around)) (length (getf o :before))
                                 (length (getf o :primary)) (length (getf o :after)))))
                       (and (plusp n) n)))
@@ -688,8 +699,8 @@
          (specs (subj-method-specializers m))
          (quals (subj-method-qualifiers m))
          (src   (method-source name quals specs))
-         (title (format nil "method ~(~a~) ~@[~(~a~) ~](~{~(~a~)~^ ~})"
-                        name (first quals) specs)))
+         (title (format nil "method ~(~a~) ~@[~(~a~) ~]~a"
+                        name (first quals) (specializer-tuple-text specs))))
     (if src
         (make-view :title title :kind :source :subject m :text src)
         (make-view :title title :kind :reference :subject m

@@ -44,15 +44,49 @@
     (let ((buf (make-string (file-length s))))       ; file-length is a byte upper
       (subseq buf 0 (read-sequence buf s)))))          ; bound; trim to chars read
 
+(defun specializer-label (spec)
+  "One method specializer as the text that names it, symbols printed per *PRINT-CASE*.
+
+   A class specializer is a symbol and PRINCs correctly. An EQL specializer is the
+   list (EQL OBJECT), and PRINC is wrong for the OBJECT: it drops the marks that say
+   WHICH object it is, so (EQL :HULL-BREACH) came out as (EQL HULL-BREACH) — naming
+   a symbol nobody dispatches on, in a browser whose whole job is to report dispatch
+   exactly. PRIN1 the object instead; a string keeps its quotes for the same reason.
+
+   (EQL (QUOTE X)) is how the source spells what the runtime reports as (EQL X).
+   Normalising that here is what lets the two labels below agree for a quoted
+   specializer, which they did not before."
+  (if (and (consp spec) (eq (first spec) 'eql)
+           (consp (cdr spec)) (null (cddr spec)))
+      (let ((obj (second spec)))
+        (when (and (consp obj) (eq (first obj) 'quote)
+                   (consp (cdr obj)) (null (cddr obj)))
+          (setf obj (second obj)))
+        (format nil "(~a ~s)" 'eql obj))
+      (princ-to-string spec)))
+
+(defun method-label (quals specs)
+  "The text that tells one method from the others on its generic function: its
+   qualifiers, then its specializer tuple — \"(SUBJ-DEFN)\", \":AROUND (WIDGET T)\".
+
+   It lives HERE, in the first module loaded, because two places have to produce it
+   identically: this file, from the DEFMETHOD form as it is recorded, and
+   model.lisp's METHOD-SOURCE-LABEL, from the runtime method. METHOD-SOURCE matches
+   the two with STRING-EQUAL, so a printer improved on only one side would silently
+   lose every method's source. One function, no drift."
+  (string-trim " " (format nil "~{~a ~}(~{~a~^ ~})"
+                           quals (mapcar #'specializer-label specs))))
+
 (defun defn-name-and-kind (form)
   "For a top-level FORM, return (values NAME KIND LABEL), or NIL if it is not a
    definition we track (it still loads — it just is not in the registry)."
   (when (and (consp form) (symbolp (first form)))
-    (flet ((specializers (lambda-list)
+    (flet ((specializer-forms (lambda-list)
+             ;; the required parameters' specializers as the source WROTE them:
+             ;; (kind (eql :hull-breach)) -> (EQL :HULL-BREACH), a bare NAME -> T.
              (let ((req (loop for p in lambda-list
                               until (member p lambda-list-keywords) collect p)))
-               (format nil "(~{~a~^ ~})"
-                       (mapcar (lambda (p) (if (consp p) (second p) t)) req)))))
+               (mapcar (lambda (p) (if (consp p) (second p) t)) req))))
       (case (first form)
         ((defun)                (values (second form) :function nil))
         ((defmacro)             (values (second form) :macro nil))
@@ -64,8 +98,7 @@
                 (quals (loop while (and rest (not (listp (car rest))))
                              collect (pop rest)))
                 (ll    (car rest)))
-           (values (second form) :method
-                   (string-trim " " (format nil "~{~a ~}~a" quals (specializers ll))))))
+           (values (second form) :method (method-label quals (specializer-forms ll)))))
         ((defvar defparameter)  (values (second form) :variable nil))
         ((defconstant)          (values (second form) :constant nil))
         ((defclass)             (values (second form) :class nil))

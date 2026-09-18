@@ -109,9 +109,13 @@
 
 (defun method-source-label (quals specs)
   "The registry label for a method — its qualifiers then its specializer tuple, e.g.
-   \"(subj-defn)\" or \":around (widget t)\". Kept identical to the label DEFN-NAME-AND-KIND
-   records so method lookup AND Accept agree on which method a defmethod names."
-  (string-trim " " (format nil "~{~a ~}(~{~a~^ ~})" quals specs)))
+   \"(SUBJ-DEFN)\" or \":AROUND (WIDGET T)\". Kept identical to the label DEFN-NAME-AND-KIND
+   records so method lookup AND Accept agree on which method a defmethod names.
+
+   Identical by CONSTRUCTION now rather than by two format strings happening to
+   match: both sides call METHOD-LABEL in registry.lisp, which is why that printer
+   lives in the first module loaded rather than here."
+  (method-label quals specs))
 
 (defun method-source (name quals specs)
   "Try to find a method's captured source in the registry (our own methods only).
@@ -278,8 +282,8 @@
                   (getf i :name) (getf i :lambda-list) (getf i :doc))
           (format t ";   ~a method~:p:~%" (length (getf i :methods)))
           (dolist (m (getf i :methods))
-            (format t ";     ~@[~{~a ~}~](~{~a~^ ~})~@[   [has source]~]~%"
-                    (getf m :qualifiers) (getf m :specializers)
+            (format t ";     ~a~@[   [has source]~]~%"
+                    (method-source-label (getf m :qualifiers) (getf m :specializers))
                     (and (getf m :source) t)))))
     (finish-output)
     name))
