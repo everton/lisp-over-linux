@@ -521,10 +521,12 @@ labels print upper-case, while the displayed ones bind =*PRINT-CASE*= to
 difference between lowering a symbol's name and lowering the contents of a string a
 method dispatches on.
 
-/Still lossy, and left alone: the method QUALIFIER./ =:around= prints as =around=
-in the same labels, by the same mechanism. Fixing it is the identical one-line
-change, but it moves visible text on every =:around= / =:before= / =:after= row, so
-it is a look to choose rather than a bug to sweep up.
+*The qualifier had the same hole.* =:around= is a keyword too, and =~a= dropped its
+colon exactly as it dropped the specializer's — so a method row read =around
+(missile ship)=, and the bare symbol =around= is itself a perfectly legal qualifier
+of a different method. =qualifier-label= sits beside =specializer-label= and fixes
+it at the one place both labels are built; rows now read =:around (missile ship)=.
+The two are the same bug and it would have been strange to fix only half of it.
 
 /No screenshot of the onion here, and the reason is itself worth recording: a
 =:matrix= pane has no keyboard cell cursor — =matrix-cell-click= in [[file:../poc/shell.lisp][=poc/shell.lisp=]]

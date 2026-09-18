@@ -65,6 +65,14 @@
         (format nil "(~a ~s)" 'eql obj))
       (princ-to-string spec)))
 
+(defun qualifier-label (qual)
+  "One method qualifier as the text that names it, symbols printed per *PRINT-CASE*.
+
+   PRIN1 for the reason SPECIALIZER-LABEL uses it: :around is a keyword, PRINC drops
+   the colon, and the bare symbol AROUND is itself a perfectly legal qualifier — so
+   the label named something that could belong to a different method entirely."
+  (prin1-to-string qual))
+
 (defun method-label (quals specs)
   "The text that tells one method from the others on its generic function: its
    qualifiers, then its specializer tuple — \"(SUBJ-DEFN)\", \":AROUND (WIDGET T)\".
@@ -75,7 +83,8 @@
    the two with STRING-EQUAL, so a printer improved on only one side would silently
    lose every method's source. One function, no drift."
   (string-trim " " (format nil "~{~a ~}(~{~a~^ ~})"
-                           quals (mapcar #'specializer-label specs))))
+                           (mapcar #'qualifier-label quals)
+                           (mapcar #'specializer-label specs))))
 
 (defun defn-name-and-kind (form)
   "For a top-level FORM, return (values NAME KIND LABEL), or NIL if it is not a

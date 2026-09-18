@@ -534,14 +534,19 @@
    contents of a string the method dispatches on."
   (let ((*print-case* :downcase)) (specializer-label spec)))
 
+(defun qualifier-text (qual)
+  "QUALIFIER-LABEL in the browser's lowercase — see SPECIALIZER-TEXT."
+  (let ((*print-case* :downcase)) (qualifier-label qual)))
+
 (defun specializer-tuple-text (specs)
   "A specializer tuple as \"(missile ship)\" / \"((eql :hull-breach) t t t)\"."
   (format nil "(~{~a~^ ~})" (mapcar #'specializer-text specs)))
 
 (defun method-tuple-label (m)
-  "A method as its qualifiers + specializer tuple, e.g. \"around (button surface)\"."
-  (format nil "~@[~{~(~a~) ~}~]~a"
-          (getf m :qualifiers) (specializer-tuple-text (getf m :specializers))))
+  "A method as its qualifiers + specializer tuple, e.g. \":around (button surface)\"."
+  (format nil "~@[~{~a ~}~]~a"
+          (mapcar #'qualifier-text (getf m :qualifiers))
+          (specializer-tuple-text (getf m :specializers))))
 
 (defun format-matrix (m)
   "Render dispatch-matrix data (model.lisp) as a monospace grid / degraded list."
@@ -699,8 +704,9 @@
          (specs (subj-method-specializers m))
          (quals (subj-method-qualifiers m))
          (src   (method-source name quals specs))
-         (title (format nil "method ~(~a~) ~@[~(~a~) ~]~a"
-                        name (first quals) (specializer-tuple-text specs))))
+         (title (format nil "method ~(~a~) ~@[~a ~]~a"
+                        name (and quals (qualifier-text (first quals)))
+                        (specializer-tuple-text specs))))
     (if src
         (make-view :title title :kind :source :subject m :text src)
         (make-view :title title :kind :reference :subject m
