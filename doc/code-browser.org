@@ -493,6 +493,39 @@ handed, so the cell you click and the onion it opens are untouched — clicking
 (alien-value (eql alien-callable))=. Grids whose labels were already symbols
 render pixel-for-pixel as before.
 
+*The same printer, everywhere it matters.* The grid was the loudest case, not the
+only one. Every place that renders a specializer tuple — the method rows in a GF
+view, the onion's layers and its title, a method pane's own title, the degraded
+text matrix — pushed the tuple through =~a=, and so read =(eql :hull-breach)= back
+as =(eql hull-breach)=. The stage's own =stage-enact= dispatches on five keywords,
+and the browser named a different specializer for every one of them.
+
+They now share one printer, =specializer-label=, and it lives in
+[[file:../initramfs/registry.lisp][=registry.lisp=]] — the first module loaded — for a reason worth stating plainly. A
+method's *label* is not only display text: it is the key =method-source= matches
+on, and TWO places build it independently. =defn-name-and-kind= builds it from the
+=defmethod= form as the registry records it; =method-source-label= builds it from
+the live method. They agreed before only because both dropped the colon in the same
+place — so improving either one alone would have silently cost every method its
+source. =method-label= is now the single builder both call, and the invariant is
+checkable rather than hoped for: 40 recorded =:method= definitions, 40 live methods
+resolving a source, 0 registry labels without a live match.
+
+Normalising =(EQL (QUOTE X))= to =(EQL X)= closes the other half of that seam. It
+is how the source spells what the runtime reports, so the two labels disagreed for
+a quoted =eql= specializer — latent only because none of our own code writes one.
+
+Display and matching differ in exactly one respect, deliberately: the matching
+labels print upper-case, while the displayed ones bind =*PRINT-CASE*= to
+=:downcase= rather than =STRING-DOWNCASE=-ing the finished text. That is the
+difference between lowering a symbol's name and lowering the contents of a string a
+method dispatches on.
+
+/Still lossy, and left alone: the method QUALIFIER./ =:around= prints as =around=
+in the same labels, by the same mechanism. Fixing it is the identical one-line
+change, but it moves visible text on every =:around= / =:before= / =:after= row, so
+it is a look to choose rather than a bug to sweep up.
+
 /No screenshot of the onion here, and the reason is itself worth recording: a
 =:matrix= pane has no keyboard cell cursor — =matrix-cell-click= in [[file:../poc/shell.lisp][=poc/shell.lisp=]]
 is the *only* way into a cell — so capturing it needs a scripted mouse click, and
