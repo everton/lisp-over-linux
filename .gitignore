@@ -39,3 +39,6 @@ screen.png
 # graphics POC build outputs (poc/build-poc.sh)
 poc/out/
 poc/screen-fb.png
+
+# Temporary files, useless to be under source-control
+/tmp/*
