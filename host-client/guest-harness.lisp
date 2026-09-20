@@ -93,13 +93,28 @@
 (defun kill-guest ()
   (when *qemu* (ignore-errors (sb-ext:process-kill *qemu* 9))))
 
+(defun port-4005-free-p ()
+  "True when nothing is listening on :4005. A previous guest that has not finished
+   dying still holds it, QEMU's hostfwd then fails for OURS, and the symptom is a
+   connection to the WRONG guest that resets mid-test. Cheaper to refuse."
+  (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
+    (unwind-protect (not (ignore-errors
+                          (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005) t))
+      (ignore-errors (sb-bsd-sockets:socket-close s)))))
+
 (defun preflight ()
   "Fail early and legibly when the host is missing what a boot needs."
   (dolist (f (list *ovmf-code* *ovmf-vars*))
     (unless (probe-file f) (error "missing ~a (apt install ovmf)" f)))
   (dolist (f '("iso_root/efi/boot/bootx64.efi" "iso_root/initramfs.cpio"))
     (unless (probe-file (merge-pathnames f *root*))
-      (error "missing ~a — run ./build.sh first" f))))
+      (error "missing ~a — run ./build.sh first" f)))
+  ;; give a lingering guest a moment, then insist
+  (dotimes (i 20)
+    (when (port-4005-free-p) (return))
+    (sleep 1))
+  (unless (port-4005-free-p)
+    (error "something is already listening on :4005 — another guest is still up")))
 
 ;;; ---- QMP: a line protocol, and we only ever emit JSON ---------------------
 
@@ -185,15 +200,25 @@
   "Connect to the guest's net REPL and confirm it is really EVALUATING — QEMU's
    hostfwd opens the host side of :4005 at t=0, so connecting proves nothing."
   (dotimes (i tries (error "net REPL on :4005 never answered"))
+    ;; The ENTIRE attempt is guarded, not just the connect. QEMU's hostfwd listens
+    ;; on the host port from the moment QEMU starts, long before the guest has a
+    ;; REPL behind it, so an early attempt connects and is then RESET when the
+    ;; forward finds nothing to forward to. That reset lands on the banner drain or
+    ;; the probe write, and an unguarded one ends the run with "connection reset by
+    ;; peer" instead of simply retrying.
     (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
-      (when (ignore-errors (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005) t)
-        (setf *repl* (sb-bsd-sockets:socket-make-stream
-                      s :input t :output t :buffering :none
-                      :element-type 'character :external-format :latin-1))
-        (repl-drain 1.0)                       ; swallow the banner
-        (write-string "(+ 1 1)" *repl*) (write-char #\Newline *repl*) (force-output *repl*)
-        (when (search "2" (repl-drain 3.0)) (return))
-        (ignore-errors (close *repl*))))
+      (when (ignore-errors
+             (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005)
+             (setf *repl* (sb-bsd-sockets:socket-make-stream
+                           s :input t :output t :buffering :none
+                           :element-type 'character :external-format :latin-1))
+             (repl-drain 1.0)                  ; swallow the banner
+             (write-string "(+ 1 1)" *repl*) (write-char #\Newline *repl*)
+             (force-output *repl*)
+             (search "2" (repl-drain 3.0)))
+        (return))
+      (ignore-errors (close *repl*))
+      (ignore-errors (sb-bsd-sockets:socket-close s)))
     (sleep 1.5)))
 
 (defun strip-ansi (string)
