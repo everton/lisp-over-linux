@@ -325,14 +325,32 @@
 (defun form-before-point (tv)
   "Read successive forms from the buffer start up to the caret and return the LAST
    complete one — the sexp before point, Emacs's C-x C-e target. Comments are
-   skipped by the reader; an incomplete trailing form is ignored. NIL if none."
-  (let ((text (buffer-text-to-point tv)) (last nil) (pos 0))
+   skipped by the reader; an incomplete trailing form is ignored.
+
+   Returns (values FORM FOUNDP). FOUNDP matters because NIL is a perfectly good form:
+   the first version stopped the scan on any form that read as NIL, so a buffer
+   containing a bare =nil= or =()= anywhere made every form BELOW it invisible, and
+   Do it would silently evaluate something from higher up the buffer instead of the
+   one before the caret. A sentinel distinguishes \"read nothing more\" from \"read NIL\",
+   and a read ERROR (an incomplete trailing form, which is the normal case while you
+   are still typing) is caught separately from a legitimate NIL."
+  (let* ((text (buffer-text-to-point tv))
+         (sentinel (list :eof))               ; fresh and uninterned: nothing can be EQ to it
+         (last nil) (foundp nil) (pos 0))
     (loop
       (multiple-value-bind (form next)
-          (ignore-errors (read-from-string text nil :eof :start pos))
-        (when (or (null form) (eq form :eof)) (return))
-        (setf last form pos next)))
-    last))
+          (handler-case (read-from-string text nil sentinel :start pos)
+            (error () (values sentinel pos)))
+        (when (eq form sentinel) (return))
+        (setf last form foundp t pos next)))
+    (values last foundp)))
+
+(defun form-echo (form)
+  "FORM printed short and on one line, to name it in the status line. The Workspace
+   verbs say WHICH form they ran: with several forms in a buffer, \"=> 3\" alone does
+   not tell you whether the one before the caret is the one that ran."
+  (let ((*print-length* 5) (*print-level* 3))
+    (substitute #\Space #\Newline (format nil "~s" form))))
 
 (defun ws-eval (form)
   "Eval FORM; return (values OK RESULT-or-CONDITION OUTPUT). OUTPUT is whatever the
@@ -363,24 +381,24 @@
 (defun workspace-do-it (pane)
   "Eval the form before point; show the value (or error), and note any printed
    output, in the status line."
-  (let ((form (form-before-point (pane-tv pane))))
-    (if (null form)
+  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
+    (if (not foundp)
         (setf *browser-status* "Do it: no form before point")
         (multiple-value-bind (ok res out) (ws-eval form)
           (let ((printed (ws-trim-output out)))
             (setf *browser-status*
                   (if ok (let ((*print-length* 40) (*print-level* 5))
-                           (format nil "~@[~a  ~]=> ~s"
+                           (format nil "~a ~@[~a  ~]=> ~s" (form-echo form)
                                    (and printed (substitute #\Space #\Newline printed)) res))
-                      (format nil "~@[~a  ~]error: ~a"
+                      (format nil "~a ~@[~a  ~]error: ~a" (form-echo form)
                               (and printed (substitute #\Space #\Newline printed)) res))))))))
 
 (defun workspace-print-it (pane)
   "Eval the form before point and weave the transcript into the buffer, inline after
    the form — the notebook that accretes an editable, re-runnable session. Anything
    the form printed is woven first (verbatim), then the value; so is an error."
-  (let ((form (form-before-point (pane-tv pane))))
-    (when form
+  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
+    (when foundp
       (multiple-value-bind (ok res out) (ws-eval form)
         (let ((printed (ws-trim-output out)))
           (ws-insert (pane-tv pane)
@@ -394,11 +412,14 @@
 (defun workspace-inspect-it (pane)
   "Eval the form before point and open the value in the inspector (a new trail
    level) — the landing pad that makes 'Inspect it' from anywhere land here."
-  (let ((form (form-before-point (pane-tv pane))))
-    (when form
-      (multiple-value-bind (ok res) (ws-eval form)
-        (if ok (trail-push res)
-            (setf *browser-status* (format nil "error: ~a" res)))))))
+  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
+    (if (not foundp)
+        (setf *browser-status* "Inspect it: no form before point")
+        (multiple-value-bind (ok res) (ws-eval form)
+          (if ok
+              (progn (setf *browser-status* (format nil "~a => inspecting" (form-echo form)))
+                     (trail-push res))
+              (setf *browser-status* (format nil "~a error: ~a" (form-echo form) res)))))))
 
 (defun workspace-debug-it (pane)
   "Eval the form before point with the debugger ARMED. We catch with HANDLER-BIND,
@@ -408,8 +429,8 @@
    control. An ABORT restart wraps the eval, guaranteeing a way back to the
    workspace. (run-debugger-fb lives in fb-browser.lisp; funcall avoids a load-order
    forward reference.)"
-  (let ((form (form-before-point (pane-tv pane))))
-    (when form
+  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
+    (when foundp
       (restart-case
           (handler-bind ((serious-condition
                            (lambda (c) (funcall 'run-debugger-fb c))))
