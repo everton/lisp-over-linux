@@ -128,6 +128,29 @@ failures are *quiet* — nothing breaks, a doc merely stops being true. The audi
   (`code-browser.org` §6.1 had the X11 client living in `host-client/`; it landed
   in `poc/`).
 
+### Write down what the check ruled OUT, not only what it confirmed
+
+"Verify, don't assert" says to check. It is silent on what to leave behind when
+the check comes back **negative**, and that is the half that gets lost — because
+a negative result looks like nothing happened, so nobody records it, so the next
+person repeats the entire search.
+
+Two from 2026-09-20, both of which cost real time twice:
+
+- The condition sweep reported a type called `TYPE`, which has never existed.
+  `quoted-symbol` accepted a bare symbol, which is right for handler clauses and
+  wrong for signalling sites. The useful artifact is not the fix, it is the
+  *reason the leniency was there* — so the next reader does not "simplify" the
+  two functions back into one.
+- A probe showed `accept-source` failing with `REDEFINITION-WITH-DEFUN`. That was
+  a **test artifact** — a `handler-case` on `CONDITION` swallowing a redefinition
+  *warning* — not a finding. Recorded as explicitly-not-a-finding, because a
+  phantom seen once tends to be rediscovered.
+
+So: when you investigate something and it turns out not to be real, say so in the
+commit message or the doc, with the reason. The next person should find the
+*answer*, not the search.
+
 ### Explaining concepts
 
 When a doc leans on a term the reader may not have (`ioctl`, character device,
