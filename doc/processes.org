@@ -1,0 +1,549 @@
+#+TITLE: Concurrent components that share graphical resources
+#+STARTUP: showall
+
+How a second process could put something on this machine's screen, what that
+would cost, and which parts of the question are already answered by code that
+exists. Also the =sb-posix= audit that came out of it, which concluded by
+changing nothing — and is here because *why* it changed nothing is a constraint
+every future dependency has to clear.
+
+Companion to [[file:framebuffer.org][framebuffer.org]] (how one process owns =/dev/fb0=), [[file:input.org][input.org]] (how it
+reads the mouse) and [[file:code-browser.org][code-browser.org]] §4½ (the =present= protocol this all turns
+on). Nothing here is built except one bug fix; §6 records an audit whose
+conclusion was to change nothing, and why that was the right answer.
+
+* 0. The question, and why it splits in two
+
+"Could separate processes present data inside the environment, without
+reimplementing something the size of X?"
+
+The question sounds like one thing and is two, and almost all the confusion comes
+from not splitting them:
+
+- *Scenario A* — a peer process sends us *a view*: labels, kinds, drillable
+  targets. Our toolkit draws it. ~350 lines, buildable today.
+- *Scenario B* — a peer process sends us *pixels*, having drawn itself. We
+  composite. ~450 lines and four permanent invariants.
+
+A is cheap because of a decision made long ago and written into a docstring; B is
+expensive for a reason that has nothing to do with line count. Both rest on the
+same constraint, so that comes first.
+
+* 1. The invariant: exactly one process writes to /dev/fb0
+
+=/dev/fb0= is opened as an ordinary file. =present-fb= does =with-open-file=,
+then per row a =file-position= seek and a =write-sequence= — see
+[[file:../poc/fb.lisp][poc/fb.lisp]].
+
+There is no lock, no ownership, no arbitration. *Two processes writing it both
+succeed*, interleave rows, and — the part that matters — *neither can detect
+it*. There is no expose event and no damage notification. A framebuffer is shared
+mutable memory with no protocol attached.
+
+** The kernel console was the first second writer
+
+This is not hypothetical; the project hit it in Phase 2. The *kernel console*
+(fbcon) kept painting text over the browser's pixels. The fix was not to share
+the surface. It was =KD_GRAPHICS= — /stop drawing, I own this now/ — with an
+=unwind-protect= to hand it back, because the alternative is staring at a dead
+console. That is =with-graphics-console= in [[file:../poc/fb.lisp][poc/fb.lisp]], and
+[[file:framebuffer.org][framebuffer.org]] explains the console side of it.
+
+The same instinct shows up *inside* the image. =*fb-canvas*= is published as a
+special in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] precisely so the debugger — entered mid-loop from
+=*debugger-hook*=, with the stack still standing — draws into *the same canvas*
+rather than becoming a second writer.
+
+So the rule, stated once:
+
+#+begin_quote
+*Exactly one process ever writes to =/dev/fb0=.*
+#+end_quote
+
+Which means the question is never "how do two processes draw". It is *how much
+does the non-drawing process send to the one that draws*.
+
+** Three answers, by how much the peer sends
+
+| What the peer sends | Who owns the screen | Cost |
+|---------------------+---------------------+------|
+| a *view* — labels, kinds, targets | the environment | ~350 lines (§2) |
+| a *pixel buffer* + damage rects | the environment, as compositor | ~450 lines + 4 invariants (§3) |
+| *nothing* — it takes the whole screen | the peer, temporarily | near zero |
+
+The third row is the one that gets forgotten. If only one thing is visible at a
+time you need no compositor at all: suspend, restore text mode, hand over the
+framebuffer, take it back when the peer exits. That is what a VT switch does, and
+=with-graphics-console= already has the give-it-back discipline. Coarse, and
+completely adequate if the goal is ever "run one full-screen foreign program".
+
+* 2. Scenario A — a peer that sends a VIEW
+
+** Why =present= is not a pixel protocol
+
+X is enormous because *the client owns the pixels*. Once that is true the wire
+must carry drawing primitives, a window hierarchy, expose events, input routing,
+resource lifetimes and an extension mechanism to patch what the model got wrong.
+
+Our =view= struct settled the opposite question years earlier, and says so in its
+own docstring in [[file:../initramfs/present.lisp][present.lisp]]:
+
+#+begin_quote
+"What (present subject) returns — *a description, never pixels*."
+#+end_quote
+
+A view is labels, kinds, groups and targets. That is s-expressions. The peer
+sends a view; *our* toolkit renders it — our font, our palette, our scrolling,
+our Spotter. A remote view looks native because it *is* rendered natively.
+
+This is [[file:code-browser.org][code-browser.org]] §4½'s rule read across a process boundary: content
+declares what it affords, the shell disposes. A process is content that lives
+further away.
+
+** The child is the same image
+
+=spawn-worker= in [[file:../initramfs/process.lisp][process.lisp]] re-execs =/sbin/lisp= with argv
+=("worker" N)=; =init-toplevel= in [[file:../initramfs/supervisor.lisp][supervisor.lisp]] branches on it. The image
+ships exactly two executables (=/init= and =/sbin/lisp= — see
+=initramfs.sbcl.list=), so "another process" here means *another copy of
+ourselves*.
+
+That is the whole reason A is cheap. The child already has =present.lisp=,
+=model.lisp= and the registry; it can call =(present subject)= itself and print
+the result. You are not inventing a foreign protocol — you are deciding how a
+*view* crosses a process boundary.
+
+And the renderer does not care where a view came from. =item->row= in
+[[file:../poc/shell.lisp][shell.lisp]], whose own docstring calls it "the whole boundary between the two
+layers", reads only =label=, =detail=, =kind=, =disposition= and =group=. All
+plain data. A view that arrived over a socket drops straight in.
+
+** The four things that would actually need designing
+
+1. *Subjects must not travel; handles must.* Drilling is =open-pane= →
+   =(present subject)=. The =subj-*= wrappers are name-based and would serialise,
+   but live objects leak in as subjects — class, package and generic-function
+   objects, and via the =(present (x t))= inspector fallback, *any value at all*.
+   So: a =subj-remote= holding (connection, handle); the child keeps an
+   integer→subject table; presenting one asks the child and rewrites every
+   returned subject into a fresh =subj-remote=. One struct and one =present=
+   method, which is exactly the extensibility §4½ promised. The dependency can be
+   inverted the way =*stage-subject-fn*= already does for the stage.
+2. *Two slots are closures and cannot cross* — =item.edit= (the inspector's
+   setter) and =command.action=. They become declarative tags the child resolves.
+   Note nothing invokes =command-action= today; the shell only reads
+   =command-label=. Going declarative costs nothing that currently works.
+3. *=EQ= identity breaks, subtly.* Three sites in =shell.lisp= compare subjects
+   with =EQ= (the beside-toggle, twice, and the preview cache). Freshly-=read=
+   structs are never =EQ=, so the preview would re-open every frame and =⇧↵=
+   would never toggle closed. Intern =subj-remote= by (connection, handle).
+4. *Liveness is a push, not a command.* §4½ already ruled on this: liveness is
+   the shell re-=present=ing a subject when its dependency signals. The child
+   sends =(:invalidate handle)=; the shell re-presents if that subject is on
+   screen. This is *better* than the stage, because poll wakes on data rather
+   than on a 33 ms timer — the zero-CPU-idle property survives.
+
+** What already exists
+
+| Need | Status |
+|------+--------|
+| AF_UNIX sockets | =CONFIG_UNIX=y= (see [[file:kernel-config.org][kernel-config.org]]); =/tmp= is a tmpfs |
+| =local-socket= in the heap | =build.sh= requires =sb-bsd-sockets= before the save |
+| A socket fd in the event loop | =socket-file-descriptor=; =fbb-wait='s docstring already anticipates a fourth slot |
+| Waking for non-input reasons | the stage heartbeat, =live-stage-timeout= |
+| Reading untrusted forms | =*read-eval*= nil, as =registry.lisp= and =model.lisp= already do |
+| A client connect/retry idiom | [[file:../host-client/qmp.lisp][host-client/qmp.lisp]], liftable wholesale |
+
+** Security: narrower than the net REPL, on purpose
+
+The network REPL is plaintext unauthenticated remote =eval= — which, since the
+REPL is PID 1, is remote root. [[file:networking.org][networking.org]] says so and the warning stands.
+
+A presentation channel must *not* extend that pattern. AF_UNIX rather than TCP,
+so it is scoped by the filesystem and not on the network; =*read-eval*= nil;
+keyword-only message heads; validated shapes; =with-standard-io-syntax= so
+=*print-circle*=, =*print-length*= and =*package*= cannot corrupt the wire.
+
+A presentation connection that *cannot eval* would be a genuine improvement in
+this project's remote-surface story, and is worth building that way from the
+first line.
+
+* 3. Scenario B — a peer that sends PIXELS
+
+** The hosting problem is already solved
+
+Not gated on Phase 7 in the technical sense. The *stage* (§3b of
+[[file:code-browser.org][code-browser.org]]) already established all five mechanisms a foreign surface would
+need: a bespoke view kind dispatched from =draw-browser=; a pane that changes
+without input plus a poll timeout to serve it; click routing into pane-local
+coordinates; key routing into the pane; and a subject type that keeps it
+drillable and Spotter-reachable. A =:foreign= view kind is those five things with
+a socket where =step-stage= is.
+
+** What you escape, and what you don't
+
+The asymmetry worth understanding: [[file:../poc/x11.lisp][poc/x11.lisp]] is ~309 lines because a *client*
+hands X one finished image and asks nothing of it ([[file:x11.org][x11.org]] has the detail). The
+*server* half is where X's complexity lives.
+
+If the peer renders into its own buffer and sends damage rectangles — the Wayland
+model rather than the X model — you delete: the entire graphics pipeline (the GC
+components and every =Poly*= request), core fonts, pixmaps and the drawable
+abstraction, colormaps and visuals, *Expose* (the biggest single deletion — with
+client-owned buffers there is no "your content was destroyed, redraw it"), the
+server-side window hierarchy and substructure redirect (and with it ICCCM and
+EWMH entirely), atoms and properties, grabs, the XKB keyboard model, and the
+extensions that exist to patch the model — RENDER, Composite, DAMAGE, MIT-SHM.
+
+What you inherit under *any* model: surface lifetime, focus policy, the
+resize/configure handshake, buffer release semantics (or you composite
+half-drawn frames), surface-local input coordinates, and a repaint scheduler.
+
+Stated honestly: "Wayland is simpler than X" is a claim about *protocol surface*,
+not about compositor implementation. =tinywl= looks tiny only because wlroots does
+the work. We would be writing the wlroots part — minus GPU, multi-output,
+xdg-shell and seat multiplexing. That is why the estimate lands in the hundreds
+of lines rather than the thousands, and it is a real saving, not a rhetorical one.
+
+** Transport on this machine
+
+- *RGBA bytes over AF_UNIX* — reachable today, and the one to pick. Calibrate the
+  cost against what is already paid: =present-fb= writes a full canvas per frame
+  via one =write-sequence= per row, unpacking every pixel in a Lisp shift loop.
+- *tmpfs file, both sides mmap* — reachable, but it needs new FFI:
+  =sb-posix:mmap= exists and =sb-posix= is *not* shipped (§6), so this would be a
+  =define-alien-routine "mmap"= against glibc — the same idiom as =%fbb-poll=,
+  about fifteen lines. The catch is not
+  the mapping: you still need an out-of-band "frame ready" signal, *and*
+  double-buffering, because with one CPU the peer will be preempted mid-paint.
+  You trade one copy for a synchronisation protocol.
+- *SCM_RIGHTS fd passing* — *not reachable*. =sendmsg=/=recvmsg=/=cmsg= appear
+  nowhere in =sb-bsd-sockets=, and =sb-posix= does not wrap them either. Hand
+  rolling =struct msghdr= is layout-by-hand for no gain over mmap. Don't.
+
+** The cost that is not lines
+
+- *Semantic view:* ~350 lines, *zero new invariants*, and the content is
+  browsable — items drill, symbols are Spotter targets, =present= composes.
+- *Compositor:* ~450 lines, *four permanent invariants*, and the content is
+  *opaque* — a rectangle the browser can never inspect, search, drill into or
+  re-present.
+
+A foreign surface as an accordion pane is a strange object. It has no items, so
+=↵= does nothing and the arrows do nothing; the breadcrumb above it names a
+choice that led nowhere; =commands-for= has nothing to offer. It would be the
+first pane in the system that is *not a view of a subject* — a hole in the
+browser's ontology. §1 of [[file:code-browser.org][code-browser.org]] has an unwritten corollary:
+/everything on screen is drawn by us from a description./ This would be the first
+violation.
+
+** Not blocked by Phase 7 — unmotivated without it
+
+So the accurate statement is not "too hard". It is that under the tiled shell a
+foreign surface is an anomaly, and under Morphic (Phase 7) it is a normal
+citizen — a Morph like any other, draggable and haloed on a World that already
+hosts things which are not the browser.
+
+And there is no client to serve. Two executables ship, both ours. The first
+"third-party" client would be a second copy of =/sbin/lisp= shipping pixels
+between two halves of the same Lisp heap. This becomes a real feature only when a
+genuinely foreign binary enters the cpio — and *that* decision (a real =/usr=, a
+loader story, more =.so= files) is larger than the compositor, and is one the
+project has twice declined for good reasons.
+
+* 4. Input: two processes and one mouse
+
+The sharpest sub-question, because the answer differs depending on how the peer
+gets the device — and both answers are bad.
+
+- *Shared fd, inherited through fork.* One open file description, one queue. Each
+  24-byte =input_event= is delivered to *exactly one* reader; the kernel does not
+  duplicate it. The two processes *steal* packets from each other, so the pointer
+  jitters — each sees roughly half the motion deltas and neither knows it.
+- *Separate =open()= of =/dev/input/eventN=.* evdev genuinely supports multiple
+  clients: each open gets its own ring buffer and the driver broadcasts every
+  event to all of them. Both processes see *everything*, correctly — and now both
+  believe they should act on it.
+- *=EVIOCGRAB= is the kernel's arbitration*, taking a device exclusively. It
+  exists precisely because "everyone sees everything" is usually wrong. We do not
+  use it, because nothing has ever competed for a device here.
+- *The cursor is software.* There is no hardware sprite plane. =draw-cursor=
+  composites an arrow into the canvas and then the whole canvas goes out. Two
+  processes doing that is two cursors, each erasing the other's, every frame.
+
+So the design answer is that *the peer has no eyes and no hands*: it never opens
+evdev and never touches =/dev/fb0=. The parent owns input and output, decides
+which pane has focus, and forwards already-decided semantic events; the peer
+replies with views. The same "exactly one owner" rule as §1, applied to input.
+
+Worth noticing that the harder version of this was already solved *within* one
+process: =fbb-wait= polls the console tty *and* the keyboard's own evdev node —
+two views of the same keyboard, for different information, because a bare Ctrl
+produces no character. One process holding both. See [[file:input.org][input.org]].
+
+* 5. Memory: fork, exec, and what copy-on-write does not buy
+
+A natural worry: does a second process double our memory?
+
+- *We do not fork — we fork AND exec.* =spawn-worker= calls =run-program=. The
+  copy-on-write mapping exists for the microseconds between the two calls and is
+  then discarded wholesale by the =execve=. *So COW buys essentially nothing
+  today.*
+- *But the image is not duplicated either*, for a different reason: =/sbin/lisp=
+  lives in the initramfs, which is a *tmpfs*. tmpfs pages /are/ the page cache —
+  no backing store, no second copy. The binary occupies RAM once, and both
+  processes map the same physical frames for text and the core's read-only spaces.
+- *What is not shared is the heap.* Dynamic space is private and gets written —
+  and SBCL's generational GC uses write-protected pages plus a SIGSEGV handler as
+  its write barrier, which is exactly the thing =preinit.c= silences so the
+  console stays readable. GC's whole job is dirtying pages, so sharing decays as
+  the child does work.
+- *A bare =fork()= is where COW would genuinely pay.* The child inherits the
+  entire live heap copy-on-write, including everything the parent built up —
+  which is a feature and not merely a saving: a forked child can =present= the
+  parent's live objects with *zero transfer*, because they are literally the same
+  pages until someone writes.
+
+Two catches, and §6 sharpened both. =sb-posix:fork= is *not* a thin syscall
+wrapper: it calls =sb_posix_after_fork= in the child, stops and restarts the
+finalizer thread, and prunes dead threads from =*all-threads*=. Hand-rolling
+=fork= against glibc would skip all of SBCL's own post-fork fixups — so here,
+rolling your own is *worse*, not just more work.
+
+And it refuses to fork at all with more than one thread running, signalling
+"Cannot fork with multiple threads running." We *do* run one — the net REPL
+thread. That turns the classic silent fork-in-a-threaded-program deadlock into an
+immediate, legible error, and it enforces exactly the recipe §5 of
+[[file:code-browser.org][code-browser.org]] already wrote down for =save-lisp-and-die=: stop the net-REPL
+thread, then fork.
+
+Which leaves a genuine tension for whoever builds §5, stated here so they meet it
+on purpose. Using =sb-posix:fork= means shipping the contrib, and *any definition
+that calls it then cannot be recompiled inside the guest* (§6) — acceptable for a
+=fork= buried in one worker-spawning function, unacceptable for anything you
+expect to edit live. Hand-rolling =fork= avoids that and loses the post-fork
+fixups. There is no free option; pick knowingly. Checked, in the guest:
+=(compile nil '(lambda () (sb-posix:waitpid -1 1)))= succeeds, so the plain call
+wrappers are not affected — it is the =declaim inline= ones over groveled structs
+that are.
+
+Finally, the instrument already exists. =report-memory= in [[file:../initramfs/meminfo.lisp][meminfo.lisp]] reports in
+honest layers — Lisp heap, process RSS, the kernel's own resident image, the
+whole machine. Summing RSS across two processes *double-counts shared pages*, so
+the real test of whether COW helped is machine-wide used memory against the sum
+of RSS. That gap /is/ the sharing.
+
+* 6. sb-posix — the audit, and why nothing was migrated  [DONE]
+
+** Why the question came up here
+
+§5 wants =fork=, =waitpid= and possibly =mmap=. The project's habit is
+=define-alien-routine= against the glibc the image already links, and the habit
+is a good one — [[file:networking.org][networking.org]] and [[file:input.org][input.org]] are largely *about* the constants
+and struct layouts it forces you to confront.
+
+But a habit is not a policy, so before adding another hand-rolled syscall the
+question was asked the other way round: *is =sb-posix= better than some of the
+alien code we already have?* Every layer we do not write ourselves is one less
+point of surprise — provided it does not cost a lesson.
+
+The answer turned out to be *no, not for anything we currently have*, and the
+reason is specific to this project rather than to =sb-posix=. It is worth
+recording in full, because the reasoning looks wrong right up until the last step.
+
+** The audit, site by site
+
+Every =define-alien-routine= in the image, against what =sb-posix= 2.6.8 actually
+provides (checked in =sbcl/contrib/sb-posix/=, not assumed):
+
+| Site | What it does | In sb-posix? | Verdict |
+|------+--------------+--------------+---------|
+| =line-editor.lisp= termios | hand-counted offsets into a 60-byte blob | *yes* — groveled =struct termios= + every constant | looked like the one clear win; see below |
+| =fb-browser.lisp= =poll= + pollfd array | hand-built 8-byte slots | *no* — no =poll=/=select=/=epoll= at all | stays, by necessity |
+| =process.lisp= =reboot(2)= | =extern-alien "reboot"= | *no* | stays |
+| =dhcp.lisp= =setsockopt= (SO_RCVTIMEO) | | *no* — and =sb-bsd-sockets= has no receive-timeout option either | stays |
+| =net.lisp= / =fb.lisp= / =fb-browser.lisp= =ioctl= | thin wrapper each | yes, but *thin* | stays — see below |
+| =net.lisp= =socket= | | =sb-bsd-sockets='s job | stays |
+| =fb.lisp= / =fb-browser.lisp= =open=/=read=/=close= | | yes | stays — marginal |
+| /new capability/ =fork=, =waitpid=, =mmap= | not used yet | *yes*, with real added value | deferred with §5 |
+
+** The one that looked like a win, and the finding that killed it
+
+The termios code was the site where hand-rolling looked like a *liability rather
+than a lesson*. It treats =struct termios= as an opaque 60-byte block and patches
+offsets counted by hand — =c_lflag= at 12, =c_cc= at 17, VTIME at =c_cc[5]=, VMIN
+at =c_cc[6]=. Every one is correct for x86-64 glibc and would be silently wrong
+anywhere else: the bad kind of correct, because nothing tells you when it stops
+being true.
+
+So the migration was written and tested. Checked against the old hardcoded
+values first, and they agree exactly — =ICANON= 2, =ECHO= 8 (the old
+=+icanon|echo+ #x0A=), =ISIG= 1, =TCSANOW= 0, =VTIME= 5, =VMIN= 6. On the host it
+was strictly better: the =make-alien=/=free-alien= pair and its =unwind-protect=
+disappear because the states become ordinary Lisp objects, and a non-tty stops
+being patched through an uninitialised buffer. It passed on a real pty, including
+that an error inside the body still restores =c_lflag=. It booted, and the REPL
+came up with raw mode working — arrows, per-keystroke echo, syntax colouring.
+
+*And then it failed the only test that matters here.* In the guest:
+
+#+begin_src lisp
+  (compile nil '(lambda () (with-raw-mode (0) :x)))   ; => NIL, failed
+  (compile nil '(lambda () (sb-posix:tcgetattr 0)))   ; => NIL, failed
+#+end_src
+
+=sb-posix:tcgetattr= is =declaim inline=, so compiling a call to it expands its
+body — which refers to =sb-posix='s *groveled alien structs*. That alien type
+information does not survive =save-lisp-and-die= into the guest. Already-compiled
+calls run perfectly, because they were compiled at build time where the types
+existed. New ones cannot be compiled at all.
+
+The consequence is not cosmetic. *You could no longer =C-c C-c= any definition in
+[[file:../initramfs/line-editor.lisp][line-editor.lisp]] from inside the running image* — and an image that edits its own
+source is the entire thesis of this project ([[file:code-browser.org][code-browser.org]] §0.1). The
+migration traded a portability hazard that has never fired for a live regression
+in the one feature the system exists to demonstrate.
+
+It was reverted. The hand-rolled version was then checked the same way, and
+recompiles in the guest:
+
+#+begin_example
+  => (:WITH-RAW-MODE-RECOMPILES :YES :RAW-WORKS :OK)
+#+end_example
+
+** The general rule this establishes
+
+#+begin_quote
+A library is usable here only if code calling it can be *recompiled inside the
+guest*, not merely run there. Anything =declaim inline= over groveled alien
+structs fails that test, because =save-lisp-and-die= keeps the compiled code and
+drops the compile-time alien types.
+#+end_quote
+
+This is a sharper constraint than "does it fit in the image", and it applies to
+every future dependency — including the org parser of [[file:code-browser.org][code-browser.org]] §8½ and
+anything the agent work pulls in. Note what it does *not* forbid: sb-posix's
+plain call wrappers are fine. Verified in the guest, =(sb-posix:getpid)= returns
+1 and =(compile nil '(lambda () (sb-posix:waitpid -1 1)))= succeeds. If §5's fork
+work ever wants them, they can come back — the cost is one =require= line and
+*+672 KiB* of image (measured at tag #24: 43,848,952 → 44,537,208 bytes, +1.57%),
+and the termios code must stay hand-rolled regardless.
+
+** And the ioctl callers, on purpose
+
+Separately from all of the above: =sb-posix:ioctl= is deliberately thin —
+=(fd cmd &optional arg)= with an alien pointer. You would still define
+=SIOCSIFADDR= yourself and still pack =ifreq= byte by byte. Migrating would save
+one =define-alien-routine= line per file and change nothing else — and those
+constants and layouts *are* the documentation in [[file:networking.org][networking.org]] and [[file:input.org][input.org]].
+Declining here is the didactic choice AGENTS.md asks for.
+
+** A bug the audit turned up
+
+Not =sb-posix='s doing, but found while reading the code it could not replace,
+and *this one shipped*. =fbb-wait= and =fbb-ready-p= wrote a pollfd's =fd= field
+with =(logand fd #xff)= — only the low byte of a 4-byte =int=. Correct for as
+long as every descriptor is a single digit, and silently polls the *wrong* one
+the first time it is not.
+
+Demonstrated rather than argued: with a pipe's read end forced to fd 300 and data
+waiting, the old writer polled fd 44 (=300 & 0xff=) and got =POLLNVAL= back,
+reporting "nothing to read" while the real descriptor had data; the new writer
+returns =POLLIN=. Both call sites now go through one =%put-pollfd= macro so they
+cannot drift apart — and this matters directly for §2, where a fourth poll slot
+would hold a *socket* rather than a single-digit device node.
+* 7. A worked example (not built)
+
+The first instinct is a clock in the top bar, drawn by a forked child, accepting
+a click to prove it is alive. Half right, and it is worth knowing which half.
+
+*What it gets right:* it changes without input, so it proves the push path; it is
+tiny; and it is obviously working or obviously broken at a glance.
+
+*Why it is the wrong demonstration here:*
+
+- *The top bar is chrome, not content.* =draw-tabs= owns it. Foreign content
+  there means the peer contributes to *chrome*, breaking §4½'s content/shell
+  separation at exactly the place it matters, while exercising *none* of
+  =present=. It would prove the socket works and nothing about the architecture.
+- *A clock does not need a process.* =(get-universal-time)= is free in-image, so
+  the child adds nothing — mechanism without motivation.
+- *A click that only proves liveness is a synthetic affordance.* Here a click is
+  a typed action on a presented object; one that merely flashes is the wrong shape.
+
+§4¾ of [[file:code-browser.org][code-browser.org]] already names the home for it: "Future areas — /a
+process/thread monitor/, the supervisor, meminfo — arrive the same way and appear
+as one more pinned tab."
+
+** The candidate that looks obvious and is not: the stage
+
+Running *the stage* (§3b) in a child suggests itself — it already exists, so the
+process boundary would be the only variable, and a hole in the dispatch matrix is
+the sort of thing you want isolated. All three arguments fail, instructively.
+
+1. *The stage is the one view whose data is live pointers.* =(present (subj-stage
+   s))= returns =:data st= — the live =stage= struct *by reference* ([[file:../initramfs/stage.lisp][stage.lisp]]).
+   =draw-stage-body= then calls =(stage-resize stage …)=, mutating the view's data
+   from inside the renderer, and =draw-stage-sprite= reads =body-x= / =body-vy= /
+   =body-rot= off live structs and calls =lol.examples:name= on the CLOS instance.
+   Every other view here is labels and symbols; this one is an object graph. So
+   "the same stage, in a child" would require inventing a wire representation for
+   the sprite set first — at which point the boundary is no longer the only
+   variable, which was the whole appeal.
+2. *It does not need the isolation.* =tick-live-stage= already wraps =step-stage=
+   in a =handler-bind= on =serious-condition= inside a =restart-case=
+   ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), and the comment there says why it is =handler-bind= and not
+   =handler-case=: the handler runs *before* the unwind, so the debugger sees live
+   restarts and a standing stack. PID 1 was never at risk. Moving the stage to a
+   child would *cost* that standing stack, since the child has no screen.
+3. *It is the worst case for the transport.* 33 ms frames mean the channel is
+   never quiet, on one CPU with no SMP. The property §2 likes — poll wakes on
+   data, not a timer, so idle costs nothing — is meaningless for a view that is
+   never idle.
+
+The stage is the best *demonstration* in the system and the worst *first
+implementation*. "Most convincing to watch" and "most suited to the mechanism"
+are different questions.
+
+** What should be built instead
+
+The criteria that actually matter: the view is *already plain data*; the work
+genuinely wants to happen elsewhere; and the child being *the same image* is
+load-bearing rather than incidental.
+
+*Tier 0 — the smoke test.* A child that presents *itself*: =pid=, =heap=,
+definition count. The pid row is load-bearing — if it differs from the
+supervisor's, a second process really answered. Every row is a real item, so
+nothing about it is a special case.
+
+*Tier 1 — the one that earns the boundary: a whole-image registry sweep.*
+=condition-signallers= and its neighbours work by =map-recorded-forms= — reading
+*every* recorded definition's captured source back out of the registry and
+walking the forms. CLOS cannot answer the question (there is no generic function
+to introspect), so it can only be derived from source, which is what makes it
+both useful and expensive. It returns symbols and strings, and it needs the
+registry, which only a child of *this* image has. A big =senders= or
+=categorize :file= sweep has the same shape.
+
+*Tier 1 generalised — sandboxed Accept.* Today =C-c C-c= compiles into the live
+image; break =draw-browser= or the supervisor and you have killed init.
+[[file:code-browser.org][code-browser.org]] §9 names this risk and suggests a thread. A *process* is
+strictly stronger: fork, apply the edit in the child, run it there, present the
+result. The child dies, the parent shows a tombstone, the image is untouched.
+* 8. Status
+
+- §1–§5, §7 — *analysis only, nothing built.* Dated 2026-09-19/20. If any of it
+  is implemented, this document is stale and the code is truth.
+- §6 — *DONE, and its conclusion is "change nothing".* =sb-posix= was audited
+  against every hand-rolled =define-alien-routine= in the image. The one
+  promising migration (termios) was written, tested, booted — and then reverted,
+  because =sb-posix='s inline entry points cannot be *recompiled* in the guest,
+  which would have cost live editing of [[file:../initramfs/line-editor.lisp][line-editor.lisp]]. The image is therefore
+  unchanged in this respect: no =(require :sb-posix)=, termios still hand-rolled.
+  What shipped from this section is the *rule* in "The general rule this
+  establishes", and one bug fix.
+- *Shipped:* the pollfd fd-width bug in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — both =fbb-wait= and
+  =fbb-ready-p= wrote only the low byte of a descriptor. Fixed via =%put-pollfd=.
+- Next, if anything: Tier 0 of §7. The seams are known; the irreducible cost is
+  that =:invalidate= can only be proven by booting, since it is a view changing
+  with no key pressed.
