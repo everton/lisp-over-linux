@@ -17,7 +17,9 @@ Parent docs:
 [[file:line-editing.org][line-editing.org]] (the editor toolkit) ·
 [[file:networking.org][networking.org]] (the TCP REPL) ·
 [[file:kernel-config.org][kernel-config.org]] (the options it needs) ·
-[[file:background/learn-clos.org][background/learn-clos.org]] (the CLOS/MOP background this doc assumes).
+[[file:background/learn-clos.org][background/learn-clos.org]] (the CLOS/MOP background this doc assumes) ·
+[[file:inspector-history.org][inspector-history.org]] (what inspectors could do historically, and the four
+powers that are cheap for us — the design backlog for the =state= half of the browser).
 
 The goal: navigate, understand and *change* the running system from inside
 itself — the thing a Smalltalk/Pharo browser gives you — without pretending
@@ -2116,6 +2118,25 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   definition grouped by the file it came from, over =model.lisp='s
   =categorize :file=. Listed here because this section is the authoritative
   status and it would otherwise be invisible to anyone reading only the phases.
+- *Not a phase either, but shipped 2026-09-20: the inspector's POWERS.* [DONE —
+  see [[file:inspector-history.org][inspector-history.org]]] The browser was always stronger on *behaviour* than on
+  *state*: the dispatch matrix, the onion, Senders/Implementors, the module index all
+  answer questions about code, while the inspector answered only "what fields does
+  this object have". Four powers from the Lisp Machine / Smalltalk lineage close that
+  gap, and all four hang off machinery §4½ already had:
+  - *A function is no longer a dead end.* =(present (f function))= shows a closure as
+    the record it is — one row per closed-over variable, *settable exactly when SBCL
+    boxed it in a =VALUE-CELL=*, which is to say exactly when the original code assigns
+    to it. Plus doors to source (recovered from =(LAMBDA … :IN ENCLOSING)=), senders,
+    disassembly, and retention.
+  - *Evaluate in the object's context* (=C-c C-e=, every inspector pane): =SELF= bound
+    to the subject and every slot name bound as a place. This is the one that matters
+    most, because it turns a fixed set of affordances into an open one.
+  - *Live instances* of a class (a heap walk — CLOS has no =allInstances=), and
+  - *Why is this alive?* (=sb-ext:search-roots= — the GC's own answer), every hop
+    drillable.
+  Still owed from that doc: *settable debugger frame locals* (§5.4 there), which is
+  the state-side twin of Phase 6's frame inspection.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

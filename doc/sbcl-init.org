@@ -129,8 +129,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 [[file:../build.sh::LISP_SOURCES][build.sh → LISP_SOURCES]], and that array is the truth. Reproduced here in order:
 
   | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
-  | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
-  | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless) |
+  | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector — incl. closures-as-records, =all-instances=, =retention-path=, =eval-in-context= ([[file:inspector-history.org][inspector-history.org]]) |
+  | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless); the function/instances/retention/disassembly views |
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
   | [[file:../initramfs/stage.lisp][=stage.lisp=]]       | the =COLLIDE= stage (§3b): bodies, both-ways dispatch, =eql=-specialised enact |
   | [[file:../initramfs/worker.lisp][=worker.lisp=]]      | a second PROCESS that contributes a *view* — =subj-worker=, the =job= argv role ([[file:processes.org][processes.org]] §2) |

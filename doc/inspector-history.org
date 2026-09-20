@@ -1,0 +1,662 @@
+#+TITLE: What an inspector used to be able to do — and what ours could
+#+STARTUP: showall
+
+Sibling docs: [[file:code-browser.org][code-browser.org]] (the design this feeds — its =present= protocol is the
+thing being extended) · [[file:background/learn-clos.org][background/learn-clos.org]] (the CLOS and =sb-mop= this
+leans on) · [[file:processes.org][processes.org]] (the other "what would it cost us" analysis doc).
+
+This doc exists because of a question with a short answer and a long one.
+
+*Short answer:* yes. The read-only object viewer that survived into modern IDEs is
+the /degenerate late form/ of the inspector. Between roughly 1974 and 1990 the tool
+called "the Inspector" could write to memory, undo what it wrote, find every object
+pointing at a given object, ask the garbage collector why something was still
+alive, enumerate every instance of a class, set a breakpoint on a single slot,
+swap one object's identity for another's, and re-enter a stack frame with edited
+arguments.
+
+*Long answer:* the sections below. The last third is the part that matters for this
+project — which of those powers are actually reachable from a frozen SBCL core
+running as PID 1, measured rather than guessed.
+
+STATUS: *five of them now ship.* §5 was written as a costing exercise and then built:
+the function/closure inspector (§5.5), evaluate-in-the-object's-context (§5.3),
+allInstances (§5.1) and the GC retention path (§5.2) are in the image as of
+2026-09-20. §6 records what building them actually cost and the four things that were
+wrong in the estimate. §5.4 (settable frame locals) is still owed.
+
+* 1. Why the viewer is the degenerate form
+
+The modern reading is that an inspector is a *window that displays an object*. That
+is backwards, and the history makes it obvious why.
+
+On the systems below, there was no "inspector" in the sense of a component you could
+point at. There was a *self-describing image* — every object carried its type, every
+type knew how to print itself, and printing did not throw away the object — plus a
+/uniform protocol/ for asking an object what it was made of. The window was simply
+where that protocol became visible and clickable. Everything else on this list falls
+out of that: if the image can describe itself to you, it can also let you change
+what it just described.
+
+So the interesting question is not "what did their inspector window have that ours
+lacks". It is *what did their image let them ask*, and the answer is: nearly
+anything, because the image and the tools were made of the same stuff.
+
+* 2. The lineage
+
+** 2.1 Interlisp and Interlisp-D (BBN/Xerox PARC, ~1974 onward)
+
+Interlisp's contribution was not the display, it was the *Programmer's Assistant*
+(Warren Teitelman). The system kept a *History List* of everything you had done,
+including side effects, and =UNDO= retracted them. Because the inspector's edits went
+through the same machinery, *an inspector write was undoable*. An inspector that
+mutates the heap without an undo is, strictly, weaker than 1974.
+
+Interlisp-D's Inspector (on the Xerox 1100 series, "D-machines", and its surviving
+descendant Medley) was a window of name/value rows where clicking a value and typing
+replaced it in the live heap immediately.
+
+The deeper Interlisp fact is that *programs were stored as list structure, not text*.
+=EDITF= was a /structure editor/: you edited the actual conses that were the function.
+"Inspecting a function" and "editing a function" were the same act, because there was
+no file in between. That is the maximum form of the idea, and it is the one thing on
+this page we deliberately do not want — see §8.
+
+** 2.2 The Lisp Machines — MIT CADR, LMI, TI Explorer, Symbolics Genera
+
+This is the high-water mark, and most of §3's catalogue is from here.
+
+Two structural facts made it possible:
+
+1. *The locative.* A first-class datatype that is a /pointer to a cell/ — not to a
+   value, but to the storage location holding it. =(locf (aref a 3))= handed you the
+   cell of an array element; you could pass it around and =setf= through it later.
+   The inspector displayed *cells*, so typing into a row stored into memory. The
+   whole notion "the inspector shows places, not values" was a hardware-supported
+   datatype rather than a design choice.
+
+2. *Presentation types* (Dynamic Windows, later CLIM — §2.4). Output carried the
+   object it came from. Any object printed /anywhere/ — in a directory listing, a
+   backtrace, an error message — stayed a live handle, and right-clicking it offered
+   the operations applicable to its type.
+
+Together these mean there was no dead text on the screen and no read-only view of
+anything. §3 is mostly a list of consequences.
+
+Genera also inspected things that are not "data" in the modern sense: a *process*
+(arrest it, inspect its stack), a *window*, a *stream*, a *flavor* (the pre-CLOS
+object system — inspect it and see its component flavors and the resulting method
+combination order), and a *stack frame* (§3.9).
+
+** 2.3 Smalltalk-80, in parallel
+
+Developed alongside at PARC, and the direct model for this project's browser. The
+Smalltalk inspector's distinguishing feature is a *code pane with =self= bound to the
+inspected object* — you type an expression, it evaluates in the object's context, and
+it can change the object. Squeak and Pharo carry the whole set forward:
+=allInstances=, =pointersTo:=, "chase pointers", =become:=, and the Morphic halo.
+
+§5.3 below is this power, ported.
+
+** 2.4 CLIM — the idea standardised
+
+The Common Lisp Interface Manager took Genera's Dynamic Windows and made it portable.
+Its two central concepts:
+
+- a *presentation type* — output is tagged with the object and the type it was
+  presented as;
+- a *presentation translator* — a rule saying "when a command wants an X and the user
+  clicks a presentation of type Y, here is how to get from Y to X", which is what
+  produced the context menu on any displayed object.
+
+Our =(present subject)= → drillable items and =(commands-for subject)= → applicable
+commands is very nearly that pair, arrived at independently. Worth knowing: when the
+browser design needs a new idea, CLIM's manual is a catalogue of ones that were tried
+against real users for a decade.
+
+** 2.5 SLIME — what survived into the CL mainstream
+
+SLIME's inspector is the living remnant and still does more than "view": its output
+embeds *action buttons* (=setf= a slot, make a slot unbound, clear a hash table),
+=M-RET= copies the inspected object into the REPL as a value you can compute with, and
+it navigates with a history. =sldb= keeps §3.9 alive: inspect a frame's locals,
+=return-from-frame=, and =restart-frame= (re-enter the frame — after recompiling the
+function, if you like).
+
+The important structural point for us: SLIME does all this *over a socket, against a
+remote image*. We already have that transport ([[file:../initramfs/net.lisp][net.lisp]], the REPL on :4005).
+
+* 3. The powers, catalogued
+
+Each row is expanded below. "Reachable here" is answered honestly in §5 — for the
+green ones it is /measured/, not estimated.
+
+| # | Power                                   | Where it came from      | Reachable in our image?          |
+|---+-----------------------------------------+-------------------------+----------------------------------|
+| 1 | Write a slot (places, not values)       | Interlisp-D, locatives  | *already shipped*                |
+| 2 | Undo the write                          | Interlisp Assistant     | possible; not designed yet       |
+| 3 | Eval arbitrary code in the object       | Smalltalk               | *SHIPPED* — §5.3                 |
+| 4 | Who points at this object?              | Smalltalk, Lisp Machine | subsumed by #5 — §5.2            |
+| 5 | Why is this still alive? (GC path)      | (modern SBCL)           | *SHIPPED* — §5.2                 |
+| 6 | Every instance of a class               | Smalltalk =allInstances=  | *SHIPPED* — §5.1                 |
+| 7 | The representation underneath           | Genera areas/storage    | possible (=room=, widetags)        |
+| 8 | Behaviour, not just state               | Genera flavor inspector | *already shipped*                |
+| 9 | Stack frames as objects (set a local)   | Genera, =sldb=            | still owed — §5.4                |
+|10 | Watchpoint on one cell                  | Genera =Monitor Variable= | hard; a shim is possible — §8    |
+|11 | Identity surgery (=become:=)              | Smalltalk, forwarding   | no — §8                          |
+|12 | Every printed object is a handle        | Dynamic Windows / CLIM  | *already shipped* (=present=)      |
+|13 | Inspect a remote image                  | SLIME, Genera           | transport exists, unwired        |
+|14 | A function/closure as a record          | Lisp Machine, Smalltalk | *SHIPPED* — §5.5                 |
+
+** 3.1 Write, not read — the place rather than the value
+
+Covered in §2.2. The point worth restating: a /value/ has no identity as a location.
+You cannot write to "the string the object happens to hold", only to the *cell* that
+holds it. An inspector that intends to edit therefore has to carry the cell along.
+
+We already do this, and the argument is written out in [[file:../initramfs/model.lisp::defun inspect-places][model.lisp's =inspect-places=]],
+which returns =(:label L :value V :set FN)= — and =FN=, a closure over the place, *is* a
+locative. A Lisp Machine got it from the hardware; we synthesise it from a closure.
+
+** 3.2 Undo
+
+Interlisp's History List (§2.1). Note that this is not a small feature bolted on: it
+requires every mutating operation to record its inverse. We have half of it already —
+the *change set* (menu =c=) records the previous text of every definition Accepted this
+session, which is undo for /code/. Undo for /data/ would be the same idea one level down:
+=inspect-places= already hands us the old value and the setter, so the inverse of a
+field write is mechanically derivable. Nobody has designed the UI for it.
+
+** 3.3 Evaluate arbitrary code in the object's context
+
+Smalltalk's =self=-bound code pane. This is §5.3 — the recommended next step, and the
+one with the best ratio of power to lines.
+
+** 3.4 Who points at this object?
+
+A *backwards* pointer query, which no ordinary language runtime can answer: given an
+object, scan the heap for everything whose slots contain it. Smalltalk exposes it as
+=pointersTo:= / "chase pointers".
+
+It is the object-level analogue of [[file:../initramfs/registry.lisp][registry.lisp]]'s =senders=, which answers the same
+shape of question about /source text/. Getting both is a pleasing symmetry: "who
+mentions this name" and "who holds this object".
+
+The honest caveat is in §5.2 — doing it by hand runs into a real SBCL constraint, and
+the better answer turns out to be power #5.
+
+** 3.5 Why is this still alive?
+
+Not "who points at it" but "what is the chain from a *GC root* to it" — a root being
+something the collector treats as definitionally live (a global, a stack slot, the
+static space of the image). This answers the actual debugging question, which is
+never "who references this" but "why has this not been collected".
+
+This is the one power on the list that is *stronger in modern SBCL than it was on a
+Lisp Machine*, and it is already in our core. §5.2.
+
+** 3.6 Every instance of a class
+
+Smalltalk's =allInstances=. CLOS has no such operator — the MOP can tell you everything
+about a class except who its instances are, because instances are not registered
+anywhere. But a *heap walk* can: iterate every allocated object and test its type.
+§5.1.
+
+** 3.7 The representation underneath
+
+Genera would show an object's *area* (a named region of the heap), its address, its
+storage type, and its size in words, and let you inspect raw memory as a typed array.
+SBCL's =room.lisp= is the surviving culture: a *widetag* is the byte in an object's
+header that says what kind of object it is, and =sb-vm:map-allocated-objects= hands it
+to you for every object in a space.
+
+This is worth having for didactic reasons above all — an inspector that cannot show
+you a widetag cannot explain a bug that lives in the representation.
+
+** 3.8 Behaviour, not just state
+
+Inspect a /function/ and get its disassembly and its source; inspect a /flavor/ and get
+its component flavors and its method-combination order.
+
+We have this, and it is the best-developed part of the browser: the dispatch matrix,
+the effective-method onion, Senders/Implementors, and the module index. The browser
+has always been stronger on behaviour than on state, which is exactly why §5's
+suggestions are all on the state side.
+
+** 3.9 Stack frames as objects — the big one
+
+In the Genera debugger a frame was an object like any other. You could inspect it,
+read its locals, *set* a local, *return a value from the frame* to its caller, or
+*restart the frame* — re-enter it with (possibly edited) arguments, against a
+(possibly just-recompiled) function.
+
+That last one changes what a debugger /is/. You do not restart the program; you fix the
+function, restart the frame, and the computation continues as though it had never
+been wrong. SLIME kept =restart-frame= and =return-from-frame= alive in the CL world.
+
+Our framebuffer debugger ([[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][=run-debugger-fb=]]) already walks frames with =sb-di= and
+shows their locals. Making a local /settable/ is §5.4.
+
+** 3.10 A watchpoint on one cell
+
+Genera's =Monitor Variable= put a trap on a single location, using a pointer type the
+microcode checked on every reference, so any read or write to that cell broke into
+the debugger. A breakpoint on a slot, set from the inspector.
+
+We have no microcode. A shim is possible for =standard-object= only — §8.
+
+** 3.11 Identity surgery
+
+Smalltalk's =become:= swaps two objects' identities across every reference in the image
+at once; the Lisp Machine equivalent was a *forwarding pointer* left in the old
+object's header. It is how you migrate every live instance after changing a class.
+
+CLOS solved the same problem more narrowly and more safely with
+=update-instance-for-redefined-class=. We get that for free and should not want more.
+
+** 3.12 Every printed object is a handle
+
+§2.4. Already ours, via [[file:../initramfs/present.lisp][present.lisp]] — and specifically via the =T= fallback method,
+whose whole job is that *nothing is ever a dead end*: any value that reaches the
+browser gets an inspector view, so drilling never stops at a wall of text.
+
+** 3.13 Remote and persistent
+
+SLIME inspects objects in another image over a socket. Genera's =Save World= meant an
+inspected, edited heap persisted to disk.
+
+We have the socket ([[file:../initramfs/net.lisp][net.lisp]], :4005) and not the persistence — the same wall the
+file-out work hit, since our rootfs is tmpfs. Recorded in [[file:code-browser.org][code-browser.org]].
+
+* 4. Where our inspector already stands
+
+Against the catalogue, honestly: we have *#1, #8 and #12* — places rather than values,
+behaviour as well as state, and everything-is-a-handle. Those are the three
+structural ones, and having them is why the rest are cheap: the protocol to hang a
+new power off already exists, so each addition below is "a function in [[file:../initramfs/model.lisp][model.lisp]], a
+row in [[file:../initramfs/present.lisp][present.lisp]], a gesture in [[file:../poc/shell.lisp][shell.lisp]]" and nothing more.
+
+What we have on the state side is thin: fields, drillable, one of them settable at a
+time. That is 1974's Interlisp-D and not much past it.
+
+* 5. The powers — measured first, then built
+
+Everything in this section was *prototyped and run against our own =./sbcl= (2.6.8)*
+before being written down, and has since been *implemented*. The measured numbers are
+from the host; guest numbers will differ and are called out where they matter.
+
+Each subsection ends with a *Shipped:* line naming the functions, so this doc stays a
+map of the code rather than a memory of a plan. §6 has the cost and the corrections.
+
+First, the constraint that shapes all of it: *a saved SBCL image is a frozen heap*, so
+anything used here must already be in the core, not a contrib. Checked:
+
+| Entry point                      | Package status | Defined in                                        |
+|----------------------------------+----------------+---------------------------------------------------|
+| =sb-ext:search-roots=              | EXTERNAL       | [[file:../sbcl/src/code/traceroot.lisp::defun search-roots][=sbcl/src/code/traceroot.lisp=]]                    |
+| =sb-vm:map-allocated-objects=      | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun map-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
+| =sb-vm:list-allocated-objects=     | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun list-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
+| =(setf sb-di:debug-var-value)=     | =fboundp= ⇒ T    | =sb-di= (already used by our debugger)              |
+| =sb-ext:make-weak-pointer=         | EXTERNAL       | core                                              |
+
+All in the plain core. None is a contrib, so none runs into the rule from
+[[file:processes.org][processes.org]] §6 about inline entry points that cannot be recompiled in the guest.
+
+** 5.1 Every instance of a class (#6)
+
+The naive version walks the heap and pushes matches into a list. *Do not do that* —
+=room.lisp='s own source comment is explicit:
+
+#+BEGIN_QUOTE
+If the user-supplied TEST function conses at all, then the result is still very
+arbitrary — including possible duplication of objects if we visit something and then
+see it again after GC transports it higher.
+#+END_QUOTE
+
+So the callback must not allocate. =list-allocated-objects= is the entry point that
+handles this correctly (it makes two passes: count, then fill a preallocated vector),
+and =:test= must be a non-consing predicate. =typep= against a class is one.
+
+#+BEGIN_SRC lisp
+(defun all-instances (class)
+  "Every live instance of CLASS in dynamic space."
+  (let* ((c (if (symbolp class) (find-class class) class))
+         (proto (ignore-errors (sb-mop:class-prototype c))))
+    (remove proto (sb-vm:list-allocated-objects
+                   :dynamic :test (lambda (x) (typep x c))))))
+#+END_SRC
+
+*The prototype filter is not optional*, and finding out why was the first thing the
+prototype taught. Without it, the first version died with:
+
+: The slot COMMON-LISP-USER::NAME is unbound in the object #<SHIP {1201313853}>
+
+That =SHIP= is PCL's *class prototype* — an instance the object system makes for its
+own use (it is what =sb-mop:class-prototype= returns, and it is how the MOP answers
+questions that need /an/ instance without having one). It is a live instance of the
+class by every test, and its slots are unbound. A heap walk finds it, and any code
+that assumes "all instances of SHIP have a name" then breaks on a ghost.
+
+*Measured:* a full walk of dynamic space took *0.09 s* on the host with ~281,000 conses
+live. Worth re-measuring in the guest before putting it behind a keystroke — our image
+is smaller, but a QEMU guest is slower, and anything over ~0.3 s wants a
+"working…" status line.
+
+*Shipped:* [[file:../initramfs/model.lisp::defun all-instances][=all-instances=]] in model.lisp, =subj-instances= + its =present= method in
+[[file:../initramfs/present.lisp][present.lisp]], reached from the class view's *live instances* row. The class-prototype
+filter is in the function, with the reason in its docstring.
+
+** 5.2 Why is this still alive? (#5, and the honest version of #4)
+
+The hand-rolled "who points at this" (#4) runs straight into §5.1's constraint: to
+test whether an object's slots contain the target you must ask for its slots, and
+=sb-mop:class-slots= conses. Doing it safely means descending to =sb-kernel:%instance-ref=
+over raw instance storage, which is unsafe in the presence of /raw slots/ (unboxed
+structure slots, where a word is a double-float and not a pointer at all).
+
+The better answer is to stop hand-rolling it. =search-roots= asks *the garbage
+collector*, which already knows the object graph, and answers the sharper question:
+not "who points here" but "what is the chain from a root".
+
+A *weak pointer* is required as the argument — a reference the collector is allowed to
+ignore, so that asking the question cannot itself be the reason the object is alive.
+That detail is the whole reason the API is shaped this way.
+
+Run against a two-element list bound to a global:
+
+#+BEGIN_SRC lisp
+(let ((wp (sb-ext:make-weak-pointer (second *fleet*))))
+  (sb-ext:search-roots wp :criterion :oldest :print :verbose))
+#+END_SRC
+
+: Path to #<SHIP {1200F64FF3}>:
+:  6       120046160F [ 262] a (COMMON-LISP:SIMPLE-VECTOR 437)
+:  0         5013809F [   2] COMMON-LISP-USER::*FLEET*
+:  0       1200F97E47 [   1] a cons = (#<SHIP {1200F64E03}> #<SHIP {1200F64FF3}>)
+:  0       1200F97E57 [   0] a cons = (#<SHIP {1200F64FF3}>)
+
+Read bottom-up that is: the ship is in a cons, which is in a cons, which is the value
+of =*FLEET*=, which lives in a symbol vector that is a root. *That is a browser trail
+already* — and the last hop is the direct referrer, so this subsumes most of what #4
+was wanted for.
+
+Better still for our purposes, =:print nil= *returns the paths as data* rather than
+printing them: a list of =(object . index)= pairs whose =car= is the live object. So each
+node of the path is directly drillable — the view writes itself.
+
+=:criterion= picks how rooty a root must be: =:oldest= (easiest to satisfy),
+=:pseudo-static=, or =:static= (only a truly image-backed object counts) — the last being
+the one to use for asking why something survived into the saved core, which is a
+question this project has a specific reason to care about.
+
+*Shipped:* [[file:../initramfs/model.lisp::defun retention-path][=retention-path=]] in model.lisp normalises the three hop shapes (=:STATIC=, a
+thread-stack marker, and the ordinary =(HOLDER . SLOT)=) into plists; =subj-retention=
+presents them, and *Why is this alive?* is on every object's =commands-for=. Every hop
+carries its holder, so the answer is itself drillable.
+
+*One honest limit, discovered in testing and visible in the code:* the browser is
+holding the subject while you ask, so =search-roots= may legitimately answer "a thread
+stack" — meaning our own frames. That hop is labelled as such rather than dressed up
+as a data structure. It is a true answer to the question asked; it is just not always
+the interesting one.
+
+** 5.3 Evaluate in the object's context (#3) — the recommended one
+
+This is Smalltalk's =self=-bound code pane, and it is the single best addition on the
+page, because it converts the inspector from a fixed set of affordances into an open
+one. Anything you have not built a button for, you can type.
+
+The CLOS-idiomatic version goes past Smalltalk: bind =self= *and* every slot name as a
+place, via =with-slots=. Then =(list name hp)= reads slots and =(incf hp 100)= writes one,
+with no accessors required and no =slot-value= boilerplate.
+
+#+BEGIN_SRC lisp
+(defun eval-in-context (obj text)
+  "READ TEXT in the object's home package and EVAL it with SELF bound to OBJ and
+   every slot name bound as a place."
+  (let* ((names (ignore-errors
+                  (mapcar #'sb-mop:slot-definition-name
+                          (sb-mop:class-slots (class-of obj)))))
+         (*package* (or (ignore-errors
+                          (symbol-package (class-name (class-of obj))))
+                        *package*))
+         (form (read-from-string text))
+         (self (intern "SELF" *package*)))
+    ;; The object is bound as a PARAMETER, never spliced into the form as a
+    ;; literal — see the gotcha below.
+    (funcall (eval (if names
+                       `(lambda (,self) (declare (ignorable ,self))
+                          (with-slots ,names ,self ,form))
+                       `(lambda (,self) (declare (ignorable ,self)) ,form)))
+             obj)))
+#+END_SRC
+
+*Measured behaviour*, all four cases run:
+
+| Typed                     | Object            | Result                                  |
+|---------------------------+-------------------+-----------------------------------------|
+| =(list name hp)=            | a =standard-object= | =("Nostromo" 3)= — slots read by bare name|
+| =(incf hp 100)=             | a =standard-object= | =103=, and the slot really is 103         |
+| =(class-of self)=           | a =standard-object= | =#<STANDARD-CLASS SHIP>=                  |
+| =(+ x y)= / =(setf x 41)=     | a =structure-object=| =3= / the struct becomes =#S(POINT :X 41 …)= |
+| =(length self)=             | a =cons=            | =3= — no slots, so =self= alone            |
+| =(hash-table-count self)=   | a =hash-table=      | =0=                                       |
+
+Two things that had to be checked rather than assumed, and both held: =with-slots=
+works on a =structure-object= under SBCL, and objects with no slots at all degrade
+cleanly to a bare =self= binding instead of erroring.
+
+*Two gotchas the prototype found*, both worth keeping in the eventual comments:
+
+1. *Never splice the object into the form as a literal.* The obvious
+   ``(let ((self ,obj)) …)`` breaks the moment the object is a list: the form becomes
+   =(let ((self (1 2 3))) …)=, and =(1 2 3)= reads as a function call —
+   =SIMPLE-PROGRAM-ERROR: illegal function call=. Binding it as a lambda parameter and
+   =funcall=​ing avoids the question entirely.
+2. *=*package*= must be bound for the READ, not just the EVAL.* Slot names are symbols
+   in some package; if the user types =hp= while =*package*= is =CL-USER= and the class
+   lives in =LOL.SHELL=, they get a different symbol and =with-slots= never matches it.
+   Binding =*package*= to the class name's home package makes bare slot names work,
+   which is the entire ergonomic point.
+
+*Where it goes, and why it is genuinely cheap:* almost all of it already exists.
+
+- [[file:../poc/shell.lisp::defvar *value-prompt*][=*value-prompt*=]] — the one-line modal input hook — is already implemented on both
+  backends ([[file:../initramfs/fb-browser.lisp::defun fb-prompt-value][=fb-prompt-value=]] in the guest).
+- [[file:../poc/shell.lisp::defun ws-eval][=ws-eval=]] already evaluates a form with output captured to a string and every
+  =serious-condition= trapped — because a bad form must not take down PID 1.
+- [[file:../poc/shell.lisp::defun set-field][=set-field=]] is already the exact shape of the new command: prompt → read → eval →
+  apply → *re-present the object* (rebuild the view rather than patch the row, so the
+  change shows up honestly).
+
+*Shipped:* [[file:../initramfs/model.lisp::defun eval-in-context][=eval-in-context=]] in model.lisp; the gesture is
+[[file:../poc/shell.lisp::defun eval-in-context-pane][=eval-in-context-pane=]] on *C-c C-e*, available on every inspector pane and advertised
+by =commands-for= for every object. It re-presents the pane afterwards for the same
+reason =set-field= does: the typed form may well have mutated the object — =(incf hp 100)=
+is the point, not an edge case — so the view has to be read back rather than patched.
+
+The result goes to the status line (Do it), not the trail: the Workspace already
+answers the Print-it/Inspect-it question three ways, and the inspector reuses that
+vocabulary rather than inventing a fourth. Applying a *function* is the exception and
+pushes its result onto the trail — see §5.5.
+
+** 5.4 Set a local in a debugger frame (#9, partial)
+
+=(setf sb-di:debug-var-value)= is =fboundp= in our core — checked. The debugger already
+walks frames and renders their locals, and =fb-prompt-value= already reads an
+expression modally over the debugger.
+
+The gap is plumbing: the locals list currently carries names and printed values, and
+would need to carry the =debug-var= and its frame so the setter has something to write
+through. That is the same "places, not values" change [[file:../initramfs/model.lisp::defun inspect-places][=inspect-places=]] already made
+once, applied to a second data source.
+
+Riskier than §5.1–5.3 because =sb-di= is fiddly — variables can be =:invalid= in a frame
+depending on where the PC is, and optimised-away locals simply are not there. The
+honest version of this feature shows a local as settable only when
+=sb-di:debug-var-validity= says it is valid at the current location.
+
+Note that *=return-from-frame= and =restart-frame= are a different order of work* and are
+not claimed here — they need the frame's continuation, not just its variables.
+
+*Not shipped.* This is the one of the four still owed, and the only one whose estimate
+was never tested against an implementation.
+
+** 5.5 A function is not a leaf (#14)
+
+This one was not in the original catalogue, which is itself the point: it took asking
+"what would inspecting a =lambda= even show?" to notice that the browser treated every
+function as a dead end. A function matched no clause of =INSPECT-PLACES=, fell to the
+=T= fallback, and produced two inert rows — =:value #<FUNCTION FOO>= and =:type FUNCTION=.
+
+In a Lisp that is plainly the wrong answer, because *a closure is a record whose
+fields are the variables it closed over*. Opening one should show them.
+
+*The detail that makes it fit our existing thesis exactly:* SBCL boxes a captured
+variable in a =VALUE-CELL= only when something *assigns* to it. A capture that is merely
+read is stored inline in the closure, and =(SETF SB-KERNEL:%CLOSURE-INDEX-REF)= does not
+exist. So *some captures are places and some are not* — which is the one thing the
+=(:label :value :set)= plist can express and a uniformly-settable design could not.
+
+Measured, on =(lambda (start step) (lambda (&optional (bump 1)) (incf start (* step bump)) start))=:
+
+| slot      | variable | boxed?     | settable |
+|-----------+----------+------------+----------|
+| capture 0 | =start=    | value-cell | *yes*    |
+| capture 1 | =step=     | inline     | no       |
+
+=start= is =INCF='d and =step= is only read, and the compiler's decision is visible in the
+inspector. Writing 900 into capture 0 and calling the closure returned 902: the state
+of a live abstraction, edited from a list row. That is the Lisp Machine's locative move
+(§3.1) applied to the object type most tooling shows nothing for at all.
+
+*Why the capture rows are labelled by POSITION and not by name.* SBCL's debug info does
+know the names — =SB-DI:DO-DEBUG-FUN-VARS= yields them — and the first implementation
+used them. It was wrong. The debug vars come back *sorted alphabetically*, not in
+capture order, and the function's own parameters are mixed in:
+
+| closure                    | capture order          | debug vars as iterated |
+|----------------------------+------------------------+------------------------|
+| =(rev zebra alpha)=          | =ZEBRA=, =ALPHA=           | =ALPHA=, =ZEBRA=           |
+| =(rev3 zulu yankee xray)=    | =ZULU=, =YANKEE=, =XRAY=     | =XRAY=, =YANKEE=, =ZULU=     |
+| =(revw zebra alpha)= (1 set) | =ZEBRA=, =ALPHA=           | =ALPHA=, =N=, =ZEBRA=        |
+
+Ordering the debug vars by their storage offset instead recovers capture order for the
+first two — and breaks on the third, because a boxed capture lands in a different
+storage class and a parameter sorts in among them. There is no honest mapping short of
+decoding SBCL's storage-class encoding, so *we do not guess*. The row says which slot
+it is; =:closes-over= reports the names as an explicitly unordered set. Naming a capture
+wrongly would be worse than not naming it, because the browser would offer to let you
+edit =step= and silently change =start=.
+
+*=:closes-over= carries three guards*, each of which earned its place within a minute of
+the first render:
+
+- *The function must actually be a closure.* A plain =DEFUN= has debug vars too — they
+  are its locals. =DRAW-ALIEN= reported closing over =(A BPP DST FB RGBA …)= before this
+  guard existed, which is simply false.
+- *Uninterned symbols are dropped.* =&key= defaulting introduces gensyms such as
+  =#:.DEFAULTING-TEMP.=, which are never variables anybody wrote.
+- *The count must match the number of capture slots*, or we return =NIL=. Debug vars
+  include the inner lambda's own locals and there is no way to tell which are captures.
+
+*The doors.* =FUNCTION-SOURCE-NAME= is what stops the drill dead-ending: SBCL records an
+anonymous closure's birthplace as =(LAMBDA (…) :IN MAKE-COUNTER)=, so the enclosing
+=DEFUN= is recoverable and the registry has its text. A closure you reached by drilling
+therefore offers *source* and *senders*, and =M-.= and =C-c C-c= work on it — not just on
+a name you typed. When the =:IN= component is a *string* (a top-level lambda, named after
+its file) there is no symbol to look up, and the view correctly offers no source door
+rather than a broken one.
+
+*One leak found only by looking at the pixels.* SBCL names a top-level anonymous lambda
+after the file it was compiled from, *with the absolute path of the build machine*, so
+the title read =function (lambda (name) in /home/everton/lisp-over-linux/initramfs/stage.lisp)=.
+The repo is deliberately relocatable — =build.sh= derives its own location and the cpio
+paths are relative, a stated goal in [[file:../README.org][README.org]] — and the UI should not be the one place
+that is not. =ABBREVIATE-FUN-NAME= shortens it to =initramfs/stage.lisp=, the same
+=directory/name= key the module index uses, for *display only*: drilling the row still
+opens the true name.
+
+*Shipped:* =value-cell-p=, [[file:../initramfs/model.lisp::defun closure-captures][=closure-captures=]], =function-closes-over=, =function-source-name=,
+=abbreviate-fun-name= and =function-places= in model.lisp, plus the =FUNCTION= clause of
+=inspect-places=; [[file:../initramfs/present.lisp::defmethod present ((f function))][=present ((f function))=]] and =subj-disassembly= in present.lisp; and
+=apply-function= / [[file:../poc/shell.lisp::defun apply-function-pane][=apply-function-pane=]] on *C-c C-a*, which calls the closure with
+arguments you type and opens the result. =render-frame.lisp= gained a =function:NAME=
+subject so the view can be checked without booting.
+
+A worked example ships *in the Workspace itself* — a =COMPILE= of a maker whose body is
+a lambda, with instructions to inspect it and read the settable/not-settable split off
+the screen. It is the last section of the Workspace primer in [[file:../initramfs/present.lisp][present.lisp]]; press =p=
+at the supervisor menu, page to the end, put point after the form and =C-c C-i=.
+
+* 6. What it cost, and where the estimate was wrong
+
+The estimate in this doc's first version was ~210 lines across four powers. The four
+that shipped came to *608 insertions across 7 files* including this doc, of which the
+code is about 390 lines in three files — roughly twice the estimate, and the overrun is
+entirely the function inspector (§5.5), which the estimate did not contain at all
+because nobody had asked the question yet.
+
+| Power                       | Where it landed                                     | Verdict          |
+|-----------------------------+-----------------------------------------------------+------------------|
+| §5.3 eval in context        | model =eval-in-context=, shell =eval-in-context-pane=    | as estimated     |
+| §5.1 all instances          | model =all-instances=, present =subj-instances=         | as estimated     |
+| §5.2 why is this alive      | model =retention-path=, present =subj-retention=        | as estimated     |
+| §5.5 functions/closures     | 6 model functions, a =present= method, =apply-function= | *not estimated*  |
+| §5.4 settable frame locals  | —                                                   | *not built*      |
+
+*Four things the estimate got wrong*, all of them found by running the code rather than
+by reading it, which is the entire argument for the "verify, don't assert" rule:
+
+1. *PCL's class prototype is a live instance with unbound slots* (§5.1). The first
+   =all-instances= died on it. Not filtering it would have shipped a ghost row into
+   every class's instance list.
+2. *A closure's capture names cannot be mapped to its slots* (§5.5). The first
+   implementation named them, plausibly and wrongly.
+3. *=search-roots= answers about our own stack* (§5.2). The browser holds the subject
+   while you ask, so the honest answer is sometimes "a thread stack" — which is true,
+   and had to be labelled rather than hidden.
+4. *The estimate assumed the hard part was the model.* It was not. Three of the four
+   model functions are under 20 lines. The work was in the guards, the labels and the
+   two rendering defects that only a pixel render showed: an =…= outside the console
+   font's 255-glyph range, and an absolute build path in a window title.
+
+Two constraints held throughout, both already load-bearing elsewhere in this project:
+
+- *Nothing may kill PID 1.* Every new eval path uses a =serious-condition= handler that
+  puts the error in the status line, not =ignore-errors= (which would swallow the
+  condition we might want to open the debugger on). Verified: a bad form, a cancelled
+  prompt and a non-function target each produce a status message and nothing worse.
+- *Verify visually without booting.* =sbcl --script poc/render-frame.lisp function:NAME=
+  renders the new view in about a second. Both cosmetic defects above were caught that
+  way, neither would have shown in a headless test, and no QEMU boot was needed.
+
+* 7. What we are deliberately not doing
+
+- *Watchpoints (#10)* — no microcode, so no cell-level trap. A shim is conceivable for
+  =standard-object= /only/: replace a slot's accessor generic function with one that
+  signals before delegating. This works precisely because CLOS accessors are generic
+  functions we can recompile in the image — but it catches only accesses that go
+  /through/ the accessor, missing every =slot-value= and every =with-slots=, which after
+  §5.3 would include the inspector's own. A watchpoint with silent holes is worse than
+  none.
+- *=become:= (#11)* — CLOS gives us =update-instance-for-redefined-class=, which solves the
+  real problem (migrating instances after a class change) without the identity surgery.
+- *Structure editing of code (§2.1)* — Interlisp edited the conses because there was no
+  text. We deliberately keep captured *source text* in [[file:../initramfs/registry.lisp][registry.lisp]] and Accept it with
+  =C-c C-c=, because the text is what carries comments and formatting, and this project
+  is didactic before it is clever.
+- *Undo of data writes (#2)* — wanted, mechanically straightforward given
+  =inspect-places=, blocked only on nobody having designed the gesture. Left open.
+
+* Change log
+
+- *2026-09-20* — created as a design doc, then *implemented in the same session*.
+  The catalogue (§3) is historical. §5's entries were each prototyped against =./sbcl=
+  2.6.8 and the measured results recorded as found — the PCL class-prototype trap
+  (§5.1), the two =eval-in-context= gotchas (§5.3), the unmappable capture names and the
+  absolute-path leak (§5.5), and =search-roots= answering about our own stack (§5.2).
+  §5.5 did not exist in the first draft: it came from asking what inspecting a =lambda=
+  should show, and became the largest part of the work. §6 replaced the cost *estimate*
+  with what it actually cost and four ways the estimate was wrong. Still owed: §5.4,
+  settable debugger frame locals. Unlike [[file:processes.org][processes.org]], this one changed the code.
