@@ -664,8 +664,16 @@ Workspace works — without invoking the compiler at all. The guest tests that e
 
   So the useful way to state the limit is *compile vs. accept*, not *compile vs. the
   Workspace*: =Do it= on a plain call is fine, because it never reaches the compiler;
-  =Accept= on arithmetic takes the machine down. (Independently reproduced in a parallel
-  session, which is also where the =accept-source= rows come from.)
+  =Accept= on arithmetic takes the machine down.
+
+  *Exactly how far that evidence reaches*, because the difference is the kind of thing
+  this doc exists to keep honest: those two rows were run in the guest against
+  =ACCEPT-SOURCE= itself, not against a =defun= that merely resembles what Accept does —
+  so "the function =C-c C-c= calls is affected" is measured, not inferred. What has *not*
+  been exercised is the last inch: driving the browser to a real definition and pressing
+  the actual chord. The few lines of [[file:../poc/shell.lisp][shell.lisp]] between the keystroke and =accept-source=
+  have been read and not run. Closing that inch is a guest *scene*, not a probe.
+  (Both rows independently reproduced in a parallel session.)
 - Anything built on runtime compilation — a future =Apply it= that builds a lambda, the
   agent work in [[file:agent.org][agent.org]] — inherits the same limit.
 - *The browser itself is unaffected*, which the same probe confirmed: inspecting a
@@ -740,6 +748,20 @@ Two constraints held throughout, both already load-bearing elsewhere in this pro
   is didactic before it is clever.
 - *Undo of data writes (#2)* — wanted, mechanically straightforward given
   =inspect-places=, blocked only on nobody having designed the gesture. Left open.
+
+* A note for whoever adds a screenshot here
+
+This doc embeds no images, and that is currently load-bearing. =refresh-screenshot.sh=
+rewrites the dated =media/screenshots/NAME-YYYY-MM-DD.png= links only in [[file:../README.org][README.org]] and
+[[file:code-browser.org][code-browser.org]] — the two files it names explicitly. A screenshot embedded *here* would
+not be rewritten by a refresh, so it would keep pointing at a dated file that the next
+refresh archives away, and the link would rot silently. That is the same trap the
+script's own comments describe for =code-browser.org=, which is why that file is handled;
+it has simply never been extended to this one.
+
+So: if you add an image to this doc, extend the script in the same turn. Do not rely on
+noticing later — a rotted image link is exactly the quiet, nothing-breaks drift the
+"Drift shapes to check first" section of =AGENTS.md= is about.
 
 * Change log
 
