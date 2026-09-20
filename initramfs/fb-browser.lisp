@@ -40,12 +40,31 @@
     (let ((n (%fbb-read fd (sb-alien:cast b (sb-alien:* sb-alien:unsigned-char)) 1)))
       (and (= n 1) (sb-alien:deref b 0)))))
 
+;; struct pollfd is { int fd; short events; short revents; } — 8 bytes, so slot N
+;; begins at N*8, events at +4, revents at +6. There is no poll(2) in sb-posix (we
+;; checked; see doc/processes.org), so unlike termios this array stays ours to lay
+;; out by hand — which makes it worth writing the one field that is easy to get
+;; wrong exactly once.
+;;
+;; FD is a FULL 32-bit int. Writing only its low byte is correct for as long as
+;; every descriptor is a single digit, and silently polls the WRONG descriptor the
+;; first time one is not — a socket in a busy image, say. That is what this did
+;; until 2026-09-20.
+(defmacro %put-pollfd (fds n fd)
+  "Write FD into pollfd slot N of FDS (a byte array) and ask for POLLIN."
+  (let ((base (gensym "BASE")) (v (gensym "FD")))
+    `(let ((,base (* ,n 8)) (,v ,fd))
+       (setf (sb-alien:deref ,fds (+ ,base 0)) (ldb (byte 8 0)  ,v)
+             (sb-alien:deref ,fds (+ ,base 1)) (ldb (byte 8 8)  ,v)
+             (sb-alien:deref ,fds (+ ,base 2)) (ldb (byte 8 16) ,v)
+             (sb-alien:deref ,fds (+ ,base 3)) (ldb (byte 8 24) ,v)
+             (sb-alien:deref ,fds (+ ,base 4)) +pollin+))))
+
 (defun fbb-ready-p (fd timeout-ms)
   "True if FD has input within TIMEOUT-MS (poll on one fd)."
   (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 8)))
     (dotimes (i 8) (setf (sb-alien:deref fds i) 0))
-    (setf (sb-alien:deref fds 0) (logand fd #xff)
-          (sb-alien:deref fds 4) +pollin+)
+    (%put-pollfd fds 0 fd)
     (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 1 timeout-ms)
     (logbitp 0 (sb-alien:deref fds 6))))
 
@@ -64,9 +83,7 @@
   (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 24)))
     (dotimes (i 24) (setf (sb-alien:deref fds i) 0))
     (flet ((set-pfd (n fd)
-             (when fd
-               (setf (sb-alien:deref fds (* n 8))       (logand fd #xff)
-                     (sb-alien:deref fds (+ (* n 8) 4)) +pollin+))))
+             (when fd (%put-pollfd fds n fd))))
       (set-pfd 0 kb-fd) (set-pfd 1 mouse-fd) (set-pfd 2 kev-fd)
       (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 3 timeout-ms)
       (values (logbitp 0 (sb-alien:deref fds 6))

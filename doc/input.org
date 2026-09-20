@@ -350,6 +350,20 @@ Three of those is a 24-byte array: =fd= at offset =n*8=, =events= at =n*8+4=,
 timeout =-1= (wait forever). The loop therefore *sleeps* until something actually
 happens, and the browser costs nothing when you are not touching it.
 
+Hand-laying-out a C struct is the price of there being no =poll= in =sb-posix= —
+checked, and there is none, nor =select= nor =epoll= ([[file:processes.org][processes.org]] §6). So this
+array stays ours, and it is worth writing the one field that is easy to get wrong
+exactly once, which is what =%put-pollfd= now does for both callers.
+
+*A bug this hid until 2026-09-20.* The =fd= field is a full 32-bit =int=, and we
+were writing only its low byte. That is correct for as long as every descriptor is
+a single digit — which, with a console and two evdev nodes, it always had been.
+Force a descriptor above 255 and it silently polls a *different* fd: with a pipe's
+read end at fd 300 and data waiting, the old code polled fd 44 (=300 & 0xff=) and
+got =POLLNVAL= back, reporting "nothing to read" while the real descriptor had
+data. It now writes all four bytes little-endian. This matters ahead of any fourth
+slot holding a *socket* rather than a device node — see [[file:processes.org][processes.org]] §2.
+
 A small robustness trick worth naming: an *absent* device (no mouse found) leaves
 its slot zeroed rather than shifting the array. A zeroed slot is =fd 0= with
 =events = 0=, which poll never reports ready — so the revents offsets stay put and
