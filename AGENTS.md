@@ -231,6 +231,14 @@ protocol in a tiled, keyboard-first shell. Progress:
 - Real UEFI has no VGA text mode → need `FB_EFI` + `FRAMEBUFFER_CONSOLE`, or the screen is blank.
 - PID 1 must never return, or the kernel panics.
 - A saved SBCL image is a **frozen heap**: install libraries *before* `save-lisp-and-die`, not at runtime. No Quicklisp/`require` at runtime (no contrib fasls, no network).
+- **Runtime compilation of GENERIC ARITHMETIC faults in the guest** (found 2026-09-20,
+  not fixed): compiling `(lambda (x) (* x 2))` — or any untyped `+ - * <  1+` — dies with
+  `Unhandled memory fault at #x1A`. Declare the types (`fixnum`, `double-float`) and it
+  compiles fine; `car`/`length`/closures compile fine; the same forms compile fine in a
+  frozen core on the *host*. So it is generic arithmetic's static-space call fixup, in
+  the guest only. **This breaks `C-c C-c` live editing for any definition doing untyped
+  arithmetic.** Nothing noticed before because the REPL evaluates plain calls through
+  SBCL's simple evaluator without the compiler. Full measurements: `doc/inspector-history.org` §5.6.
 - **Networking is ON** since tag #21: `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
   Older notes claiming `CONFIG_NET` is unset are stale — see `kernel-config.org`

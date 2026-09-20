@@ -25,6 +25,10 @@ allInstances (§5.1) and the GC retention path (§5.2) are in the image as of
 2026-09-20. §6 records what building them actually cost and the four things that were
 wrong in the estimate. §5.4 (settable frame locals) is still owed.
 
+§5.6 is a *separate and larger* finding the work turned up: *compiling generic
+arithmetic at runtime faults the guest*, which breaks =C-c C-c= live editing for most
+real definitions. Measured, not fixed.
+
 * 1. Why the viewer is the degenerate form
 
 The modern reading is that an inspector is a *window that displays an object*. That
@@ -588,6 +592,82 @@ A worked example ships *in the Workspace itself* — a =COMPILE= of a maker whos
 a lambda, with instructions to inspect it and read the settable/not-settable split off
 the screen. It is the last section of the Workspace primer in [[file:../initramfs/present.lisp][present.lisp]]; press =p=
 at the supervisor menu, page to the end, put point after the form and =C-c C-i=.
+
+** 5.6 The bug the example found: runtime arithmetic does not compile in the guest
+
+The Workspace example written for §5.5 was the obvious Lispy thing —
+
+#+BEGIN_SRC lisp
+(funcall (compile nil '(lambda (start step)
+                         (lambda (&optional (bump 1)) (incf start (* step bump)) start)))
+         10 2)
+#+END_SRC
+
+— and in the guest it takes the machine down: =Unhandled memory fault at #x1A=. It is
+*not* the inspector. It is the first thing this project has ever asked the guest to
+do that needs the compiler at runtime, and the compiler is broken there.
+
+*How it was cornered.* Everything below was measured in the real guest, booted headless
+with the net REPL forwarded, one form per probe. The model layer was eliminated first:
+in a frozen SBCL core on the HOST (built exactly as =build.sh= builds the image) the whole
+inspector path survives — =function-places=, =present=, =retention-path=, =disassemble=,
+=all-instances=. Then in the guest:
+
+| compiled form                              | result              |
+|--------------------------------------------+---------------------|
+| =(lambda () 1)=                              | compiles, and runs  |
+| =(lambda (a) (lambda () a))=                 | compiles, and runs  |
+| =(lambda (x) (car x))=                       | compiles            |
+| =(lambda (x) (length x))=                    | compiles            |
+| =(lambda (x) (+ x 1))=                       | *memory fault*      |
+| =(lambda (x) (* x 2))=                       | *memory fault*      |
+| =(lambda (x) (- x 1))=                       | *memory fault*      |
+| =(lambda (x y) (< x y))=                     | *memory fault*      |
+| =(lambda (x) (1+ x))=                        | *memory fault*      |
+| =(lambda (x) (declare (fixnum x)) (* x 2))=  | compiles            |
+| =(lambda (x) (declare (double-float x)) …)=  | compiles            |
+| =(eval '(defun zz (x) (* x 2)))=             | *memory fault*      |
+
+The line is sharp and it is not "the compiler": it is *generic arithmetic*. Declare the
+types and the compiler emits inline machine ops and is fine. Leave them undeclared and
+it must emit a call to SBCL's generic-arithmetic routines — =GENERIC-+=, =GENERIC-*= and
+friends, which on x86-64 are *static* functions reached at a fixed offset from static
+space — and emitting that call is what faults.
+
+=#x1A= is 26, which is the fixnum 13 with its tag on. Something is dereferencing a
+small integer as a pointer, which is the signature of an address computed from the
+wrong base. The working hypothesis is therefore that *static-space call fixups are
+wrong for code compiled at runtime in this image* — the fixups baked in at build time
+are fine (the whole image runs), and only newly emitted ones are not. Not yet proven;
+proving it means looking at where SBCL maps static space in the guest versus on the
+host, and whether =save-lisp-and-die :executable t= plus the guest's mapping leaves the
+runtime compiler computing from a stale base.
+
+*Why nobody had noticed.* Nothing in the image needed the compiler at runtime until
+now. The REPL evaluates most forms through SBCL's simple evaluator, which handles a
+plain function call — =(+ 1 1)= at the REPL returns 2, and =(subj-worker :self)= in the
+Workspace works — without invoking the compiler at all. The guest tests that exist
+([[file:../check-scroll.lisp][check-scroll.lisp]]) drive navigation and scrolling. So the gap was real and invisible.
+
+*What it costs us, which is more than one Workspace example:*
+
+- *=C-c C-c= live editing cannot recompile a definition that does untyped arithmetic.*
+  This is a headline Phase 4 feature ([[file:code-browser.org][code-browser.org]]) and most real definitions do
+  arithmetic somewhere. Accepting an edit to one will fault the guest.
+- Anything built on runtime compilation — a future =Apply it= that builds a lambda, the
+  agent work in [[file:agent.org][agent.org]] — inherits the same limit.
+- *The browser itself is unaffected*, which the same probe confirmed: inspecting a
+  closure in the guest returns its captures correctly
+  (=((:LABEL "capture 0" :VALUE 5 :SET NIL))=).
+
+*What was done about it here.* The specimens moved into the image:
+=lol.examples:make-counter= and =make-accumulator= in [[file:../initramfs/examples.lisp][examples.lisp]] are compiled at BUILD
+time, so the Workspace line is a plain CALL and works. The primer keeps the =compile=
+version in a comment, labelled with what it does and why, because the example is a good
+one and the bug is worth meeting deliberately rather than by accident.
+
+*Not fixed.* This is a kernel/image-level problem, not a browser one, and it wants its
+own session. It is the largest known limitation of the running system.
 
 * 6. What it cost, and where the estimate was wrong
 
