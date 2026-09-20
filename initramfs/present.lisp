@@ -104,6 +104,15 @@
 ;; presenting a SUBJ-CONDITION shows the control flow — the same "two readings,
 ;; disambiguated by which subject you hand to PRESENT" trick as symbol vs subj-defn.
 (defstruct (subj-condition (:constructor subj-condition (name))) name)
+;; The inspector POWERS (doc/inspector-history.org). Each is a QUESTION about an
+;; object rather than a part of it, so each gets its own subject — the same
+;; "two readings, disambiguated by which subject you hand to PRESENT" trick used
+;; above for symbol vs subj-defn. SUBJ-INSTANCES: every live instance of a class
+;; (Smalltalk's allInstances). SUBJ-RETENTION: the GC's answer to "why is this
+;; still alive". SUBJ-DISASSEMBLY: the machine code under a function.
+(defstruct (subj-instances   (:constructor subj-instances   (class-name))) class-name)
+(defstruct (subj-retention   (:constructor subj-retention   (object)))     object)
+(defstruct (subj-disassembly (:constructor subj-disassembly (function)))   function)
 
 (defun module-index ()
   "Alist of (CATEGORY . COUNT) over every recorded definition, keyed by the module
@@ -417,6 +426,14 @@
                                 :kind :condition :group "control flow"
                                 :disposition :new-trail
                                 :subject (subj-condition (class-name c)))))
+             ;; allInstances. CLOS has no operator for this — the MOP knows everything
+             ;; about a class except who its instances are, because nothing registers
+             ;; them. A heap walk is the only way to ask, so the door lives here.
+             (list (make-item :label "live instances"
+                              :detail "every instance of this class in the heap"
+                              :kind :class :group "control flow"
+                              :disposition :new-trail
+                              :subject (subj-instances (class-name c))))
              (mapcar (lambda (s) (make-item :label (string-downcase (princ-to-string s))
                                             :detail "superclass" :kind :class :group "superclasses"
                                             :subject (find-class s)))
@@ -764,7 +781,7 @@
 (defmethod present ((s subj-workspace))
   (make-view
    :title "workspace" :kind :workspace :subject s
-   :text ";; Workspace — a Lisp scratch buffer (not the REPL; this is the notebook).
+   :text ";; Workspace -- a Lisp scratch buffer (not the REPL; this is the notebook).
 ;;   C-x C-e   Do it       eval the form before point (result in the status line)
 ;;   C-c C-p   Print it    eval and weave the result inline, after the form
 ;;   C-c C-i   Inspect it   eval and open the value in the inspector
@@ -775,7 +792,7 @@
 (+ 1 2)
 
 ;; ---- a SECOND PROCESS drawing into this environment (doc/processes.org) ----
-;; No pixels cross between them. The child sends a VIEW — labels, kinds, names —
+;; No pixels cross between them. The child sends a VIEW -- labels, kinds, names --
 ;; and this image's own toolkit renders it, which is why a worker's rows tint,
 ;; scroll and drill exactly like native ones. Put point after a form and C-c C-i
 ;; (Inspect it) to open it as a pane you can drill; C-c C-p prints it inline.
@@ -783,13 +800,48 @@
 ;; Proof that it really is another process: compare this pid with the supervisor's.
 (subj-worker :self)
 
-;; The job that earns the boundary — every recorded definition's source read back
+;; The job that earns the boundary -- every recorded definition's source read back
 ;; and walked for signalling calls. CLOS cannot answer this; only source can. Each
 ;; row drills into that condition's real view.
 (subj-worker :signallers)
 
 ;; Same thing from the REPL, printed rather than opened:
 (show-worker :self)
+
+;; ---- a CLOSURE is a record, and its captures are its FIELDS ----------------
+;; Most tools show a function as a dead end. It is not one: a closure is a record
+;; whose fields are the variables it closed over. COMPILE a maker whose body is a
+;; lambda closing over two variables, call it, and look at what comes back.
+;;
+;; Put point after the form below and press C-c C-i (Inspect it). You get the
+;; function view, and in it:
+;;
+;;   identity      :name, :lambda-list, :documentation (that one IS settable)
+;;   captures      one row per closed-over variable, drillable like any value
+;;   doors         source / senders / disassembly / why is this alive?
+;;
+;; Look at the two capture rows. ONE OF THEM SAYS (settable) AND THE OTHER DOES
+;; NOT, and that is not arbitrary: SBCL boxes a captured variable in a VALUE-CELL
+;; exactly when the code ASSIGNS to it. START is INCF'd, so it lives in a cell and
+;; is a real place; STEP is only read, so it is stored inline and there is no cell
+;; to write through. The inspector shows PLACES, not values, and here you can see
+;; the difference the compiler made.
+;;
+;;   C-c C-c   on the settable capture -- type a number and the live closure's
+;;             state changes. Call it again afterwards and watch it count from there.
+;;   C-c C-a   Apply it... -- call the closure with arguments you type (try: 3).
+;;   C-c C-e   Evaluate in context... -- eval with SELF bound to the closure
+;;             (try: (funcall self 10)).
+;;
+;; The captures are labelled by POSITION, not by name, on purpose: SBCL's debug
+;; info lists variable names sorted alphabetically and mixed in with the inner
+;; lambda's own parameters, so there is no honest way to say which name belongs to
+;; which slot. :closes-over reports the names it can verify, as an unordered set.
+(funcall (compile nil '(lambda (start step)
+                         (lambda (&optional (bump 1))
+                           (incf start (* step bump))
+                           start)))
+         10 2)
 "))
 
 (defmethod present ((s subj-change-set))
@@ -816,6 +868,155 @@
                        :label "(nothing accepted yet)"
                        :detail "C-c C-c Accepts — an edit in a source pane, or a new definition in the Workspace"))))))
 
+(defun one-line (value)
+  "VALUE printed short and on ONE line, for a view's detail column. Newlines become
+   spaces because the console font draws an out-of-range character as a box, and a
+   captured source form is full of them — a row that reads `(LAMBDA (&KEY X)[]' is
+   worse than one that reads across. Truncation elsewhere in the browser uses `..',
+   ASCII, for the same reason: the kernel VT font covers 255 glyphs and no more."
+  (let ((*print-length* 6) (*print-level* 3))
+    (substitute #\Space #\Newline (format nil "~s" value))))
+
+;;; ---- functions: a closure is a record, and its captures are its fields ----
+;;; Without this a function is a dead end — two inert rows reading #<FUNCTION FOO>
+;;; and FUNCTION. That is the wrong answer in a Lisp: a closure is a record whose
+;;; fields are the variables it closed over, and half of those are writable (the
+;;; ones something assigns to live in a VALUE-CELL; see model.lisp's
+;;; CLOSURE-CAPTURES). Drilling a capture opens its value; C-c C-c on one edits the
+;;; state of a live abstraction, which is the Lisp Machine's locative move applied
+;;; to the object type most tooling shows nothing for at all.
+;;;
+;;; GENERIC-FUNCTION has its own, more specific method above, so it keeps the
+;;; dispatch-matrix view and never lands here.
+
+(defmethod present ((f function))
+  (let* ((places (inspect-places f))
+         (src-name (function-source-name f))
+         ;; the capture rows are exactly those whose label is a string ("capture N");
+         ;; the identity rows (:name, :lambda-list …) are keyword-labelled
+         (captures (remove-if-not (lambda (p) (stringp (getf p :label))) places))
+         (fields   (remove-if     (lambda (p) (stringp (getf p :label))) places)))
+    (make-view
+     :title (format nil "function ~(~a~)"
+                    (let ((*print-length* 4) (*print-level* 2))
+                      (princ-to-string
+                       (abbreviate-fun-name
+                        (or (ignore-errors (sb-kernel:%fun-name f)) f)))))
+     :kind :inspector :subject f
+     :items
+     (append
+      (mapcar (lambda (p)
+                (make-item :label (format nil "~s" (getf p :label))
+                           ;; :NAME is abbreviated for DISPLAY only — drilling the row
+                           ;; still opens the true name, path and all.
+                           :detail (one-line (if (eq (getf p :label) :name)
+                                                 (abbreviate-fun-name (getf p :value))
+                                                 (getf p :value)))
+                           :group "identity"
+                           :edit (getf p :set)
+                           :subject (getf p :value)))
+              fields)
+      ;; One row per closed-over variable. The DETAIL says whether it is a place,
+      ;; because "you may edit this one but not that one" is not guessable from the
+      ;; value — it depends on whether the ORIGINAL CODE ever assigned to it.
+      (mapcar (lambda (p)
+                (make-item :label (getf p :label)
+                           :detail (format nil "~a~a" (one-line (getf p :value))
+                                           (if (getf p :set) "   (settable)" ""))
+                           :kind :slot
+                           :group (if captures "captures (closed-over variables)" nil)
+                           :edit (getf p :set)
+                           :subject (getf p :value)))
+              captures)
+      ;; The doors out. SOURCE is the one that stops the drill dead-ending: an
+      ;; anonymous closure records its birthplace as (LAMBDA (…) :IN MAKE-COUNTER),
+      ;; so FUNCTION-SOURCE-NAME recovers the enclosing DEFUN and the registry has
+      ;; its text — which means M-. and C-c C-c work on a closure you found by
+      ;; drilling, not just on a name you typed.
+      (when src-name
+        (list (make-item :label "source" :detail (format nil "the definition of ~(~a~)" src-name)
+                         :kind :function :group "doors" :disposition :new-trail
+                         :subject (subj-defn src-name))
+              (make-item :label "senders" :detail (format nil "who calls ~(~a~)" src-name)
+                         :kind :function :group "doors" :disposition :new-trail
+                         :subject (subj-xref :senders src-name))))
+      (list (make-item :label "disassembly" :detail "the machine code under it"
+                       :group "doors" :disposition :new-trail
+                       :subject (subj-disassembly f))
+            (make-item :label "why is this alive?" :detail "the path from a GC root"
+                       :group "doors" :disposition :new-trail
+                       :subject (subj-retention f)))))))
+
+(defmethod commands-for ((f function))
+  (list (make-command :label "Apply it..." :key "C-c C-a" :surfaces '(:menu :halo :key)
+                      :target f)
+        (make-command :label "Evaluate in context..." :key "C-c C-e"
+                      :surfaces '(:menu :palette :key) :target f)
+        (make-command :label "Why is this alive?" :surfaces '(:menu)
+                      :target (subj-retention f))))
+
+;;; ---- the inspector's powers: instances, retention, disassembly -----------
+
+(defmethod present ((s subj-instances))
+  "Every live instance of a class — Smalltalk's allInstances, which CLOS cannot do
+   without a heap walk because instances are not registered anywhere."
+  (let* ((name (subj-instances-class-name s))
+         (found (all-instances name)))
+    (make-view
+     :title (format nil "instances of ~(~a~)" name)
+     :kind :list :subject s
+     :items (if found
+                (mapcar (lambda (o)
+                          (make-item :label (let ((*print-length* 4) (*print-level* 2))
+                                              (format nil "~s" o))
+                                     :detail "a live instance"
+                                     :kind :class
+                                     :subject o))
+                        found)
+                (list (make-item :label "(no live instances)"
+                                 :detail "nothing of this class is reachable in dynamic space"))))))
+
+(defmethod present ((s subj-retention))
+  "The chain from a GC root down to the object — the modern inspector's best power,
+   and the one SBCL does better than a Lisp Machine did. Every hop is itself drillable,
+   so 'why is this alive' lands you in the structure that is keeping it alive."
+  (let* ((obj (subj-retention-object s))
+         (hops (retention-path obj)))
+    (make-view
+     :title (let ((*print-length* 3) (*print-level* 2))
+              (format nil "why is ~s alive?" obj))
+     :kind :list :subject s
+     :items (if hops
+                (loop for hop in hops
+                      for i from 0
+                      collect (make-item
+                               :label (getf hop :label)
+                               :detail (if (getf hop :index)
+                                           (format nil "hop ~d — holds it in slot ~a"
+                                                   i (getf hop :index))
+                                           (format nil "hop ~d — a root" i))
+                               :group "from the root down"
+                               :subject (getf hop :object)))
+                (list (make-item :label "(no path found)"
+                                 :detail "unreachable, or the search was interrupted"))))))
+
+(defmethod present ((s subj-disassembly))
+  "The machine code under a function — Genera's 'show me the representation', which is
+   didactic here above all: an inspector that cannot show you the instructions cannot
+   explain a bug that lives in them. Rides the existing :reference text pane."
+  (let ((f (subj-disassembly-function s)))
+    (make-view
+     :title (format nil "disassembly of ~(~a~)"
+                    (let ((*print-length* 4) (*print-level* 2))
+                      (princ-to-string
+                       (abbreviate-fun-name
+                        (or (ignore-errors (sb-kernel:%fun-name f)) f)))))
+     :kind :reference :subject s
+     :text (or (ignore-errors
+                 (with-output-to-string (out)
+                   (let ((*standard-output* out)) (disassemble f))))
+               "(disassembly unavailable)"))))
+
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 
 (defmethod present ((x t))
@@ -833,7 +1034,15 @@
                             (inspect-places x))))
 
 (defmethod commands-for ((x t))
-  (list (make-command :label "Inspect" :key "C-c C-i" :surfaces '(:menu :halo) :target x)))
+  "What ANY object affords. `Evaluate in context' is the important one: it is the
+   Smalltalk inspector's code pane, and it turns this fixed list into an open one —
+   anything we did not build a command for, you can type. See model.lisp's
+   EVAL-IN-CONTEXT and doc/inspector-history.org."
+  (list (make-command :label "Inspect" :key "C-c C-i" :surfaces '(:menu :halo) :target x)
+        (make-command :label "Evaluate in context..." :key "C-c C-e"
+                      :surfaces '(:menu :palette :key) :target x)
+        (make-command :label "Why is this alive?" :surfaces '(:menu :palette)
+                      :target (subj-retention x) :disposition :new-trail)))
 
 ;;; ---- REPL demo: render a view (and its commands) as text -----------------
 

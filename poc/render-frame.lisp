@@ -99,6 +99,7 @@ exactly as open-environment does in the guest):
   condition:NAME           a condition's static face    e.g. condition:division-by-zero
   onion:NAME:C1,C2         the effective-method onion    e.g. onion:collide:ship,asteroid
   symbol:NAME              the inspector on a symbol's cells
+  function:NAME            the FUNCTION object: captures, doors, disassembly
   workspace                the Workspace scratch buffer
   changes                  the change set
 
@@ -212,6 +213,13 @@ OPTIONS
       ((string= head "matrix") (subj-matrix (find-sym rest)))
       ((string= head "condition") (subj-condition (find-sym rest)))
       ((string= head "symbol") (find-sym rest))
+      ;; function:NAME — the FUNCTION object behind a name, which is a different
+      ;; subject from the symbol (whose view shows its cells) and from defn:NAME
+      ;; (whose view shows source). This is the one that opens the closure inspector.
+      ((string= head "function")
+       (let ((sym (find-sym rest)))
+         (unless (fboundp sym) (error "not fbound: ~a" rest))
+         (fdefinition sym)))
       ((string= head "defn")
        (let ((parts (split-on #\: rest)))
          (subj-defn (find-sym (first parts))

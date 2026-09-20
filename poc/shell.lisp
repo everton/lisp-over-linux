@@ -1000,9 +1000,19 @@
                              ((pane-side cur)
                               '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
                                 ("SuperL-o" . "edit")))
+                             ;; a FUNCTION subject can be applied; every inspector pane
+                             ;; can be evaluated inside (C-c C-e). Advertise the verb
+                             ;; that is special to what you are looking at, first.
+                             ((functionp (pane-subject cur))
+                              '(("ret" . "drill") ("C-c C-a" . "apply it")
+                                ("C-c C-e" . "eval in context")))
                              ((let ((it (selected-item cur))) (and it (item-edit it)))
                               '(("up/dn" . "move") ("ret" . "drill")
-                                ("C-c C-c" . "set this field")))
+                                ("C-c C-c" . "set this field")
+                                ("C-c C-e" . "eval in context")))
+                             ((eq (view-kind (pane-view cur)) :inspector)
+                              '(("up/dn" . "move") ("ret" . "drill")
+                                ("C-c C-e" . "eval in context")))
                              (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
                        '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
                        (when cmds
@@ -1215,6 +1225,72 @@
                (setf *browser-status* (format nil "set failed: ~a" c)))))))))
   nil)
 
+(defun eval-in-context-pane (pane)
+  "Evaluate a typed expression INSIDE the object this pane is showing — SELF bound to it
+   and every slot name bound as a place (model.lisp's EVAL-IN-CONTEXT).
+
+   This is Smalltalk's inspector code pane, and it is the gesture that makes the
+   inspector open-ended: every other command here is a thing we decided in advance you
+   might want, and this one is the escape hatch for everything we did not think of.
+
+   The pane is RE-PRESENTED afterwards for the same reason SET-FIELD re-presents: the
+   typed form may well have mutated the object — (incf hp 100) is the point, not an
+   edge case — and the view is a rendering of the object, so it has to be read back
+   rather than patched. Errors land in the status line; a form typed into a live image
+   must not be able to take down PID 1."
+  (let ((subject (pane-subject pane)))
+    (cond
+      ((null *value-prompt*)
+       (setf *browser-status* "no input available on this backend"))
+      (t
+       (let ((text (funcall *value-prompt* "expression (SELF = this object)")))
+         (unless text (setf *browser-status* nil))
+         (when (and text (plusp (length (string-trim '(#\Space #\Tab) text))))
+           (handler-case
+               (let ((value (eval-in-context subject text)))
+                 (let ((sel (pane-sel pane)))
+                   (setf (pane-view pane) (present subject))
+                   (set-pane-sel pane sel))
+                 (setf *preview-subject* nil)
+                 (setf *browser-status*
+                       (let ((*print-length* 20) (*print-level* 3))
+                         (format nil "~a => ~s" (string-trim '(#\Space #\Tab) text) value))))
+             (serious-condition (c)
+               (setf *browser-status* (format nil "eval failed: ~a" c))))))))))
+
+(defun apply-function-pane (pane)
+  "Apply the FUNCTION this pane is showing to typed arguments, and open the result.
+
+   For a function, `evaluate in the object's context' collapses to this: the object IS
+   the verb, so the useful thing to type is its arguments. The result is pushed onto the
+   trail rather than summarised in the status line — you asked the function for a value
+   because you want to look at the value."
+  (let ((subject (pane-subject pane)))
+    (cond
+      ((not (functionp subject))
+       (setf *browser-status* "not a function"))
+      ((null *value-prompt*)
+       (setf *browser-status* "no input available on this backend"))
+      (t
+       (let ((text (funcall *value-prompt* "arguments (no parens)")))
+         (unless text (setf *browser-status* nil))
+         (when text
+           ;; The CALL is guarded; opening the result is NOT inside the same guard, so
+           ;; that a failure to open cannot be reported as "apply failed" — a wrong
+           ;; attribution sends you looking at the wrong thing, which is exactly the
+           ;; bug an inspector exists to prevent. :APPLIED distinguishes "the call
+           ;; returned NIL" from "the call never happened".
+           (multiple-value-bind (value applied)
+               (handler-case (values (apply-function subject text) t)
+                 (serious-condition (c)
+                   (setf *browser-status* (format nil "apply failed: ~a" c))
+                   (values nil nil)))
+             (when applied
+               (setf *browser-status*
+                     (let ((*print-length* 20) (*print-level* 3))
+                       (format nil "=> ~s" value)))
+               (trail-push value)))))))))
+
 (defun accept-pane (pane)
   "Compile the buffer into the live image + update the registry (accept-source).
 
@@ -1375,8 +1451,14 @@
          ;; same way the editable panes take it.
          ((and *pending-prefix* (eq *pending-prefix* :c-c))
           (setf *pending-prefix* nil)
-          (when (and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
-            (set-field p))
+          (when (lol.canvas:ctrl-p state)
+            (cond
+              ;; C-c C-c — Accept: write the typed value into the place this row shows.
+              ((member key '(#\c #\C)) (set-field p))
+              ;; C-c C-e — Evaluate in context: the Smalltalk code pane, on any subject.
+              ((member key '(#\e #\E)) (eval-in-context-pane p))
+              ;; C-c C-a — Apply it: only meaningful when the subject IS a function.
+              ((member key '(#\a #\A)) (apply-function-pane p))))
           nil)
          ((and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
           (setf *pending-prefix* :c-c) nil)

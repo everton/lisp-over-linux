@@ -336,6 +336,162 @@
       (sort out #'string-lessp :key (lambda (g) (princ-to-string (car g)))))))
 
 ;;; ======================================================================
+;;; Functions as objects — a closure's captures ARE its slots
+;;; ======================================================================
+;;; Most tooling shows a function as a leaf: #<FUNCTION FOO> and nothing to open.
+;;; That is wrong, and Lisp makes it obviously wrong — a closure is a RECORD whose
+;;; fields are the variables it closed over. Opening one should show them.
+;;;
+;;; The detail that makes this fit INSPECT-PLACES' thesis exactly: SBCL boxes a
+;;; captured variable in a VALUE-CELL *only when something assigns to it*. A
+;;; capture that is merely read is stored inline in the closure and there is no
+;;; cell to write through — (SETF SB-KERNEL:%CLOSURE-INDEX-REF) does not exist.
+;;; So some captures are places and some are not, which is the one thing the
+;;; (:LABEL :VALUE :SET) plist can say and a uniformly-settable design could not.
+
+(defun value-cell-p (x)
+  "True when X is a VALUE-CELL — the box SBCL puts around a closed-over variable
+   that is ASSIGNED somewhere. Tested by widetag rather than by calling
+   SB-DI::INDIRECT-VALUE-CELL-P, which is internal to SB-DI and not exported."
+  (and (sb-kernel:pointerp x)
+       (eql (sb-kernel:widetag-of x) sb-vm:value-cell-widetag)))
+
+(defun closure-captures (fn)
+  "FN's captured variables as PLACES: a list of plists (:label L :value V :set FN-or-NIL),
+   the same shape INSPECT-PLACES returns, one per closure slot.
+
+   Labels are POSITIONAL (\"capture 0\"), deliberately. SBCL's debug info does know the
+   names — SB-DI:DO-DEBUG-FUN-VARS yields them — but it yields them SORTED BY NAME, not
+   in capture order, and it mixes the function's own parameters in with the captures.
+   Ordering the debug vars by their storage offset recovers capture order when every
+   capture is read-only, and breaks as soon as one is boxed (the cell lands in a
+   different storage class). There is no honest mapping short of decoding SBCL's
+   storage-class encoding, so we do not guess: the row says which SLOT it is, and
+   FUNCTION-CLOSES-OVER reports the names as an unordered set alongside. Naming a
+   capture wrongly would be worse than not naming it, because the browser would let
+   you edit \"step\" and silently change `start'."
+  (when (sb-kernel:closurep fn)
+    (loop for v in (sb-kernel:%closure-values fn)
+          for i from 0
+          collect (if (value-cell-p v)
+                      ;; assigned somewhere, so it lives in a cell — a real place
+                      (let ((cell v))
+                        (list :label (format nil "capture ~d" i)
+                              :value (sb-kernel:value-cell-ref cell)
+                              :set (lambda (new) (sb-kernel:value-cell-set cell new))))
+                      ;; read-only capture: stored inline, no cell, nothing to write to
+                      (list :label (format nil "capture ~d" i) :value v :set nil)))))
+
+(defun flatten-tree (tree)
+  "Every atom in TREE, as a flat list — enough to pull the variable names out of a
+   lambda list without a real parser. We ship no utility library (a saved image is a
+   frozen heap), so the four lines live here."
+  (let ((out '()))
+    (labels ((walk (x) (cond ((null x))
+                             ((consp x) (walk (car x)) (walk (cdr x)))
+                             (t (push x out)))))
+      (walk tree))
+    (nreverse out)))
+
+(defun function-closes-over (fn)
+  "The NAMES of FN's closed-over variables, as an unordered set, or NIL when we cannot
+   say for certain. Computed as (debug vars of FN) minus (FN's own parameters), because
+   DO-DEBUG-FUN-VARS yields both.
+
+   Three guards, each of which was earning its keep within a minute of the first render:
+
+   - FN must actually BE a closure. A plain DEFUN has debug vars too — they are its
+     locals — and reporting those as `closes over' is simply false. DRAW-ALIEN showed
+     (A BPP DST FB RGBA …) before this guard existed.
+   - Uninterned symbols are dropped. &KEY defaulting introduces gensyms such as
+     #:.DEFAULTING-TEMP., which are never variables anybody wrote.
+   - The count must MATCH the number of capture slots. Debug vars include the inner
+     lambda's own locals, and there is no way to tell which of them are captures; when
+     the counts disagree we return NIL rather than name the wrong set. Unordered even
+     when we do answer — see CLOSURE-CAPTURES for why the order cannot be recovered."
+  (when (sb-kernel:closurep fn)
+    (ignore-errors
+      (let* ((df (sb-di:fun-debug-fun fn))
+             (params (remove-if-not #'symbolp
+                                    (flatten-tree
+                                     (ignore-errors (sb-kernel:%fun-lambda-list fn)))))
+             (vars '()))
+        (sb-di:do-debug-fun-vars (v df) (push (sb-di:debug-var-symbol v) vars))
+        (let ((names (sort (remove-if (lambda (sym)
+                                        (or (null (symbol-package sym))   ; a gensym
+                                            (member sym params :test #'string=)
+                                            (member sym lambda-list-keywords)))
+                                      (nreverse vars))
+                           #'string< :key #'symbol-name)))
+          (when (= (length names) (length (sb-kernel:%closure-values fn)))
+            names))))))
+
+(defun abbreviate-fun-name (name)
+  "A function NAME fit to put on screen: any absolute source path inside it shortened
+   to DIRECTORY/NAME.TYPE.
+
+   SBCL names a top-level anonymous lambda after the file it was compiled from, and that
+   name is recorded with the ABSOLUTE path of the build machine — so an unedited title
+   reads (LAMBDA (NAME) :IN \"/home/someone/lisp-over-linux/initramfs/stage.lisp\") and
+   the browser cheerfully shows a stranger's home directory on a laptop that has no such
+   directory. The repo is deliberately relocatable (README.org; the cpio paths and
+   build.sh are all relative), and the UI should not be the one place that is not.
+
+   DIRECTORY/NAME is the same key CATEGORIZE :file uses for the module index, so an
+   abbreviated name reads exactly like the module it came from."
+  (labels ((short (x)
+             (if (and (stringp x) (find #\/ x))
+                 (let* ((path (pathname x))
+                        (dir  (car (last (pathname-directory path))))
+                        (file (format nil "~a~@[.~a~]" (pathname-name path)
+                                      (pathname-type path))))
+                   (if (stringp dir) (format nil "~a/~a" dir file) file))
+                 x)))
+    (if (consp name) (mapcar #'short name) (short name))))
+
+(defun function-source-name (fn)
+  "The NAME to look FN's source up under: its own name when it has one, or the name of
+   the function it was defined inside when it is an anonymous closure — SBCL records
+   that as (LAMBDA (…) :IN MAKE-COUNTER), so the enclosing definition is recoverable
+   and `Source' on a closure can open the DEFUN that built it."
+  (let ((n (ignore-errors (sb-kernel:%fun-name fn))))
+    (cond ((symbolp n) n)
+          ;; (SETF FOO) and friends are legal function names — keep them whole
+          ((and (consp n) (eq (first n) 'setf)) n)
+          ;; (LAMBDA (…) :IN ENCLOSING) / (FLET FOO :IN ENCLOSING)
+          ((and (consp n) (member :in n))
+           (let ((tail (cdr (member :in n))))
+             (and (consp tail) (symbolp (first tail)) (first tail))))
+          (t nil))))
+
+(defun function-places (fn)
+  "FN's fields as places — the FUNCTION clause of INSPECT-PLACES.
+
+   Name, lambda list and documentation, then one row per capture. DOCUMENTATION is the
+   only non-capture row that is settable, because it is the only one with a defined
+   writer: a function's name and arity are properties of the compiled code object, and
+   changing what a function DOES is `C-c C-c' on its source, not a one-line prompt —
+   the same argument INSPECT-PLACES already makes about a symbol's :FUNCTION cell."
+  (let* ((name   (ignore-errors (sb-kernel:%fun-name fn)))
+         (ll     (ignore-errors (sb-kernel:%fun-lambda-list fn)))
+         (closes (function-closes-over fn))
+         (expr   (ignore-errors (function-lambda-expression fn))))
+    (append
+     (list (list :label :name :value name :set nil)
+           (list :label :lambda-list :value ll :set nil)
+           (list :label :documentation :value (or (documentation fn t) :none)
+                 :set (lambda (new) (setf (documentation fn t) new))))
+     (when closes
+       (list (list :label :closes-over :value closes :set nil)))
+     (closure-captures fn)
+     ;; FUNCTION-LAMBDA-EXPRESSION returns NIL for most COMPILED functions, so this row
+     ;; is present only when the form really was retained (it is, for anything the image
+     ;; loaded as source). Source recovery proper goes through the registry by name —
+     ;; see FUNCTION-SOURCE-NAME — which works for compiled definitions too.
+     (when expr
+       (list (list :label :source-form :value expr :set nil))))))
+
+;;; ======================================================================
 ;;; The Inspector — every value browsable (the (present (x t)) fallback)
 ;;; ======================================================================
 
@@ -388,6 +544,10 @@
              collect (let ((i i))
                        (list :label i :value (aref obj i)
                              :set (lambda (new) (setf (aref obj i) new))))))
+      ;; A function is not a leaf — see the section above. This MUST precede the
+      ;; standard-object clause: a generic function is a funcallable instance and
+      ;; therefore also a STANDARD-OBJECT, and the function reading is the useful one.
+      (function (function-places obj))
       ((or standard-object structure-object)     ; general: slots by name (LAST)
        (mapcar (lambda (s)
                  (let ((n (sb-mop:slot-definition-name s)))
@@ -416,6 +576,133 @@
     (format t ";   ~s = ~s~%" (car f) (cdr f)))
   (finish-output)
   obj)
+
+;;; ======================================================================
+;;; Inspector POWERS — the verbs, not the fields (doc/inspector-history.org)
+;;; ======================================================================
+;;; Everything above answers "what is in this object". These answer the questions an
+;;; inspector on a Lisp Machine could answer and a modern object viewer cannot:
+;;; run code inside it, find every instance of its class, and ask the garbage
+;;; collector why it is still alive. All three are pure model — they compute and
+;;; return; present.lisp renders and shell.lisp supplies the gesture.
+
+(defun eval-in-context (obj text)
+  "READ and EVAL the expression in TEXT *inside* OBJ: SELF is bound to the object, and
+   every slot name is bound as a PLACE. Returns the value.
+
+   This is Smalltalk's inspector code pane — the power that turns a fixed set of
+   affordances into an open one, because anything we did not build a button for you
+   can simply type. The CLOS version goes one better than Smalltalk's `self': WITH-SLOTS
+   makes the slots themselves lexically visible, so (list name hp) reads two slots and
+   (incf hp 100) writes one, with no accessors required and no SLOT-VALUE boilerplate.
+
+   Two things here are not obvious and both were found the hard way:
+
+   1. The object is bound as a LAMBDA PARAMETER, never spliced into the form. The
+      obvious `(let ((self ,obj)) …) breaks the moment the object is a list — the form
+      becomes (LET ((SELF (1 2 3))) …) and (1 2 3) reads as a function call.
+
+   2. *PACKAGE* is bound around the READ, not just the EVAL. Slot names are symbols in
+      some package; typing `hp' while *PACKAGE* is CL-USER when the class lives in
+      LOL.SHELL interns a DIFFERENT symbol and WITH-SLOTS silently never matches it.
+      Binding it to the class name's home package is what makes bare slot names work,
+      which is the whole ergonomic point.
+
+   Objects with no slots at all (a cons, a hash-table, a function) degrade to a bare
+   SELF binding rather than erroring, so the verb is available on every subject."
+  (let* ((names (ignore-errors
+                  (mapcar #'sb-mop:slot-definition-name
+                          (sb-mop:class-slots (class-of obj)))))
+         (names (remove-if-not #'symbolp names))
+         (*package* (or (ignore-errors
+                          (symbol-package (class-name (class-of obj))))
+                        *package*))
+         (form (read-from-string text))
+         (self (intern "SELF" *package*)))
+    (funcall (eval (if names
+                       `(lambda (,self) (declare (ignorable ,self))
+                          (with-slots ,names ,self ,form))
+                       `(lambda (,self) (declare (ignorable ,self)) ,form)))
+             obj)))
+
+(defun all-instances (class &key (limit 500))
+  "Every live instance of CLASS in dynamic space — Smalltalk's allInstances, which CLOS
+   has no operator for because instances are not registered anywhere. A heap walk is the
+   only way to ask, and SBCL ships one.
+
+   Two traps, both hit while building this:
+
+   1. The :TEST MUST NOT CONS. room.lisp says so in its own source: a consing predicate
+      makes the result `very arbitrary - including possible duplication of objects if we
+      visit something and then see it again after GC transports it higher'. TYPEP against
+      a class is a layout check and is safe. LIST-ALLOCATED-OBJECTS is the right entry
+      point because it does the two-pass count-then-fill that keeps its own allocation
+      out of the walk.
+
+   2. PCL's CLASS PROTOTYPE is a live instance of the class and it has UNBOUND SLOTS.
+      The object system makes one for its own use, so a heap walk finds it, and any
+      caller that reasonably assumes `every SHIP has a name' then breaks on a ghost.
+      Filtering it is not optional."
+  (let* ((c (if (symbolp class) (find-class class nil) class))
+         (proto (and c (ignore-errors (sb-mop:class-prototype c)))))
+    (when c
+      (let ((found (sb-vm:list-allocated-objects
+                    :dynamic :test (lambda (x) (typep x c)) :count limit)))
+        (remove proto found)))))
+
+(defun retention-path (obj)
+  "Why is OBJ still alive? A list of HOPS from a GC root down to it, outermost first.
+   Each hop is a plist (:label L :object O :index I) — O is the holder, so every hop is
+   itself something the browser can open, and I is the slot within it.
+
+   This asks the GARBAGE COLLECTOR, which already knows the object graph, rather than
+   scanning the heap by hand — and it answers the sharper question. `Who points at this'
+   is rarely what you want to know; `what is the chain from something definitionally
+   live' is. SB-EXT:SEARCH-ROOTS is one of the very few powers on the historical list
+   that modern SBCL does BETTER than a Lisp Machine did.
+
+   The argument must be a WEAK POINTER — a reference the collector is allowed to ignore —
+   so that asking cannot itself become the reason the object is alive. Note the honest
+   limit that follows from this: the browser is holding the subject while you ask, so a
+   path ending at a thread stack may be reporting OUR OWN frames. Such a hop is labelled
+   as a stack root rather than dressed up as a data structure.
+
+   Hops come back in three shapes and all three are normalised here: the keyword :STATIC
+   (the root space itself), (\"main thread\" . SAP) for a stack root, and (HOLDER . SLOT)
+   for the ordinary heap case. Labels are printed under tight *PRINT-LENGTH*/:LEVEL
+   because a hop is routinely an internal vector of several hundred symbols, and a view
+   row that tried to show it whole would be unreadable and slow."
+  (ignore-errors
+    (let* ((results (sb-ext:search-roots (sb-ext:make-weak-pointer obj)
+                                         :criterion :oldest :print nil))
+           ;; one weak pointer in, so at most one (TARGET . PATH) out
+           (path (cdr (first results))))
+      (loop for hop in path
+            collect (cond
+                      ((keywordp hop)
+                       (list :label (format nil "~(~a~) space (a GC root)" hop)
+                             :object nil :index nil))
+                      ((and (consp hop) (stringp (car hop)))
+                       (list :label (format nil "~a's stack — possibly this browser's own frames"
+                                            (car hop))
+                             :object nil :index nil))
+                      ((consp hop)
+                       (list :label (let ((*print-length* 3) (*print-level* 2)
+                                          (*print-lines* 1))
+                                      (format nil "~s" (car hop)))
+                             :object (car hop) :index (cdr hop)))
+                      (t (list :label (format nil "~s" hop) :object nil :index nil)))))))
+
+(defun apply-function (fn args-text)
+  "Call FN with the arguments in ARGS-TEXT (a bare argument list, without the surrounding
+   parens: \"1 2\"). Returns the value.
+
+   For a FUNCTION, `evaluate in the object's context' collapses to this: the object IS
+   the verb, so the useful thing to type is its arguments. Reading a wrapped list rather
+   than EVALing a whole call form keeps the function identity fixed — you apply the
+   closure you are looking at, not whatever its name happens to be bound to now, which
+   for an anonymous closure is nothing at all."
+  (apply fn (read-from-string (concatenate 'string "(" args-text ")"))))
 
 ;;; ======================================================================
 ;;; The condition system — the live debugger's two stacks (§3)
