@@ -653,7 +653,19 @@ Workspace works — without invoking the compiler at all. The guest tests that e
 
 - *=C-c C-c= live editing cannot recompile a definition that does untyped arithmetic.*
   This is a headline Phase 4 feature ([[file:code-browser.org][code-browser.org]]) and most real definitions do
-  arithmetic somewhere. Accepting an edit to one will fault the guest.
+  arithmetic somewhere. This started as an inference from the =defun= row above and was
+  then measured on the user-facing path itself — =accept-source=, which is what =C-c C-c=
+  calls:
+
+  | accepted source            | result         |
+  |----------------------------+----------------|
+  | =(defun zz-a () :ok)=        | accepted       |
+  | =(defun zz-b (x) (* x 2))=   | *memory fault* |
+
+  So the useful way to state the limit is *compile vs. accept*, not *compile vs. the
+  Workspace*: =Do it= on a plain call is fine, because it never reaches the compiler;
+  =Accept= on arithmetic takes the machine down. (Independently reproduced in a parallel
+  session, which is also where the =accept-source= rows come from.)
 - Anything built on runtime compilation — a future =Apply it= that builds a lambda, the
   agent work in [[file:agent.org][agent.org]] — inherits the same limit.
 - *The browser itself is unaffected*, which the same probe confirmed: inspecting a

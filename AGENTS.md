@@ -236,9 +236,13 @@ protocol in a tiled, keyboard-first shell. Progress:
   `Unhandled memory fault at #x1A`. Declare the types (`fixnum`, `double-float`) and it
   compiles fine; `car`/`length`/closures compile fine; the same forms compile fine in a
   frozen core on the *host*. So it is generic arithmetic's static-space call fixup, in
-  the guest only. **This breaks `C-c C-c` live editing for any definition doing untyped
-  arithmetic.** Nothing noticed before because the REPL evaluates plain calls through
-  SBCL's simple evaluator without the compiler. Full measurements: `doc/inspector-history.org` §5.6.
+  the guest only. **This breaks `C-c C-c` live editing**: `accept-source` faults on
+  `(defun zz-b (x) (* x 2))` and succeeds on `(defun zz-a () :ok)`, so *accepting an
+  edit* to any definition doing untyped arithmetic takes the guest down — and most real
+  definitions do arithmetic somewhere. Read the split as **compile vs. accept, not
+  compile vs. Workspace**: `Do it` on a plain call is fine (SBCL's simple evaluator
+  never invokes the compiler, which is why nothing noticed before), `Accept` on
+  arithmetic is not. Full measurements: `doc/inspector-history.org` §5.6.
 - **Networking is ON** since tag #21: `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
   Older notes claiming `CONFIG_NET` is unset are stale — see `kernel-config.org`
