@@ -146,7 +146,21 @@
     ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).
-    ("spotter"   "l" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5) (:type "coll")))))
+    ("spotter"   "l" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5) (:type "coll")))
+    ;; a FUNCTION as an object (doc/inspector-history.org §5.5): the four PageDowns
+    ;; park point at the end of the primer, on the MAKE-COUNTER call, so Inspect it
+    ;; opens the closure rather than a symbol. The payload is the two capture rows —
+    ;; one marked (settable) because SBCL boxed it in a VALUE-CELL when something
+    ;; assigned to it, one not because it is only ever read. That difference is a
+    ;; decision the compiler made about your code, made visible.
+    ("closure"   "p" ((:wait 1.0) (:key "pgdn") (:key "pgdn") (:key "pgdn") (:key "pgdn")
+                      (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 2.5)))
+    ;; a SECOND PROCESS contributing a view (doc/processes.org §7). Typed rather than
+    ;; paged to, because what is being shown is that the pid in the provenance row is
+    ;; not 1. NB: a plain CALL is safe to type here; a form the compiler would have to
+    ;; compile generic arithmetic for is not — see inspector-history.org §5.6.
+    ("worker"    "p" ((:wait 1.0) (:type "(subj-worker :self)") (:wait 0.8)
+                      (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 3.0)))))
 
 ;;; ---- the net REPL: readiness, and quieting the kernel console ------------
 

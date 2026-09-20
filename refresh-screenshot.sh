@@ -86,7 +86,7 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace"
+SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace closure worker"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
@@ -184,16 +184,24 @@ if [ -f "$README" ] && [ "$MODE" != scene ]; then
     sed -i -E "s#\[\[\./media/screenshot\.png\]\]#[[./media/screenshots/screenshot-$STAMP.png]]#" "$README"
 fi
 
-# doc/code-browser.org embeds these shots too (the scenes, plus the 'browser' one
-# it reuses for the accordion). It lives in doc/, so its links are one level up
-# (../media/...). Run this for EVERY mode, not just scenes: otherwise a --mode
-# browser refresh would update the README and silently leave the doc pointing at
-# a dated file that no longer exists. Same rule as the README — reference the
+# The docs embed these shots too. They live in doc/, so their links are one level
+# up (../media/...). Run this for EVERY mode, not just scenes: otherwise a --mode
+# browser refresh would update the README and silently leave a doc pointing at a
+# dated file that no longer exists. Same rule as the README — reference the
 # concrete dated file, never the symlink, so it renders on github.com.
-CB="$MICRO/doc/code-browser.org"
-if [ -f "$CB" ]; then
-  sed -i -E "s#\[\[file:\.\./media/screenshots/$BASENAME-[0-9]{4}-[0-9]{2}-[0-9]{2}\.png\]\]#[[file:../media/screenshots/$BASENAME-$STAMP.png]]#" "$CB"
-fi
+#
+# EVERY .org under doc/, not a named list. This used to name code-browser.org
+# alone, which was true when it was the only doc with pictures and quietly stopped
+# being a rule the moment a second one wanted them: the new doc's links would
+# simply never be rewritten, and would rot without anything failing. A list would
+# have had the same shape as the bug — correct until the next addition — so the
+# glob is the fix rather than one more entry. The sed only matches the exact
+# dated pattern, so a doc with no screenshots is untouched.
+for DOC in "$MICRO"/doc/*.org "$MICRO"/doc/background/*.org; do
+  [ -f "$DOC" ] || continue
+  sed -i -E "s#\[\[file:\.\./media/screenshots/$BASENAME-[0-9]{4}-[0-9]{2}-[0-9]{2}\.png\]\]#[[file:../media/screenshots/$BASENAME-$STAMP.png]]#" "$DOC"
+  sed -i -E "s#\[\[file:\.\./\.\./media/screenshots/$BASENAME-[0-9]{4}-[0-9]{2}-[0-9]{2}\.png\]\]#[[file:../../media/screenshots/$BASENAME-$STAMP.png]]#" "$DOC"
+done
 
 say "Wrote $DATED ($(stat -c%s "$DATED") bytes)"
 echo "  $(basename "$LINK") -> $(readlink "$LINK")   (local convenience symlink)"
