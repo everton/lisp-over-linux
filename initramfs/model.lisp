@@ -683,7 +683,7 @@
                        (list :label (format nil "~(~a~) space (a GC root)" hop)
                              :object nil :index nil))
                       ((and (consp hop) (stringp (car hop)))
-                       (list :label (format nil "~a's stack — possibly this browser's own frames"
+                       (list :label (format nil "~a's stack -- possibly this browser's own frames"
                                             (car hop))
                              :object nil :index nil))
                       ((consp hop)
@@ -880,9 +880,27 @@
       (setf tail (cdr tail)))
     (and (listp tail) tail)))
 
+;;; A condition type is written one way at a SIGNALLING site and the opposite way in
+;;; a HANDLER clause, so reading them takes two functions rather than one lenient
+;;; one. It used to be one, and the cost was a phantom: COMMANDS-FOR contains
+;;; (signal type), where TYPE is a parameter, and the sweep duly reported a
+;;; condition called TYPE that has never existed. Same for (make-condition type) in
+;;; CONDITION-REPORT. Guessing that a variable's NAME is a type name is worse than
+;;; declining to answer, because the browser then offers you a view of nothing.
+
 (defun quoted-symbol (x)
-  "X if it is a bare symbol or (QUOTE symbol), else NIL — how a condition type is
-   written at a signalling site: (error 'end-of-file) or (error 'end-of-file :s …)."
+  "X if it is (QUOTE symbol), else NIL. A condition type at a SIGNALLING site is
+   always quoted — (error 'end-of-file), (make-condition 'off-course :by 3) — so a
+   BARE symbol there is a variable holding a type, whose value we cannot know
+   statically and must not invent. Resignalling an existing condition object,
+   (error c), is likewise not a type and correctly yields NIL."
+  (and (consp x) (eq (first x) 'quote) (symbolp (second x)) (second x)))
+
+(defun clause-type-symbol (x)
+  "X if it is a bare symbol, or (QUOTE symbol), else NIL. The opposite convention:
+   a type in a HANDLER-CASE clause, a HANDLER-BIND binding or a RESTART-CASE spec is
+   written bare — (handler-case … (end-of-file (e) …)) — and there it really is a
+   literal name, because the macro does not evaluate it."
   (cond ((and (symbolp x) x (not (keywordp x))) x)
         ((and (consp x) (eq (first x) 'quote) (symbolp (second x))) (second x))))
 
@@ -917,10 +935,10 @@
     (case (and (symbolp (first form)) (first form))
       (handler-bind
        (let ((bindings (form-arg form 1)))
-         (remove nil (mapcar (lambda (b) (and (consp b) (quoted-symbol (first b))))
+         (remove nil (mapcar (lambda (b) (and (consp b) (clause-type-symbol (first b))))
                              (and (listp bindings) bindings)))))
       (handler-case
-       (remove nil (mapcar (lambda (c) (and (consp c) (quoted-symbol (first c))))
+       (remove nil (mapcar (lambda (c) (and (consp c) (clause-type-symbol (first c))))
                            (form-tail form 2))))
       (ignore-errors (list 'error))
       (t nil))))
@@ -930,11 +948,11 @@
   (when (consp form)
     (case (and (symbolp (first form)) (first form))
       (restart-case
-       (remove nil (mapcar (lambda (c) (and (consp c) (quoted-symbol (first c))))
+       (remove nil (mapcar (lambda (c) (and (consp c) (clause-type-symbol (first c))))
                            (form-tail form 2))))
       (with-simple-restart
        (let* ((spec (form-arg form 1))
-              (name (and (consp spec) (quoted-symbol (first spec)))))
+              (name (and (consp spec) (clause-type-symbol (first spec)))))
          (and name (list name))))
       (t nil))))
 

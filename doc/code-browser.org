@@ -1307,6 +1307,14 @@ everything else. *There is no rail:* a rail would list the areas a second time,
 next to the tabs that already list them. Future areas — a process/thread monitor,
 the supervisor, meminfo — arrive the same way and appear as one more pinned tab.
 
+The process monitor is now *partly real*, and arrived exactly as predicted: one
+subject and one =present= method, appearing as an ordinary drillable pane.
+[[file:../initramfs/worker.lisp][worker.lisp]] runs a job in a SECOND PROCESS and presents the view it sends back —
+=(subj-worker :self)= reports the child's pid, =(subj-worker :signallers)= a
+whole-image sweep whose rows drill into this image's own condition views. Why it
+is a view and not pixels, and why nothing here had to change to host it, is
+[[file:processes.org][processes.org]] §2 and §7.
+
 *The FB shell, concretely* (see the mock-up): a single *tab strip* of open trails
 across the top — numbered, ad-hoc and pinned alike, each with a × and a
 kind-coloured stripe, and each labelled by its *subject* rather than its view title
@@ -1552,6 +1560,16 @@ Three options, in increasing order of ambition:
    stop the net-REPL thread, =fork()=, and let the *child* (which is not PID 1)
    save to the disk from option 2 while the parent waits. Worth one honest
    experiment; not worth committing a phase to until that experiment runs.
+
+   Two findings since, both in [[file:processes.org][processes.org]] §5, and both make this easier than it
+   looked. =sb-posix:fork= is not a thin syscall wrapper — it runs SBCL's own
+   post-fork fixups and *refuses outright* with "Cannot fork with multiple threads
+   running", which turns the classic silent fork-in-a-threaded-program deadlock
+   into a legible error and enforces the "stop the net-REPL thread first" step
+   above rather than trusting you to remember it. The catch is that shipping that
+   contrib has a cost of its own (§6 of the same doc): code calling its inline
+   entry points cannot be RECOMPILED in the guest, so a =fork= buried in one
+   function is fine and a =fork= in something you expect to edit live is not.
 
 * 6. The graphics layer, concretely
 
@@ -2194,7 +2212,12 @@ hindsight, the first content this feature will make live.
   supervisor beneath it, can crash init. Mitigations: wrap Accept in
   =handler-case= (the codebase already does this everywhere), and consider
   running the browser in its own thread — =sb-thread= is already in use — so a
-  crash does not take PID 1 with it.
+  crash does not take PID 1 with it. A *process* is strictly stronger than a
+  thread here and is now demonstrably available ([[file:processes.org][processes.org]] §2, §7): the child
+  is the same image, so it arrives owning the registry, and a crash in it is a
+  pipe that closes rather than an init that dies. The version of this that would
+  actually close the risk — fork, apply the edit in the child, run it there,
+  present the result — is named as owed in §7's "what it does not do", not built.
 - *One form, many definitions* (=defstruct=, =defclass= accessors). Called out in
   §2; it is the main source of fiddliness.
 - *xref covers our code, not SBCL's.* =who-calls= on built-in CL functions will
