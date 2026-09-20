@@ -215,9 +215,19 @@ How each piece works:
     [[file:framebuffer.org][framebuffer.org]] §8 (and §5 for /dev/fb0).
 
 Key bits learned while writing it:
-  - =sb-posix:getpid= is a CONTRIB and is NOT loaded by default (and
-    =(require :sb-posix)= fails against this source tree). Use the built-in
-    =(sb-unix:unix-getpid)= instead — no contrib needed.
+  - =sb-posix:getpid= is a CONTRIB and is NOT loaded by default. This entry used
+    to add "and =(require :sb-posix)= fails against this source tree"; that was
+    true when written and is *no longer* — it failed for want of =SBCL_HOME=,
+    which the build has set since the =sb-bsd-sockets= work, and the contrib
+    loads and freezes in fine. We still do not ship it, but for a different and
+    much more interesting reason, measured on *2026-09-20*: several sb-posix
+    entry points (=tcgetattr= among them) are =declaim inline= and expand into
+    its groveled alien structs, and *that alien type information does not survive
+    =save-lisp-and-die= into the guest*. Code calling them runs, but can never be
+    RECOMPILED inside the running image — which breaks =C-c C-c= on any
+    definition that uses one, and self-editing is the whole point here. The audit
+    is [[file:processes.org][processes.org]] §6. =(sb-unix:unix-getpid)= remains the right call: no
+    contrib, no constraint.
   - PID 1 must reap children or they become zombies. =run-program= reaps the
     children IT launched. A fuller init would also reap *reparented* orphans with
     a waitpid(-1, WNOHANG) loop on SIGCHLD — noted, not implemented.

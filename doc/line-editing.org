@@ -48,6 +48,18 @@ already present. No new native library, no new file.
 direct =sb-alien tcsetattr= binding is the cleaner path here — no contrib fasl.)
 Always restore the saved termios on exit with =unwind-protect=.
 
+*That parenthesis was re-examined on 2026-09-20 and survives — for a better
+reason than it originally had.* =sb-posix= does grovel =struct termios= out of
+the real header, which is genuinely nicer than our hand-counted offsets
+(=c_lflag= at 12, =c_cc= at 17, VTIME=[5], VMIN=[6]), and the migration was
+written and tested. It was then *reverted*: =sb-posix:tcgetattr= is =declaim
+inline= and expands into groveled alien structs whose type information does not
+survive =save-lisp-and-die= into the guest. The migrated code ran — the REPL came
+up and edited fine — but =(compile nil '(lambda () (with-raw-mode (0) :x)))=
+*failed in the guest*, meaning you could no longer =C-c C-c= this file's own
+definitions from inside the running image. The hand-rolled version recompiles
+there; that was checked, both ways. Full audit: [[file:processes.org][processes.org]] §6.
+
 * Aside: what an =ioctl= actually is
 
 =tcsetattr= is not really its own syscall — glibc implements it as an *ioctl*.
