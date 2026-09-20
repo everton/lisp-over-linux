@@ -132,7 +132,17 @@
           (format t "~&menu error: ~a~%" c) (finish-output))))))
 
 (defun init-toplevel ()
+  "Which role this process plays, decided by argv — the image re-execs itself, so
+   every process here is this same binary wearing a different hat.
+
+     worker N   the throwaway demo child (process.lisp)
+     job NAME   compute NAME and print a VIEW to stdout (worker.lisp); the parent
+                reads it and presents it, which is how a second process puts
+                something on this screen without touching /dev/fb0 at all.
+     (none)     the supervisor, i.e. PID 1"
   (let ((args (rest sb-ext:*posix-argv*)))
-    (if (and args (string= (first args) "worker"))
-        (worker-main (second args))
-        (supervisor-main))))
+    (cond ((and args (string= (first args) "worker"))
+           (worker-main (second args)))
+          ((and args (string= (first args) "job"))
+           (run-worker-job (second args)))
+          (t (supervisor-main)))))

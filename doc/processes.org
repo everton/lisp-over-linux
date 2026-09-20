@@ -9,8 +9,9 @@ every future dependency has to clear.
 
 Companion to [[file:framebuffer.org][framebuffer.org]] (how one process owns =/dev/fb0=), [[file:input.org][input.org]] (how it
 reads the mouse) and [[file:code-browser.org][code-browser.org]] §4½ (the =present= protocol this all turns
-on). Nothing here is built except one bug fix; §6 records an audit whose
-conclusion was to change nothing, and why that was the right answer.
+on). §7 is *built* — worker.lisp, a second process contributing a view — and §6
+records an audit whose conclusion was to change nothing, and why. The rest is
+analysis, and says so where it matters.
 
 * 0. The question, and why it splits in two
 
@@ -452,98 +453,137 @@ reporting "nothing to read" while the real descriptor had data; the new writer
 returns =POLLIN=. Both call sites now go through one =%put-pollfd= macro so they
 cannot drift apart — and this matters directly for §2, where a fourth poll slot
 would hold a *socket* rather than a single-digit device node.
-* 7. A worked example (not built)
+* 7. The worked example  [BUILT]
 
-The first instinct is a clock in the top bar, drawn by a forked child, accepting
-a click to prove it is alive. Half right, and it is worth knowing which half.
+[[file:../initramfs/worker.lisp][worker.lisp]] is §2's claim, running: a second process contributes a view to this
+environment, and no pixels cross between them. It is ~150 lines rather than the
+~350 §2 estimates, because it does the easy half — see "what it does not do".
 
-*What it gets right:* it changes without input, so it proves the push path; it is
-tiny; and it is obviously working or obviously broken at a glance.
+** Run it without typing anything
 
-*Why it is the wrong demonstration here:*
+The Workspace primer carries the forms, so =p= at the supervisor menu and
+=C-c C-i= (Inspect it) with point after one of them opens it as a pane:
 
-- *The top bar is chrome, not content.* =draw-tabs= owns it. Foreign content
-  there means the peer contributes to *chrome*, breaking §4½'s content/shell
-  separation at exactly the place it matters, while exercising *none* of
-  =present=. It would prove the socket works and nothing about the architecture.
-- *A clock does not need a process.* =(get-universal-time)= is free in-image, so
-  the child adds nothing — mechanism without motivation.
-- *A click that only proves liveness is a synthetic affordance.* Here a click is
-  a typed action on a presented object; one that merely flashes is the wrong shape.
+#+begin_src lisp
+  (subj-worker :self)         ; proof a different process answered: compare pids
+  (subj-worker :signallers)   ; the whole-image sweep; each row drills
+  (show-worker :self)         ; the same thing printed, for the REPL
+#+end_src
 
-§4¾ of [[file:code-browser.org][code-browser.org]] already names the home for it: "Future areas — /a
-process/thread monitor/, the supervisor, meminfo — arrive the same way and appear
-as one more pinned tab."
+What comes back looks like this — a =provenance= row naming the pid that did the
+work, then the results, tinted and sectioned by the same widgets everything else
+uses, with =commands-for= offering "Run again" in the status line:
 
-** The candidate that looks obvious and is not: the stage
+#+begin_example
+  v worker self — the process that answered                              list
+    provenance
+    computed in pid 27                        a second process sent this view
+    results
+    pid                                                                    27
+    heap                                            16,955,424 bytes live
+    definitions                                             577 recorded
+#+end_example
 
-Running *the stage* (§3b) in a child suggests itself — it already exists, so the
-process boundary would be the only variable, and a hole in the dispatch matrix is
-the sort of thing you want isolated. All three arguments fail, instructively.
+The environment is PID 1 and the work happened in pid 27. That is the entire
+claim, and it is one row.
+
+** Why the stage was the wrong candidate
+
+An earlier draft of this section proposed running *the stage* (§3b) in a child:
+it already exists, so the process boundary would be the only variable, and a hole
+in the dispatch matrix is the sort of thing you want isolated. All three
+arguments turn out to be wrong, and they are wrong in instructive ways.
 
 1. *The stage is the one view whose data is live pointers.* =(present (subj-stage
    s))= returns =:data st= — the live =stage= struct *by reference* ([[file:../initramfs/stage.lisp][stage.lisp]]).
    =draw-stage-body= then calls =(stage-resize stage …)=, mutating the view's data
    from inside the renderer, and =draw-stage-sprite= reads =body-x= / =body-vy= /
    =body-rot= off live structs and calls =lol.examples:name= on the CLOS instance.
-   Every other view here is labels and symbols; this one is an object graph. So
-   "the same stage, in a child" would require inventing a wire representation for
-   the sprite set first — at which point the boundary is no longer the only
-   variable, which was the whole appeal.
+   Every other view in the system is labels and symbols; this one is an object
+   graph. "The same stage, in a child" would therefore require inventing a wire
+   representation for the sprite set first — at which point the boundary is no
+   longer the only variable, which was the whole appeal.
 2. *It does not need the isolation.* =tick-live-stage= already wraps =step-stage=
    in a =handler-bind= on =serious-condition= inside a =restart-case=
-   ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), and the comment there says why it is =handler-bind= and not
-   =handler-case=: the handler runs *before* the unwind, so the debugger sees live
-   restarts and a standing stack. PID 1 was never at risk. Moving the stage to a
-   child would *cost* that standing stack, since the child has no screen.
+   ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), and the comment there says exactly why it is =handler-bind=
+   and not =handler-case=: the handler runs *before* the unwind, so the debugger
+   sees live restarts and a standing stack. PID 1 was never at risk. Moving the
+   stage to a child would *cost* that standing stack, since the child has no
+   screen — the debugger would have to be shipped across as data and the restart
+   invoked by message.
 3. *It is the worst case for the transport.* 33 ms frames mean the channel is
    never quiet, on one CPU with no SMP. The property §2 likes — poll wakes on
    data, not a timer, so idle costs nothing — is meaningless for a view that is
    never idle.
 
-The stage is the best *demonstration* in the system and the worst *first
-implementation*. "Most convincing to watch" and "most suited to the mechanism"
-are different questions.
+The stage remains the best *demonstration* in the system and is the worst
+*first implementation*. Worth keeping the distinction: "most convincing to watch"
+and "most suited to the mechanism" are different questions.
 
-** What should be built instead
+** What earned it instead
 
 The criteria that actually matter: the view is *already plain data*; the work
 genuinely wants to happen elsewhere; and the child being *the same image* is
 load-bearing rather than incidental.
 
-*Tier 0 — the smoke test.* A child that presents *itself*: =pid=, =heap=,
-definition count. The pid row is load-bearing — if it differs from the
-supervisor's, a second process really answered. Every row is a real item, so
-nothing about it is a special case.
+=job-signallers= meets all three. It reads every recorded definition's captured
+source back out of the registry and walks every subform for signalling calls —
+=map-recorded-forms= over the whole image. CLOS cannot answer the question (there
+is no generic function to introspect), so it can only be derived from source,
+which is what makes it both useful and expensive. It returns symbols and strings.
+And it needs the registry, which only a child of *this* image has.
 
-*Tier 1 — the one that earns the boundary: a whole-image registry sweep.*
-=condition-signallers= and its neighbours work by =map-recorded-forms= — reading
-*every* recorded definition's captured source back out of the registry and
-walking the forms. CLOS cannot answer the question (there is no generic function
-to introspect), so it can only be derived from source, which is what makes it
-both useful and expensive. It returns symbols and strings, and it needs the
-registry, which only a child of *this* image has. A big =senders= or
-=categorize :file= sweep has the same shape.
+=job-self= is the smoke test beside it: pid, heap, definition count. The pid row
+is the load-bearing one.
 
-*Tier 1 generalised — sandboxed Accept.* Today =C-c C-c= compiles into the live
-image; break =draw-browser= or the supervisor and you have killed init.
-[[file:code-browser.org][code-browser.org]] §9 names this risk and suggests a thread. A *process* is
-strictly stronger: fork, apply the edit in the child, run it there, present the
-result. The child dies, the parent shows a tombstone, the image is untouched.
+** Three decisions in the implementation
+
+1. *The child is the same image.* =run-program "/sbin/lisp" ("job" …)= — the
+   mechanism =spawn-worker= already used, with a new =job= role in
+   =init-toplevel=. No client library, because the client is us.
+2. *A pipe, not a socket.* =run-program= gives =:output :stream= free. No AF_UNIX,
+   no fourth pollfd, no accept loop.
+3. *Subjects do not travel; names do.* The child sends symbols and the parent
+   rebuilds real subjects around them, so a row computed in another process drills
+   into *this* image's condition view. That is §2's handle idea at its simplest —
+   sufficient while every subject is a named one, and insufficient the moment a
+   worker wants to hand back an arbitrary object.
+
+On the host there is no =/sbin/lisp= to exec, so =call-worker= runs the job
+in-process and *says so in the view*. The fallback is visible, never silent, and
+it keeps [[file:../poc/render-frame.lisp][render-frame.lisp]] and the host prototype working.
+
+** What it does not do
+
+Everything §2 lists beyond the first step, and the omissions are the honest part:
+
+- *No liveness.* This is synchronous — the parent waits. A child pushing
+  =(:invalidate handle)= as results arrive is what wants the socket and the fourth
+  poll slot, and is the next real piece of work.
+- *No handle protocol.* Names, not handles, so a worker cannot yet hand back an
+  object that has no name.
+- *No =EQ= interning*, because nothing is re-presented across calls yet — the
+  trap §2 names is still waiting for whoever adds liveness.
+- *No isolation benefit.* A crash in the child is a pipe that closes, which is
+  reported as an empty view rather than as a debugger. Sandboxed Accept — the
 * 8. Status
 
-- §1–§5, §7 — *analysis only, nothing built.* Dated 2026-09-19/20. If any of it
-  is implemented, this document is stale and the code is truth.
+- §7 — *BUILT.* [[file:../initramfs/worker.lisp][worker.lisp]]: a =job= argv role, two jobs, =subj-worker= + one
+  =present= method, and the forms sitting ready in the Workspace primer. Verified
+  in the guest — the environment is PID 1 and the view came back from another
+  pid. Synchronous only; liveness, handles and sandboxed Accept are still owed,
+  and §7's "what it does not do" lists them.
 - §6 — *DONE, and its conclusion is "change nothing".* =sb-posix= was audited
   against every hand-rolled =define-alien-routine= in the image. The one
   promising migration (termios) was written, tested, booted — and then reverted,
   because =sb-posix='s inline entry points cannot be *recompiled* in the guest,
-  which would have cost live editing of [[file:../initramfs/line-editor.lisp][line-editor.lisp]]. The image is therefore
-  unchanged in this respect: no =(require :sb-posix)=, termios still hand-rolled.
-  What shipped from this section is the *rule* in "The general rule this
-  establishes", and one bug fix.
-- *Shipped:* the pollfd fd-width bug in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — both =fbb-wait= and
-  =fbb-ready-p= wrote only the low byte of a descriptor. Fixed via =%put-pollfd=.
-- Next, if anything: Tier 0 of §7. The seams are known; the irreducible cost is
-  that =:invalidate= can only be proven by booting, since it is a view changing
-  with no key pressed.
+  which would have cost live editing of [[file:../initramfs/line-editor.lisp][line-editor.lisp]]. What shipped from that
+  section is the *rule* in "The general rule this establishes", and one bug fix:
+  the pollfd fd-width bug in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]], where both =fbb-wait= and
+  =fbb-ready-p= wrote only the low byte of a descriptor.
+- §1–§5 — *analysis only.* Dated 2026-09-19/20. If any of it is implemented,
+  this document is stale and the code is truth.
+- Next: liveness. A socket, a fourth poll slot, and =(:invalidate handle)= — at
+  which point §2's =EQ=-interning trap becomes real. The irreducible cost is that
+  it can only be proven by booting, since it is a view changing with no key
+  pressed.

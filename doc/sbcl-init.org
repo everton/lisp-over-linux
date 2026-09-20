@@ -132,8 +132,11 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector (code browser Phase 1) |
   | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless) |
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
+  | [[file:../initramfs/stage.lisp][=stage.lisp=]]       | the =COLLIDE= stage (§3b): bodies, both-ways dispatch, =eql=-specialised enact |
+  | [[file:../initramfs/worker.lisp][=worker.lisp=]]      | a second PROCESS that contributes a *view* — =subj-worker=, the =job= argv role ([[file:processes.org][processes.org]] §2) |
   | [[file:../poc/canvas.lisp][=poc/canvas.lisp=]]  | the pixel buffer + font + =draw-string= ([[file:fonts.org][fonts.org]])       |
   | [[file:../poc/textview.lisp][=poc/textview.lisp=]] | the editable text view (uses canvas)                    |
+  | [[file:../poc/widgets.lisp][=poc/widgets.lisp=]] | =lol.widgets=: panel/bar/list/scrollbar/grid/card + the semantic palette |
   | [[file:../poc/fb.lisp][=poc/fb.lisp=]]      | the =/dev/fb0= presenter + =KD_GRAPHICS= ([[file:framebuffer.org][framebuffer.org]] §9) |
   | [[file:../initramfs/ansi.lisp][=ansi.lisp=]]        | 16-colour SGR helpers (used by line-editor + repl)        |
   | [[file:../initramfs/line-editor.lisp][=line-editor.lisp=]] | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |

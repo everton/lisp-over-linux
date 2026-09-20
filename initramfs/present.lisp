@@ -773,6 +773,23 @@
 ;; Editing is the text view's: caret, selection, syntax, auto-indent.
 
 (+ 1 2)
+
+;; ---- a SECOND PROCESS drawing into this environment (doc/processes.org) ----
+;; No pixels cross between them. The child sends a VIEW — labels, kinds, names —
+;; and this image's own toolkit renders it, which is why a worker's rows tint,
+;; scroll and drill exactly like native ones. Put point after a form and C-c C-i
+;; (Inspect it) to open it as a pane you can drill; C-c C-p prints it inline.
+
+;; Proof that it really is another process: compare this pid with the supervisor's.
+(subj-worker :self)
+
+;; The job that earns the boundary — every recorded definition's source read back
+;; and walked for signalling calls. CLOS cannot answer this; only source can. Each
+;; row drills into that condition's real view.
+(subj-worker :signallers)
+
+;; Same thing from the REPL, printed rather than opened:
+(show-worker :self)
 "))
 
 (defmethod present ((s subj-change-set))
