@@ -18,7 +18,8 @@
   (:documentation "Didactic CLOS specimens for the code browser — see COLLIDE and LAUNCH.")
   (:export #:space-object #:asteroid #:ship #:station #:missile
            #:name #:collide
-           #:off-course #:steer #:launch))
+           #:off-course #:steer #:launch
+           #:make-counter #:make-accumulator))
 
 (in-package :lol.examples)
 
@@ -178,4 +179,37 @@
 
 ;;; Leave the reader back in the default package so the next module loads cleanly
 ;;; regardless of order (this file is position-independent in the build list).
+;;; ---- closure specimens: a record whose fields are its CAPTURES -------------
+;;; The CLOS specimens above exist to be looked at as classes and methods. These two
+;;; exist to be looked at as CLOSURES, in the function view (doc/inspector-history.org
+;;; S5.5) -- because a closure is a record whose fields are the variables it closed
+;;; over, and half of those are editable.
+;;;
+;;; They live HERE, compiled into the image at build time, rather than being typed
+;;; into the Workspace as a (compile nil (lambda ...)) -- which matters more than it
+;;; looks. Runtime compilation of generic arithmetic currently faults in the guest
+;;; (see doc/inspector-history.org S5.6), so a specimen you COMPILE in the Workspace
+;;; cannot be made there; a specimen you CALL is just a function call, and works.
+;;;
+;;; The didactic payload is the difference between the two captures of MAKE-COUNTER:
+;;; START is assigned (INCF) so SBCL boxes it in a VALUE-CELL and the inspector can
+;;; write to it; STEP is only read, so it is stored inline and there is no cell to
+;;; write through. One row says (settable) and the other does not, and the reason is
+;;; a decision the compiler made about your code.
+
+(defun make-counter (start step)
+  "A counter closure over START (assigned, therefore a settable capture) and STEP
+   (only read, therefore not settable). Call it to advance the count.
+
+   Inspect the returned closure to see the two captures and the difference between
+   them; C-c C-c on the settable one rewrites the live counter's state."
+  (lambda (&optional (bump 1))
+    (incf start (* step bump))
+    start))
+
+(defun make-accumulator (&optional (total 0))
+  "An accumulator closure over a single assigned capture -- the smallest possible
+   specimen, for when MAKE-COUNTER's two captures are one too many to look at."
+  (lambda (n) (incf total n) total))
+
 (in-package :cl-user)

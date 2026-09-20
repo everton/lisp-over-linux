@@ -810,38 +810,47 @@
 
 ;; ---- a CLOSURE is a record, and its captures are its FIELDS ----------------
 ;; Most tools show a function as a dead end. It is not one: a closure is a record
-;; whose fields are the variables it closed over. COMPILE a maker whose body is a
-;; lambda closing over two variables, call it, and look at what comes back.
-;;
-;; Put point after the form below and press C-c C-i (Inspect it). You get the
-;; function view, and in it:
+;; whose fields are the variables it closed over. Put point after the form below
+;; and press C-c C-i (Inspect it). You get the function view, and in it:
 ;;
 ;;   identity      :name, :lambda-list, :documentation (that one IS settable)
 ;;   captures      one row per closed-over variable, drillable like any value
 ;;   doors         source / senders / disassembly / why is this alive?
 ;;
-;; Look at the two capture rows. ONE OF THEM SAYS (settable) AND THE OTHER DOES
-;; NOT, and that is not arbitrary: SBCL boxes a captured variable in a VALUE-CELL
-;; exactly when the code ASSIGNS to it. START is INCF'd, so it lives in a cell and
-;; is a real place; STEP is only read, so it is stored inline and there is no cell
-;; to write through. The inspector shows PLACES, not values, and here you can see
-;; the difference the compiler made.
+;; Look at the two capture rows. ONE SAYS (settable) AND THE OTHER DOES NOT, and
+;; that is not arbitrary: SBCL boxes a captured variable in a VALUE-CELL exactly
+;; when the code ASSIGNS to it. In MAKE-COUNTER, START is INCF-d, so it lives in a
+;; cell and is a real place; STEP is only read, so it is stored inline and there is
+;; no cell to write through. The inspector shows PLACES, not values, and here you
+;; can see the difference the compiler made to your own code.
 ;;
 ;;   C-c C-c   on the settable capture -- type a number and the live closure's
-;;             state changes. Call it again afterwards and watch it count from there.
+;;             state changes. Call it again and watch it count from there.
 ;;   C-c C-a   Apply it... -- call the closure with arguments you type (try: 3).
 ;;   C-c C-e   Evaluate in context... -- eval with SELF bound to the closure
 ;;             (try: (funcall self 10)).
 ;;
-;; The captures are labelled by POSITION, not by name, on purpose: SBCL's debug
-;; info lists variable names sorted alphabetically and mixed in with the inner
-;; lambda's own parameters, so there is no honest way to say which name belongs to
-;; which slot. :closes-over reports the names it can verify, as an unordered set.
-(funcall (compile nil '(lambda (start step)
-                         (lambda (&optional (bump 1))
-                           (incf start (* step bump))
-                           start)))
-         10 2)
+;; Captures are labelled by POSITION, not name, on purpose: SBCL's debug info lists
+;; variable names sorted alphabetically and mixed in with the inner lambda's own
+;; parameters, so there is no honest way to say which name belongs to which slot.
+;; :closes-over reports the names it can verify, as an unordered set.
+(lol.examples:make-counter 10 2)
+
+;; MAKE-COUNTER is an ordinary function compiled into the image (initramfs/
+;; examples.lisp), so the line above is just a CALL. The more Lispy thing to write
+;; would be to build the same closure right here with COMPILE:
+;;
+;;   (funcall (compile nil (quote (lambda (start step)
+;;                                  (lambda (&optional (bump 1))
+;;                                    (incf start (* step bump))
+;;                                    start))))
+;;            10 2)
+;;
+;; Do not run that one yet. It CRASHES THE GUEST with an unhandled memory fault at
+;; #x1A -- not because of the inspector, but because compiling generic ARITHMETIC
+;; at runtime faults in this image. The same fault means C-c C-c live editing
+;; cannot recompile any definition that does arithmetic. Open bug, measured and
+;; written up in doc/inspector-history.org S5.6.
 "))
 
 (defmethod present ((s subj-change-set))
