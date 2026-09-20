@@ -534,6 +534,15 @@ inspector. Writing 900 into capture 0 and calling the closure returned 902: the 
 of a live abstraction, edited from a list row. That is the Lisp Machine's locative move
 (§3.1) applied to the object type most tooling shows nothing for at all.
 
+In the booted machine, on =(make-counter 10 2)= from [[file:../initramfs/examples.lisp][examples.lisp]]:
+
+[[file:../media/screenshots/closure-2026-09-20.png]]
+
+/The two capture rows are the payload — =capture 0= carries =(settable)= because SBCL
+boxed it, =capture 1= does not because it is only ever read. Above them the identity
+rows, including =:CLOSES-OVER= naming both variables as an unordered set; below, the
+four doors a function opens. =./refresh-screenshot.sh --scene closure=./
+
 *Why the capture rows are labelled by POSITION and not by name.* SBCL's debug info does
 know the names — =SB-DI:DO-DEBUG-FUN-VARS= yields them — and the first implementation
 used them. It was wrong. The debug vars come back *sorted alphabetically*, not in

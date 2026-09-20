@@ -7,7 +7,7 @@ userland is *SBCL Common Lisp running as PID 1*. No GRUB, no systemd, no shell �
 firmware → kernel → Lisp. "lisp-over-linux", LoL for short (yes, also a nod to
 the *Land of Lisp* alien this thing paints in the corner of the screen).
 
-[[./media/screenshots/screenshot-2026-09-18.png]]
+[[./media/screenshots/screenshot-2026-09-20.png]]
 
 /Booted under QEMU/OVMF: SBCL is PID 1 — the supervisor menu, then a colored
 REPL session driven on the framebuffer console (default 8x16 font, 160x50).
@@ -25,7 +25,7 @@ glyph, rule and highlight below was rasterised in Common Lisp and pushed to the
 panel as bytes. What you are looking at is the running system displaying — and
 editing — its own source.
 
-[[./media/screenshots/browser-2026-09-18.png]]
+[[./media/screenshots/browser-2026-09-20.png]]
 
 /The code browser running as PID 1 on the bare framebuffer (=b= from the
 supervisor menu). It opens on the *module index* — every definition grouped by

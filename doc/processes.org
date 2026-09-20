@@ -484,19 +484,17 @@ The Workspace primer carries the forms, so =p= at the supervisor menu and
 
 What comes back looks like this — a =provenance= row naming the pid that did the
 work, then the results, tinted and sectioned by the same widgets everything else
-uses, with =commands-for= offering "Run again" in the status line:
+uses. Nothing here is a special case: the rows are ordinary =item=s, so they take
+the concept palette, the list widget and the scrollbar without knowing they came
+off a pipe. The status line carries the Workspace's echo of the form that was
+run; =commands-for= on this subject offers "Run again", reachable the usual way.
 
-#+begin_example
-  v worker self — the process that answered                              list
-    provenance
-    computed in pid 27                        a second process sent this view
-    results
-    pid                                                                    27
-    heap                                            16,955,424 bytes live
-    definitions                                             577 recorded
-#+end_example
+[[file:../media/screenshots/worker-2026-09-20.png]]
 
-The environment is PID 1 and the work happened in pid 27. That is the entire
+/The view a second process sent back, rendered by this one./
+/=./refresh-screenshot.sh --scene worker=/
+
+The environment is PID 1 and the work happened in pid 25. That is the entire
 claim, and it is one row.
 
 ** Why the stage was the wrong candidate
