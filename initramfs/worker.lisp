@@ -179,13 +179,13 @@
 (defmethod present ((s subj-worker))
   (multiple-value-bind (result forked) (call-worker (subj-worker-job s))
     (make-view
-     :title (format nil "worker ~(~a~) — ~a"
+     :title (format nil "worker ~(~a~) - ~a"
                     (subj-worker-job s) (getf result :title "?"))
      :kind :list :subject s
      :items (cons (make-item :label (if forked
                                         (format nil "computed in pid ~a"
                                                 (getf result :pid "?"))
-                                        "computed in THIS process (no /sbin/lisp — host fallback)")
+                                        "computed in THIS process (no /sbin/lisp - host fallback)")
                              :detail (if forked "a second process sent this view" "fallback")
                              :kind (if forked :package :condition)
                              :group "provenance")
