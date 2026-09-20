@@ -421,6 +421,18 @@ structs fails that test, because =save-lisp-and-die= keeps the compiled code and
 drops the compile-time alien types.
 #+end_quote
 
+*One caveat on that test, found later the same day and by a different route.*
+The rule above assumes recompiling in the guest otherwise works. It mostly does —
+but not for everything: compiling a form whose body does *untyped generic
+arithmetic* faults in the guest with =MEMORY-FAULT-ERROR: Unhandled memory fault
+at #x1A=, while the same form compiles on the host and while typed arithmetic
+compiles fine. That is a separate, deeper problem than this section's, it is
+measured in [[file:inspector-history.org][inspector-history.org]] §5.6, and it means a "does it recompile?" probe
+must be written with a body the guest can compile at all, or it will blame the
+library for something that is not the library's fault. The termios probe here
+used =with-raw-mode=, which does no arithmetic, so its verdict stands — checked
+again afterwards against a trivial lambda as a control.
+
 This is a sharper constraint than "does it fit in the image", and it applies to
 every future dependency — including the org parser of [[file:code-browser.org][code-browser.org]] §8½ and
 anything the agent work pulls in. Note what it does *not* forbid: sb-posix's
