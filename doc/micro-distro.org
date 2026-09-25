@@ -440,8 +440,8 @@ needed. =./build.sh= prints them for you when it finishes./
 If the laptop already runs a Linux with GRUB, the same two files can live in the
 host's =/boot= and appear as one more line in its boot menu. Nothing about the
 image changes; only *who loads it* does — GRUB instead of the firmware's
-removable-media path. /Status (2026-09-25): entry installed and verified in the
-generated =grub.cfg=; the first real boot through it is still to be reported./
+removable-media path. /Status (2026-09-25): *WORKING* — booted on the laptop through this
+GRUB entry (kernel tag #24), no USB stick involved./
 
 ** Where the files go, and why not the ESP
 =/boot/lisp/= on the host's root filesystem, *not* the EFI System Partition. On
