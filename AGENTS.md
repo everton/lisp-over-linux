@@ -266,7 +266,6 @@ protocol in a tiled, keyboard-first shell. Progress:
   compile vs. Workspace**: `Do it` on a plain call is fine (SBCL's simple evaluator
   never invokes the compiler, which is why nothing noticed before), `Accept` on
   arithmetic is not. Full measurements: `doc/inspector-history.org` §5.6.
-- **Networking is ON** since tag #21: `CONFIG_NET=y` + `INET` + `virtio-net`, and
+- **Networking is on** (tag #21 onward): `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
-  Older notes claiming `CONFIG_NET` is unset are stale — see `kernel-config.org`
-  and `doc/networking.org`.
+  Details: `kernel-config.org` and `doc/networking.org`.
