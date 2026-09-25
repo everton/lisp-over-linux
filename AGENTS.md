@@ -28,7 +28,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/background/background.org` | General firmware/CPU/hardware theory (UEFI handoff, x86 modes, USB-HID, multicore). "Not project rationale." |
 | `doc/background/learn-networking.org` | From-scratch networking tutorial with a progress tracker + deep links into the code. |
 | `doc/background/learn-clos.org` | From-scratch CLOS + MOP tutorial (same shape as `learn-networking.org`). The Lisp background the browser assumes: multiple dispatch, specificity, method combination, conditions/restarts, and the `sb-mop` accessors `model.lisp` is built from. |
-| `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`). Location-independent; uses the `./linux`/`./sbcl` symlinks. |
+| `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`, `--interactive`, `--install-host`). Location-independent; uses the `./linux`/`./sbcl` symlinks. `--install-host` copies kernel+cpio to `/boot/lisp` for the host's GRUB entry, so the laptop boots the image without a USB stick — the menuentry itself is a one-time manual step (`doc/micro-distro.org`, "Booting from the host's GRUB"). |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
 | `check-scroll.lisp` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. |
