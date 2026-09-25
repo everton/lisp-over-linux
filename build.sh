@@ -10,8 +10,13 @@
 #   ./build.sh --run           build, then boot HEADLESS in QEMU and screenshot it
 #   ./build.sh --interactive   build, then boot in a QEMU WINDOW you can type into
 #   ./build.sh --kernel --run  the full cycle
+#   ./build.sh --install-host  build, then copy kernel+cpio to /boot/lisp (sudo)
+#                              for the host's GRUB entry — boot without the USB
 #
 # --run is non-interactive (boots, screenshots, kills QEMU) — for CI/quick checks.
+# --install-host (-H) only copies the two files, and only if they changed; the
+# GRUB menuentry itself is a one-time manual step (doc/micro-distro.org,
+# "Booting from the host's GRUB").
 # --interactive (-i) opens a real QEMU window: PID-1's console is tty0 (the
 # framebuffer VT, per the console= cmdline), so you drive the REPL from that
 # window; the launching terminal mirrors the serial/kernel log. It runs in the
@@ -100,15 +105,16 @@ QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
           -device virtio-net-pci,netdev=net0)
 
 say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-usage() { sed -n '3,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ---- argument parsing (flags combine) --------------------------------------
-DO_KERNEL=0; DO_RUN=0; DO_INTERACTIVE=0
+DO_KERNEL=0; DO_RUN=0; DO_INTERACTIVE=0; DO_INSTALL_HOST=0
 for arg in "$@"; do
   case "$arg" in
-    -k|--kernel)      DO_KERNEL=1 ;;
-    -r|--run)         DO_RUN=1 ;;
-    -i|--interactive) DO_INTERACTIVE=1 ;;
+    -k|--kernel)       DO_KERNEL=1 ;;
+    -r|--run)          DO_RUN=1 ;;
+    -i|--interactive)  DO_INTERACTIVE=1 ;;
+    -H|--install-host) DO_INSTALL_HOST=1 ;;
     -h|--help)        usage; exit 0 ;;
     *) echo "unknown option: $arg" >&2; usage; exit 1 ;;
   esac
@@ -188,6 +194,29 @@ printf '  %-28s %s bytes\n' "lisp-init"      "$(stat -c%s "$INITRAMFS_DIR/lisp-i
 printf '  %-28s %s bytes\n' "initramfs.cpio" "$(stat -c%s "$CPIO_OUT")"
 printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
 [ "$DO_KERNEL" -eq 0 ] && echo "  (kernel NOT rebuilt — pass --kernel if you changed kernel config)"
+
+# ---- 4b. (optional) install into the HOST's /boot for its GRUB -------------
+# The same two files the USB stick carries, but read by the host's GRUB from
+# its own ext4 /boot. GRUB's `initrd` command hands the cpio to the EFI stub
+# through the LINUX_EFI_INITRD_MEDIA_GUID device path, which the stub tries
+# BEFORE the built-in `initrd=initramfs.cpio` — so that cmdline entry is simply
+# never consulted here (linux/drivers/firmware/efi/libstub/efi-stub-helper.c,
+# efi_load_initrd). `cmp` first, so an unchanged file needs no sudo at all.
+if [ "$DO_INSTALL_HOST" -eq 1 ]; then
+  HOST_DIR=/boot/lisp
+  say "Installing into $HOST_DIR (host GRUB entry)"
+  [ -d "$HOST_DIR" ] || sudo mkdir -p "$HOST_DIR"
+  for pair in "$BOOTX64:bzImage" "$CPIO_OUT:initramfs.cpio"; do
+    src="${pair%%:*}"; dst="$HOST_DIR/${pair##*:}"
+    if cmp -s "$src" "$dst"; then
+      echo "  $dst  unchanged"
+    else
+      sudo cp "$src" "$dst" && echo "  $dst  updated"
+    fi
+  done
+  grep -qs '/boot/lisp/bzImage' /boot/grub/grub.cfg \
+    || echo "  note: no GRUB entry yet — see doc/micro-distro.org, \"Booting from the host's GRUB\"."
+fi
 
 # ---- 5a. (optional) boot it INTERACTIVELY in a QEMU window -----------------
 # Foreground, visible window, no screenshot/kill. The window IS the console
@@ -275,4 +304,5 @@ Next:
   Live window  :  add -display gtk to the qemu line (drop -display none) to watch it boot
   Refresh USB  :  sudo cp iso_root/efi/boot/bootx64.efi  /mnt/EFI/BOOT/BOOTX64.EFI
                   sudo cp iso_root/initramfs.cpio         /mnt/initramfs.cpio
+  Host GRUB    :  ./build.sh --install-host   (then pick the entry at boot)
 TIP

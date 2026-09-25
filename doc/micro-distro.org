@@ -435,6 +435,82 @@ needed. =./build.sh= prints them for you when it finishes./
   - Garbled text / wrong resolution
       -> cosmetic; tune with the EFI framebuffer or a video= cmdline arg.
 
+* Booting from the host's GRUB (no USB stick)
+
+If the laptop already runs a Linux with GRUB, the same two files can live in the
+host's =/boot= and appear as one more line in its boot menu. Nothing about the
+image changes; only *who loads it* does — GRUB instead of the firmware's
+removable-media path. /Status (2026-09-25): entry installed and verified in the
+generated =grub.cfg=; the first real boot through it is still to be reported./
+
+** Where the files go, and why not the ESP
+=/boot/lisp/= on the host's root filesystem, *not* the EFI System Partition. On
+this machine =/boot= is a plain directory on the ext4 root (hundreds of GB free),
+which GRUB reads natively; the ESP is a 512 MB FAT32 partition shared with the
+firmware and GRUB itself, and has no reason to carry a 48 MB cpio. (Check with
+=df -h /boot /boot/efi= — the two lines are different filesystems.) This only
+works because =/boot= is *unencrypted*; GRUB could not read it through LUKS
+without extra modules.
+
+#+begin_src sh
+  ./build.sh --install-host      # build, then copy both files to /boot/lisp (sudo)
+#+end_src
+
+=--install-host= copies =iso_root/efi/boot/bootx64.efi= → =/boot/lisp/bzImage= and
+=iso_root/initramfs.cpio= → =/boot/lisp/initramfs.cpio=, each only if =cmp= says
+it changed. Note it copies =bootx64.efi=, which =build.sh= refreshes only under
+=--kernel= — the same rule as the USB stick.
+
+** The menuentry (one time)
+Append to =/etc/grub.d/40_custom= (a script that just =cat=s everything after its
+header into =grub.cfg=), then =sudo update-grub=:
+
+#+begin_example
+  menuentry "Lisp over Linux (SBCL as PID 1)" {
+      search --no-floppy --file /boot/lisp/bzImage --set=root
+      set gfxpayload=keep
+      linux  /boot/lisp/bzImage
+      initrd /boot/lisp/initramfs.cpio
+  }
+#+end_example
+
+=update-grub= does *not* announce =40_custom= entries in its output — it lists
+only the kernels it detected itself. Confirm with
+=grep -A5 "Lisp over Linux" /boot/grub/grub.cfg=. After that one-time step,
+rebuilding needs only =--install-host=: GRUB reads the files at boot, so
+=update-grub= is not needed again.
+
+  - =search --file ... --set=root= makes GRUB find the partition by the file,
+    not by a disk number that could shift when a USB stick is plugged in.
+  - =gfxpayload=keep= hands the kernel the GOP mode GRUB is already in, which
+    is exactly what =efifb= (and so =/dev/fb0= and fbcon) inherits.
+  - *No kernel arguments are needed*: the built-in =CONFIG_CMDLINE= still applies,
+    since =CMDLINE_OVERRIDE= is off — GRUB's (empty) line is merged with it.
+
+** The =initrd=initramfs.cpio= in the built-in cmdline is harmless here
+The built-in cmdline tells the EFI stub to load =\initramfs.cpio= from the root
+of the volume it was loaded from — right for the USB stick, meaningless for a
+kernel on ext4. It never gets that far. GRUB's =initrd= command publishes the cpio
+through a special EFI device path (=LINUX_EFI_INITRD_MEDIA_GUID=), and the stub
+tries that *first*, falling back to the cmdline =initrd== only when the device
+path is absent (=EFI_NOT_FOUND=) — see =efi_load_initrd()= in
+=linux/drivers/firmware/efi/libstub/efi-stub-helper.c=.
+
+** Two alternatives, and why not
+  - *GRUB =chainloader= the bzImage as an EFI app.* Closest to the USB boot, but
+    the file must sit on the ESP, and the built-in =initrd== then resolves to the
+    ESP *root* — so the cpio would have to be =/boot/efi/initramfs.cpio=.
+  - *A firmware boot entry* (=efibootmgr -c -d /dev/nvme0n1 -p 1 -L Lisp -l
+    '\EFI\lisp\bootx64.efi'=). The purest EFISTUB path — GRUB never runs, you
+    pick it from the firmware's own menu (F12 etc.) — with the same ESP-root
+    constraint on the cpio. Worth it if the point is to see the firmware do it.
+
+Safety: the image cannot even see the host's disk. No NVMe, SATA, USB-storage
+or ext4 support is built in (tag #24), and the root filesystem is the initramfs
+in RAM — so booting it cannot touch the installed system. Secure Boot must be
+off, as for the stick — GRUB's =linux= command refuses an unsigned kernel under
+shim.
+
 * Shrinking init with musl libc
 
 Background: every C program needs a libc (printf, malloc, the startup code

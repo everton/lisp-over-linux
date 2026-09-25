@@ -125,6 +125,8 @@ window while the launching terminal mirrors the serial/kernel log. =--run= is th
 non-interactive path (boots, screenshots, kills QEMU) for quick checks/CI.
 
 Then write the USB / boot on real hardware — see [[file:doc/micro-distro.org][micro-distro.org]].
+Or skip the stick: =./build.sh --install-host= puts both files in the host's
+=/boot/lisp= for a one-time GRUB entry ([[file:doc/micro-distro.org::Booting from the host's GRUB][micro-distro.org → Booting from the host's GRUB]]).
 
 * Upgrading the kernel version
 

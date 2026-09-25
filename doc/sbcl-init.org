@@ -98,6 +98,9 @@ userland (the whole point of the separate initrd — no kernel rebuild):
   - =./build.sh --run=           build, then boot HEADLESS in QEMU and screenshot it
   - =./build.sh --interactive=   build, then boot in a QEMU WINDOW you can type into
   - =./build.sh --kernel --run=  the full cycle
+  - =./build.sh --install-host=  build, then copy kernel + cpio to the host's
+    =/boot/lisp= for a GRUB entry (sudo) — see
+    [[file:micro-distro.org::Booting from the host's GRUB][micro-distro.org → Booting from the host's GRUB]]
   (flags combine; env =QEMU_WAIT=<seconds>= tunes the pre-screenshot boot wait,
   =QEMU_DISPLAY=<gtk|sdl>= picks the =--interactive= window backend)
 
