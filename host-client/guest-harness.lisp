@@ -185,16 +185,24 @@
 
 (defvar *repl* nil "The net-REPL character stream.")
 
-(defun repl-drain (seconds)
+(defun repl-drain (seconds &optional done-p)
   "Everything readable within SECONDS. Non-blocking, because the REPL never signals
-   end-of-answer — it just stops talking."
+   end-of-answer — it just stops talking.
+
+   DONE-P, if given, is asked about the text so far at every newline, and a true
+   answer ends the drain early. Without it the drain ALWAYS takes the full SECONDS —
+   which once passed for a hang: a timing probe given 300 s of room took 300 s even
+   though the guest answered in a second, and an outer `timeout` killed the run."
   (let ((deadline (+ (get-internal-real-time)
                      (* seconds internal-time-units-per-second)))
-        (out (make-string-output-stream)))
+        (out (make-array 256 :element-type 'character :adjustable t :fill-pointer 0)))
     (loop while (< (get-internal-real-time) deadline)
           do (let ((c (read-char-no-hang *repl* nil nil)))
-               (if c (write-char c out) (sleep 0.02))))
-    (get-output-stream-string out)))
+               (cond ((null c) (sleep 0.02))
+                     (t (vector-push-extend c out)
+                        (when (and done-p (char= c #\Newline) (funcall done-p out))
+                          (return))))))
+    (coerce out 'simple-string)))
 
 (defun repl-connect (&optional (tries 120))
   "Connect to the guest's net REPL and confirm it is really EVALUATING — QEMU's
@@ -256,7 +264,10 @@
   (write-string (format nil "(format t \"~~%<<~~s>>~~%\" (ignore-errors ~a))" form-string)
                 *repl*)
   (write-char #\Newline *repl*) (force-output *repl*)
-  (or (between-markers (strip-ansi (repl-drain seconds))) "?"))
+  ;; SECONDS is a ceiling now, not a wait: the drain stops at the first answer
+  (or (between-markers (strip-ansi (repl-drain seconds
+                                               (lambda (s) (between-markers (strip-ansi s))))))
+      "?"))
 
 (defun probe-int (form-string &optional (seconds 3.0))
   "PROBE, parsed as an integer, or NIL. SECONDS matters more than it looks: a probe
