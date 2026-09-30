@@ -74,7 +74,7 @@
   (setf *qemu*
         (sb-ext:run-program
          "qemu-system-x86_64"
-         (list "-machine" "q35" "-m" "2048"
+         (list "-machine" "q35,accel=kvm:tcg" "-m" "2048"
                "-drive" (format nil "if=pflash,format=raw,readonly=on,file=~a" *ovmf-code*)
                "-drive" (format nil "if=pflash,format=raw,file=~a" (path "vars.fd"))
                ;; built as a pathname, not spliced into a format string: the first

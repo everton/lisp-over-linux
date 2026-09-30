@@ -91,8 +91,17 @@ OVMF firmware on this box:
   /usr/share/OVMF/OVMF_CODE_4M.fd   (code, read-only)
   /usr/share/OVMF/OVMF_VARS_4M.fd   (NVMR template -> copy to a writable file)
 
-Note: this user is NOT in the =kvm= group, so QEMU runs under TCG (no
-=-enable-kvm=); boots take ~20-40 s. Add the user to =kvm= for fast boots.
+Note: every QEMU launch in this repo passes =-machine q35,accel=kvm:tcg= — use KVM
+(hardware virtualisation: the guest runs on the real CPU) and fall back to TCG
+(QEMU translating every guest instruction in software) when =/dev/kvm= cannot be
+opened. Which one you get matters far more than it looks. This user is not in the
+=kvm= group, and an older version of this note concluded QEMU had to run under TCG —
+but udev tags =/dev/kvm= =uaccess=, so logind adds an ACL for whoever is logged in
+at the seat (=getfacl /dev/kvm= shows =user:<you>:rw-=; =ls -l= shows it as the
+trailing =@=). KVM was available all along; nothing asked for it. Measured at tag
+#24, 1280x800, before the rendering fixes: one browser frame cost 67 ms under TCG
+against 6.5 ms under KVM ([[file:framebuffer.org][framebuffer.org §9.4]]). Check with
+=test -r /dev/kvm -a -w /dev/kvm=.
 
 * Step 1 — the init program
 
@@ -291,7 +300,7 @@ firmware launches automatically off a USB stick with no NVRAM boot entry.
 #+begin_src sh :results output
   cd ~/lisp-over-linux
   : > serial.log
-  timeout 40 qemu-system-x86_64 -machine q35 -m 1024 \
+  timeout 40 qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 1024 \
     -kernel ~/lisp-over-linux/linux/arch/x86/boot/bzImage \
     -append "console=ttyS0,115200" \
     -serial file:serial.log -display none -no-reboot
@@ -310,7 +319,7 @@ QEMU's VVFAT exposes iso_root/ as a virtual FAT disk, so we test the exact
   cd ~/lisp-over-linux
   cp /usr/share/OVMF/OVMF_VARS_4M.fd ovmf_vars_test.fd   # writable NVRAM
   : > serial.log
-  qemu-system-x86_64 -machine q35 -m 1024 \
+  qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 1024 \
     -drive if=pflash,format=raw,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd \
     -drive if=pflash,format=raw,file=ovmf_vars_test.fd \
     -drive file=fat:rw:iso_root,format=raw,if=ide \

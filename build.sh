@@ -253,7 +253,7 @@ if [ "$DO_INTERACTIVE" -eq 1 ]; then
 
   # Foreground (no '&'): the script blocks here until QEMU exits. -no-reboot
   # makes the menu's power-off actually quit QEMU (RB_POWER_OFF -> exit).
-  qemu-system-x86_64 -machine q35 -m 2048 \
+  qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VARS" \
     -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
@@ -275,7 +275,7 @@ if [ "$DO_RUN" -eq 1 ]; then
   cp "$OVMF_VARS" "$VARS"                 # fresh writable NVRAM
   : > "$SERIAL"; rm -f "$SHOT_PPM" "$SHOT_PNG"
 
-  qemu-system-x86_64 -machine q35 -m 2048 \
+  qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file="$VARS" \
     -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \

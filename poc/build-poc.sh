@@ -72,7 +72,7 @@ cp "$OUT/initramfs.cpio"                 "$OUT/esp/initramfs.cpio"
 say "Booting QEMU (headless) — screenshot in ${QEMU_WAIT:-40}s"
 cp "$OVMF_VARS" "$OUT/vars.fd"
 QMP="/tmp/poc-qmp.sock"; rm -f "$QMP"
-qemu-system-x86_64 -machine q35 -m 2048 \
+qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$OUT/vars.fd" \
   -drive file=fat:rw:"$OUT/esp",format=raw,if=ide \

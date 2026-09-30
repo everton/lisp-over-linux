@@ -138,7 +138,7 @@ cp "$OVMF_VARS" "$WORK/vars.fd"          # fresh writable NVRAM
 # Same machine/mem/OVMF/drive/netdev as build.sh's --run, but serial->file,
 # -display none, and a -qmp unix socket we drive keystrokes through.
 say "Booting headless (QEMU + QMP)"
-qemu-system-x86_64 -machine q35 -m 2048 \
+qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
   -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
   -drive if=pflash,format=raw,file="$WORK/vars.fd" \
   -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
