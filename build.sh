@@ -80,6 +80,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
   "$INITRAMFS_DIR/fb-browser.lisp"   # run-browser-fb: the code browser on /dev/fb0 (uses shell+fb+line-editor)
+  "$INITRAMFS_DIR/bench.lisp"        # bench-render: frame timings on this screen (the "f" menu action; uses fb-browser)
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
   "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client + configure-eth0 (uses net + sb-bsd-sockets)

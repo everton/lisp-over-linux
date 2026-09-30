@@ -11,8 +11,8 @@ STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #24). A C preinit mounts
 interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
 index, (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
-(w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
-the network REPL, (s) power off.
+(w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (f) frame
+timings, (t) toggle the network REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -154,6 +154,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
   | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option) |
+  | [[file:../initramfs/bench.lisp][=bench.lisp=]]       | =bench-render=: frame timings on this screen (the =f)= menu option; [[file:framebuffer.org][framebuffer.org]] §9.4). Removable: drop it from build.sh's list and the menu |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
   | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
   | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |

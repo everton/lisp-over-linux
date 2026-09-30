@@ -549,14 +549,26 @@ guest (numbers from =check-pointer.lisp= and a one-off baseline run of the old c
 | per frame                        | before, KVM | after, KVM | before, TCG | after, TCG |
 |----------------------------------+-------------+------------+-------------+------------|
 | =draw-browser= alone             | 2.2 ms      | (same)     | 18.8 ms     | (same)     |
-| =present-fb= alone               | 4.0 ms      | ~1 ms (*)  | 47.7 ms     | ~2 ms (*)  |
+| =present-fb= alone               | 4.0 ms      | 0.2–0.6 ms | 47.7 ms     | ~2 ms (*)  |
 | full frame (draw + present)      | 6.5 ms      | 2.9–3.3 ms | 67.0 ms     | 21.0 ms    |
 
-(*) By subtraction: the full frame minus =draw-browser=, which did not change.
+(*) By subtraction: the full frame minus =draw-browser=, which did not change. The KVM
+"after" was later measured directly with the supervisor's =f)= action ([[file:../initramfs/bench.lisp][bench.lisp]]):
+0.2–0.6 ms — the subtraction had overestimated it.
 
 (Why 50 frames: SBCL's =get-internal-real-time= reads =CLOCK_MONOTONIC_COARSE= on
 Linux, which only moves once per kernel tick — every 4 ms at our =CONFIG_HZ=250=. A
 single frame cannot be timed at all.)
+
+*On real hardware*, where the host's net-REPL harness cannot reach (the laptop has no
+NIC our kernel drives), pick =f) frame timings= from the supervisor menu:
+[[file:../initramfs/bench.lisp::defun bench-render][=bench-render=]] times draw / present / frame / pointer on whatever screen the
+image booted on and prints them beside the QEMU reference. It warms up untimed and
+reports the best of three rounds, because a single round moved by more than 2× between
+runs. Its numbers are only as quiet as the machine: with another process holding the
+host's CPUs (load average 17), the same QEMU guest measured a 8.6 ms frame instead of
+2.6 ms. Real hardware has no host to compete with, which is exactly why the laptop
+number is worth having — the present there is a write into real video memory.
 
 KVM vs TCG is the other half of the story: those are the same image under QEMU with
 and without hardware virtualisation. None of the repo's QEMU launches used to ask

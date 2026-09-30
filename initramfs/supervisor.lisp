@@ -13,6 +13,7 @@
 ;;;;   process.lisp      worker-main, spawn-worker, power-off
 ;;;;   framebuffer.lisp  draw-alien (the Land-of-Lisp sprite)
 ;;;;   meminfo.lisp      report-memory (the "m" menu action)
+;;;;   bench.lisp        bench-render (the "f" menu action)
 ;;;;   line-editor.lisp  the "poor man's readline" toolkit
 ;;;;   repl.lisp         run-repl (the "r" menu action)
 
@@ -71,6 +72,7 @@
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
   (format t "  m) show memory usage~%")
+  (format t "  f) frame timings (how fast this screen renders)~%")
   (format t "  t) network REPL on TCP :4005  [~a]~%"
           (if (net-repl-running-p) "RUNNING" "stopped"))
   (format t "  s) shut down (power off)~%")
@@ -117,6 +119,7 @@
                  (spawn-worker worker-id))
                 ((string-equal choice "a") (draw-alien :announce t))
                 ((string-equal choice "m") (report-memory))
+                ((string-equal choice "f") (bench-render))
                 ((string-equal choice "t")
                  (ecase (toggle-net-repl)
                    (:started
