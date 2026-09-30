@@ -1903,9 +1903,10 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   *This also closes the last scrolling gap.* A list pane now has a viewport
   independent of its selection: the wheel moves =PANE-TOP= with =PANE-FOLLOW= off,
   so scrolling is /looking/, and touching the selection re-attaches the view. The
-  re-arming deliberately does NOT happen in the draw — the framebuffer loop redraws
-  on every event, mouse motion included, so a wheel-scrolled list would snap back the
-  instant the pointer twitched. /Verified: after =wheel:20= the viewport has moved and
+  re-arming deliberately does NOT happen in the draw — the framebuffer loop then
+  redrew on every event, mouse motion included, so a wheel-scrolled list would snap back
+  the instant the pointer twitched. (A bare pointer move no longer redraws at all —
+  [[file:framebuffer.org][framebuffer.org §9.5]] — but every key and click still does, so the rule stands.) /Verified: after =wheel:20= the viewport has moved and
   the selection is off-screen; a click then lands on the row under the pointer (row 5,
   not row 0), because the hit map moved with the view; one =down= re-attaches./
 - *Phase 3a — the Workspace* (§3a). [DONE — [[file:../initramfs/present.lisp][present.lisp]] (subj-workspace) +
@@ -2064,9 +2065,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   wheel scrolls *its* viewport and leaves the selection alone — scrolling is
   /looking/, not moving — and any selection move re-attaches the view to the
   selection. (That last rule is enforced in =set-pane-sel=, the one door onto
-  =pane-sel=, and deliberately *not* in the draw: the framebuffer loop redraws on
-  every event, mouse motion included, so re-arming there would snap a
-  wheel-scrolled list back the instant the pointer twitched.)
+  =pane-sel=, and deliberately *not* in the draw: the draw runs after every key, click and
+  wheel notch, so re-arming there would snap a wheel-scrolled list back on the next
+  one. A bare pointer move no longer redraws — [[file:framebuffer.org][framebuffer.org §9.5]].)
   /Verified in the booted guest over QMP — real evdev =REL_WHEEL= records, from
   QEMU's wheel-up/wheel-down buttons — reading the browser's own state back through
   the net REPL rather than eyeballing pixels. On the flat =CL-USER= list: PageDown

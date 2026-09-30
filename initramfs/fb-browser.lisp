@@ -549,6 +549,50 @@
 ;; without threading them through every call.
 (defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
 (defvar *fb-mouse* nil)  (defvar *fb-kbd* nil)
+
+;;; ---- the pointer is not part of the frame ---------------------------------
+;;; The canvas holds the browser and NEVER the pointer. The pointer is composited on
+;;; the way out — into a patch the size of the arrow — and only that patch is sent to
+;;; the screen. That split is what makes a moving mouse cheap: the pixels under the
+;;; old position are still sitting untouched in the canvas, so erasing the arrow is
+;;; re-sending that little rectangle, and nothing has to be redrawn at all.
+;;;
+;;; Before this, every mouse packet repainted and re-sent the whole 1280x800 frame
+;;; for a change of about 200 pixels — 6.5 ms a frame under KVM and 67 ms under
+;;; QEMU's TCG (tag #24), so the pointer trailed the hand. A move now costs 12 us and
+;;; 0.13 ms (doc/framebuffer.org §9.5). (Nothing the browser DRAWS depends on where
+;;; the pointer is — no hover effects — which is what makes skipping the redraw correct.)
+
+(defparameter +cursor-w+ (reduce #'max *cursor-bits* :key #'length))
+(defparameter +cursor-h+ (length *cursor-bits*))
+
+(defvar *cursor-patch* nil "Scratch canvas the pointer is composited into.")
+
+(defun put-cursor (canvas x y)
+  "Show the pointer at X,Y over CANVAS's pixels, sending only the arrow's patch."
+  (let* ((patch (or *cursor-patch*
+                    (setf *cursor-patch* (lol.canvas:make-canvas +cursor-w+ +cursor-h+))))
+         (dst (lol.canvas:canvas-pixels patch))
+         (src (lol.canvas:canvas-pixels canvas))
+         (cw (lol.canvas:canvas-w canvas))
+         (n (max 0 (min +cursor-w+ (- cw x)))))    ; columns that are on screen
+    (dotimes (row (max 0 (min +cursor-h+ (- (lol.canvas:canvas-h canvas) y))))
+      (replace dst src :start1 (* row +cursor-w+) :end1 (+ (* row +cursor-w+) n)
+                       :start2 (+ (* (+ y row) cw) x)))
+    (draw-cursor patch 0 0)
+    (lol.fb:present-fb patch :x0 x :y0 y)))
+
+(defun show-frame (canvas)
+  "Send a freshly drawn CANVAS to the screen, then the pointer over it."
+  (lol.fb:present-fb canvas)
+  (when *fb-mouse* (put-cursor canvas *cursor-x* *cursor-y*)))
+
+(defun move-cursor (canvas old-x old-y)
+  "The pointer moved and nothing else changed: put back what was under it (straight
+   from CANVAS), then draw it at its new place. Two tiny writes instead of a frame."
+  (lol.fb:present-fb-rect canvas old-x old-y +cursor-w+ +cursor-h+)
+  (put-cursor canvas *cursor-x* *cursor-y*))
+
 ;;; ---- the stage's heartbeat (§3b) -----------------------------------------
 ;;; The browser has always been a pure function of state that only input changes, and
 ;;; the poll that sleeps forever is how it stays at zero CPU on an idle console. A
@@ -661,10 +705,14 @@
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
                    (with-raw-mode (0 nil)
-                     (loop
-                       (draw-browser canvas xres yres)
-                       (when mouse (draw-cursor canvas *cursor-x* *cursor-y*))
-                       (lol.fb:present-fb canvas)
+                     ;; DIRTY = the browser's state changed since the last frame. Only
+                     ;; a key, a click, the wheel or a stage tick can change it; a held
+                     ;; modifier or a bare pointer move cannot, so neither redraws.
+                     (loop with dirty = t do
+                       (when dirty
+                         (draw-browser canvas xres yres)
+                         (show-frame canvas)
+                         (setf dirty nil))
                        ;; A running stage (§3b) is the one thing on screen that changes
                        ;; without being asked, so it — and only it — makes the loop
                        ;; wake on a deadline rather than sleeping until input.
@@ -672,6 +720,7 @@
                            (fbb-wait 0 mouse kbd (live-stage-timeout))
                          (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift/Super first
                          (when kb
+                           (setf dirty t)
                            (multiple-value-bind (key state) (fb-read-key 0)
                              ;; The cooked tty sends a bare ESC[A for EVERY arrow and no
                              ;; byte for a held modifier — it lives only in the evdev
@@ -685,15 +734,23 @@
                                          (eq :quit (browser-key key state)))
                                  (return)))))
                          (when (and mouse ms)
-                           (multiple-value-bind (clicked wheel) (read-mouse mouse xres yres)
-                             ;; wheel first: a notch scrolls the current pane a few
-                             ;; lines (up = toward the start), point untouched.
-                             (unless (zerop wheel)
-                               (browser-scroll (* (- wheel) +wheel-lines+)))
-                             (when clicked
-                               (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*))))
+                           (let ((ox *cursor-x*) (oy *cursor-y*))
+                             (multiple-value-bind (clicked wheel) (read-mouse mouse xres yres)
+                               ;; wheel first: a notch scrolls the current pane a few
+                               ;; lines (up = toward the start), point untouched.
+                               (unless (zerop wheel)
+                                 (browser-scroll (* (- wheel) +wheel-lines+))
+                                 (setf dirty t))
+                               (when clicked
+                                 (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*)
+                                 (setf dirty t))
+                               ;; a bare move: the frame is still right, only the arrow
+                               ;; is in the wrong place (a redraw would move it anyway)
+                               (when (and (not dirty)
+                                          (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                                 (move-cursor canvas ox oy)))))
                          ;; nothing was ready: the deadline fired, so advance the world
-                         (unless (or kb ms kev) (tick-live-stage))))))
+                         (unless (or kb ms kev) (tick-live-stage) (setf dirty t))))))
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
@@ -894,18 +951,20 @@
          (tv (lol.textview:make-textview :font *bfont* :focus nil)))
     (lol.textview:tv-set-text tv text)
     (lol.textview:tv-geometry tv 12 32 (- w 24) (- h 44))
-    (loop
-      (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-      (lol.canvas:fill-rect canvas 0 0 w 24 *ui-hi*)
-      (lol.canvas:draw-string canvas *bfont*
-        (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
-        12 5 *ui-accent*)
-      (lol.textview:tv-draw canvas tv)
-      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
-      (lol.fb:present-fb canvas)
+    (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
+      (when dirty
+        (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+        (lol.canvas:fill-rect canvas 0 0 w 24 *ui-hi*)
+        (lol.canvas:draw-string canvas *bfont*
+          (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
+          12 5 *ui-accent*)
+        (lol.textview:tv-draw canvas tv)
+        (show-frame canvas)
+        (setf dirty nil))
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
         (when kev (read-keyboard-evdev *fb-kbd*))
         (when kb
+          (setf dirty t)
           (multiple-value-bind (key state) (fb-read-key 0)
             (declare (ignore state))
             (case key
@@ -915,29 +974,44 @@
               (:page-down (lol.textview:tv-wheel tv +src-page+))
               ((:escape #\q #\Q :return #\Return) (return)))))
         (when (and *fb-mouse* ms)
-          (multiple-value-bind (clicked wheel) (read-mouse *fb-mouse* w h)
-            (declare (ignore clicked))
-            (unless (zerop wheel) (lol.textview:tv-wheel tv (* (- wheel) +wheel-lines+)))))))))
+          (let ((ox *cursor-x*) (oy *cursor-y*))
+            (multiple-value-bind (clicked wheel) (read-mouse *fb-mouse* w h)
+              (declare (ignore clicked))
+              (cond ((/= wheel 0)
+                     (lol.textview:tv-wheel tv (* (- wheel) +wheel-lines+))
+                     (setf dirty t))
+                    ((and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                     (move-cursor canvas ox oy))))))))))
 
 (defun dbg-prompt-value (name)
   "A modal input line over the debugger for a restart that needs a value: read the Lisp
    expression the user types (Enter accepts, Esc cancels). Returns the typed STRING, or
    NIL if cancelled. Draws its bar over the current debugger frame (already on canvas)."
   (let ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
-    (loop
-      (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *ui-hi*)
-      (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *ui-amber*)
-      (lol.canvas:draw-string canvas *bfont*
-        ;; "accepts", not "invokes": this line is shared now — a restart INVOKES with
-        ;; the value, the inspector SETS a field to it (shell.lisp's set-field)
-        (format nil "value for [~(~a~)] — an expression, Enter accepts, Esc cancels:" name)
-        12 (- h 38) *ui-amber*)
-      (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *ui-text*)
-      (lol.fb:present-fb canvas)
+    (loop with dirty = t do
+      (when dirty
+        (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *ui-hi*)
+        (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *ui-amber*)
+        (lol.canvas:draw-string canvas *bfont*
+          ;; "accepts", not "invokes": this line is shared now — a restart INVOKES with
+          ;; the value, the inspector SETS a field to it (shell.lisp's set-field)
+          (format nil "value for [~(~a~)] — an expression, Enter accepts, Esc cancels:" name)
+          12 (- h 38) *ui-amber*)
+        (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *ui-text*)
+        (show-frame canvas)
+        (setf dirty nil))
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-        (declare (ignore ms))
         (when kev (read-keyboard-evdev *fb-kbd*))
+        ;; The mouse must be READ even though a click means nothing here: an unread
+        ;; mouse fd stays readable, and poll would then return at once forever — this
+        ;; loop used to spin, repainting, from the first twitch of the pointer on.
+        (when (and *fb-mouse* ms)
+          (let ((ox *cursor-x*) (oy *cursor-y*))
+            (read-mouse *fb-mouse* w h)
+            (when (or (/= ox *cursor-x*) (/= oy *cursor-y*))
+              (move-cursor canvas ox oy))))
         (when kb
+          (setf dirty t)
           (multiple-value-bind (key state) (fb-read-key 0)
             (declare (ignore state))
             (cond
@@ -1004,15 +1078,17 @@
          (rsel 0) (fsel 0) (focus :restarts) (pending-meta nil)
          (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
     (when (null restarts) (return-from run-debugger-fb))  ; nothing to do; let it pass
-    (loop
-      ;; locals read fresh each iteration — cheap, and the loop only turns on input
-      (let ((locals (ignore-errors (frame-locals (nth fsel frame-objs)))))
-        (draw-debugger canvas w h condition restarts backtrace locals rsel fsel focus))
-      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
-      (lol.fb:present-fb canvas)
+    (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
+      (when dirty
+        ;; locals read fresh on each redraw — cheap, and a redraw only follows input
+        (let ((locals (ignore-errors (frame-locals (nth fsel frame-objs)))))
+          (draw-debugger canvas w h condition restarts backtrace locals rsel fsel focus))
+        (show-frame canvas)
+        (setf dirty nil))
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
         (when kev (read-keyboard-evdev *fb-kbd*))
         (when kb
+          (setf dirty t)
           (multiple-value-bind (key state) (fb-read-key 0)
            (let ((meta (or (lol.canvas:meta-p state) pending-meta)))
             (setf pending-meta nil)
@@ -1042,11 +1118,16 @@
               ;; default, or supply args to any restart)
               ((and (characterp key) (char-equal key #\v)) (dbg-invoke-with-value restarts rsel))
               ((member key '(:return #\Return)) (dbg-enter restarts rsel))))))
-        (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
-          (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
-                (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
-            (cond (ri (dbg-enter restarts ri))           ; a restart click invokes (asks if needed)
-                  (fi (setf focus :backtrace fsel fi))))))))) ; a frame click selects it
+        (when (and *fb-mouse* ms)
+          (let ((ox *cursor-x*) (oy *cursor-y*))
+            (if (read-mouse *fb-mouse* w h)
+                (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
+                      (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
+                  (setf dirty t)
+                  (cond (ri (dbg-enter restarts ri))  ; a restart click invokes (asks if needed)
+                        (fi (setf focus :backtrace fsel fi))))  ; a frame click selects it
+                (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                  (move-cursor canvas ox oy)))))))))
 
 ;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------
 ;;; The keys are deliberately NOT shown as permanent chrome — SuperL-? summons this
@@ -1136,13 +1217,16 @@
   (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
     (when canvas
       (draw-cheatsheet canvas w h)
-      (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
-      (lol.fb:present-fb canvas)
+      (show-frame canvas)
       (loop
         (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
           (when kev (read-keyboard-evdev *fb-kbd*))
           (when kb (fb-read-key 0) (return))            ; any key dismisses
-          (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h)) (return)))))))
+          (when (and *fb-mouse* ms)
+            (let ((ox *cursor-x*) (oy *cursor-y*))
+              (when (read-mouse *fb-mouse* w h) (return))   ; a click dismisses
+              (when (or (/= ox *cursor-x*) (/= oy *cursor-y*))
+                (move-cursor canvas ox oy)))))))))
 
 ;;; ---- the Spotter: SuperL-Space fuzzy finder (§4¾) -------------------------
 ;;; A modal overlay over the browser's live canvas + input, like the debugger and
@@ -1170,15 +1254,17 @@
          (results (ignore-errors (spotter-results query cands +spotter-cap+)))
          (sel 0))
     (when canvas
-      (loop
-        (draw-spotter-card canvas w h query results sel)
-        (when *fb-mouse* (draw-cursor canvas *cursor-x* *cursor-y*))
-        (lol.fb:present-fb canvas)
+      (loop with dirty = t do               ; redraw only on a change (see run-browser-fb)
+        (when dirty
+          (draw-spotter-card canvas w h query results sel)
+          (show-frame canvas)
+          (setf dirty nil))
         (flet ((refilter () (setf results (ignore-errors (spotter-results query cands +spotter-cap+))
                                   sel 0)))
           (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
             (when kev (read-keyboard-evdev *fb-kbd*))
             (when kb
+              (setf dirty t)
               (multiple-value-bind (key state) (fb-read-key 0)
                 (declare (ignore state))
                 (cond
@@ -1194,8 +1280,12 @@
                      (setf query (subseq query 0 (1- (length query)))) (refilter)))
                   ((and (characterp key) (graphic-char-p key))
                    (setf query (concatenate 'string query (string key))) (refilter)))))
-            (when (and *fb-mouse* ms (read-mouse *fb-mouse* w h))
-              (let ((i (spotter-row-at* *cursor-x* *cursor-y*)))
-                (cond ((and i (< i (length results)))
-                       (new-trail (getf (nth i results) :subject)) (return))
-                      ((spotter-outside-p* *cursor-x* *cursor-y*) (return)))))))))))  ; click-away dismisses
+            (when (and *fb-mouse* ms)
+              (let ((ox *cursor-x*) (oy *cursor-y*))
+                (if (read-mouse *fb-mouse* w h)
+                    (let ((i (spotter-row-at* *cursor-x* *cursor-y*)))
+                      (cond ((and i (< i (length results)))
+                             (new-trail (getf (nth i results) :subject)) (return))
+                            ((spotter-outside-p* *cursor-x* *cursor-y*) (return)))) ; click-away dismisses
+                    (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                      (move-cursor canvas ox oy)))))))))))

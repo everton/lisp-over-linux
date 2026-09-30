@@ -205,8 +205,9 @@ DIMM. Two consequences we actually feel:
 - Writes are slower than RAM writes and behave differently under caching, which
   is why the kernel maps it write-combining (=ioremap_wc=).
 - Each =write(2)= additionally costs a *syscall*. That is the whole reason
-  [[file:../initramfs/framebuffer.lisp::defun draw-alien][=draw-alien=]] and [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] build an entire row in a plain Lisp array and
-  issue *one* =write-sequence= per row: 150 syscalls for the alien, not 38,400.
+  [[file:../initramfs/framebuffer.lisp::defun draw-alien][=draw-alien=]] builds an entire row in a plain Lisp array and issues *one*
+  =write-sequence= per row: 150 syscalls for the alien, not 38,400. [[file:../poc/fb.lisp::defun present-fb][=present-fb=]]
+  takes the idea to its end — one syscall for the whole frame (§9.4).
 
 *Two doors onto the same memory*, then — and the unit differs between them:
 
@@ -246,15 +247,15 @@ the verdict in §6 — it makes both sides of it honest.
 Every item here is real code in this repo, not generic GPU marketing.
 
 - *Full-screen repaint is a CPU copy.* [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] renders a 1280×800 canvas in
-  Lisp and pushes it with *800 =write(2)= calls per frame* (§9.1). With a GPU we
-  would not push anything: the canvas would already live in a GPU buffer, and
-  "presenting" would be a *page flip* — telling the display controller to scan
-  out a different address. A pointer swap instead of 4 MB of copying.
-- *The §9.4 memcpy TODO exists only because we hand bytes to the kernel.* We
-  unpack each 32-bit canvas word into four byte slots to satisfy the file-I/O
-  interface, a copy that §9.2 shows is semantically a no-op. A DRM *dumb buffer*
-  is mapped straight into our address space, so the renderer would draw *into*
-  the scanout memory and the copy would vanish rather than be optimised.
+  Lisp and pushes it into the scanout memory with one =pwrite(2)= per frame
+  (§9.4) — 4 MB copied by the kernel every time. With a GPU we would not push
+  anything: the canvas would already live in a GPU buffer, and "presenting" would
+  be a *page flip* — telling the display controller to scan out a different
+  address. A pointer swap instead of 4 MB of copying.
+- *The copy itself exists only because we hand bytes to the kernel.* §9.4 took
+  it down to one plain =memcpy=-shaped copy, but it is still a copy. A DRM *dumb
+  buffer* is mapped straight into our address space, so the renderer would draw
+  *into* the scanout memory and the copy would vanish rather than be optimised.
 - *No vsync, no double buffering → tearing.* This is the honest current
   limitation. We write directly into the memory being scanned out, so a repaint
   can be caught halfway by the display controller and the panel shows the top of
@@ -322,7 +323,7 @@ The card in this laptop is =00:02.0 [8086:8a52] Intel Iris Plus Graphics G7=
 
 efifb remains right for this project. We are not rendering video or running a
 compositor; we repaint a text-dense browser on keystrokes, and a CPU-drawn
-1280×800 frame is fast enough today (§9.4 says as much). The cost of the
+1280×800 frame is fast enough (about 3 ms drawn and sent under KVM, §9.4). The cost of the
 alternative is not "a config option" but a 418k-line driver, three proprietary
 blobs that would have to be fetched rather than committed, and an ioctl-based
 graphics stack to write in Lisp — for benefits (page flips, vsync, modesetting,
@@ -434,21 +435,21 @@ things worth recording here.
 
 ** 9.1 =present-fb= — =draw-alien= generalised
 
-=lol.fb:present-fb= ([[file:../poc/fb.lisp][poc/fb.lisp]]) blits a whole *canvas* instead of one sprite,
-but the mechanism is unchanged: read the geometry from sysfs, then, per row,
-=file-position= to =(y0+y)*stride + x0*4= and =write-sequence= the row. Its own
-header says so — "the same file-position + write-sequence path draw-alien
-already uses — proven to work on this machine". Same 32bpp bail-out, same
-never-assume-stride rule. =lol.fb:fb-geometry= is =read-fb-geometry= under
-another name, in the POC's package.
+=lol.fb:present-fb= ([[file:../poc/fb.lisp][poc/fb.lisp]]) blits a whole *canvas* instead of one sprite.
+It began as =draw-alien='s mechanism verbatim — read the geometry from sysfs, then,
+per row, =file-position= to =(y0+y)*stride + x0*4= and =write-sequence= the row — and
+has since become a single =pwrite(2)= straight from the canvas (§9.4). What survived
+is the addressing: the same 32bpp bail-out, the same never-assume-stride rule, the
+same byte offset =(y0+y)*stride + x0*4= for a row whenever rows are not contiguous.
+=lol.fb:fb-geometry= is =read-fb-geometry= under another name, in the POC's package.
 
 The difference from =draw-alien= is what it does NOT do: no read-modify-write.
 The alien needs to read the background back to honour its alpha cutout (§8.4);
 a full-screen canvas *owns* every pixel it covers, so it just overwrites.
 
-*Row at a time, not pixel at a time* — deliberately. Each =write-sequence= is
-one =write(2)=; the row buffer is built in ordinary Lisp memory first. A
-1280x800 repaint is 800 syscalls, not 1,024,000.
+*Never pixel at a time.* One =write(2)= per pixel would be 1,024,000 syscalls a
+frame. The first version wrote a row at a time (800 a frame); it is now one call a
+frame, or one per row only when the screen's =stride= is wider than the canvas.
 
 ** 9.2 The pixel format lines up for free
 
@@ -507,28 +508,94 @@ pixels. Both are the same shared-resource problem seen from opposite ends.
 Used by =run-browser-fb= ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) around its whole event loop, and by
 =poc/run-guest.lisp=.
 
-** 9.4 TODO (near future): make the blit a real memcpy
+** 9.4 DONE: the blit is a single copy
 
-=present-fb= currently *unpacks each pixel by hand* ([[file:../poc/fb.lisp][fb.lisp]], the =dotimes (x w)=
-body): it masks and shifts the 32-bit canvas word into four =(unsigned-byte 8)=
-slots of a row buffer, one pixel at a time, before writing the row.
+This section used to be a TODO. =present-fb= *unpacked each pixel by hand*: it
+masked and shifted every 32-bit canvas word into four =(unsigned-byte 8)= slots of a
+row buffer, then did a =file-position= + =write-sequence= per row — and, per frame,
+re-read three sysfs files and re-opened =/dev/fb0=. Per §9.2 that unpacking is
+*semantically a no-op*: source and destination bytes are already identical. The
+TODO said to fix it "when full-screen repaints start to feel slow". They did.
 
-Per §9.2 this copy is *semantically a no-op* — source and destination bytes are
-already identical. It exists only because SBCL will not let you view an
-=(unsigned-byte 32)= array as an =(unsigned-byte 8)= array without going through
-=sb-alien= (or a displaced-array trick). So we pay a per-pixel mask/shift/store
-loop to move bytes to where they already were.
+*What it does now* ([[file:../poc/fb.lisp::defun blit-fb][=blit-fb=]] in poc/fb.lisp):
 
-The fix, when full-screen repaints start to feel slow:
+1. =/dev/fb0= is opened *once* and kept, with its geometry, in =*fb*=. A variable
+   survives =save-lisp-and-die= but a file descriptor does not, so an
+   =sb-ext:*init-hooks*= entry forgets the cache when the image starts.
+2. The canvas's pixel vector is handed to the kernel *as it is*.
+   =sb-sys:with-pinned-objects= promises the garbage collector will not move the
+   vector for the duration (SBCL's GC moves objects, and the kernel is reading that
+   memory during the call); =sb-sys:vector-sap= is the address of its first element.
+   That is the "view a =(unsigned-byte 32)= array as bytes" step the old TODO said
+   SBCL would not let us do without =sb-alien= — and it is exactly that: one =sb-alien=
+   call.
+3. One =pwrite(2)= — a write at an explicit file offset, so no seek — sends the whole
+   frame when the rows are contiguous on both sides (=stride = width × 4=), else one
+   per row. The kernel side is [[file:../linux/drivers/video/fbdev/core/fb_io_fops.c::ssize_t fb_io_write][=fb_io_write=]]: it copies a page at a time into the
+   mapped framebuffer and advances by exactly what it copied, so a single call really
+   does write the whole 4 MB.
 
-1. =mmap= /dev/fb0 via =sb-alien= (§5 already flags mmap as the fast path; we
-   have the FFI — it is what =reboot(2)=, =ioctl=, and =poll= already use).
-2. Keep the canvas as 32-bit words and copy word-wise. Each aligned 64-bit store
-   carries *two pixels* (pixels are densely packed 4-byte cells; nothing is
-   padded to word size).
-3. That also drops the syscall per row to zero — stores go straight to the
-   mapped MMIO region.
+*Why not =mmap=*, which is what this section originally proposed? Both end in one
+copy of the canvas into the scanout memory; =mmap= would only move that copy from the
+kernel into our own loop. The canvas has to stay an ordinary Lisp vector — the whole
+toolkit draws into it, on the host and in the guest alike — so drawing *into* the
+mapping (the way to make the copy vanish) is not on offer without rewriting the
+canvas. =pwrite= gets the same copy for no new FFI beyond one routine, and no
+risk of the GC and a device mapping meeting.
 
-Not urgent: the row-at-a-time path is fast enough for the browser today, and it
-is a great deal less code. Filed here so the reason for the ugly inner loop is
-on the record, and so the optimisation is not re-derived from scratch later.
+*Measured* at tag #24, 1280×800, module index, averaged over 50 frames in the booted
+guest (numbers from =check-pointer.lisp= and a one-off baseline run of the old code):
+
+| per frame                        | before, KVM | after, KVM | before, TCG | after, TCG |
+|----------------------------------+-------------+------------+-------------+------------|
+| =draw-browser= alone             | 2.2 ms      | (same)     | 18.8 ms     | (same)     |
+| =present-fb= alone               | 4.0 ms      | ~1 ms (*)  | 47.7 ms     | ~2 ms (*)  |
+| full frame (draw + present)      | 6.5 ms      | 2.9–3.3 ms | 67.0 ms     | 21.0 ms    |
+
+(*) By subtraction: the full frame minus =draw-browser=, which did not change.
+
+(Why 50 frames: SBCL's =get-internal-real-time= reads =CLOCK_MONOTONIC_COARSE= on
+Linux, which only moves once per kernel tick — every 4 ms at our =CONFIG_HZ=250=. A
+single frame cannot be timed at all.)
+
+KVM vs TCG is the other half of the story: those are the same image under QEMU with
+and without hardware virtualisation. None of the repo's QEMU launches used to ask
+for KVM, so everything ran in the right-hand columns; see the note under "OVMF
+firmware on this box" in [[file:micro-distro.org][micro-distro.org]].
+
+** 9.5 The pointer is not part of the frame
+
+The browser redraws only when its *state* changes, and the loop used to treat
+every input event as a change — including the mouse, which reports motion many
+times a second. A pointer move therefore cost a full frame: repaint everything,
+draw the arrow into the canvas, send 4 MB. For about 200 pixels of actual change.
+
+Nothing the browser *draws* depends on where the pointer is (there are no hover
+effects), so a bare move does not need a redraw at all — only the arrow has to move.
+That works if the canvas never contains the arrow:
+
+- [[file:../initramfs/fb-browser.lisp::defun show-frame][=show-frame=]] sends a freshly drawn canvas, then
+  [[file:../initramfs/fb-browser.lisp::defun put-cursor][=put-cursor=]] composites the arrow into a *patch* the size of the arrow (copying
+  the canvas pixels under it first, so the transparent cells show the right thing)
+  and sends only that patch.
+- [[file:../initramfs/fb-browser.lisp::defun move-cursor][=move-cursor=]] handles a move with nothing else changed: the pixels under the
+  *old* position are still sitting untouched in the canvas, so erasing the arrow is
+  re-sending that small rectangle (=lol.fb:present-fb-rect=); then =put-cursor= at
+  the new position. Two writes of 16 short rows each.
+
+Every event loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — the browser, the source viewer, the value
+prompt, the debugger, the cheatsheet, the Spotter — follows one pattern: a =dirty=
+flag set by a key, a click, a wheel notch or a stage tick; a redraw only when it is
+set; =move-cursor= otherwise. (The value prompt also used to leave the mouse unread,
+and since =poll= is level-triggered an unread mouse is readable forever: the prompt
+spun, repainting, from the first twitch of the pointer until you pressed Enter.)
+
+| per pointer move | before (a full frame) | after      |
+|------------------+-----------------------+------------|
+| KVM              | 6.5 ms                | 12 µs      |
+| TCG              | 67 ms                 | 0.13 ms    |
+
+=check-pointer.lisp= in the repo root guards the contract in the booted guest: it
+counts =draw-browser= calls across real QMP pointer motion (zero), checks the
+screendump (arrow at the new place, the canvas's own pixel back at the old one),
+and checks the canvas never holds the arrow.

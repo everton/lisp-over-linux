@@ -148,7 +148,8 @@ wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugge
 here), and anything about =present-fb= itself. Its module index is correspondingly a
 subset of the guest's.
 
-For the half it cannot reach there is [[file:../check-scroll.lisp][=check-scroll.lisp=]] in the project root: it boots
+For the half it cannot reach there is [[file:../check-scroll.lisp][=check-scroll.lisp=]] in the project root (and
+[[file:../check-pointer.lisp][=check-pointer.lisp=]] beside it, for the pointer not redrawing the frame): it boots
 the real image and asserts what the machine *does* with real input — QMP keys and
 genuine evdev =REL_WHEEL= records — reading =pane-top= / =pane-sel= / =tv-scroll=
 back over the net REPL rather than guessing from pixels. The two harnesses divide
@@ -157,9 +158,11 @@ how the machine behaves.
 
 * Known rough edges (it is a POC)
 
-- The framebuffer path pushes a *full frame* per present (no damage tracking) and
-  writes it row-by-row rather than via =mmap=. Fine for a static scene; the real
-  toolkit needs dirty rectangles.
+- The framebuffer path redraws and pushes a *full frame* whenever the state changes
+  (no damage tracking) — one =pwrite(2)= of the canvas, ~3 ms a frame under KVM
+  (doc/framebuffer.org §9.4). The mouse pointer is the one exception: it is
+  composited on the way out, so a bare move re-sends two arrow-sized patches and
+  redraws nothing (§9.5). Dirty rectangles for the rest are still owed.
 - =run-guest.lisp= (the standalone POC scene) draws once and parks and does not
   read the mouse; the shipped =fb-browser.lisp= does read it (see above).
 - Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.

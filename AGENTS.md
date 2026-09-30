@@ -32,6 +32,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
 | `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
 | `check-scroll.lisp` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. |
+| `check-pointer.lisp` | Boot the image under QEMU and **assert that a bare mouse move does not redraw the browser** — counts `draw-browser` calls (via `sb-int:encapsulate`) across real QMP pointer motion, and checks the screendump: arrow at the new place, no smear at the old, never in the canvas. Also prints what a full frame and a pointer move cost in that guest. |
 | `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the `code-browser.org` illustrations (`--scenes` lists them). |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): REPL / worker / power-off menu. |
@@ -266,6 +267,12 @@ protocol in a tiled, keyboard-first shell. Progress:
   compile vs. Workspace**: `Do it` on a plain call is fine (SBCL's simple evaluator
   never invokes the compiler, which is why nothing noticed before), `Accept` on
   arithmetic is not. Full measurements: `doc/inspector-history.org` §5.6.
+  A second shape, seen 2026-09-29: compiling `(aref (lol.canvas:canvas-pixels c) 5)` —
+  an `aref` on a `(unsigned-byte 32)` vector the compiler cannot see the type of —
+  signals `NIL is not of type SB-VM::SPECIALIZED-ARRAY-ELEMENT-TYPE-PROPERTIES` in the
+  guest. It bites **net-REPL probes**, because `probe` wraps the form in
+  `ignore-errors` and so forces a compile; send a form of plain nested calls with no
+  wrapper and the simple evaluator runs it (`check-pointer.lisp`'s `probe-plain`).
 - **Networking is on** (tag #21 onward): `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
   Details: `kernel-config.org` and `doc/networking.org`.

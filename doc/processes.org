@@ -32,9 +32,9 @@ same constraint, so that comes first.
 
 * 1. The invariant: exactly one process writes to /dev/fb0
 
-=/dev/fb0= is opened as an ordinary file. =present-fb= does =with-open-file=,
-then per row a =file-position= seek and a =write-sequence= — see
-[[file:../poc/fb.lisp][poc/fb.lisp]].
+=/dev/fb0= is opened as an ordinary file. =present-fb= keeps it open and =pwrite(2)=s
+the canvas straight from Lisp memory — one call for a full frame — see
+[[file:../poc/fb.lisp][poc/fb.lisp]] and [[file:framebuffer.org][framebuffer.org §9.4]].
 
 There is no lock, no ownership, no arbitration. *Two processes writing it both
 succeed*, interleave rows, and — the part that matters — *neither can detect
@@ -210,7 +210,7 @@ of lines rather than the thousands, and it is a real saving, not a rhetorical on
 
 - *RGBA bytes over AF_UNIX* — reachable today, and the one to pick. Calibrate the
   cost against what is already paid: =present-fb= writes a full canvas per frame
-  via one =write-sequence= per row, unpacking every pixel in a Lisp shift loop.
+  as one =pwrite(2)= of the pixel vector, no per-pixel work (framebuffer.org §9.4).
 - *tmpfs file, both sides mmap* — reachable, but it needs new FFI:
   =sb-posix:mmap= exists and =sb-posix= is *not* shipped (§6), so this would be a
   =define-alien-routine "mmap"= against glibc — the same idiom as =%fbb-poll=,
