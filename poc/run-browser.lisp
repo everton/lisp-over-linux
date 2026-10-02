@@ -59,6 +59,11 @@
                                     (lol.canvas:super-p (lol.x11:event-state e))))
                   (4 (browser-scroll (- +wheel-lines+)))
                   (5 (browser-scroll +wheel-lines+))))
+               ;; motion with button 1 held (Button1Mask, #x100, in the state) is a
+               ;; drag: it extends the selection the press started (BROWSER-DRAG)
+               (:motion
+                (when (logtest #x100 (lol.x11:event-state e))
+                  (browser-drag (lol.x11:event-x e) (lol.x11:event-y e))))
                (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)))
                (t nil))))
       (unwind-protect

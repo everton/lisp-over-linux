@@ -1670,9 +1670,12 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   mouse and the keyboard's *own* evdev together, so the loop sleeps until one of
   the three has something. We decode =EV_REL= (relative — QEMU's PS/2 mouse, plus
   =REL_WHEEL= for scroll), =EV_ABS= (absolute — a =usb-tablet=, or a laptop
-  touchpad) and =EV_KEY=/=BTN_LEFT=; a cursor is drawn each frame and left-click
-  calls =browser-click= — on a touchpad a TAP does too, since a tap reports no
-  button and there is no libinput here to turn one into a click ([[file:input.org][input.org]] §4½). /Finding the device:/ do *not* assume =eventN= or grep the
+  touchpad) and =EV_KEY=/=BTN_LEFT=; a cursor is composited over the frame
+  ([[file:framebuffer.org][framebuffer.org]] §9.5) and left-click calls =browser-click= — on a touchpad a
+  deliberate TAP does too (brief, still, and pressed firmly enough: a graze is not a
+  click), since a tap reports no button and there is no libinput here to turn one
+  into a click. Motion with the button held is a *drag* that selects text
+  (=browser-drag=) — on a clickpad, press the pad and slide ([[file:input.org][input.org]] §4½). /Finding the device:/ do *not* assume =eventN= or grep the
   Handlers line for =mouse= — =mousedev= is not built, so a plain PS/2 mouse shows
   only =Handlers=eventN= with no =mouseN= token. =find-mouse-device= instead reads
   =/proc/bus/input/devices= and ranks the blocks by their =B: EV=- capability mask

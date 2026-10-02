@@ -1577,6 +1577,41 @@
         (setf (pane-top p) (max 0 (+ (pane-top p) lines))
               (pane-follow p) nil))))
 
+;;; ---- press and drag: selecting text with the pointer ------------------------
+;;; A click that places the caret in a text view also arms a DRAG: while the button
+;;; stays down, pointer motion extends the selection from that caret to the pointer
+;;; (TV-DRAG — the anchor stays where the press began). The backend tells us the
+;;; button is still held; this file only remembers WHICH view the press landed in,
+;;; because by the time the pointer moves it may be over a different pane.
+
+(defvar *drag-tv* nil
+  "The text view the last left press placed the caret in, or NIL: what a drag
+   extends. Set by BROWSER-CLICK, cleared by the next click.")
+(defvar *drag-origin* nil
+  "Where that press happened, (X . Y), until the pointer has moved far enough to be
+   a drag; NIL once it is one. See +DRAG-SLOP+.")
+(defparameter +drag-slop+ 3
+  "Pixels the pointer must travel, held down, before it selects. A clickpad's press
+   rolls the fingertip, which nudges the pointer a pixel or two; without this slop
+   every press would select a character or two instead of just placing the caret.")
+
+(defun browser-drag (x y)
+  "The left button is still held and the pointer is at X,Y: extend the selection in
+   the view the press landed in. Returns T when the frame changed (so the caller
+   redraws), NIL when there is no drag or the pointer is still inside the slop."
+  (when *drag-tv*
+    (when (and *drag-origin*
+               (<= (abs (- x (car *drag-origin*))) +drag-slop+)
+               (<= (abs (- y (cdr *drag-origin*))) +drag-slop+))
+      (return-from browser-drag nil))
+    (setf *drag-origin* nil)
+    (lol.textview:tv-drag *drag-tv* x y)
+    t))
+
+(defun arm-drag (tv x y)
+  "A press just placed TV's caret at X,Y: a drag from here selects in TV."
+  (setf *drag-tv* tv *drag-origin* (cons x y)))
+
 (defun browser-click (x y &optional ctrl super)
   "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
    list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
@@ -1592,6 +1627,7 @@
    in the half that already has focus behaves as it always did, and Ctrl-click /
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
+  (setf *drag-tv* nil *drag-origin* nil)    ; only a caret placed below re-arms it
   ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
   ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
   (when (< y +bar-h+)
@@ -1618,7 +1654,8 @@
          (ctrl (jump-to-definition (pane-tv p) x y))
          ((and (or (editable-pane-p p) (workspace-pane-p p))
                (lol.textview:tv-hit-p (pane-tv p) x y))
-          (lol.textview:tv-click (pane-tv p) x y))))
+          (lol.textview:tv-click (pane-tv p) x y)
+          (arm-drag (pane-tv p) x y))))
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
@@ -1645,7 +1682,9 @@
           (let* ((side (pane-side p)) (tv (pane-tv side)))
             (cond
               ((and tv (lol.textview:tv-hit-p tv x y))
-               (if ctrl (jump-to-definition tv x y) (lol.textview:tv-click tv x y)))
+               (if ctrl
+                   (jump-to-definition tv x y)
+                   (progn (lol.textview:tv-click tv x y) (arm-drag tv x y))))
               ;; a list in the right column: select the row that was drawn there,
               ;; read back from its OWN hit map (see *SIDE-ROWS*)
               ((null tv)

@@ -310,10 +310,12 @@ always worked. A *tap* sends no button at all: the finger lands, lifts, and the 
 trace is =BTN_TOUCH= going =1= and then =0=. Everywhere else, =libinput= is the
 thing that decides those two events were a click. There is no =libinput= here.
 
-So =read-mouse= decides. A contact becomes a click when three things hold:
+So =read-mouse= decides. A contact becomes a click when four things hold:
 
-1. *It was brief* — under =*tap-max-us*=, 180ms, which is the figure libinput
-   settled on. Longer and you were resting a finger, not tapping.
+1. *It was brief, but not fleeting* — under =*tap-max-us*=, 180ms, which is the
+   figure libinput settled on (longer and you were resting a finger, not tapping),
+   and at least =*tap-min-us*=, 30ms. A Synaptics pad sends a packet every 12.5ms,
+   so a finger brushing past on its way somewhere is over in one or two of them.
 2. *It did not travel* — no further from where it landed than =*tap-travel*=, a
    fortieth of the pad (about 2mm on a Synaptics pad), which forgives the roll of a
    finger lifting without admitting a drag.
@@ -321,6 +323,30 @@ So =read-mouse= decides. A contact becomes a click when three things hold:
    right-click we have no second button for — and either way the contact stops being
    a tap. A real =BTN_LEFT= disarms it too, so a press and the finger resting on the
    pad cannot fire twice.
+4. *It pressed like a tap* — its peak =ABS_PRESSURE= reached =*tap-min-pressure*=,
+   60. The pad reports pressure on every packet (0..255, Synaptics' "Z"), and the
+   kernel already turns anything over 30 into =BTN_TOUCH= — that is the hysteresis
+   at =if (hw.z > 30)= / =if (hw.z < 25)= in =linux/drivers/input/mouse/synaptics.c=.
+   Synaptics' interfacing guide puts a very light finger near 30 and a normal one
+   near 80; a graze lives between the two. A pad that reports no pressure skips this
+   test rather than never tapping.
+
+Rules 1's floor and 4 came later (2026-10-02), from use: with only the first three,
+the lightest touch on the laptop's pad was a click, and an accidental one looks
+exactly like a bug — something opened that you did not ask for. A *physical*
+press is untouched by all of this: it is =BTN_LEFT=, and it always clicks.
+
+*Tuning it.* The numbers are guesses about one person's fingers on one pad, so
+the last contact is kept, as the rule saw it, in =*last-touch*= — =(:ms 75 :peak
+80 :tap t)=. Print it in the Workspace right after a tap that misbehaved, and set
+=*tap-min-pressure*= or =*tap-min-us*= there; both are ordinary special variables,
+read on every contact.
+
+*How it was verified* without a touchpad (QEMU emulates none): =read-mouse= takes an
+fd, and a regular file is one, so a file of synthetic Synaptics-shaped records —
+=BTN_TOUCH=, =ABS_X/Y=, =ABS_PRESSURE= every 12.5ms — replays a contact exactly. A
+firm 80ms tap (peak 80) clicked; a graze of the same length (peak 45), a one-packet
+brush, a 300ms rest and a sliding contact did not; a physical press did.
 
 *This is what the timestamps were for.* Every record has carried a =struct timeval=
 since §2 and we had never read one — the rule above is the first thing that needs
@@ -328,12 +354,40 @@ to know /how long/ rather than /what/. [[file:../initramfs/fb-browser.lisp::defu
 gesture only ever takes a *difference* of two of them, so the clock behind it
 (evdev's default is =CLOCK_REALTIME=) never has to mean anything absolute.
 
-Two honest limits. *There is no tap-and-drag* — tap, then press-and-hold to drag —
-because that needs a click the browser can hold open, and =read-mouse= returns a
-click as a boolean. For the same reason *two clicks inside one drain collapse into
-one*; a drain is one =poll(2)= wake, so two taps that fast are not reachable by
+Two honest limits. *There is no tap-and-drag* — tap, then touch-and-hold to drag —
+because a tap is decided only when the finger /lifts/, so there is nothing still
+held to drag with; the pressed drag (next section) is the way to select. And
+because =read-mouse= returns a click as a boolean, *two clicks inside one drain
+collapse into one*; a drain is one =poll(2)= wake, so two taps that fast are not reachable by
 hand, and a double-click gesture would need a real press/release pair rather than
 this flag.
+
+** Press and drag: selecting with the pointer
+
+A press that lands in a text view places the caret there, and while the button stays
+down, motion extends the selection from that caret to the pointer — [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]],
+over the =tv-drag= the X11 editor prototype always had. On a clickpad that is: press
+the pad down, and slide.
+
+- *The button's state, not just its press.* =read-mouse= used to report =BTN_LEFT=
+  only as "a click happened". It now also keeps =*button-down*= — value 1 sets it,
+  0 clears it — and the loop treats any pointer motion while it is set as a drag.
+- *Which view.* =browser-click= remembers the text view the press placed the caret
+  in (=*drag-tv*=); a drag extends that one even if the pointer wanders over another
+  pane.
+- *A slop of 3 pixels* (=+drag-slop+=) before the first extension. Pressing a
+  clickpad rolls the fingertip, which nudges the pointer a pixel or two; without the
+  slop, every press would select a character instead of placing the caret.
+- *Two fingers do not scroll while the pad is pressed.* On a clickpad the press is
+  often a thumb, and the finger that moves is a second one — which is otherwise the
+  two-finger scroll (§6). So =pad-motion= scrolls only when the button is up.
+  /Untested on the laptop's pad:/ which finger =ABS_X/Y= follows while two are
+  down is the pad's choice, not ours, so pressing with one finger and sliding the
+  same one is the sure way.
+
+Verified in the guest by =check-pointer.lisp=, with QEMU's left button genuinely held
+across real =EV_REL= motion: the press alone selects nothing, the drag selects and
+follows the pointer down, the release is seen, and a still click clears it.
 
 * 5. Waiting on three things at once: =poll(2)=
 
@@ -428,6 +482,7 @@ wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
 |-------------+----------------------------------+-----------------------------|
 | move        | =EV_REL= =REL_X/Y= deltas        | =MotionNotify= x,y          |
 | left click  | =EV_KEY= =BTN_LEFT= value 1      | =ButtonPress= detail =1=    |
+| drag        | =REL_X/Y= while =BTN_LEFT= is 1  | =MotionNotify= with =Button1Mask= (=#x100=) in =state= |
 | wheel up    | =EV_REL= =REL_WHEEL= value =+1=  | =ButtonPress= detail =4=    |
 | wheel down  | =EV_REL= =REL_WHEEL= value =-1=  | =ButtonPress= detail =5=    |
 | Ctrl held   | =EV_KEY= =KEY_LEFTCTRL= value 1  | the event's =state= bitmask |
@@ -437,10 +492,9 @@ wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
 every event, so the host needs no equivalent of the second keyboard fd. That
 asymmetry is exactly why the guest has one.
 
-*Known gap.* [[file:../poc/run-browser.lisp][=run-browser.lisp=]]'s event loop tests =(= 1 (event-detail e))= before
-acting, so buttons 4 and 5 are silently dropped: the wheel works on the bare
-framebuffer and does nothing in the X11 window. Closing it is one branch to
-=browser-scroll=, and it is the piece of phase 5 still genuinely owed.
+[[file:../poc/run-browser.lisp][=run-browser.lisp=]] dispatches on the button: 1 clicks, 4 and 5 call =browser-scroll=
+(this paragraph used to record them as silently dropped — closed since), and a
+=:motion= whose state carries =Button1Mask= calls =browser-drag=.
 
 * 8. What makes it work (kernel side)
 
@@ -486,12 +540,14 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 | the record's timestamp, for the tap      | [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]]                                  |
 | track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
 | wait on tty + mouse + keyboard           | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]                                       |
+| press-and-drag selection                 | [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], =*button-down*= in =read-mouse=     |
 | notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |
 | the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                       |
 | the cursor bitmap we draw ourselves      | =*cursor-bits*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]                  |
 
 The cursor deserves the last word: there isn't one. No hardware sprite, no
 overlay plane — =*cursor-x*= and =*cursor-y*= are two integers, and we paint a
-little arrow from a string-art bitmap into the frame like everything else. The
+little arrow from a string-art bitmap ourselves — into a patch composited over the
+frame on its way to the screen, never into the frame itself ([[file:framebuffer.org][framebuffer.org]] §9.5). The
 mouse pointer on this machine is drawn by the same =fill-rect= that draws the
 tab strip.

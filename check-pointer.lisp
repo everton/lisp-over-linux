@@ -22,6 +22,10 @@
 ;;;;   - the CANVAS, which must not contain the arrow at all — it is composited on the
 ;;;;     way out, never drawn in.
 ;;;;
+;;;; Then PRESS AND DRAG: in a source pane, QEMU's left button held across real
+;;;; motion must select text, a still press must not, and a move after the release
+;;;; must not extend it (doc/input.org, "Press and drag").
+;;;;
 ;;;; Also prints what a full frame and a pointer move cost in this guest, for the
 ;;;; record — not asserted, since that depends on the host.
 
@@ -97,6 +101,49 @@
     (check "a key still redraws" (and n (>= n 1))))
 
   (probe "(sb-int:unencapsulate 'draw-browser 'count)")
+
+  ;; PRESS AND DRAG selects text. A source pane, reached the way check-scroll.lisp
+  ;; reaches one; then QEMU's left button genuinely held across real EV_REL motion —
+  ;; the same BTN_LEFT a clickpad's physical press sends.
+  (format t "~&~%== press and drag selects text ==~%")
+  (qmp-hold "meta_l" "spc") (sleep 2.0)
+  (qmp-type "draw-brow") (sleep 1.5)
+  (qmp-key "ret") (sleep 3.5)
+  (flet ((tv (accessor) (probe-int (format nil "(lol.textview::~a (pane-tv (current-pane)))" accessor)))
+         (selected () (string= (probe "(lol.textview::selection-p (pane-tv (current-pane)))") "T"))
+         (button (down)
+           (qmp-events (format nil "{\"type\":\"btn\",\"data\":{\"down\":~a,\"button\":\"left\"}}"
+                               (if down "true" "false")))
+           (sleep 0.6))
+         (glide (dx dy)                     ; in small steps, like a hand
+           (dotimes (i 4) (qmp-move (round dx 4) (round dy 4)) (sleep 0.25))
+           (sleep 0.8)))
+    (let ((tx (tv "tv-x")) (ty (tv "tv-y"))
+          (cx (probe-int "*cursor-x*")) (cy (probe-int "*cursor-y*")))
+      (when (and tx ty cx cy)
+        (glide (- (+ tx 80) cx) (- (+ ty 40) cy)))      ; into the text, near the top
+      (button t)
+      (let ((held (probe "*button-down*"))
+            (line0 (tv "tv-point-line"))
+            (sel0 (selected)))
+        (glide 120 64)                                  ; about four lines down
+        (let ((line1 (tv "tv-point-line")) (sel1 (selected)))
+          (button nil)
+          (let ((released (probe "*button-down*")))
+            (glide 40 40)                               ; button up: just a move
+            (let ((line2 (tv "tv-point-line")))
+              (format t "~&  press at line ~a, dragged to ~a, after release ~a; held=~a released=~a~%"
+                      line0 line1 line2 held released)
+              (check "the press is seen as held" (string= held "T"))
+              (check "a press alone places the caret, no selection" (not sel0))
+              (check "dragging with it held selects" sel1)
+              (check "the selection follows the pointer down"
+                     (and line0 line1 (> line1 line0)))
+              (check "the release is seen" (string= released "NIL"))
+              (check "moving after the release does not extend it" (eql line2 line1)))))))
+    ;; a click on the spot (press, release, no motion) collapses it again
+    (button t) (button nil)
+    (check "a still click clears the selection" (not (selected))))
   ;; the record, not an assertion: what a frame and a pointer move cost here. Many
   ;; iterations each, because GET-INTERNAL-REAL-TIME reads CLOCK_MONOTONIC_COARSE on
   ;; Linux (sbcl/src/code/unix.lisp), which only advances once a kernel tick — 4 ms at

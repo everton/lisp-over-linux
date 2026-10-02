@@ -230,10 +230,30 @@
 (defvar *tap-x* nil "Where it landed, in pad units — the origin the travel test measures from.")
 (defvar *tap-y* nil)
 (defvar *tap-live* nil "Is this contact still a tap candidate?")
+(defvar *tap-peak-z* nil
+  "The highest ABS_PRESSURE this contact reached, or NIL when the pad reports none.")
+(defvar *last-touch* nil
+  "The last contact as the tap rule saw it — (:ms :peak :tap) — kept for TUNING:
+   print it in the Workspace after a tap that did or did not click, and you have
+   the two numbers *TAP-MIN-US* and *TAP-MIN-PRESSURE* are compared against.")
+(defvar *button-down* nil
+  "Is the left button held right now? On a clickpad that is the pad PHYSICALLY
+   pressed. Pointer motion while it is down is a drag (BROWSER-DRAG).")
 
 (defvar *tap-max-us* 180000
   "The longest contact still counted as a tap, in microseconds. Past it you were
    resting a finger, not tapping — 180ms is what libinput settled on.")
+(defvar *tap-min-us* 30000
+  "The SHORTEST contact counted as a tap. A finger brushing the pad on its way
+   somewhere is over in one or two packets — a Synaptics pad sends one every
+   12.5ms — and a deliberate tap is not.")
+(defvar *tap-min-pressure* 60
+  "How hard a tap must press, as the peak ABS_PRESSURE of the contact (0..255 on a
+   Synaptics pad). The kernel already calls anything over 30 a touch; Synaptics'
+   own interfacing guide puts a very light finger at about 30 and a normal one at
+   about 80, and a graze lives between the two. So a contact that never pressed
+   past this is not a click, however brief. A pad that reports no pressure at all
+   skips the test. Tune it against *LAST-TOUCH*.")
 (defvar *tap-travel* 1/40
   "How far the finger may wander and still tap, as a fraction of the pad's own axis
    range. A tap is a contact that did not travel; this is the slop that forgives a
@@ -321,7 +341,8 @@
               *pointer-pad-p* (pointer-pad-p ev prop)
               *pad-x* nil *pad-y* nil *pad-fingers* 0
               *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0
-              *tap-down-us* nil *tap-x* nil *tap-y* nil *tap-live* nil)
+              *tap-down-us* nil *tap-x* nil *tap-y* nil *tap-live* nil
+              *tap-peak-z* nil *button-down* nil)
         (when *pointer-abs-p*
           (multiple-value-setq (*abs-x-min* *abs-x-max*) (evdev-abs-range fd 0))
           (multiple-value-setq (*abs-y-min* *abs-y-max*) (evdev-abs-range fd 1))))
@@ -400,8 +421,10 @@
         (setf *tap-live* nil)))
     (when (and dx (> (abs dx) (floor xrange 4))) (setf dx nil))
     (when (and dy (> (abs dy) (floor yrange 4))) (setf dy nil))
-    (if (>= *pad-fingers* 2)
-        ;; two fingers = the wheel this hardware does not have. Dragging them
+    (if (and (>= *pad-fingers* 2) (not *button-down*))
+        ;; two fingers = the wheel this hardware does not have. Not while the pad is
+        ;; pressed, though: the thumb holding the press down is a finger too, and
+        ;; the other one is dragging a selection, not scrolling. Dragging them
         ;; toward you is the same gesture as rolling a wheel toward you, so it
         ;; makes the same negative notches (see §6 of doc/input.org).
         (when dy
@@ -461,7 +484,11 @@
                         (setf *cursor-x* (abs-to-screen val *abs-x-min* *abs-x-max* xres))))
                  (1 (if *pointer-pad-p*
                         (setf ny val)
-                        (setf *cursor-y* (abs-to-screen val *abs-y-min* *abs-y-max* yres))))))
+                        (setf *cursor-y* (abs-to-screen val *abs-y-min* *abs-y-max* yres))))
+                 ;; ABS_PRESSURE: how hard the finger presses. Only the tap rule
+                 ;; reads it, as the peak over the contact (*TAP-MIN-PRESSURE*).
+                 (24 (when *tap-down-us*
+                       (setf *tap-peak-z* (max val (or *tap-peak-z* 0)))))))
               ((= type 2)                       ; EV_REL
                (case code
                  (0 (setf *cursor-x* (max 0 (min (1- xres) (+ *cursor-x* val)))))
@@ -470,6 +497,8 @@
               ((= type 1)                       ; EV_KEY — a button is just a key
                (case code
                  (#x110 (when (= val 1) (setf clicked t))        ; BTN_LEFT press
+                        ;; held until it reports 0: motion meanwhile is a drag
+                        (setf *button-down* (plusp val))
                         ;; a real press is not also a tap — a clickpad reports both
                         ;; the button and the finger resting on it
                         (setf *tap-live* nil))
@@ -488,18 +517,27 @@
                          ;; from the next packet if it was not.
                          (setf *tap-down-us* (evdev-time-us
                                               (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
-                               *tap-x* nx *tap-y* ny
+                               *tap-x* nx *tap-y* ny *tap-peak-z* nil
                                *tap-live* *pointer-pad-p*)
-                         ;; it left: a candidate that was brief enough IS the click.
+                         ;; it left: a candidate that was deliberate enough IS the
+                         ;; click — long enough not to be a brush, short enough not
+                         ;; to be a rest, and pressed hard enough not to be a graze.
                          ;; No button was ever reported — on a pad, that is the whole
                          ;; gesture, and the reason libinput exists elsewhere.
-                         (let ((dt (and *tap-down-us*
-                                        (- (evdev-time-us
-                                            (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
-                                           *tap-down-us*))))
-                           (when (and *tap-live* dt (<= 0 dt *tap-max-us*))
-                             (setf clicked t))
-                           (setf *pad-fingers* 0 *tap-live* nil
+                         (let* ((dt (and *tap-down-us*
+                                         (- (evdev-time-us
+                                             (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
+                                            *tap-down-us*)))
+                                (tap (and *tap-live* dt
+                                          (<= *tap-min-us* dt *tap-max-us*)
+                                          (or (null *tap-peak-z*)
+                                              (>= *tap-peak-z* *tap-min-pressure*)))))
+                           (when *tap-down-us*
+                             (setf *last-touch* (list :ms (and dt (round dt 1000))
+                                                      :peak *tap-peak-z*
+                                                      :tap (and tap t))))
+                           (when tap (setf clicked t))
+                           (setf *pad-fingers* 0 *tap-live* nil *tap-peak-z* nil
                                  *tap-down-us* nil *tap-x* nil *tap-y* nil))))
                     ;; a second finger means scroll, or a right-click we have no
                     ;; button for — either way this contact stopped being a tap
@@ -745,6 +783,12 @@
                                  (setf dirty t))
                                (when clicked
                                  (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*)
+                                 (setf dirty t))
+                               ;; moved with the button still held: a drag, which
+                               ;; extends the text selection the press started
+                               (when (and *button-down* (not clicked)
+                                          (or (/= ox *cursor-x*) (/= oy *cursor-y*))
+                                          (browser-drag *cursor-x* *cursor-y*))
                                  (setf dirty t))
                                ;; a bare move: the frame is still right, only the arrow
                                ;; is in the wrong place (a redraw would move it anyway)
