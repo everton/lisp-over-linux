@@ -1194,12 +1194,72 @@ stage, a *tab*, or the pane itself when nothing smaller was hit.
   Spotter, the clipboard history, the keys). The *type-specific* part is exactly
   =commands-for=, so a new subject type extends the menu by writing a method, and
   the menu code never hears about it ([[file:../poc/shell.lisp::defun run-command][=run-command=]] executes one).
-- *Middle button* → the *halo* ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]]): handles ringed round the point,
-  each numbered. *Source* leads — the code that produced the object: a symbol's
-  definition, a function's, and for an instance its class's (for a CLOS object, the
-  code that generated it /is/ its class) — then *Inspect*, the object's own =:halo=
-  commands, and *Copy*. Morphic draws handles round a morph's bounds; ours ring the
-  point, because the things here (a word, a row, a sprite) are small.
+- *Middle button* → the *halo*, which is about *layers*, not one object — see the
+  next subsection.
+
+** The halo walks the layers under the pointer  [BUILT 2026-10-02]
+
+The first halo asked only what a pane *shows*. Middle-click the Workspace's text and
+it was about =SUBJ-WORKSPACE= — the browser's handle on a view — and Inspect handed
+that to =present=, whose method for it /is/ the Workspace: a second Workspace opened
+below the first. The thing you pointed at — the text view holding the buffer, the
+pane, the code painting them — could not be reached at all. The fix has three parts.
+
+*1. Inspect means the instance.* =present= picks a view by type, so a value with a
+view of its own (every =SUBJ-*=, a pane, a text view) was never shown field by
+field. [[file:../initramfs/present.lisp::defstruct (subj-object][=subj-object=]] wraps a value to mean "this, as an object" — the third use of
+the "which subject you hand to =present=" trick (symbol vs =subj-defn=, class vs
+=subj-condition=) — and [[file:../initramfs/present.lisp::defun inspect-subject][=inspect-subject=]] wraps exactly when needed: when the value's
+most specific =present= method is not the =T= inspector. Functions, classes,
+packages and symbols keep their own views, which are their inspectors and richer
+than a slot list. Inside that inspector, fields keep drilling as objects (a field
+holding a pane opens the pane's fields), =C-c C-c= sets a field, =C-c C-e= evaluates
+with =self= bound to the instance ([[file:../initramfs/present.lisp::defun subject-value][=subject-value=]] unwraps it), and "Open its view" goes
+back to what it normally shows.
+
+*2. Every frame records who drew what.* Morphic gets this for free: there each thing
+on screen /is/ an object that draws itself. Here drawing is plain functions over plain
+structs, so each drawing function notes, the way it already records its hit maps,
+what it drew where and which functions painted it ([[file:../poc/shell.lisp::defun note-drawn][=note-drawn=]] into =*drawn*=,
+reset by =draw-browser=). The screen (the =CANVAS=, =draw-browser=), the tab strip and
+each tab (the trail list, =draw-tabs=), the systray (=draw-tray=, its data from
+=tray-items=), each pane (=PANE=, =draw-pane-body=), a text view (=TEXTVIEW=,
+=tv-draw=), a list (=VIEW=, =draw-list-body= / =item->row= / =draw-list=), the matrix, the
+stage and each sprite, the status line.
+
+*3. The halo is about one layer at a time, and shows which.*
+[[file:../poc/shell.lisp::defun halo-layers][=halo-layers=]] lists what is under the point, innermost first: the thing the pointer is
+*on* (the word and the symbol it names; what a row opens, then the row's own =ITEM=;
+what a sprite stands for), then every drawn element containing the point, smallest
+first, each pane followed by what it *shows*. For a word in the Workspace:
+
+| layer           | object                 | handles ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]])                  |
+|-----------------+------------------------+-----------------------------------------|
+| =greet=          | the symbol =GREET=       | Source, Senders, Inspect, Copy           |
+| text view       | a =LOL.TEXTVIEW:TEXTVIEW= | Inspect, Code: tv-draw, Class: textview, Copy |
+| pane · workspace | a =PANE=                 | Inspect, Code: draw-pane-body, Code: draw-panel, Class: pane, Copy |
+| shows           | =SUBJ-WORKSPACE=          | Open its view, Inspect, Copy             |
+| the screen      | the =CANVAS=              | Inspect, Code: draw-browser, Class: canvas, Copy |
+
+=Up=, =Tab= or the middle button again walk *out* to the thing around the current
+layer (Morphic's repeated middle-click), =Down= walks back *in*, =Left=/=Right= move
+between handles. What the halo is about is shown, not described: the current layer
+stays bright and outlined in the accent while everything else dims ([[file:../poc/shell.lisp::defun spotlight][=spotlight=]]),
+and a caption lists every layer with the current one lit, then what it is ("text view
+— a LOL.TEXTVIEW:TEXTVIEW"). On a small element (a word, a row, a tab) the handles
+hang off its outline as a strip, Morphic-style, so nothing covers the thing itself;
+on a large one (a pane, the screen) they ring the point clicked. The first halo put
+its name label at the ring's centre — exactly on top of the word it was about. Handle dots are coloured by what
+they open: amber an instance, teal code, blue a class, gold a view. A word that names
+nothing offers only Copy.
+
+*Code* opens the drawing function's definition, editable; =C-c C-c= recompiles it into
+the running image, so the change is global — every pane drawn by it changes on the
+next frame. That is the "change its code for everyone" half; Inspect, with settable
+fields, is the "change this instance" half.
+
+To look at a halo without booting: =sbcl --script poc/render-frame.lisp workspace
+--halo 80,226,1= draws it at that point on layer 1 and lists the layers.
 
 *The middle button had two jobs.* X's select-then-middle-click paste (PRIMARY,
 [[file:clipboard.org][clipboard.org]] §3) and Smalltalk's halo both want it. The split is by *place*, in
@@ -1222,7 +1282,8 @@ shell's =*chooser*= hook, the way =*value-prompt*= is): arrows or hover move, En
 or a click picks, a digit picks directly, Esc or a click elsewhere leaves. On the
 X11 host backend no chooser is installed, and the buttons say so in the status line.
 Verified in the guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle
-buttons.
+buttons — including walking a row's layers out to its =PANE=, inspecting that pane,
+and opening =tv-draw= from the Workspace's text view.
 
 (Distinct concern, kept separate: *liveness* — "this content changed, re-render me"
 — is the shell re-=present='ing a subject when its dependency signals, not a
@@ -2216,7 +2277,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   opens on the Workspace alone (the index is =SuperL-m=, the flat CL-USER list
   =SuperL-l=); a *clipboard* with Parcellite's history, X's PRIMARY and the Emacs
   kill and rectangle keys ([[file:clipboard.org][clipboard.org]], manager on =SuperL-h=); the *right-button
-  menu* and the *halo* (§4½, "The right button and the halo"); a *systray* with the
+  menu* and the *halo* (§4½, "The right button and the halo"), which walks the
+  layers under the pointer — word, element, pane, screen — to the instance and the
+  code that draws it; a *systray* with the
   battery and the clock, copied from the host's StumpWM mode line ([[file:systray.org][systray.org]]);
   and a pointer that hides when idle ([[file:framebuffer.org][framebuffer.org]] §9.5).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application

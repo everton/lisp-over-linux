@@ -513,6 +513,21 @@
    A click reads it back rather than computing an index from y, because with section
    headers in the layout screen row N is no longer item N.")
 
+(defvar *drawn* '()
+  "Everything the last frame drew that you might point at, as
+   ((x y w h object drawers label) …): the OBJECT that is on screen there and the
+   DRAWERS — the functions whose code put it there, the one that paints it first.
+
+   This is what lets the halo answer \"who drew me?\" for any pixel. Morphic gets it
+   for free, because there every thing on screen IS an object (a morph) that draws
+   itself; here drawing is plain functions over plain structs, so the drawing
+   functions say what they drew, the way they already record their hit maps. Reset
+   by DRAW-BROWSER at the top of every frame.")
+
+(defun note-drawn (x y w h object drawers label)
+  "Record that DRAWERS painted OBJECT into the rect X,Y,W,H (see *DRAWN*)."
+  (push (list x y w h object drawers label) *drawn*))
+
 (defun draw-list-body (canvas pane x y w h &optional (into :main))
   "Render a list view: the widget does rows, sections, selection and the scrollbar;
    this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
@@ -520,6 +535,8 @@
    INTO says which hit map to record — :MAIN for the expanded pane, :SIDE for the
    right-hand column, which is drawn in the same frame and must not overwrite it."
   (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
+    (note-drawn x y w h (pane-view pane) '(draw-list-body item->row lol.widgets:draw-list)
+                (format nil "list of ~d rows" (length rows)))
     (multiple-value-bind (top hits)
         (lol.widgets:draw-list canvas x y w h rows
                                :sel (pane-sel pane) :top (pane-top pane)
@@ -628,10 +645,13 @@
                  (atan (body-vy b) (body-vx b))
                  (/ (body-rot b) 1000.0)))
          (c (cos th)) (sn (sin th))
+         (r (body-r b))
          (pts (mapcar (lambda (p)
                         (cons (+ ox (body-x b) (round (- (* (car p) c) (* (cdr p) sn))))
                               (+ oy (body-y b) (round (+ (* (car p) sn) (* (cdr p) c))))))
                       (stage-sprite-points b))))
+    (note-drawn (- (+ ox (body-x b)) r) (- (+ oy (body-y b)) r) (* 2 r) (* 2 r)
+                b '(draw-stage-sprite stage-sprite-points) "sprite")
     (lol.canvas:draw-poly canvas pts color)
     ;; the station's ring and core — a hexagon alone reads as a rock
     (when (eq (body-kind b) :station)
@@ -891,6 +911,9 @@
          (x0 (- w tw))
          (pen (+ x0 8)))
     (lol.canvas:fill-rect canvas x0 0 tw (- +bar-h+ 1) *ui-bg*)
+    (note-drawn x0 0 tw (- +bar-h+ 1) items '(draw-tray tray-items) "the systray")
+    (note-drawn (- pen 3) 0 16 (- +bar-h+ 1) (lol.clipboard:clip-current)
+                '(draw-clip-icon open-clipboard-manager) "the clipboard icon")
     (draw-clip-icon canvas pen 3 (if (lol.clipboard:clip-current) *ui-accent* *ui-dim*))
     (setf *tray-clip-rect* (cons (- pen 3) (+ pen 13)))
     (incf pen 14)
@@ -912,6 +935,7 @@
    name sits at the right when there's room."
   (setf *tab-rects* '() *tab-close-rects* '() *tab-plus-rect* nil)
   (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
+  (note-drawn 0 0 w +bar-h+ *trails* '(draw-tabs) "the tab strip")
   (let ((x 8) (multi (cdr *trails*)))                        ; align with the 8px gutter below
     (loop for trail in *trails* for i from 0
           for active = (= i *active*)
@@ -934,6 +958,8 @@
                                            (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
                    (push (cons i (cons cx (+ cx 14))) *tab-close-rects*)))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
+               (note-drawn x 0 tw +bar-h+ trail '(draw-tabs trail-title)
+                           (format nil "tab ~d · ~a" (1+ i) (trail-title trail)))
                (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
     (let ((px (+ x 2)))
@@ -955,7 +981,9 @@
     (lol.widgets:draw-bar canvas 8 y (- w 16)
                           :marker ">" :label (view-title (pane-view pane)) :tint tint
                           :right (and sel (format nil "picked ~a" (item-label sel))))
-    (lol.canvas:fill-rect canvas 8 y 3 +bar-h+ tint))       ; the kind stripe
+    (lol.canvas:fill-rect canvas 8 y 3 +bar-h+ tint)        ; the kind stripe
+    (note-drawn 8 y (- w 16) +bar-h+ pane '(draw-crumb)
+                (format nil "breadcrumb · ~a" (short-title (view-title (pane-view pane))))))
   (push (cons index y) *crumb-rects*))
 
 (defun preview-for (subject)
@@ -975,13 +1003,20 @@
   "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
    into the rect. The one place that knows how each view kind paints, so the expanded
    pane and the nav-split preview stay identical. INTO is passed to DRAW-LIST-BODY."
+  (when (eq into :side)                  ; the main pane is noted with its panel
+    (note-drawn x y w h pane '(draw-pane-body)
+                (format nil "side pane · ~a" (short-title (view-title (pane-view pane))))))
   (cond
     ((pane-tv pane)
      (lol.textview:tv-geometry (pane-tv pane) x y w h)
+     (note-drawn x y w h (pane-tv pane) '(lol.textview:tv-draw) "text view")
      (lol.textview:tv-draw canvas (pane-tv pane)))
     ((eq (view-kind (pane-view pane)) :matrix)
+     (note-drawn x y w h (view-data (pane-view pane)) '(draw-matrix-body lol.widgets:draw-grid)
+                 "dispatch matrix")
      (draw-matrix-body canvas pane x y w h))
     ((eq (view-kind (pane-view pane)) :stage)
+     (note-drawn x y w h (view-data (pane-view pane)) '(draw-stage-body) "stage")
      (draw-stage-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h into))))
 
@@ -996,6 +1031,8 @@
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
   (setf *split-x* nil)
+  (setf *drawn* '())
+  (note-drawn 0 0 w h canvas '(draw-browser) "the screen")
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   ;; the tab strip replaces the old static title bar
   (draw-tabs canvas w)
@@ -1008,6 +1045,8 @@
     ;; the expanded current pane
     (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 24)))
       (setf *content-top* body-y)                 ; remember it for click hit-testing
+      (note-drawn 8 y (- w 16) (- h y 24) cur '(draw-pane-body lol.widgets:draw-panel)
+                  (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
       (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y 24)
                               :title (view-title (pane-view cur))
                               :tint (view-kind-color (pane-view cur))
@@ -1069,53 +1108,58 @@
                                          prev-x (+ body-y 4) *ui-dim*))))
           ;; single pane, full width (source / matrix / a list with nothing to preview)
           (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))
-    ;; status line
-    (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
-      (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *ui-hi*)
-      (if *browser-status*
-          (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *ui-accent*)
-          (draw-hints canvas 10 (- h 18) w
-                      (append
-                       (cond ((and *editing-side* (pane-side cur))
-                              ;; name the half you go BACK to, and the verb the pane's
-                              ;; own header advertises — a stage is not a list, and a
-                              ;; Workspace defines rather than accepts an edit.
-                              (list (cons "C-c C-c"
-                                          (if (workspace-pane-p (pane-side cur))
-                                              "define" "accept"))
-                                    (cons "SuperL-o"
-                                          (if (eq (view-kind (pane-view cur)) :stage)
-                                              "back to stage" "back to list"))))
-                             ((workspace-pane-p cur)
-                              '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
-                                ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")
-                                ("C-c C-c" . "define")))
-                             ((eq (view-kind (pane-view cur)) :stage)
-                              '(("spc" . "run/pause") ("n" . "step") ("s/a/m/t" . "spawn")
-                                ("w" . "workspace") ("r" . "reset")
-                                ("tab" . "select") ("ret" . "inspect")))
-                             ((editable-pane-p cur) '(("C-c C-c" . "accept")))
-                             ((pane-side cur)
-                              '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
-                                ("SuperL-o" . "edit")))
-                             ;; a FUNCTION subject can be applied; every inspector pane
-                             ;; can be evaluated inside (C-c C-e). Advertise the verb
-                             ;; that is special to what you are looking at, first.
-                             ((functionp (pane-subject cur))
-                              '(("ret" . "drill") ("C-c C-a" . "apply it")
-                                ("C-c C-e" . "eval in context")))
-                             ((let ((it (selected-item cur))) (and it (item-edit it)))
-                              '(("up/dn" . "move") ("ret" . "drill")
-                                ("C-c C-c" . "set this field")
-                                ("C-c C-e" . "eval in context")))
-                             ((eq (view-kind (pane-view cur)) :inspector)
-                              '(("up/dn" . "move") ("ret" . "drill")
-                                ("C-c C-e" . "eval in context")))
-                             (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
-                       '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
-                       (when cmds
-                         (list (cons nil (format nil "commands: ~{~a~^ · ~}"
-                                                 (mapcar #'command-label cmds)))))))))))
+    (draw-status-line canvas w h cur)))
+
+(defun draw-status-line (canvas w h cur)
+  "The bottom line: the last message, or the keys that matter for the pane CUR."
+  (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
+    (note-drawn 0 (- h 22) w 22 *browser-status* '(draw-status-line draw-hints)
+                "the status line")
+    (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *ui-hi*)
+    (if *browser-status*
+        (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *ui-accent*)
+        (draw-hints canvas 10 (- h 18) w
+                    (append
+                     (cond ((and *editing-side* (pane-side cur))
+                            ;; name the half you go BACK to, and the verb the pane's
+                            ;; own header advertises — a stage is not a list, and a
+                            ;; Workspace defines rather than accepts an edit.
+                            (list (cons "C-c C-c"
+                                        (if (workspace-pane-p (pane-side cur))
+                                            "define" "accept"))
+                                  (cons "SuperL-o"
+                                        (if (eq (view-kind (pane-view cur)) :stage)
+                                            "back to stage" "back to list"))))
+                           ((workspace-pane-p cur)
+                            '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
+                              ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")
+                              ("C-c C-c" . "define")))
+                           ((eq (view-kind (pane-view cur)) :stage)
+                            '(("spc" . "run/pause") ("n" . "step") ("s/a/m/t" . "spawn")
+                              ("w" . "workspace") ("r" . "reset")
+                              ("tab" . "select") ("ret" . "inspect")))
+                           ((editable-pane-p cur) '(("C-c C-c" . "accept")))
+                           ((pane-side cur)
+                            '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside")
+                              ("SuperL-o" . "edit")))
+                           ;; a FUNCTION subject can be applied; every inspector pane
+                           ;; can be evaluated inside (C-c C-e). Advertise the verb
+                           ;; that is special to what you are looking at, first.
+                           ((functionp (pane-subject cur))
+                            '(("ret" . "drill") ("C-c C-a" . "apply it")
+                              ("C-c C-e" . "eval in context")))
+                           ((let ((it (selected-item cur))) (and it (item-edit it)))
+                            '(("up/dn" . "move") ("ret" . "drill")
+                              ("C-c C-c" . "set this field")
+                              ("C-c C-e" . "eval in context")))
+                           ((eq (view-kind (pane-view cur)) :inspector)
+                            '(("up/dn" . "move") ("ret" . "drill")
+                              ("C-c C-e" . "eval in context")))
+                           (t '(("up/dn" . "move") ("ret" . "drill") ("S-ret" . "beside"))))
+                     '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
+                     (when cmds
+                       (list (cons nil (format nil "commands: ~{~a~^ · ~}"
+                                               (mapcar #'command-label cmds))))))))))
 
 ;;; ---- the Spotter card (§4¾) ----------------------------------------------
 ;;; The DRAWING lives here, in the backend-blind layer, and only the input loop lives
@@ -1336,7 +1380,7 @@
    edge case — and the view is a rendering of the object, so it has to be read back
    rather than patched. Errors land in the status line; a form typed into a live image
    must not be able to take down PID 1."
-  (let ((subject (pane-subject pane)))
+  (let ((subject (subject-value (pane-subject pane))))
     (cond
       ((null *value-prompt*)
        (setf *browser-status* "no input available on this backend"))
@@ -1347,7 +1391,7 @@
            (handler-case
                (let ((value (eval-in-context subject text)))
                  (let ((sel (pane-sel pane)))
-                   (setf (pane-view pane) (present subject))
+                   (setf (pane-view pane) (present (pane-subject pane)))
                    (set-pane-sel pane sel))
                  (setf *preview-subject* nil)
                  (setf *browser-status*
@@ -1363,7 +1407,7 @@
    the verb, so the useful thing to type is its arguments. The result is pushed onto the
    trail rather than summarised in the status line — you asked the function for a value
    because you want to look at the value."
-  (let ((subject (pane-subject pane)))
+  (let ((subject (subject-value (pane-subject pane))))
     (cond
       ((not (functionp subject))
        (setf *browser-status* "not a function"))
@@ -1604,16 +1648,22 @@
 
 ;;; ---- jump-to-definition: Ctrl-click a symbol in a source pane -------------
 
-(defun click-token (string col)
-  "The symbol-token in STRING under column COL, or NIL when COL is whitespace or a
-   delimiter. A token is a maximal run of non-delimiter characters — enough to
-   catch =foo-bar=, =*var*=, and =pkg:name= without a real reader."
+(defun token-span (string col)
+  "The columns [START END) of the symbol-token in STRING under column COL, or NIL
+   when COL is whitespace or a delimiter. A token is a maximal run of non-delimiter
+   characters — enough to catch =foo-bar=, =*var*=, and =pkg:name= without a real
+   reader."
   (flet ((delim (ch) (member ch '(#\Space #\Tab #\( #\) #\' #\" #\` #\, #\;))))
     (when (and string (<= 0 col) (< col (length string)) (not (delim (char string col))))
       (let ((start col) (end col) (n (length string)))
         (loop while (and (> start 0) (not (delim (char string (1- start))))) do (decf start))
         (loop while (and (< end n) (not (delim (char string end)))) do (incf end))
-        (subseq string start end)))))
+        (values start end)))))
+
+(defun click-token (string col)
+  "The symbol-token in STRING under column COL, or NIL (see TOKEN-SPAN)."
+  (multiple-value-bind (start end) (token-span string col)
+    (and start (subseq string start end))))
 
 (defun resolve-symbol (token)
   "TOKEN (a raw source word) -> an EXISTING symbol, or NIL. Understands =pkg:name=
@@ -1873,11 +1923,15 @@
          (l (lol.textview::line-at-y tv y))
          (c (lol.textview::col-at-x tv l x))
          (line (aref (lol.textview:tv-lines tv) l))
-         (token (or (click-token line c) (and (> c 0) (click-token line (1- c)))))
+         (at (if (click-token line c) c (max 0 (1- c))))
+         ;; past the end of the line is empty space, not the line's last word
+         (token (and (<= x (+ (lol.textview::x-of-col tv (length line)) 4))
+                     (click-token line at)))
          (sym (resolve-symbol token)))
-    (list :kind :text :pane pane :tv tv
-          :editable (or (editable-pane-p pane) (workspace-pane-p pane))
-          :token token :symbol sym :line l :col c)))
+    (multiple-value-bind (start end) (and token (token-span line at))
+      (list :kind :text :pane pane :tv tv
+            :editable (or (editable-pane-p pane) (workspace-pane-p pane))
+            :token token :symbol sym :line l :col c :start start :end end))))
 
 (defun row-target (pane hits y)
   "A target for a click at height Y on PANE's list, whose painted rows are HITS."
@@ -1911,19 +1965,11 @@
         ((eq (view-kind (pane-view p)) :stage)
          (let ((b (stage-body-at p x y)))
            (if b
-               (list :kind :sprite :pane p :subject (body-obj b))
+               (list :kind :sprite :pane p :body b :subject (body-obj b))
                (pane-itself p))))
         ((and (null (pane-tv p)) (not (eq (view-kind (pane-view p)) :matrix)))
          (or (row-target p *list-rows* y) (pane-itself p)))
         (t (pane-itself p))))))
-
-(defun target-object (target)
-  "The Lisp object a TARGET stands for — what Inspect would open, what the halo is
-   ABOUT. A word in text stands for its symbol; a row for its subject."
-  (case (getf target :kind)
-    (:text (getf target :symbol))
-    ((:row :sprite :pane) (getf target :subject))
-    (t nil)))
 
 ;;; ---- running a COMMAND (present.lisp's affordance protocol) ---------------
 ;;; COMMANDS-FOR has always described, per type, what a subject affords and on
@@ -1991,8 +2037,9 @@
 ;;; section header, so the generic edit verbs and the type's own commands read as
 ;;; separate lists.
 
-(defun menu-entry (label action &key key group)
-  (list :label label :action action :key key :group group))
+(defun menu-entry (label action &key key group tone)
+  "One entry. TONE is a Lisp-concept keyword the halo colours its handle by."
+  (list :label label :action action :key key :group group :tone tone))
 
 (defun command-entries (subject surface &optional (group "commands"))
   "SUBJECT's commands for SURFACE as menu entries."
@@ -2061,7 +2108,7 @@
    (case (getf target :kind)
      (:text   (text-menu-entries target))
      (:row    (row-menu-entries target))
-     (:sprite (append (list (menu-entry "Inspect" (lambda () (trail-push (getf target :subject)))
+     (:sprite (append (list (menu-entry "Inspect" (lambda () (trail-push (inspect-subject (getf target :subject))))
                                         :group "instance"))
                       (command-entries (getf target :subject) :menu "instance")))
      (:tab    (let ((i (getf target :index)))
@@ -2109,38 +2156,156 @@
       (lol.widgets:hit-row *menu-hits* y)))
 
 ;;; ---- the halo (middle button) ---------------------------------------------
-;;; Smalltalk's halo: middle-click a thing and a ring of HANDLES appears around it,
-;;; each one a thing you can do to THAT object — browse the code that made it, inspect
-;;; it, see who uses it. Morphic's handles are coloured dots around the morph's
-;;; bounds; ours ring the point you clicked, because the things here (a word, a row, a
-;;; sprite) are small. The handles come from the same COMMANDS-FOR, its :HALO surface.
+;;; Smalltalk's halo: middle-click a thing and a ring of HANDLES appears round it,
+;;; each one a thing you can do to THAT object. In Morphic the thing is always a
+;;; morph — an on-screen object that draws itself — and pressing the middle button
+;;; again walks out to the morph that CONTAINS it. Ours does the same over LAYERS:
+;;;
+;;;     the word under the pointer       the symbol it names         Source, Senders
+;;;     the row / the sprite             what it opens / stands for  Open, Inspect
+;;;     the text view, the list          a TEXTVIEW / VIEW instance  Inspect, Code
+;;;     the pane                         a PANE instance             Inspect, Code
+;;;     what the pane shows              its subject                 Open its view
+;;;     the screen                       the CANVAS                  Code: draw-browser
+;;;
+;;; The first two are what the pointer is ON (POINTER-TARGET). The rest come from
+;;; *DRAWN*: every drawing function says what it drew where, so any pixel can answer
+;;; "which instance is this, and which code painted it". Inspect opens the INSTANCE,
+;;; fields settable in place (C-c C-c) and evaluable inside (C-c C-e); Code opens the
+;;; drawing function's definition, which C-c C-c recompiles for everyone.
+;;;
+;;; What the halo is about must never be a guess, so the chosen layer is shown, not
+;;; described: it stays bright and outlined while everything else dims, and a caption
+;;; names every layer under the pointer with the current one lit.
 
 (defparameter +halo-radius+ 74 "Distance of the handles from the clicked point.")
 
-(defun halo-entries (object)
-  "The halo's handles for OBJECT: Source (the code that produced it) and Inspect
-   always lead, then the object's own :halo commands, then Copy."
-  (let* ((src (source-subject object))
-         (own (command-entries object :halo "halo"))
-         (base (remove nil
-                       (list (when src (menu-entry "Source" (lambda () (trail-push src)) :group "halo"))
-                             (menu-entry "Inspect" (lambda () (trail-push object)) :group "halo")
+(defun halo-layer (name title object rect role &optional drawers)
+  "One layer the halo can be about. ROLE is :THING (what the pointer is on), :ELEMENT
+   (an on-screen instance, with the DRAWERS that paint it) or :SUBJECT (what a pane
+   shows). RECT is (x y w h), what the halo outlines."
+  (list :name name :title title :object object :rect rect :role role :drawers drawers))
+
+(defun drawn-record-of (object)
+  "The *DRAWN* record for OBJECT, or NIL."
+  (find object *drawn* :key #'fifth))
+
+(defun target-layers (target)
+  "The innermost layers: the thing the pointer is ON, before what contains it."
+  (case (getf target :kind)
+    (:text
+     (let ((tv (getf target :tv)) (tok (getf target :token)) (sym (getf target :symbol)))
+       (when (and tok (getf target :start))
+         (let* ((lh (lol.textview:tv-line-height tv))
+                (x0 (lol.textview::x-of-col tv (getf target :start)))
+                (x1 (lol.textview::x-of-col tv (getf target :end)))
+                (y (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv)
+                      (* (- (getf target :line) (lol.textview::tv-scroll tv)) lh))))
+           (list (halo-layer (clip-text tok 20)
+                             (if sym (format nil "the symbol ~s" sym) (format nil "the word ~s" tok))
+                             (or sym tok) (list (- x0 2) (- y 1) (+ (- x1 x0) 4) (+ lh 1))
+                             :thing))))))
+    (:row
+     (let* ((pane (getf target :pane)) (item (getf target :item))
+            (rec (drawn-record-of (pane-view pane)))
+            (hit (find (getf target :index) (if (eq pane (current-pane)) *list-rows* *side-rows*)
+                       :key #'cdr))
+            (rect (if (and rec hit)
+                      (list (first rec) (car hit) (third rec) +row-h+)
+                      (and rec (subseq rec 0 4))))
+            (label (clip-text (item-label item) 20)))
+       (remove nil
+               (list (when (getf target :subject)
+                       (halo-layer label (format nil "what the row opens: ~a" (item-label item))
+                                   (getf target :subject) rect :thing))
+                     (halo-layer "row" (format nil "the row ~s itself" (item-label item))
+                                 item rect :element '(item->row lol.widgets:draw-list))))))
+    (:sprite
+     (let ((rec (drawn-record-of (getf target :body))))
+       (list (halo-layer (object-title (getf target :subject))
+                         "what the sprite stands for" (getf target :subject)
+                         (and rec (subseq rec 0 4)) :thing))))
+    (t nil)))
+
+(defun drawn-layers (x y)
+  "Every drawn element under X,Y, innermost (smallest) first — each pane followed by
+   what it shows."
+  (let ((under (remove-if-not (lambda (d)
+                                (destructuring-bind (dx dy dw dh &rest r) d
+                                  (declare (ignore r))
+                                  (and (<= dx x (+ dx dw -1)) (<= dy y (+ dy dh -1)))))
+                              *drawn*)))
+    (loop for d in (stable-sort (copy-list under) #'< :key (lambda (d) (* (third d) (fourth d))))
+          append (destructuring-bind (dx dy dw dh obj drawers label) d
+                   (let ((rect (list dx dy dw dh)))
+                     (cons (halo-layer (clip-text label 24) label obj rect :element drawers)
+                           (when (pane-p obj)
+                             (list (halo-layer "shows"
+                                               (format nil "what the pane shows: ~a"
+                                                       (view-title (pane-view obj)))
+                                               (pane-subject obj) rect :subject)))))))))
+
+(defun halo-layers (x y)
+  "Everything under X,Y the halo can be about, innermost first."
+  (append (target-layers (pointer-target x y)) (drawn-layers x y)))
+
+(defun halo-entries (layer)
+  "The handles for LAYER. An element offers its instance and the code that draws it;
+   a thing offers its definition and its uses; what a pane shows can be opened."
+  (let* ((object (getf layer :object))
+         (role (getf layer :role))
+         (src (source-subject object))
+         (g "halo")
+         (inspect (unless (stringp object)    ; a word that names nothing: only Copy
+                    (menu-entry "Inspect" (lambda () (trail-push (inspect-subject object)))
+                                :group g :tone :variable)))
+         (class-of-it (when src
+                        (menu-entry (if (or (symbolp object) (subj-defn-p object)
+                                            (functionp object))
+                                        "Source"
+                                        (format nil "Class: ~(~a~)" (type-of object)))
+                                    (lambda () (trail-push src)) :group g :tone :class)))
+         (base
+           (remove nil
+                   (if (eq role :element)
+                       ;; an element: the instance first, then the code that paints it
+                       (append (list inspect)
+                               (loop for d in (getf layer :drawers)
+                                     when (jumpable-p d)
+                                       collect (let ((d d))
+                                                 (menu-entry (format nil "Code: ~(~a~)" d)
+                                                             (lambda () (trail-push (subj-defn d)))
+                                                             :group g :tone :function)))
+                               (list class-of-it))
+                       ;; a thing: where it goes, where it came from, who uses it
+                       (list (when (and (not (symbolp object)) (not (stringp object)))
+                               (menu-entry (if (eq role :subject) "Open its view" "Open")
+                                           (lambda () (trail-push object))
+                                           :group g :tone :package))
+                             class-of-it
+                             (when (and (symbolp object) object (fboundp object))
+                               (menu-entry "Senders" (lambda () (trail-push (subj-xref :senders object)))
+                                           :group g :tone :generic-function))
                              (when (and (symbolp object) object (find-class object nil))
-                               (menu-entry "Class" (lambda () (trail-push (find-class object))) :group "halo"))))))
+                               (menu-entry "Class" (lambda () (trail-push (find-class object)))
+                                           :group g :tone :class))
+                             inspect))))
+         (own (if (member role '(:element)) '()
+                  (and (not (stringp object)) (command-entries object :halo g)))))
     (append base
             (remove-if (lambda (e) (find (getf e :label) base :key (lambda (b) (getf b :label))
                                                               :test #'string-equal))
                        own)
             (list (menu-entry "Copy" (lambda () (copy-to-clipboard
-                                                 (let ((*print-length* 20) (*print-level* 4))
-                                                   (prin1-to-string object))))
-                              :group "halo")))))
+                                                 (if (stringp object) object
+                                                     (let ((*print-length* 20) (*print-level* 4))
+                                                       (prin1-to-string object)))))
+                              :group g :tone :macro)))))
 
 (defvar *halo-handles* '() "((index cx cy x0 x1) …) of the handles drawn last.")
-(defvar *halo-title* nil
-  "What the halo calls its object — the row's label or the word clicked, which is how
-   you knew it on screen. NIL falls back to the printed object, which for a browser
-   subject is a struct printout nobody recognises.")
+(defvar *halo-layer* nil
+  "The layer the halo drawn last is about (a HALO-LAYER plist). Read by the guest
+   checks, which cannot see the chooser's local state.")
 
 (defun halo-handle-xy (i n cx cy)
   "Where handle I of N sits around CX,CY: evenly round a circle, the first at the top."
@@ -2148,39 +2313,110 @@
     (values (round (+ cx (* +halo-radius+ (cos th))))
             (round (+ cy (* +halo-radius+ (sin th)))))))
 
-(defun draw-halo (canvas w h object entries sel cx cy)
-  "The browser, dimmed, with the halo's handles ringed round CX,CY: a coloured dot per
-   handle and its name beside it, the selected one lit, and the object named at the
-   centre so you can see WHAT the halo is about before you choose."
+(defun clamp-rect (rect w h)
+  "RECT (x y w h) cut to the screen W x H, or NIL when nothing is left."
+  (destructuring-bind (x y rw rh) rect
+    (let ((x0 (max 0 x)) (y0 (max 0 y)) (x1 (min w (+ x rw))) (y1 (min h (+ y rh))))
+      (and (< x0 x1) (< y0 y1) (list x0 y0 (- x1 x0) (- y1 y0))))))
+
+(defun spotlight (canvas rect factor)
+  "Dim the whole canvas to FACTOR/256 EXCEPT RECT, which keeps its pixels: the halo's
+   way of showing which element it is about. The canvas has no alpha, so the rect's
+   rows are copied out, the scrim runs, and they are put back."
+  (let* ((px (lol.canvas:canvas-pixels canvas)) (cw (lol.canvas:canvas-w canvas))
+         (rows (when rect
+                 (destructuring-bind (x y rw rh) rect
+                   (loop for r from y below (+ y rh)
+                         collect (subseq px (+ (* r cw) x) (+ (* r cw) x rw)))))))
+    (lol.widgets:scrim canvas factor)
+    (when rect
+      (destructuring-bind (x y rw rh) rect
+        (declare (ignore rw rh))
+        (loop for row in rows for r from y
+              do (replace px row :start1 (+ (* r cw) x)))))))
+
+(defun draw-halo-caption (canvas w h layers depth top)
+  "The caption card: every layer under the pointer, innermost first, the current one
+   lit; what the current one IS; and the keys that walk the layers."
+  (let* ((layer (nth depth layers))
+         (sep " > ")
+         (names (mapcar (lambda (l) (getf l :name)) layers))
+         (crumb-w (+ (loop for n in names sum (lol.canvas:string-px *bfont* n))
+                     (* (1- (length names)) (lol.canvas:string-px *bfont* sep))))
+         (what (clip-text (format nil "~a  -  ~a" (getf layer :title)
+                                  (object-title (getf layer :object)))
+                          110))
+         (hint "Up/Tab/middle: the thing around it   Down: back in   Left/Right: handle   1-9   Esc")
+         (cw (min (- w 16) (+ 24 (max crumb-w (lol.canvas:string-px *bfont* what)
+                                      (lol.canvas:string-px *bfont* hint)))))
+         (ch 62)
+         (x (max 8 (floor (- w cw) 2)))
+         (y (if (eq top :top) (+ +bar-h+ 6) (- h 22 ch 8))))
+    (lol.canvas:fill-rect canvas x y cw ch *ui-panel*)
+    (lol.canvas:draw-rect canvas x y cw ch *ui-rule*)
+    (let ((pen (+ x 12)))
+      (loop for n in names for i from 0
+            do (when (plusp i)
+                 (setf pen (lol.canvas:draw-string canvas *bfont* sep pen (+ y 8) *ui-rule*)))
+               (when (= i depth)
+                 (lol.canvas:fill-rect canvas (- pen 2) (+ y 6) (+ (lol.canvas:string-px *bfont* n) 4)
+                                       16 *ui-hi*))
+               (setf pen (lol.canvas:draw-string canvas *bfont* n pen (+ y 8)
+                                                 (if (= i depth) *ui-accent* *ui-dim*)))))
+    (lol.canvas:draw-string canvas *bfont* what (+ x 12) (+ y 26) *ui-text*)
+    (lol.canvas:draw-string canvas *bfont* hint (+ x 12) (+ y 44) *ui-dim*)))
+
+(defun draw-halo (canvas w h layers depth entries sel cx cy)
+  "The browser with layer DEPTH of LAYERS spotlit — bright and outlined in the accent
+   while the rest dims — its handles hung off a small element's outline, or ringed
+   round CX,CY on a large one (a dot per handle, coloured by what it opens: code, an
+   instance, a view), and the caption naming the layers."
   (draw-browser canvas w h)
-  (lol.widgets:scrim canvas 150)
-  (let* ((n (length entries))
+  (let* ((layer (setf *halo-layer* (nth depth layers)))
+         (rect (and (getf layer :rect) (clamp-rect (getf layer :rect) w h)))
+         (n (length entries))
          (cx (max (+ +halo-radius+ 90) (min cx (- w +halo-radius+ 90))))
-         (cy (max (+ +bar-h+ +halo-radius+ 14) (min cy (- h +halo-radius+ 30)))) ; below the tabs
-         (name (lol.widgets:clip-text (or *halo-title*
-                                          (let ((*print-length* 5) (*print-level* 2))
-                                            (prin1-to-string object)))
-                                      28))
-         (nw (lol.canvas:string-px *bfont* name)))
+         (cy (max (+ +bar-h+ +halo-radius+ 14) (min cy (- h +halo-radius+ 30)))))
+    (spotlight canvas rect 110)
+    (when rect
+      (destructuring-bind (x y rw rh) rect
+        (lol.canvas:draw-rect canvas x y rw rh *ui-accent*)
+        (lol.canvas:draw-rect canvas (1+ x) (1+ y) (max 1 (- rw 2)) (max 1 (- rh 2)) *ui-accent*)))
+    (draw-halo-caption canvas w h layers depth (if (> cy (floor h 2)) :top :bottom))
     (setf *halo-handles* '())
-    (lol.canvas:draw-circle canvas cx cy (- +halo-radius+ 22) *ui-rule*)
-    (lol.canvas:fill-rect canvas (- cx (floor nw 2) 6) (- cy 9) (+ nw 12) 18 *ui-panel*)
-    (lol.canvas:draw-string canvas *bfont* name (- cx (floor nw 2)) (- cy 6) *ui-accent*)
-    (loop for e in entries for i from 0
-          do (multiple-value-bind (hx hy) (halo-handle-xy i n cx cy)
-               (let* ((label (format nil "~d ~a" (1+ i) (getf e :label)))
-                      (lw (lol.canvas:string-px *bfont* label))
-                      (left (< hx (- cx 8)))                ; labels point away from the centre
-                      (lx (if left (- hx 12 lw) (+ hx 12)))
-                      (on (= i sel)))
-                 (lol.canvas:draw-circle canvas hx hy 8
-                                         (concept-color (case i (0 :class) (1 :variable) (2 :function)
-                                                          (3 :generic-function) (t :restart)))
-                                         :fill t)
-                 (when on (lol.canvas:draw-circle canvas hx hy 11 *ui-accent*))
-                 (lol.canvas:fill-rect canvas (- lx 3) (- hy 8) (+ lw 6) 16 (if on *ui-hi* *ui-panel*))
-                 (lol.canvas:draw-string canvas *bfont* label lx (- hy 6) (if on *ui-accent* *ui-text*))
-                 (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) *halo-handles*))))))
+    (flet ((handle (i e hx hy lx)
+             ;; one handle: a dot coloured by what it opens, its numbered label at LX
+             (let* ((label (format nil "~d ~a" (1+ i) (getf e :label)))
+                    (lw (lol.canvas:string-px *bfont* label))
+                    (on (= i sel)))
+               (lol.canvas:draw-circle canvas hx hy 8 (concept-color (or (getf e :tone) :restart))
+                                       :fill t)
+               (when on (lol.canvas:draw-circle canvas hx hy 11 *ui-accent*))
+               (lol.canvas:fill-rect canvas (- lx 3) (- hy 8) (+ lw 6) 16 (if on *ui-hi* *ui-panel*))
+               (lol.canvas:draw-string canvas *bfont* label lx (- hy 6) (if on *ui-accent* *ui-text*))
+               (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) *halo-handles*)))
+           (label-w (i e) (lol.canvas:string-px *bfont* (format nil "~d ~a" (1+ i) (getf e :label)))))
+      (if (and rect (<= (fourth rect) 60))
+          ;; a SMALL element (a word, a row, a tab): the handles hang off its outline
+          ;; as a strip, below it (above when it is near the bottom), so nothing covers
+          ;; the thing the halo is about — Morphic puts them on the bounds, too
+          (destructuring-bind (x y rw rh) rect
+            (declare (ignore rw))
+            (let* ((total (loop for e in entries for i from 0 sum (+ (label-w i e) 34)))
+                   (hy (if (> (+ y rh 40) (- h 22 70)) (- y 16) (+ y rh 16)))
+                   (pen (max 8 (min x (- w total 8)))))
+              (loop for e in entries for i from 0
+                    do (handle i e (+ pen 8) hy (+ pen 20))
+                       (incf pen (+ (label-w i e) 34)))))
+          ;; a LARGE one: a ring round the point clicked, inside the outline
+          (progn
+            (lol.canvas:draw-circle canvas cx cy (- +halo-radius+ 22) *ui-rule*)
+            (loop for e in entries for i from 0
+                  do (multiple-value-bind (hx hy) (halo-handle-xy i n cx cy)
+                       (handle i e hx hy
+                               (if (< hx (- cx 8))         ; labels point away from the centre
+                                   (- hx 12 (label-w i e))
+                                   (+ hx 12))))))))))
 
 (defun halo-handle-at (x y)
   "The halo handle index at X,Y (its dot or its label), :OUTSIDE elsewhere."
@@ -2196,16 +2432,17 @@
 ;;; WHAT to show. *CHOOSER* is the hook a backend installs, like *VALUE-PROMPT*.
 
 (defvar *chooser* nil
-  "A hook: (funcall *chooser* KIND ENTRIES X Y &optional OBJECT) shows a modal menu
-   (:menu) or halo (:halo) and returns the chosen entry, or NIL. Installed by the
+  "A hook: (funcall *chooser* KIND ENTRIES X Y &optional LAYERS) shows a modal menu
+   (:menu) or halo (:halo, about LAYERS — see HALO-LAYERS) and returns the chosen
+   entry, or NIL. Installed by the
    framebuffer backend; NIL elsewhere, and then the gestures say so.")
 
-(defun choose-and-run (kind entries x y &optional object)
+(defun choose-and-run (kind entries x y &optional layers)
   "Offer ENTRIES through *CHOOSER* and run the one picked."
   (cond
     ((null entries) nil)
     ((null *chooser*) (setf *browser-status* "no menus on this backend"))
-    (t (let ((e (funcall *chooser* kind entries x y object)))
+    (t (let ((e (funcall *chooser* kind entries x y layers)))
          (when e
            (handler-case (funcall (getf e :action))
              (serious-condition (c)
@@ -2228,13 +2465,9 @@
     (if (and (eq (getf target :kind) :text) (getf target :editable)
              (not force-halo) (primary-selection))
         (paste-primary-at target)
-        (let ((object (target-object target))
-              (*halo-title* (case (getf target :kind)
-                              (:row (item-label (getf target :item)))
-                              (:text (getf target :token))
-                              (t nil))))
-          (if object
-              (choose-and-run :halo (halo-entries object) x y object)
+        (let ((layers (halo-layers x y)))
+          (if layers
+              (choose-and-run :halo (halo-entries (first layers)) x y layers)
               (setf *browser-status* "nothing here to put a halo on"))))))
 
 (defun open-modules ()

@@ -1477,30 +1477,44 @@
 ;;; (draw-context-menu, draw-halo); this loop only reads input, the same way the
 ;;; Spotter's does. It is installed as the shell's *CHOOSER* hook.
 
-(defun run-chooser-fb (kind entries x y &optional object)
+(defun run-chooser-fb (kind entries x y &optional layers)
   "Show ENTRIES as a :MENU card at X,Y or a :HALO round it, and return the entry
-   picked, or NIL. Keys: up/down (left/right too, for the ring) move, Return picks,
-   1-9 pick directly, Esc leaves. A click picks what is under it; a click anywhere
-   else leaves. A press of the button that opened it, on the same spot, does not
-   count — only a new click does."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (sel 0) (n (length entries)))
+   picked, or NIL. Keys: up/down move (left/right for the ring), Return picks, 1-9
+   pick directly, Esc leaves. A click picks what is under it; a click anywhere else
+   leaves. A press of the button that opened it, on the same spot, does not count —
+   only a new click does.
+
+   A halo is about one of LAYERS (shell.lisp's HALO-LAYERS: the word, the element
+   holding it, the pane, the screen). Up, Tab and the middle button walk OUT to the
+   thing around the current one, Down walks back IN — Morphic's repeated middle-click
+   — and each step rebuilds the handles for the new layer."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (sel 0) (n (length entries))
+        (depth 0))
     (when (and canvas entries)
-      (flet ((draw ()
-               (if (eq kind :halo)
-                   (draw-halo canvas w h object entries sel x y)
-                   (draw-context-menu canvas w h entries sel x y)))
-             (hit (px py)
-               (if (eq kind :halo) (halo-handle-at px py) (menu-entry-at px py))))
+      (labels ((halo-p () (eq kind :halo))
+               (draw ()
+                 (if (halo-p)
+                     (draw-halo canvas w h layers depth entries sel x y)
+                     (draw-context-menu canvas w h entries sel x y)))
+               (hit (px py)
+                 (if (halo-p) (halo-handle-at px py) (menu-entry-at px py)))
+               (walk (delta)                 ; to another layer: new handles, first one lit
+                 (setf depth (mod (+ depth delta) (length layers))
+                       entries (halo-entries (nth depth layers))
+                       n (length entries) sel 0)))
         (loop with dirty = t do
           (when dirty (draw) (show-frame canvas) (setf dirty nil))
           (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
             (when kev (read-keyboard-evdev *fb-kbd*))
             (when kb
               (setf dirty t)
-              (let ((key (fb-read-key 0)))
+              (multiple-value-bind (key state) (fb-read-key 0)
                 (cond
                   ((member key '(:escape :eof)) (return nil))
                   ((member key '(:return #\Return)) (return (nth sel entries)))
+                  ((and (halo-p) (eq key :tab)) (walk (if (logbitp 0 state) -1 1)))
+                  ((and (halo-p) (eq key :up)) (walk 1))
+                  ((and (halo-p) (eq key :down)) (walk -1))
                   ((member key '(:up :left))    (setf sel (mod (1- sel) n)))
                   ((member key '(:down :right :tab)) (setf sel (mod (1+ sel) n)))
                   ((and (characterp key) (digit-char-p key) (<= 1 (digit-char-p key) n))
@@ -1509,7 +1523,11 @@
               (let ((ox *cursor-x*) (oy *cursor-y*))
                 (multiple-value-bind (clicked wheel button) (read-mouse *fb-mouse* w h)
                   (declare (ignore wheel))
+                  ;; Alt-click is the touchpad's middle button, as in the main loop
+                  (when (and clicked *alt-down*) (setf clicked nil button :middle *button-down* nil))
                   (cond
+                    ((and (halo-p) (eq button :middle))
+                     (walk 1) (setf dirty t))
                     ((or clicked button)
                      (let ((i (hit *cursor-x* *cursor-y*)))
                        (cond ((eq i :outside) (return nil))

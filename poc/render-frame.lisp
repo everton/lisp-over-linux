@@ -41,6 +41,10 @@
 ;;; draw). The shell degrades gracefully without fb-browser — it reaches the Spotter
 ;;; and the debugger through (fboundp …).
 
+(defvar *halo-at* nil
+  "When set by --halo X,Y[,DEPTH], render the middle-button halo opened at X,Y on
+   layer DEPTH (0 = the innermost thing under the point) and list the layers.")
+
 (defvar *spotter-query* nil
   "When set by --spotter, render the Spotter palette over the subject instead of the
    plain browser.")
@@ -115,6 +119,8 @@ OPTIONS
               each may take C- M- S- s- prefixes
               (Ctrl / Meta / Shift / Super).  e.g. -k \"down down ret S-ret\"
   --spotter Q draw the Spotter palette, filtered by Q, over the chosen subject
+  --halo X,Y[,D] open the middle-button halo at X,Y on layer D (0 = innermost) and
+              list the layers under that point
   -h          this text
 ")
 
@@ -329,6 +335,8 @@ OPTIONS
                ;; --spotter QUERY renders the Spotter palette over the chosen subject,
                ;; which is otherwise reachable only by booting the guest
                ((string= a "--spotter") (setf *spotter-query* (or (pop argv) "")))
+               ((string= a "--halo")
+                (setf *halo-at* (mapcar #'parse-integer (split-on #\, (pop argv)))))
                ((string= a "-s")
                 (let ((parts (split-on #\x (string-downcase (pop argv)))))
                   (setf w (parse-integer (first parts)) h (parse-integer (second parts)))))
@@ -345,6 +353,17 @@ OPTIONS
                  (hits (spotter-results *spotter-query* cands)))
             (draw-spotter-card canvas w h *spotter-query* hits 0))
           (draw-browser canvas w h))
+      (when *halo-at*
+        ;; the halo reads *DRAWN* from the frame just drawn, as it does in the guest
+        (destructuring-bind (hx hy &optional (depth 0)) *halo-at*
+          (let* ((layers (halo-layers hx hy))
+                 (depth (min depth (1- (length layers)))))
+            (loop for l in layers for i from 0
+                  do (format t "~&  ~:[ ~;*~] ~d ~a — ~a~%" (= i depth) i (getf l :name)
+                             (getf l :title)))
+            (let ((entries (halo-entries (nth depth layers))))
+              (format t "~&  handles: ~{~a~^ · ~}~%" (mapcar (lambda (e) (getf e :label)) entries))
+              (draw-halo canvas w h layers depth entries 0 hx hy)))))
       (write-ppm canvas out)
       (format t "~&~a  ~dx~d  ~a~@[  keys: ~a~]~%"
               out w h (view-title (pane-view (current-pane))) script))

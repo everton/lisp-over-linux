@@ -13,7 +13,9 @@
 ;;;;   C. a mouse drag sets PRIMARY and the history; a middle click pastes PRIMARY
 ;;;;   D. rectangles: C-x SPC, motion, C-x r k keeps the column block
 ;;;;   E. the right button opens the context menu; Esc closes it
-;;;;   F. the middle button on a list row opens the halo; a handle runs its command
+;;;;   F. the middle button on a list row opens the halo; Up walks out through the
+;;;;      layers (row subject, row, list, pane); Inspect opens the PANE instance;
+;;;;      on the Workspace text the halo is about the TEXT VIEW, and Code opens tv-draw
 ;;;;   G. SuperL-h opens the clipboard manager
 ;;;;   H. the pointer hides after a few idle seconds and comes back on a move
 ;;;;   I. the systray is drawn
@@ -143,14 +145,39 @@
     (glide-to 120 (+ top 12)))
   (probe "(setf *halo-handles* nil)")
   (click "middle")
-  (shot "halo")
+  (shot "halo-row")
   (check "a middle click on a row opens the halo" (yes "(and *halo-handles* t)"))
-  (let ((depth (probe-int "(length (current-trail))")))
-    ;; a MODULE row's subject is the browser's own handle on a view, so it has no
-    ;; Source handle (source-subject) and Inspect is handle 1
-    (qmp-key "1") (sleep 1.5)
-    (check "a handle runs its command (Inspect pushes a pane)"
-           (eql (probe-int "(length (current-trail))") (and depth (1+ depth)))))
+  (check "about what the row opens, first"
+         (string= (probe "(getf *halo-layer* :role)") ":THING"))
+  (qmp-key "up") (sleep 0.8)
+  (check "Up walks out to the row itself (an ITEM)"
+         (yes "(and (item-p (getf *halo-layer* :object)) t)"))
+  (qmp-key "up") (qmp-key "up") (sleep 0.8)
+  (shot "halo-pane")
+  (check "then the list, then the PANE instance"
+         (yes "(and (pane-p (getf *halo-layer* :object)) t)"))
+  (qmp-key "1") (sleep 1.5)                         ; Inspect
+  (format t "~&  after Inspect: ~a / ~a~%" (probe "(type-of (pane-subject (current-pane)))")
+          (probe "(view-title (pane-view (current-pane)))"))
+  (check "Inspect on the pane opens the PANE's fields, not what it shows"
+         (yes "(and (pane-p (subject-value (pane-subject (current-pane)))) (eq :inspector (view-kind (pane-view (current-pane)))) t)"))
+
+  (format t "~&~%== F2. the halo on the Workspace text: the code that draws it ==~%")
+  (qmp-hold "meta_l" "1") (sleep 1.5)                ; back to the Workspace tab
+  (probe "(setf (lol.clipboard::board-primary lol.clipboard::*clipboard*) nil)") ; nothing to paste
+  (let ((tx (probe-int "(lol.textview::tv-x (pane-tv (current-pane)))"))
+        (ty (probe-int "(lol.textview::tv-y (pane-tv (current-pane)))")))
+    (glide-to (+ tx 1000) (+ ty 40)))                ; empty space right of the text
+  (probe "(setf *halo-layer* nil)")
+  (click "middle")
+  (shot "halo-textview")
+  (check "a middle click on the Workspace's empty text is about the TEXT VIEW instance"
+         (yes "(and (lol.textview::textview-p (getf *halo-layer* :object)) t)"))
+  (format t "~&  halo layer: ~a~%" (probe "(getf *halo-layer* :title)"))
+  (qmp-key "2") (sleep 1.5)                         ; Code: tv-draw
+  (format t "~&  after Code: ~a~%" (probe "(view-title (pane-view (current-pane)))"))
+  (check "and its Code handle opens the definition that draws it"
+         (yes "(and (subj-defn-p (pane-subject (current-pane))) (eq (subj-defn-name (pane-subject (current-pane))) 'lol.textview:tv-draw) t)"))
 
   (format t "~&~%== G. SuperL-h: the clipboard manager ==~%")
   (probe "(setf *clip-rect* nil)")

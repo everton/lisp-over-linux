@@ -135,6 +135,15 @@ and holding down Super:
   sbcl --script poc/render-frame.lisp modules --spotter ""     # the recents band
 #+end_src
 
+*And the halo.* =--halo X,Y[,D]= opens the middle-button halo at X,Y on layer D (0 is
+the innermost thing under the point) and prints the layers and the handles — the
+quickest way to see what a point on the screen is made of:
+
+#+begin_src sh
+  sbcl --script poc/render-frame.lisp workspace --halo 110,280     # the symbol LAUNCH
+  sbcl --script poc/render-frame.lisp workspace --halo 110,280,1   # the TEXTVIEW holding it
+#+end_src
+
 That works because the Spotter's *drawing* lives in =shell.lisp= with the rest of the
 shell's; only its modal input loop is in =fb-browser.lisp=. The same split is why the
 palette's colours could be fixed by looking at a frame rather than by guessing: the

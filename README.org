@@ -42,7 +42,8 @@ summons the *Spotter* to find any definition, package or object; a source pane i
 *live* — edit it and =C-c C-c= compiles the definition back into the running image;
 and an error opens a real *debugger* with restarts, an =sb-di= backtrace and frame
 locals. The right button opens a context menu, the middle one a Smalltalk *halo*
-(or pastes, X-style, in text); the clipboard keeps a Parcellite-style history
+(or pastes, X-style, in text) that walks out from the word under the pointer to the
+instance on screen and the code that draws it; the clipboard keeps a Parcellite-style history
 (=Super-h=) and knows the Emacs kill and rectangle keys; a systray shows the battery
 and the clock. =Super-?= lists every key.
 
