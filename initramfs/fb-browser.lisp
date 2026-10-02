@@ -1403,7 +1403,8 @@
      ("press + drag"       "select text")
      ("right / Menu key"   "context menu  (S-F10 too)")
      ("pad corner press"   "right button (bottom right)")
-     ("middle"             "halo: source, inspect, ...")
+     ("middle"             "halo: source, inspect, code")
+     ("  again / Up / Tab" "halo: the thing around it")
      ("2-finger press"     "middle button  (Alt-click too)")
      ("Super-middle"       "halo even in editable text"))
     ("Debugger"
