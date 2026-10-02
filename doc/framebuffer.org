@@ -570,6 +570,26 @@ host's CPUs (load average 17), the same QEMU guest measured a 8.6 ms frame inste
 2.6 ms. Real hardware has no host to compete with, which is exactly why the laptop
 number is worth having — the present there is a write into real video memory.
 
+*The laptop's answer* (tag #24, 2026-10-01). Its screen is
+1920×1200, which is 2.25× the pixels of the QEMU reference, so the last column scales
+the laptop's number down to 1280×800:
+
+| per frame               | laptop, 1920×1200 | QEMU + KVM, 1280×800 | laptop ÷ 2.25 |
+|-------------------------+-------------------+----------------------+---------------|
+| =draw-browser=          | 3.92 ms           | 2.2 ms               | 1.74 ms       |
+| =present-fb=            | 1.12 ms           | 0.4 ms               | 0.50 ms       |
+| full frame              | 5.04 ms           | 2.9 ms               | 2.24 ms       |
+| pointer move            | 0.006 ms          | 0.012 ms             | (fixed size)  |
+
+What it settles:
+- *Rendering is not the laptop's bottleneck.* A whole frame at full resolution is
+  5 ms, about 200 a second, and a pointer move is 6 µs.
+- *=pwrite= is enough; =mmap= is not owed.* 9.2 MB (1920 × 1200 × 4) into real video
+  memory in 1.12 ms is about 8 GB/s.
+- *Drawing is the remaining cost* — about 80% of the frame. The per-pixel scaling is only
+  indicative, since =draw-browser= does not scale purely with area: a taller screen
+  shows more rows of text, too.
+
 KVM vs TCG is the other half of the story: those are the same image under QEMU with
 and without hardware virtualisation. None of the repo's QEMU launches used to ask
 for KVM, so everything ran in the right-hand columns; see the note under "OVMF
