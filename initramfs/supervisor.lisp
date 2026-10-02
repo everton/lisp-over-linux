@@ -1,19 +1,21 @@
 ;;;; supervisor.lisp — a tiny, didactic init/supervisor in Common Lisp.
 ;;;;
 ;;;; Roles chosen by argv:
-;;;;   (no args)   => interactive SUPERVISOR menu  (this is PID 1)
+;;;;   (no args)   => the SUPERVISOR (this is PID 1): boots into the environment,
+;;;;                  then an interactive menu once you leave it
 ;;;;   "worker" N  => a short-lived WORKER process
 ;;;;
-;;;; The supervisor menu lets you run a Lisp REPL, spawn a worker, or power
-;;;; the machine off. PID 1 must NEVER return, so every path either loops or
-;;;; powers off, and errors are caught so a typo can't crash init.
+;;;; At boot it opens the environment (the code browser, fb-browser.lisp) directly;
+;;;; the supervisor menu is what is left when you quit it or it dies, and lets you
+;;;; reopen it, run a Lisp REPL, spawn a worker, or power the machine off. PID 1
+;;;; must NEVER return, so every path either loops or powers off, and errors are
+;;;; caught so a typo can't crash init.
 ;;;;
 ;;;; This file is just the loop + entry point. The pieces it drives live in
 ;;;; sibling files, loaded before it (see build.sh):
 ;;;;   process.lisp      worker-main, spawn-worker, power-off
 ;;;;   framebuffer.lisp  draw-alien (the Land-of-Lisp sprite)
 ;;;;   meminfo.lisp      report-memory (the "m" menu action)
-;;;;   bench.lisp        bench-render (the "f" menu action)
 ;;;;   line-editor.lisp  the "poor man's readline" toolkit
 ;;;;   repl.lisp         run-repl (the "r" menu action)
 
@@ -72,7 +74,6 @@
   (format t "  w) spawn a worker process~%")
   (format t "  a) draw the Land-of-Lisp alien~%")
   (format t "  m) show memory usage~%")
-  (format t "  f) frame timings (how fast this screen renders)~%")
   (format t "  t) network REPL on TCP :4005  [~a]~%"
           (if (net-repl-running-p) "RUNNING" "stopped"))
   (format t "  s) shut down (power off)~%")
@@ -81,7 +82,8 @@
   (draw-alien))                  ; (re)paint the alien LAST so it stays on screen
 
 (defun supervisor-main ()
-  "PID 1: an interactive menu loop. Never returns."
+  "PID 1: boot diagnostics, the environment, then an interactive menu loop.
+   Never returns."
   (format t "~%Supervisor up — I am PID ~a, SBCL ~a on ~a ~a.~%"
           (sb-unix:unix-getpid) (lisp-implementation-version)
           (software-type) (software-version))
@@ -97,7 +99,15 @@
       (format t "~&network REPL could not start.~%"))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
+  ;; Boot straight INTO the environment: it is what the machine is for. The menu
+  ;; below is the fallback — you land there when you leave the environment
+  ;; (SuperL-q, or q on a list), or when it dies: RUN-BROWSER-FB catches any error,
+  ;; prints it and returns, so a broken environment still leaves a working PID 1.
+  ;; With no framebuffer at all, it fails at once and the menu is simply first.
+  ;; The screen is cleared BEFORE, not after: a dying environment's last words are
+  ;; printed on the way out, and should still be there above the menu.
   (format t "~C[2J~C[H" #\Escape #\Escape)  ; clear screen for a clean menu + alien
+  (run-browser-fb)
   (let ((worker-id 0))
     (loop
       (handler-case
@@ -119,7 +129,6 @@
                  (spawn-worker worker-id))
                 ((string-equal choice "a") (draw-alien :announce t))
                 ((string-equal choice "m") (report-memory))
-                ((string-equal choice "f") (bench-render))
                 ((string-equal choice "t")
                  (ecase (toggle-net-repl)
                    (:started

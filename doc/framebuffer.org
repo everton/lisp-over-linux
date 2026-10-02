@@ -553,7 +553,7 @@ guest (numbers from =check-pointer.lisp= and a one-off baseline run of the old c
 | full frame (draw + present)      | 6.5 ms      | 2.9–3.3 ms | 67.0 ms     | 21.0 ms    |
 
 (*) By subtraction: the full frame minus =draw-browser=, which did not change. The KVM
-"after" was later measured directly with the supervisor's =f)= action ([[file:../initramfs/bench.lisp][bench.lisp]]):
+"after" was later measured directly with the supervisor's =f)= action (=bench.lisp=, below):
 0.2–0.6 ms — the subtraction had overestimated it.
 
 (Why 50 frames: SBCL's =get-internal-real-time= reads =CLOCK_MONOTONIC_COARSE= on
@@ -561,10 +561,13 @@ Linux, which only moves once per kernel tick — every 4 ms at our =CONFIG_HZ=25
 single frame cannot be timed at all.)
 
 *On real hardware*, where the host's net-REPL harness cannot reach (the laptop has no
-NIC our kernel drives), pick =f) frame timings= from the supervisor menu:
-[[file:../initramfs/bench.lisp::defun bench-render][=bench-render=]] times draw / present / frame / pointer on whatever screen the
-image booted on and prints them beside the QEMU reference. It warms up untimed and
-reports the best of three rounds, because a single round moved by more than 2× between
+NIC our kernel drives), the numbers came from a supervisor menu entry built for the
+purpose, =f) frame timings=: =bench-render= timed draw / present / frame / pointer on
+whatever screen the image booted on and printed them beside the QEMU reference. It
+has served and is *removed*; the git tag =bench-render-f= marks the last commit that
+has it (=git show bench-render-f:initramfs/bench.lisp=), and putting it back is that
+file, its line in =build.sh='s =LISP_SOURCES=, and one menu line. It warmed up untimed and
+reported the best of three rounds, because a single round moved by more than 2× between
 runs. Its numbers are only as quiet as the machine: with another process holding the
 host's CPUs (load average 17), the same QEMU guest measured a 8.6 ms frame instead of
 2.6 ms. Real hardware has no host to compete with, which is exactly why the laptop

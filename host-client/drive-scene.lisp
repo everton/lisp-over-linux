@@ -174,14 +174,15 @@
     (get-output-stream-string out)))
 
 (defun bring-up-quietly (&key (timeout 120))
-  "Two things must happen before we type on the console, and both go through the net
+  "Three things must happen before we type on the console, all through the net
    REPL: confirm the guest is really EVALUATING (QEMU's hostfwd opens the HOST side
    of :4005 at t=0, so merely connecting proves nothing), and lower the kernel
-   console loglevel so a late printk cannot paint over the demo on tty0.
+   console loglevel so a late printk cannot paint over the demo on tty0, and wait
+   for the boot-time environment to be up.
 
    CRUCIAL: the REPL's listen backlog is 1 (net.lisp: socket-listen server 1), so a
    second queued connection triggers a 'TCP: Possible SYN flooding' printk that lands
-   on the console. So we make EXACTLY ONE connection and do both jobs on it."
+   on the console. So we make EXACTLY ONE connection and do all three on it."
   (let ((deadline (+ (get-universal-time) timeout)))
     (loop while (< (get-universal-time) deadline)
           do (let ((s (make-instance 'sb-bsd-sockets:inet-socket
@@ -211,6 +212,17 @@
                             stream)
                            (write-char #\Newline stream) (force-output stream)
                            (repl-drain stream 2.0)
+                           ;; The image BOOTS INTO the environment; wait for it on this
+                           ;; same connection, so a key we send next lands in the
+                           ;; browser and not in the boot diagnostics. 1337 because the
+                           ;; echoed source reads "1000 337" and no ANSI code is 1337.
+                           (loop repeat 60
+                                 until (search "1337"
+                                               (progn
+                                                 (write-string "(if *fb-canvas* (+ 1000 337) 0)" stream)
+                                                 (write-char #\Newline stream) (force-output stream)
+                                                 (repl-drain stream 0.5)))
+                                 do (sleep 0.5))
                            (ignore-errors
                             (write-string ":quit" stream) (write-char #\Newline stream)
                             (force-output stream) (sleep 0.3))
@@ -240,38 +252,42 @@
       (format *error-output* "~&ERROR: net REPL on :4005 never answered~%")
       (return-from main 1))
     (format t "~&guest REPL up, kernel console quieted~%") (finish-output)
-    ;; The REPL comes up at start-net-repl, still BEFORE the supervisor clears the
-    ;; screen and paints the menu. Wait past that so the menu key lands in the menu's
-    ;; read-line, on a clean screen.
-    (sleep 6)
+    ;; The environment is up (bring-up-quietly waited for it); give its first
+    ;; frame a moment to reach the screen.
+    (sleep 2)
     (lol.qmp:with-qmp (socket)
       (format t "~&connected to QMP; driving mode=~a~@[ scene=~a~]~%"
               mode (and (string= mode "scene") scene))
       (finish-output)
       (if (string= mode "repl")
           (progn
-            ;; menu: 'r' enters the REPL (a cooked read-line, so it needs the Enter)
+            ;; leave the environment ('q' on its list) for the supervisor menu, where
+            ;; 'r' enters the REPL (a cooked read-line, so it needs the Enter)
+            (lol.qmp:key "q") (sleep 1.5)
             (lol.qmp:key "r") (sleep 0.2) (lol.qmp:key "ret") (sleep 1.5)
             ;; each Enter triggers eval + a coloured result line
             (dolist (form *forms*)
               (lol.qmp:type-string form) (sleep 0.3)
               (lol.qmp:key "ret") (sleep 1.5))
             (sleep 1.0))                      ; let the last redraw + alien settle
-          ;; menu: a single letter launches run-browser-fb rooted somewhere ('b' the
-          ;; module index, 'l' the flat package list, 'p' the Workspace). The menu
-          ;; read is still COOKED, so it needs the Enter; from then on the browser
-          ;; owns the keyboard in raw mode and single keycodes are what it wants.
+          ;; The image boots into the module index, which is what menu 'b' opens, so a
+          ;; 'b' scene starts right there. Any other root ('l' the flat package list,
+          ;; 'p' the Workspace) is a trip through the menu: 'q' leaves the
+          ;; environment, then the menu letter. The menu read is COOKED, so it needs
+          ;; the Enter; from then on the browser owns the keyboard in raw mode and
+          ;; single keycodes are what it wants.
           (let* ((entry (and (string= mode "scene")
                              (or (assoc scene *scenes* :test #'string=)
                                  (error "unknown scene: ~a" scene))))
                  (menu-key (if entry (second entry) "b"))
                  (steps (if entry (third entry)
                             (mapcar (lambda (k) (list :key k)) *browser-keys*))))
-            (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")
-            ;; Give it time to load the font, build the canvas, open evdev and paint
-            ;; the first full-screen frame — much slower than a REPL prompt, because
-            ;; it is a 1280x800 canvas rendered pixel by pixel in Lisp.
-            (sleep 8.0)
+            (unless (string= menu-key "b")
+              (lol.qmp:key "q") (sleep 1.5)
+              (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")
+              ;; Give it time to build the view, open evdev and paint the first
+              ;; full-screen frame.
+              (sleep 8.0))
             (mapc #'run-step steps)
             (sleep 2.0)))                     ; let the final frame settle
       (lol.qmp:screendump (namestring (merge-pathnames ppm)))

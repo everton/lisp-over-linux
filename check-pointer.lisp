@@ -69,8 +69,7 @@
 
 (defun checks ()
   (quiet-kernel-console)
-  (sleep 6)
-  (qmp-key "b") (sleep 0.2) (qmp-key "ret") (sleep 9)       ; the browser, module index
+  (wait-for-browser)                                        ; boots into the module index
 
   (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'draw-browser 'count (lambda (f &rest args) (push t *draws*) (apply f args))) t)")
 

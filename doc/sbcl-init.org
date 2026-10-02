@@ -7,12 +7,13 @@ This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
 STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #24). A C preinit mounts
-/proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1) presenting an
-interactive console menu — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
+/proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1), which boots straight
+into the pixel environment and falls back to an interactive console menu when you
+leave it or it dies — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
 index, (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
-(w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (f) frame
-timings, (t) toggle the network REPL, (s) power off.
+(w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
+the network REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -154,7 +155,6 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
   | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option) |
-  | [[file:../initramfs/bench.lisp][=bench.lisp=]]       | =bench-render=: frame timings on this screen (the =f)= menu option; [[file:framebuffer.org][framebuffer.org]] §9.4). Removable: drop it from build.sh's list and the menu |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
   | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
   | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
@@ -179,15 +179,25 @@ image*: =build.sh= does =(require :sb-bsd-sockets)= at build time (with =SBCL_HO
 pointed at the SBCL tree's =obj/sbcl-home=) before =save-lisp-and-die=, so sockets
 are frozen into =/sbin/lisp= and need no fasl at runtime. See [[file:networking.org][networking.org]].
 
-One executable, two roles chosen by argv: no args => interactive SUPERVISOR menu
-(PID 1); "worker <id>" => a short-lived WORKER. Toplevel =init-toplevel=
+One executable, two roles chosen by argv: no args => the SUPERVISOR (PID 1); "worker <id>" => a short-lived WORKER. Toplevel =init-toplevel=
 dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
 =worker-main=, =spawn-worker=.
 
-The supervisor is an interactive menu read from the console ([[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp →
+*Boot goes straight into the environment.* After its diagnostics (input devices,
+DHCP, the network REPL, interfaces) =supervisor-main= calls =run-browser-fb= on
+the module index — the environment is what the machine is for, so it should not
+wait behind a menu. The menu is the *fallback*: you reach it by leaving the
+environment (=SuperL-q=, or =q= on a list pane), and you land on it if the
+environment dies, because =run-browser-fb= catches any =serious-condition=, prints
+it and returns. The screen is cleared /before/ the environment opens, not after, so
+a dying environment's last words stay above the menu. With no framebuffer at all
+the environment fails at once and the menu is simply first.
+
+The supervisor menu is read from the console ([[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp →
 print-menu]] prints it, and the =cond= right below it dispatches):
   r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
-  b) the environment              -> the tabbed pixel browser on /dev/fb0, opening
+  b) the environment              -> reopen the tabbed pixel browser on /dev/fb0,
+                                     the one the image booted into, opening
                                      on the MODULE INDEX: every definition grouped
                                      by the file it came from, which is the only
                                      root that shows the whole system (the lol.*

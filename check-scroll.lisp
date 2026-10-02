@@ -42,10 +42,12 @@
 
 (defun checks ()
   (quiet-kernel-console)
-  (sleep 6)
+  (wait-for-browser)
 
-  ;; 'l' — the FLAT CL-USER list, several hundred rows. NOT 'b' (the module index):
-  ;; that is nineteen rows and fits on screen, so its viewport cannot move at all.
+  ;; 'l' — the FLAT CL-USER list, several hundred rows. NOT the module index the
+  ;; image boots into: that is nineteen rows and fits on screen, so its viewport
+  ;; cannot move at all. Leave it for the menu, and open 'l' from there.
+  (leave-browser)
   (qmp-key "l") (sleep 0.2) (qmp-key "ret") (sleep 9)
 
   (format t "~&~%== A. list pane (the flat CL-USER package view) ==~%")

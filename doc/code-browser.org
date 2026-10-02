@@ -2,7 +2,8 @@
 #+STARTUP: showall
 
 Status: *IMPLEMENTED AND RUNNING.* Phases 0-6 are all done: the browser runs
-full-screen on =/dev/fb0= as PID 1 (=b= at the supervisor menu), browses and
+full-screen on =/dev/fb0= as PID 1 (the image boots into it; =b= at the
+supervisor menu reopens it), browses and
 *edits* its own source, scrolls, carries a live debugger, and has a widget
 toolkit under it. Phase 7 (Morphic) is the only one left, and it is open horizon
 rather than a plan. §8 tracks it per phase and is the authoritative status.
@@ -2031,8 +2032,8 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   two =(error "…")= sites in =canvas.lisp=, and a good check that the walker sees a
   format-string call as the =SIMPLE-ERROR= it really is./
 - *Phase 5 — into the machine.* [DONE — keyboard *and* mouse — [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]] the
-  *same* shell runs full-screen on =/dev/fb0=, launched from the supervisor menu
-  (=b)=), as PID 1. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
+  *same* shell runs full-screen on =/dev/fb0=, as PID 1 — the image boots straight
+  into it, and the supervisor menu (=b)=) reopens it. Output = =lol.fb:present-fb= under =KD_GRAPHICS=; input is
   =poll(2)=-multiplexed over the raw console keyboard (=with-raw-mode= + escape
   parsing) and the evdev mouse (relative or absolute; a cursor is drawn, left-click
   drills a list row, and *Ctrl-click on a symbol in a source pane jumps to its

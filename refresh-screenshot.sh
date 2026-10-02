@@ -4,11 +4,12 @@
 #
 # TWO demos, same machinery, selected by --mode:
 #
-#   repl    (default)  the framebuffer CONSOLE: the supervisor menu, then 'r'
+#   repl    (default)  the framebuffer CONSOLE: leave the environment the image
+#                      boots into ('q'), then 'r' from the supervisor menu
 #                      into the Lisp REPL, a few colored forms, and the
 #                      Land-of-Lisp alien in the top-right corner.
 #                      -> media/screenshots/screenshot-<date>.png
-#   browser            the pixel ENVIRONMENT: 'b' from the menu launches the
+#   browser            the pixel ENVIRONMENT the image boots into: the
 #                      code browser full-screen on /dev/fb0 under KD_GRAPHICS
 #                      (fbcon stops drawing; every pixel is ours).
 #                      -> media/screenshots/browser-<date>.png

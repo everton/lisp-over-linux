@@ -46,6 +46,7 @@
            #:qmp-hold #:qmp-wheel #:qmp-type
            #:repl-drain #:repl-connect #:strip-ansi #:between-markers
            #:probe #:probe-int #:quiet-kernel-console
+           #:wait-for-browser #:leave-browser
            #:*results* #:check #:report-results #:run-guest-checks))
 
 (in-package :lol.guest)
@@ -275,6 +276,25 @@
    failed assertion — so give a slow form (a whole-image sweep, say) real room."
   (let ((s (probe form-string seconds)))
     (ignore-errors (parse-integer (string-trim " " s)))))
+
+;;; The image BOOTS INTO the environment (supervisor.lisp); the menu only appears
+;;; once you leave it. So a test that wants the module index just waits for it, and
+;;; one that wants another root ('l', 'p', 'r') leaves first and then uses the menu.
+
+(defun wait-for-browser (&optional (seconds 30))
+  "Block until the boot-time environment is up: *FB-CANVAS* is set just before the
+   first frame is drawn, so give that frame a moment after it appears. Returns T,
+   or NIL if it never came (then the menu is probably what is on screen)."
+  (loop repeat (* 2 seconds)
+        when (string= (probe "(and *fb-canvas* t)") "T")
+          do (sleep 2.0) (return t)
+        do (sleep 0.5)))
+
+(defun leave-browser ()
+  "Quit the environment to the supervisor menu: 'q' on a list pane, which the
+   module index at boot is. The menu then waits in a cooked READ-LINE, so the next
+   menu letter needs its Enter."
+  (qmp-key "q") (sleep 1.5))
 
 (defun quiet-kernel-console ()
   "Lower the console log level, so a late printk cannot repaint over whatever the

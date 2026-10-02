@@ -416,9 +416,10 @@ needed. =./build.sh= prints them for you when it finishes./
   1. Firmware boot menu key is vendor-specific (F12/F9/F10/Esc at power-on).
   2. Must select the *UEFI* device entry (not legacy/CSM).
   3. Secure Boot must be OFF (this kernel is unsigned).
-  4. Expected result: a few kernel log lines, then the *supervisor menu* — the
-     Lisp machine is up and PID 1 is SBCL. Pick =b= for the code browser, =r= for
-     a REPL, =s= to power off. /(The original micro-distro printed "Hello from
+  4. Expected result: a few kernel log lines and the supervisor's diagnostics, then
+     the *code browser* full-screen — the Lisp machine is up and PID 1 is SBCL.
+     Leave it (=SuperL-q=) for the *supervisor menu*: =b= reopens the browser, =r=
+     is a REPL, =s= powers off. /(The original micro-distro printed "Hello from
      EFISTUB micro-linux!" and looped forever; that was before the userland.)/
   5. Booted to a panic, "No working init found"? The kernel is fine and the
      =initramfs.cpio= is missing from the ESP root — see the two-files note above.

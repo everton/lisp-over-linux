@@ -675,9 +675,11 @@
 
 
 (defun run-browser-fb (&optional root)
-  "Launch the browser full-screen on /dev/fb0, rooted at ROOT. Blocks until you
-   leave it (C-g at the root), then restores the text console and returns to the
-   supervisor menu. Any error is caught so it cannot crash PID 1.
+  "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
+   it once at boot, and again from its menu ('b', 'p', 'c', 'l'). Blocks until you
+   leave it (SuperL-q, or q on a list pane), then restores the text console and
+   returns to the supervisor menu. Any error is caught and printed, so a dying
+   environment drops you at the menu instead of crashing PID 1.
 
    ROOT defaults to the MODULE INDEX (subj-modules), not to the CL-USER package.
    Two reasons. It is a table of contents rather than one flat 300-plus-row list;
