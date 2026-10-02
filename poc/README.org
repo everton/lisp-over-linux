@@ -33,6 +33,9 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =widgets.lisp=   | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map. |
 | =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
+| =clipboard.lisp= | =lol.clipboard=: the clipboard core as plain data — history (blank refusal, dedup, bound, Emacs append and yank-pop), PRIMARY, and the =C-x r= rectangle commands. No dependencies. Design: [[file:../doc/clipboard.org][doc/clipboard.org]]. |
+| =clipboard-test.lisp= | its host test: =sbcl --script poc/clipboard-test.lisp=, PASS/FAIL per assertion, non-zero exit on failure. |
+| =sysinfo-test.lisp= | host test for the systray data ([[file:../initramfs/sysinfo.lisp][initramfs/sysinfo.lisp]]): builds fake =/sys/class/power_supply= trees and checks battery parsing, the cache, and the clock against =date=. =sbcl --script poc/sysinfo-test.lisp=; exits non-zero on failure. See [[file:../doc/systray.org][doc/systray.org]]. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
 | =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
 | =bdf2font.lisp=  | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |

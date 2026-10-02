@@ -223,6 +223,12 @@
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
    C-c C-p Print it, C-c C-i Inspect it.")
+(defvar *last-edit* nil
+  "What the previous editing key did, for the two Emacs commands that depend on it:
+   (:KILL) — so another kill APPENDS to the same history entry — and
+   (:YANK TV L0 C0 L1 C1) — the span the last paste inserted, which M-y replaces.
+   Any other key clears it (EDIT-PANE-KEY).")
+
 (defvar *pending-meta* nil
   "T after a lone Esc — the Emacs Meta prefix (§4¾). The next key is Meta-modified,
    so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
@@ -344,6 +350,28 @@
         (when (eq form sentinel) (return))
         (setf last form foundp t pos next)))
     (values last foundp)))
+
+(defun form-text-before-point (tv)
+  "The SOURCE TEXT of the form FORM-BEFORE-POINT would return, or NIL — the same scan,
+   but keeping the characters rather than the object.
+
+   Accept (C-c C-c) in the Workspace needs this. It hands ACCEPT-SOURCE a string, which
+   reads its FIRST form; given the whole buffer, it compiled whatever stood at the top
+   — the primer's (+ 1 2) — and reported \"Accepted: 3\" for a (defun greet …) under
+   the caret, and filed the entire buffer as that definition's source. The text,
+   rather than a re-printed form, is what gets recorded, so comments and layout in
+   the definition survive into the change set."
+  (let* ((text (buffer-text-to-point tv))
+         (sentinel (list :eof))
+         (last nil) (pos 0))
+    (loop
+      (multiple-value-bind (form next)
+          (handler-case (read-from-string text nil sentinel :start pos)
+            (error () (values sentinel pos)))
+        (when (eq form sentinel) (return))
+        (setf last (cons pos next) pos next)))
+    (and last
+         (string-trim '(#\Space #\Tab #\Newline) (subseq text (car last) (cdr last))))))
 
 (defun form-echo (form)
   "FORM printed short and on one line, to name it in the status line. The Workspace
@@ -825,6 +853,57 @@
    it first is a step the picture does not ask for.")
 (defvar *tab-plus-rect* nil  "x-range (x0 . x1) of the + new-tab hit-box, or NIL.")
 
+;;; ---- the systray: the right end of the tab strip -----------------------------
+;;; What the user's StumpWM mode line shows on the host, in the same order — battery,
+;;; then the date and time — plus an icon for the clipboard history. The DATA comes
+;;; from initramfs/sysinfo.lisp (TRAY-ITEMS); this only lays it out. It is drawn into
+;;; its own rectangle so the clock can tick by repainting just that strip
+;;; (DRAW-TRAY), not the whole frame. See doc/systray.org.
+
+(defvar *tray-rect* nil "The tray's rectangle (x y w h), set on draw.")
+(defvar *tray-clip-rect* nil "The clipboard icon's x-range (x0 . x1), for clicks.")
+
+(defun tray-tone-color (tone)
+  "A battery tone as a colour — the host script's green / yellow / red."
+  (case tone
+    ((:ok :charging) (concept-color :method))     ; green
+    (:warn *ui-amber*)
+    (:low (concept-color :condition))             ; red
+    (t *ui-dim*)))
+
+(defun draw-clip-icon (canvas x y color)
+  "A tiny clipboard, 10x13: the board and the clip at its top."
+  (lol.canvas:draw-rect canvas x (+ y 2) 10 11 color)
+  (lol.canvas:fill-rect canvas (+ x 3) y 4 4 color)
+  (lol.canvas:fill-rect canvas (+ x 2) (+ y 6) 6 1 color)
+  (lol.canvas:fill-rect canvas (+ x 2) (+ y 9) 4 1 color))
+
+(defun tray-width ()
+  "How wide the tray will be, so the tabs can stop short of it."
+  (let ((items (ignore-errors (tray-items))))
+    (+ 8 14 (loop for it in items sum (+ 16 (lol.canvas:string-px *bfont* (getf it :text)))) 8)))
+
+(defun draw-tray (canvas w)
+  "Paint the tray, right-aligned in the tab strip: [clip] | BAT 87% | 2026-10-02 09:01.
+   Records *TRAY-RECT* and *TRAY-CLIP-RECT*. Returns the tray's left edge."
+  (let* ((items (ignore-errors (tray-items)))
+         (tw (tray-width))
+         (x0 (- w tw))
+         (pen (+ x0 8)))
+    (lol.canvas:fill-rect canvas x0 0 tw (- +bar-h+ 1) *ui-bg*)
+    (draw-clip-icon canvas pen 3 (if (lol.clipboard:clip-current) *ui-accent* *ui-dim*))
+    (setf *tray-clip-rect* (cons (- pen 3) (+ pen 13)))
+    (incf pen 14)
+    (dolist (it items)
+      (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) 3 *ui-rule*)
+      (incf pen 16)
+      (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen 3
+                                        (if (eq (getf it :kind) :battery)
+                                            (tray-tone-color (getf it :tone))
+                                            *ui-text*))))
+    (setf *tray-rect* (list x0 0 tw (- +bar-h+ 1)))
+    x0))
+
 (defun draw-tabs (canvas w)
   "The top tab strip: one tab per open trail, each with a kind-coloured stripe and its
    SuperL-number badge; the active one is highlighted (brighter bg + accent top-rule +
@@ -841,7 +920,7 @@
           for title = (format nil "~a " (clip-text (trail-title trail) 16))
           for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
           for tw = (+ lw (if closer 14 0))
-          while (< (+ x tw) (- w 26))             ; leave room for the + button
+          while (< (+ x tw) (- w 26 (tray-width)))  ; room for the + button and the tray
           do (progn
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
                (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
@@ -864,10 +943,8 @@
       (setf x (+ px 14)))
     ;; a hairline seam under the whole strip
     (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
-    ;; app name, right-aligned, if it still fits
-    (let* ((s "lisp-over-linux") (sx (- w (lol.canvas:string-px *bfont* s) 8)))
-      (when (> sx (+ x 8))
-        (lol.canvas:draw-string canvas *bfont* s sx 3 *ui-dim*)))))
+    ;; the systray where the app's name used to sit
+    (draw-tray canvas w)))
 
 (defun draw-crumb (canvas y w pane index)
   "A collapsed ancestor bar: a kind-coloured stripe, the subject's title, and what
@@ -1325,8 +1402,12 @@
    the change set (§3b, beat 4).
 
    Sets *browser-status* to the outcome."
-  (let ((text (lol.textview:tv-text (pane-tv pane)))
+  (let ((text (if (workspace-pane-p pane)
+                  (form-text-before-point (pane-tv pane))   ; the form before the caret
+                  (lol.textview:tv-text (pane-tv pane))))
         (subj (pane-subject pane)))
+    (unless text
+      (return-from accept-pane (setf *browser-status* "Accept: no form before point")))
     (handler-case
         (multiple-value-bind (name kind label)
             (if (workspace-pane-p pane) (values nil nil nil) (accept-target subj))
@@ -1340,8 +1421,28 @@
    Chords ride *pending-prefix*: C-c {C-c Accept | C-p Print | C-i Inspect | C-d Debug},
    C-x C-e Do it; a bare Tab completes; anything else edits. Shared by the current pane
    and the ⇧↵ side pane, and guarded so a list side (no textview) can't crash. Returns NIL."
-  (let ((c (lol.canvas:ctrl-p state)))
+  (let ((c (lol.canvas:ctrl-p state))
+        (tv (pane-tv p))
+        (previous (shiftf *last-edit* nil)))     ; consumed: see *LAST-EDIT*
     (cond
+      ;; C-x r <key>: the rectangle commands — a THREE-key chord, hence its own prefix
+      ((eq *pending-prefix* :c-x-r)
+       (setf *pending-prefix* nil)
+       (when tv (editor-rectangle tv (if (characterp key) (char-downcase key) key)))
+       nil)
+      ;; C-x <key> that are not the Workspace's C-x C-e: select all, rectangle mark,
+      ;; and the r prefix
+      ((and (eq *pending-prefix* :c-x) tv (not c) (member key '(#\h #\H #\Space #\r #\R)))
+       (setf *pending-prefix* nil)
+       (case (char-downcase key)
+         (#\h (editor-select-all tv))
+         (#\r (setf *pending-prefix* :c-x-r))
+         (#\Space (lol.textview:tv-move-point tv (lol.textview:tv-point-line tv)
+                                             (lol.textview:tv-point-col tv))
+                  (lol.textview::set-mark tv)
+                  (setf (lol.textview:tv-rect-mode tv) t
+                        *browser-status* "rectangle mark — move, then C-x r k / M-w / d / o / c / t")))
+       nil)
       (*pending-prefix*
        (let ((prefix *pending-prefix*))
          (setf *pending-prefix* nil)
@@ -1359,7 +1460,8 @@
            ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
          nil))
       ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
-      ((and c (eql key #\x) (workspace-pane-p p)) (setf *pending-prefix* :c-x) nil)
+      ((and c (eql key #\x)) (setf *pending-prefix* :c-x) nil)
+      ((and tv (clipboard-key tv key state previous)) nil)
       ((and (eq key :tab) (pane-tv p)) (editor-complete p) nil)
       (t (when (pane-tv p) (lol.textview:tv-key (pane-tv p) key state)) nil))))
 
@@ -1386,6 +1488,9 @@
       ;; Esc alone = the Emacs Meta prefix (sticky for the next key); it must NOT quit
       ;; the browser. Leaving via C-g at the root (below) is the deliberate exit.
       ((eq key :escape) (setf *pending-meta* t) nil)
+      ;; Shift-F10 — the context menu from the keyboard (the Menu key does the same,
+      ;; via the keyboard's evdev; see fb-browser.lisp)
+      ((and (eq key :f10) (lol.canvas:shift-p state)) (keyboard-context-menu) nil)
       ;; C-g = back, everywhere (the console can't deliver SuperL, so Ctrl-g is the
       ;; portable "back" that also works while editing a source pane). At the root there
       ;; is nothing to pop, so C-g does NOTHING — leaving the environment is SuperL-q
@@ -1422,6 +1527,10 @@
           (let ((it (selected-item (current-pane))))
             (when (and it (item-subject it)) (new-trail (item-subject it))))
           nil)
+         ((member key '(#\m #\M)) (open-modules) nil)                         ; the module index
+         ((member key '(#\l #\L))                                              ; the CL-USER package
+          (new-trail (find-package :cl-user)) nil)
+         ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
          ((member key '(#\? #\/))                                              ; Super-? — every binding
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) :quit)
@@ -1445,6 +1554,9 @@
       ;;     C-x then C-e Do it. Any other key edits. ---
       ((or (editable-pane-p p) (workspace-pane-p p)) (edit-pane-key p key state))
       ;; --- read-only reference pane: scroll only ---
+      ((and (pane-tv p) (or (and (lol.canvas:meta-p state) (member key '(#\w #\W)))
+                            (and (lol.canvas:ctrl-p state) (eq key :insert))))
+       (editor-copy (pane-tv p)) nil)                   ; copying is reading, so allowed
       ((pane-tv p)
        (case key
          (:up        (lol.textview:tv-key (pane-tv p) :up 0))
@@ -1632,6 +1744,8 @@
   ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
   (when (< y +bar-h+)
     (cond
+      ((and *tray-clip-rect* (<= (car *tray-clip-rect*) x (cdr *tray-clip-rect*)))
+       (open-clipboard-manager))
       ((and *tab-plus-rect* (<= (car *tab-plus-rect*) x (cdr *tab-plus-rect*)))
        (new-trail (subj-workspace)))
       ((find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*)
@@ -1648,12 +1762,12 @@
     (cond
       (hit (trail-goto (car hit)))
       ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
-      ;; in an editable pane (source or workspace), and is inert in a read-only one.
+      ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
+      ;; it is reading, not editing. The caret is simply not drawn there.
       ((pane-tv p)
        (cond
          (ctrl (jump-to-definition (pane-tv p) x y))
-         ((and (or (editable-pane-p p) (workspace-pane-p p))
-               (lol.textview:tv-hit-p (pane-tv p) x y))
+         ((lol.textview:tv-hit-p (pane-tv p) x y)
           (lol.textview:tv-click (pane-tv p) x y)
           (arm-drag (pane-tv p) x y))))
       ;; dispatch matrix: a cell drills its effective-method onion
@@ -1731,3 +1845,684 @@
                  (when (item-subject it)
                    (if super (new-trail (item-subject it))
                        (trail-push (item-subject it)))))))))))))
+
+;;; ---- what is under the pointer --------------------------------------------
+;;; The right-button menu and the middle-button halo both start from the same
+;;; question: WHAT did you point at? Not which pixel — which THING: a row (and the
+;;; subject it opens), a word in some text (and the symbol it names), an instance on
+;;; the stage, a tab. One function answers it, from the hit maps the last frame
+;;; recorded, so the menus and the drawing can never disagree about what is where.
+
+(defun stage-body-at (pane px py)
+  "The stage body under PX,PY in PANE's viewport, or NIL. The hit test STAGE-CLICK
+   performs, without selecting anything."
+  (let ((stage (view-data (pane-view pane))))
+    (when *stage-rect*
+      (destructuring-bind (x y w vh) *stage-rect*
+        (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
+          (find-if (lambda (b)
+                     (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
+                       (<= (+ (* dx dx) (* dy dy))
+                           (let ((rr (+ (body-r b) 6))) (* rr rr)))))
+                   (reverse (stage-bodies stage))))))))
+
+(defun text-target (pane x y)
+  "A target for a click at X,Y inside PANE's text view: the word there and, if it
+   names one, the symbol."
+  (let* ((tv (pane-tv pane))
+         (l (lol.textview::line-at-y tv y))
+         (c (lol.textview::col-at-x tv l x))
+         (line (aref (lol.textview:tv-lines tv) l))
+         (token (or (click-token line c) (and (> c 0) (click-token line (1- c)))))
+         (sym (resolve-symbol token)))
+    (list :kind :text :pane pane :tv tv
+          :editable (or (editable-pane-p pane) (workspace-pane-p pane))
+          :token token :symbol sym :line l :col c)))
+
+(defun row-target (pane hits y)
+  "A target for a click at height Y on PANE's list, whose painted rows are HITS."
+  (let* ((items (view-items (pane-view pane)))
+         (i (lol.widgets:hit-row hits y))
+         (it (and i (< i (length items)) (nth i items))))
+    (when it
+      (list :kind :row :pane pane :index i :item it :subject (item-subject it)))))
+
+(defun pointer-target (x y)
+  "What is under X,Y, as a plist with a :KIND of :TAB :TEXT :ROW :SPRITE or :PANE
+   (the pane's own subject, when nothing more specific was hit). Never NIL inside the
+   frame: pointing at empty space still points at the pane you are in."
+  (let ((p (current-pane)))
+    (flet ((pane-itself (pane) (list :kind :pane :pane pane :subject (pane-subject pane))))
+      (cond
+        ((< y +bar-h+)
+         (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
+           (and tab (list :kind :tab :index (car tab)))))
+        ;; the right-hand column: a pinned side pane, or the read-only preview
+        ((and *split-x* (>= x *split-x*) (>= y *content-top*))
+         (let ((side (or (pane-side p) *preview-pane*)))
+           (cond ((null side) (pane-itself p))
+                 ((and (pane-tv side) (lol.textview:tv-hit-p (pane-tv side) x y))
+                  (text-target side x y))
+                 ((null (pane-tv side))
+                  (or (row-target side *side-rows* y) (pane-itself side)))
+                 (t (pane-itself side)))))
+        ((and (pane-tv p) (lol.textview:tv-hit-p (pane-tv p) x y))
+         (text-target p x y))
+        ((eq (view-kind (pane-view p)) :stage)
+         (let ((b (stage-body-at p x y)))
+           (if b
+               (list :kind :sprite :pane p :subject (body-obj b))
+               (pane-itself p))))
+        ((and (null (pane-tv p)) (not (eq (view-kind (pane-view p)) :matrix)))
+         (or (row-target p *list-rows* y) (pane-itself p)))
+        (t (pane-itself p))))))
+
+(defun target-object (target)
+  "The Lisp object a TARGET stands for — what Inspect would open, what the halo is
+   ABOUT. A word in text stands for its symbol; a row for its subject."
+  (case (getf target :kind)
+    (:text (getf target :symbol))
+    ((:row :sprite :pane) (getf target :subject))
+    (t nil)))
+
+;;; ---- running a COMMAND (present.lisp's affordance protocol) ---------------
+;;; COMMANDS-FOR has always described, per type, what a subject affords and on
+;;; which SURFACES — :menu, :halo, :palette, :key — and until now only the status line
+;;; read it. The right-button menu shows the :menu ones and the halo the :halo ones,
+;;; which is what makes both EXTENSIBLE: a new subject type gets its own entries by
+;;; adding a COMMANDS-FOR method, and neither menu has to learn about it.
+
+(defun run-command (cmd)
+  "Do what COMMAND says: call its ACTION, or open its TARGET by its DISPOSITION. The
+   two prompting verbs are named by their KEY, because what they open is a prompt
+   about the target rather than the target itself."
+  (let ((target (command-target cmd)))
+    (cond
+      ((command-action cmd)
+       (handler-case (let ((out (make-string-output-stream)))
+                       (let ((*standard-output* out)) (funcall (command-action cmd)))
+                       ;; an action that PRINTS (Disassemble) reports in the status line
+                       (let ((s (ws-trim-output (get-output-stream-string out))))
+                         (when s (setf *browser-status*
+                                       (lol.widgets:clip-text (substitute #\Space #\Newline s) 200)))))
+         (serious-condition (c)
+           (setf *browser-status* (format nil "~a failed: ~a" (command-label cmd) c)))))
+      ((equal (command-key cmd) "C-c C-e") (eval-in-context-pane (open-pane target)))
+      ((equal (command-key cmd) "C-c C-a") (apply-function-pane (open-pane target)))
+      ((null target) nil)
+      ((eq (command-disposition cmd) :new-trail) (new-trail target))
+      (t (trail-push target)))))
+
+(defun subject-commands (subject surface)
+  "SUBJECT's commands that show on SURFACE (:menu or :halo), errors swallowed: a
+   menu that cannot be built must not take the browser with it."
+  (and subject
+       (remove-if-not (lambda (c) (member surface (command-surfaces c)))
+                      (ignore-errors (commands-for subject)))))
+
+(defun source-subject (object)
+  "The code that PRODUCED OBJECT, as a subject to open — the halo's 'Source' handle,
+   Smalltalk's 'browse the class'. A symbol: its definition. A function: the
+   definition of its name. A definition: itself. An instance: its class's
+   definition — for a CLOS object the code that generated it is its class. NIL when
+   there is nothing recorded to show."
+  (flet ((defn (name) (and name (symbolp name) (jumpable-p name) (subj-defn name))))
+    (cond
+      ((subj-defn-p object) object)
+      ;; the other SUBJ-* structures are the browser's own handles on a VIEW (a
+      ;; module, an xref, a matrix), not objects some code of yours produced — their
+      ;; "source" would be present.lisp's defstruct, true and useless
+      ((and (typep object 'structure-object)
+            (let ((n (symbol-name (type-of object))))
+              (and (> (length n) 5) (string= "SUBJ-" n :end2 5))))
+       nil)
+      ((symbolp object) (defn object))
+      ((functionp object)
+       (let ((name (ignore-errors (sb-kernel:%fun-name object))))
+         (defn (if (consp name) (second name) name))))   ; (setf foo) -> foo
+      ((typep object '(or standard-object structure-object condition))
+       (let ((cname (class-name (class-of object))))
+         (or (defn cname) (find-class cname nil))))
+      (t nil))))
+
+;;; ---- the right-button menu ------------------------------------------------
+;;; The obvious things first, then whatever the thing under the pointer says it
+;;; affords. An entry is a plist (:label :key :action :group); :GROUP becomes a
+;;; section header, so the generic edit verbs and the type's own commands read as
+;;; separate lists.
+
+(defun menu-entry (label action &key key group)
+  (list :label label :action action :key key :group group))
+
+(defun command-entries (subject surface &optional (group "commands"))
+  "SUBJECT's commands for SURFACE as menu entries."
+  (mapcar (lambda (c)
+            (menu-entry (command-label c) (lambda () (run-command c))
+                        :key (command-key c) :group group))
+          (subject-commands subject surface)))
+
+(defun text-menu-entries (target)
+  "The edit verbs for a right-click in text, then the symbol under the pointer."
+  (let* ((tv (getf target :tv))
+         (sel (lol.textview::selection-p tv))
+         (editable (getf target :editable))
+         (sym (getf target :symbol))
+         (g "edit"))
+    (append
+     (remove nil
+             (list (when (and editable sel) (menu-entry "Cut" (lambda () (editor-cut tv)) :key "C-w" :group g))
+                   (when sel (menu-entry "Copy" (lambda () (editor-copy tv)) :key "M-w" :group g))
+                   (when editable (menu-entry "Paste" (lambda () (editor-paste tv)) :key "C-y" :group g))
+                   (when editable (menu-entry "Paste the selection" (lambda () (editor-paste-primary tv))
+                                              :key "middle" :group g))
+                   (menu-entry "Select all" (lambda () (editor-select-all tv)) :key "C-x h" :group g)))
+     (when (and sym (symbolp sym))
+       (let ((gs (format nil "~(~a~)" sym)))
+         (remove nil
+                 (list (when (jumpable-p sym)
+                         (menu-entry "Go to definition" (lambda () (trail-push (subj-defn sym)))
+                                     :key "M-." :group gs))
+                       (when (fboundp sym)
+                         (menu-entry "Senders" (lambda () (trail-push (subj-xref :senders sym)))
+                                     :key "M-," :group gs))
+                       (menu-entry "Inspect" (lambda () (trail-push sym)) :key "C-c C-i" :group gs))))))))
+
+(defun row-menu-entries (target)
+  "Open it, three ways, and copy its name — then the subject's own commands."
+  (let ((subject (getf target :subject))
+        (item (getf target :item)))
+    (append
+     (when subject
+       (list (menu-entry "Open" (lambda () (trail-push subject)) :key "ret" :group "open")
+             (menu-entry "Open in a new tab" (lambda () (new-trail subject)) :key "SuperL-ret" :group "open")
+             (menu-entry "Open beside"
+                         (lambda ()
+                           (set-pane-sel (getf target :pane) (getf target :index))
+                           (open-beside (getf target :pane)))
+                         :key "S-ret" :group "open")))
+     (list (menu-entry "Copy name" (lambda () (copy-to-clipboard (item-label item)))
+                       :group "open"))
+     (command-entries subject :menu))))
+
+(defun environment-menu-entries ()
+  "What any right-click ends with: the places you can always go."
+  (list (menu-entry "New Workspace" (lambda () (new-trail (subj-workspace))) :group "environment")
+        (menu-entry "Module index" (lambda () (open-modules)) :key "SuperL-m" :group "environment")
+        (menu-entry "Find anything..." (lambda () (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)))
+                    :key "SuperL-spc" :group "environment")
+        (menu-entry "Clipboard history..." (lambda () (open-clipboard-manager))
+                    :key "SuperL-h" :group "environment")
+        (menu-entry "Keys" (lambda () (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)))
+                    :key "SuperL-?" :group "environment")))
+
+(defun context-menu-entries (target)
+  "Everything the right-button menu offers for TARGET."
+  (append
+   (case (getf target :kind)
+     (:text   (text-menu-entries target))
+     (:row    (row-menu-entries target))
+     (:sprite (append (list (menu-entry "Inspect" (lambda () (trail-push (getf target :subject)))
+                                        :group "instance"))
+                      (command-entries (getf target :subject) :menu "instance")))
+     (:tab    (let ((i (getf target :index)))
+                (list (menu-entry "Close tab" (lambda () (activate-trail i) (close-trail)) :group "tab")
+                      (menu-entry "Move to slot 1" (lambda () (activate-trail i) (swap-trail 1)) :group "tab"))))
+     (:pane   (command-entries (getf target :subject) :menu)))
+   (environment-menu-entries)))
+
+(defun entry-rows (entries)
+  "Menu entries -> widget rows (label, key hint as the detail, group as a section)."
+  (map 'vector (lambda (e)
+                 (lol.widgets:make-row (getf e :label) :detail (getf e :key)
+                                       :group (getf e :group) :tint *ui-text*))
+       entries))
+
+(defvar *menu-rect* nil "The context menu card (x0 y0 x1 y1), for click routing.")
+(defvar *menu-hits* '() "The context menu's painted rows — see HIT-ROW.")
+
+(defun draw-context-menu (canvas w h entries sel x y)
+  "The browser, then the right-button menu as a card whose corner is at X,Y — moved
+   left/up when it would run off the screen, the way every desktop does it."
+  (draw-browser canvas w h)
+  (let* ((rows (entry-rows entries))
+         (nslots (+ (length rows)
+                    (length (remove-duplicates (map 'list #'lol.widgets:row-group rows)
+                                               :test #'equal))))
+         (cw 320)
+         (ch (min (- h 40) (+ 32 (* nslots +row-h+))))
+         (cx (max 4 (min x (- w cw 8))))
+         (cy (max (+ +bar-h+ 2) (min y (- h ch 8)))))
+    (setf *menu-rect* (list cx cy (+ cx cw) (+ cy ch)))
+    (let ((body (lol.widgets:draw-card canvas cx cy cw ch)))
+      (multiple-value-bind (top hits)
+          (lol.widgets:draw-list canvas (+ cx 4) (- body 18) (- cw 8) (- ch 12) rows
+                                 :sel sel :top 0 :follow-sel t)
+        (declare (ignore top))
+        (setf *menu-hits* hits)))))
+
+(defun menu-entry-at (x y)
+  "The context menu entry index at X,Y, :OUTSIDE when X,Y is off the card, or NIL."
+  (if (or (null *menu-rect*)
+          (destructuring-bind (x0 y0 x1 y1) *menu-rect*
+            (not (and (<= x0 x x1) (<= y0 y y1)))))
+      :outside
+      (lol.widgets:hit-row *menu-hits* y)))
+
+;;; ---- the halo (middle button) ---------------------------------------------
+;;; Smalltalk's halo: middle-click a thing and a ring of HANDLES appears around it,
+;;; each one a thing you can do to THAT object — browse the code that made it, inspect
+;;; it, see who uses it. Morphic's handles are coloured dots around the morph's
+;;; bounds; ours ring the point you clicked, because the things here (a word, a row, a
+;;; sprite) are small. The handles come from the same COMMANDS-FOR, its :HALO surface.
+
+(defparameter +halo-radius+ 74 "Distance of the handles from the clicked point.")
+
+(defun halo-entries (object)
+  "The halo's handles for OBJECT: Source (the code that produced it) and Inspect
+   always lead, then the object's own :halo commands, then Copy."
+  (let* ((src (source-subject object))
+         (own (command-entries object :halo "halo"))
+         (base (remove nil
+                       (list (when src (menu-entry "Source" (lambda () (trail-push src)) :group "halo"))
+                             (menu-entry "Inspect" (lambda () (trail-push object)) :group "halo")
+                             (when (and (symbolp object) object (find-class object nil))
+                               (menu-entry "Class" (lambda () (trail-push (find-class object))) :group "halo"))))))
+    (append base
+            (remove-if (lambda (e) (find (getf e :label) base :key (lambda (b) (getf b :label))
+                                                              :test #'string-equal))
+                       own)
+            (list (menu-entry "Copy" (lambda () (copy-to-clipboard
+                                                 (let ((*print-length* 20) (*print-level* 4))
+                                                   (prin1-to-string object))))
+                              :group "halo")))))
+
+(defvar *halo-handles* '() "((index cx cy x0 x1) …) of the handles drawn last.")
+(defvar *halo-title* nil
+  "What the halo calls its object — the row's label or the word clicked, which is how
+   you knew it on screen. NIL falls back to the printed object, which for a browser
+   subject is a struct printout nobody recognises.")
+
+(defun halo-handle-xy (i n cx cy)
+  "Where handle I of N sits around CX,CY: evenly round a circle, the first at the top."
+  (let ((th (- (/ (* 2 pi i) n) (/ pi 2))))
+    (values (round (+ cx (* +halo-radius+ (cos th))))
+            (round (+ cy (* +halo-radius+ (sin th)))))))
+
+(defun draw-halo (canvas w h object entries sel cx cy)
+  "The browser, dimmed, with the halo's handles ringed round CX,CY: a coloured dot per
+   handle and its name beside it, the selected one lit, and the object named at the
+   centre so you can see WHAT the halo is about before you choose."
+  (draw-browser canvas w h)
+  (lol.widgets:scrim canvas 150)
+  (let* ((n (length entries))
+         (cx (max (+ +halo-radius+ 90) (min cx (- w +halo-radius+ 90))))
+         (cy (max (+ +bar-h+ +halo-radius+ 14) (min cy (- h +halo-radius+ 30)))) ; below the tabs
+         (name (lol.widgets:clip-text (or *halo-title*
+                                          (let ((*print-length* 5) (*print-level* 2))
+                                            (prin1-to-string object)))
+                                      28))
+         (nw (lol.canvas:string-px *bfont* name)))
+    (setf *halo-handles* '())
+    (lol.canvas:draw-circle canvas cx cy (- +halo-radius+ 22) *ui-rule*)
+    (lol.canvas:fill-rect canvas (- cx (floor nw 2) 6) (- cy 9) (+ nw 12) 18 *ui-panel*)
+    (lol.canvas:draw-string canvas *bfont* name (- cx (floor nw 2)) (- cy 6) *ui-accent*)
+    (loop for e in entries for i from 0
+          do (multiple-value-bind (hx hy) (halo-handle-xy i n cx cy)
+               (let* ((label (format nil "~d ~a" (1+ i) (getf e :label)))
+                      (lw (lol.canvas:string-px *bfont* label))
+                      (left (< hx (- cx 8)))                ; labels point away from the centre
+                      (lx (if left (- hx 12 lw) (+ hx 12)))
+                      (on (= i sel)))
+                 (lol.canvas:draw-circle canvas hx hy 8
+                                         (concept-color (case i (0 :class) (1 :variable) (2 :function)
+                                                          (3 :generic-function) (t :restart)))
+                                         :fill t)
+                 (when on (lol.canvas:draw-circle canvas hx hy 11 *ui-accent*))
+                 (lol.canvas:fill-rect canvas (- lx 3) (- hy 8) (+ lw 6) 16 (if on *ui-hi* *ui-panel*))
+                 (lol.canvas:draw-string canvas *bfont* label lx (- hy 6) (if on *ui-accent* *ui-text*))
+                 (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) *halo-handles*))))))
+
+(defun halo-handle-at (x y)
+  "The halo handle index at X,Y (its dot or its label), :OUTSIDE elsewhere."
+  (let ((hit (find-if (lambda (h)
+                        (destructuring-bind (i hx hy x0 x1) h
+                          (declare (ignore i hx))
+                          (and (<= x0 x x1) (<= (- hy 10) y (+ hy 10)))))
+                      *halo-handles*)))
+    (if hit (first hit) :outside)))
+
+;;; ---- the gestures, backend-blind ------------------------------------------
+;;; The backends own the modal loops (fb-browser.lisp: RUN-CHOOSER-FB); these decide
+;;; WHAT to show. *CHOOSER* is the hook a backend installs, like *VALUE-PROMPT*.
+
+(defvar *chooser* nil
+  "A hook: (funcall *chooser* KIND ENTRIES X Y &optional OBJECT) shows a modal menu
+   (:menu) or halo (:halo) and returns the chosen entry, or NIL. Installed by the
+   framebuffer backend; NIL elsewhere, and then the gestures say so.")
+
+(defun choose-and-run (kind entries x y &optional object)
+  "Offer ENTRIES through *CHOOSER* and run the one picked."
+  (cond
+    ((null entries) nil)
+    ((null *chooser*) (setf *browser-status* "no menus on this backend"))
+    (t (let ((e (funcall *chooser* kind entries x y object)))
+         (when e
+           (handler-case (funcall (getf e :action))
+             (serious-condition (c)
+               (setf *browser-status* (format nil "~a failed: ~a" (getf e :label) c)))))))))
+
+(defun browser-context-menu (x y)
+  "Right button at X,Y: the menu for whatever is there."
+  (choose-and-run :menu (context-menu-entries (pointer-target x y)) x y))
+
+(defun browser-middle-click (x y &optional force-halo)
+  "Middle button at X,Y. In EDITABLE text it is X's middle-click paste: the PRIMARY
+   selection (whatever you last selected with the mouse) goes in at the pointer.
+   Anywhere else — and in text when FORCE-HALO (SuperL held) or there is nothing
+   selected to paste — it opens the HALO on the thing under the pointer.
+
+   That is the disambiguation, and it follows what each place is FOR: text you can
+   edit is where a paste can land, so the paste wins there; a row, a sprite, a word in
+   read-only text cannot receive a paste, so there the button is free for the halo."
+  (let ((target (pointer-target x y)))
+    (if (and (eq (getf target :kind) :text) (getf target :editable)
+             (not force-halo) (primary-selection))
+        (paste-primary-at target)
+        (let ((object (target-object target))
+              (*halo-title* (case (getf target :kind)
+                              (:row (item-label (getf target :item)))
+                              (:text (getf target :token))
+                              (t nil))))
+          (if object
+              (choose-and-run :halo (halo-entries object) x y object)
+              (setf *browser-status* "nothing here to put a halo on"))))))
+
+(defun open-modules ()
+  "The module index — every definition by the file it came from. Focus its tab if one
+   is open, else open one. (It used to be the environment's first tab; the environment
+   now opens on the Workspace alone.)"
+  (let ((i (position-if (lambda (trail) (typep (pane-subject (first trail)) 'subj-modules))
+                        *trails*)))
+    (if i (activate-trail i) (new-trail (subj-modules)))))
+
+(defun keyboard-context-menu ()
+  "The Menu key, or Shift-F10: the right-button menu without a pointer, anchored at
+   the caret in a text pane or at the selected row in a list. The keyboard-first rule
+   (doc/code-browser.org §1): anything the pointer can reach, a key can too."
+  (let* ((p (current-pane))
+         (tv (cond ((and *editing-side* (pane-side p)) (pane-tv (pane-side p)))
+                   (t (pane-tv p)))))
+    (multiple-value-bind (x y)
+        (if tv
+            (values (lol.textview::x-of-col tv (lol.textview:tv-point-col tv))
+                    (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) 4
+                       (* (- (lol.textview:tv-point-line tv) (lol.textview::tv-scroll tv))
+                          (lol.textview:tv-line-height tv))))
+            (let ((hit (find (pane-sel p) *list-rows* :key #'cdr)))
+              (values 40 (if hit (+ (car hit) 4) *content-top*))))
+      (browser-context-menu x y))))
+
+;;; ---- the clipboard, wired into the editor ---------------------------------
+;;; poc/clipboard.lisp holds the state and does the text surgery — pure functions
+;;; over a vector of lines. This is the part that knows about panes and keys: which
+;;; text view a command acts on, what counts as a CONSECUTIVE kill (C-k C-k builds
+;;; one entry), and where the last paste landed (so M-y can swap it). The key table
+;;; and the reasons behind it: doc/clipboard.org.
+
+(defun clip-status (verb text)
+  "Say what just happened to the clipboard, briefly."
+  (setf *browser-status*
+        (if text
+            (format nil "~a: ~a" verb (lol.clipboard:clip-label text 60))
+            (format nil "~a: nothing (blank text is not kept)" verb))))
+
+(defun copy-to-clipboard (string)
+  "Put STRING in the clipboard history (blank strings are refused, and say so)."
+  (clip-status "copied" (lol.clipboard:clip-copy string)))
+
+(defun primary-selection () (lol.clipboard:primary))
+
+(defun editor-region-text (tv)
+  "The selected text of TV, or NIL."
+  (multiple-value-bind (al ac pl pc) (lol.textview:tv-region tv)
+    (and al (lol.clipboard:region-text (lol.textview:tv-lines tv) al ac pl pc))))
+
+(defun editor-copy (tv)
+  "M-w / Ctrl-Insert: the region into the history. The selection stays, so a
+   copy is not also a deselect — the pointer user expects to still see it."
+  (let ((text (editor-region-text tv)))
+    (if text
+        (clip-status "copied" (lol.clipboard:clip-copy text))
+        (setf *browser-status* "copy: no selection"))))
+
+(defun editor-cut (tv)
+  "C-w / Shift-Delete: the region into the history, and out of the buffer."
+  (multiple-value-bind (al ac pl pc) (lol.textview:tv-region tv)
+    (if (not al)
+        (setf *browser-status* "cut: no selection")
+        (let ((text (lol.clipboard:region-text (lol.textview:tv-lines tv) al ac pl pc)))
+          (multiple-value-bind (lines l c)
+              (lol.clipboard:region-delete (lol.textview:tv-lines tv) al ac pl pc)
+            (lol.textview:tv-replace tv lines l c))
+          (clip-status "cut" (lol.clipboard:clip-copy text))))))
+
+(defun editor-insert (tv text)
+  "Insert TEXT at TV's caret — replacing the selection, as every editor since the
+   Mac does — and remember the span for M-y."
+  (multiple-value-bind (al ac pl pc) (lol.textview:tv-region tv)
+    (when al
+      (multiple-value-bind (lines l c)
+          (lol.clipboard:region-delete (lol.textview:tv-lines tv) al ac pl pc)
+        (lol.textview:tv-replace tv lines l c))))
+  (let ((l0 (lol.textview:tv-point-line tv)) (c0 (lol.textview:tv-point-col tv)))
+    (multiple-value-bind (lines l1 c1)
+        (lol.clipboard:insert-text (lol.textview:tv-lines tv) l0 c0 text)
+      (lol.textview:tv-replace tv lines l1 c1)
+      (setf *last-edit* (list :yank tv l0 c0 l1 c1)))))
+
+(defun editor-paste (tv)
+  "C-y / Shift-Insert: the newest history entry, at the caret."
+  (let ((text (lol.clipboard:clip-yank)))
+    (if text
+        (editor-insert tv text)
+        (setf *browser-status* "paste: the clipboard is empty"))))
+
+(defun editor-yank-pop (tv previous)
+  "M-y straight after a paste: swap what it inserted for the entry before it, and
+   again for the one before that. PREVIOUS is the last edit; anything but a paste in
+   this same view and M-y says so instead (Emacs: 'Previous command was not a yank')."
+  (if (not (and (eq (first previous) :yank) (eq (second previous) tv)))
+      (setf *browser-status* "M-y: only straight after a paste (C-y)")
+      (destructuring-bind (l0 c0 l1 c1) (cddr previous)
+        (lol.clipboard:clip-yank-pop)
+        (multiple-value-bind (lines l c)
+            (lol.clipboard:region-delete (lol.textview:tv-lines tv) l0 c0 l1 c1)
+          (lol.textview:tv-replace tv lines l c))
+        (editor-insert tv (lol.clipboard:clip-yank))
+        (setf *browser-status*
+              (format nil "M-y: ~a" (lol.clipboard:clip-label (lol.clipboard:clip-yank) 60))))))
+
+(defun editor-kill (tv l0 c0 l1 c1 previous &optional (where :after))
+  "Kill the text between two positions: out of the buffer, into the history —
+   APPENDED to the last entry when the previous command was a kill too (WHERE says
+   which end: a backward kill goes on the front)."
+  (let ((text (lol.clipboard:region-text (lol.textview:tv-lines tv) l0 c0 l1 c1)))
+    (multiple-value-bind (lines l c)
+        (lol.clipboard:region-delete (lol.textview:tv-lines tv) l0 c0 l1 c1)
+      (lol.textview:tv-replace tv lines l c))
+    (lol.clipboard:clip-copy text :append (and (eq (first previous) :kill) where))
+    (setf *last-edit* (list :kill))
+    (setf *browser-status* nil)))
+
+(defun editor-kill-line (tv previous)
+  "C-k: to the end of the line, or the newline itself at the end of one."
+  (multiple-value-bind (l0 c0 l1 c1)
+      (lol.clipboard:kill-line-span (lol.textview:tv-lines tv)
+                                    (lol.textview:tv-point-line tv)
+                                    (lol.textview:tv-point-col tv))
+    (when l0 (editor-kill tv l0 c0 l1 c1 previous))))
+
+(defun editor-kill-word (tv dir previous)
+  "M-d (DIR :right) / M-Backspace (:left): kill to the word boundary the motion
+   keys use. Found by MOVING there with the anchor left behind, then killing the
+   region that motion made."
+  (lol.textview:tv-move-point tv (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv))
+  (lol.textview::move-word tv dir t)
+  (multiple-value-bind (al ac pl pc) (lol.textview:tv-region tv)
+    (when al
+      (editor-kill tv al ac pl pc previous (if (eq dir :left) :before :after)))))
+
+(defun editor-select-all (tv) (lol.textview:tv-select-all tv))
+
+(defun editor-paste-primary (tv)
+  "Paste the PRIMARY selection at the caret (the menu's 'Paste the selection')."
+  (let ((text (primary-selection)))
+    (if text (editor-insert tv text) (setf *browser-status* "nothing selected to paste"))))
+
+(defun paste-primary-at (target)
+  "X's middle click: put the caret where the pointer is, then paste PRIMARY there."
+  (let ((tv (getf target :tv)))
+    (lol.textview:tv-move-point tv (getf target :line) (getf target :col))
+    (editor-paste-primary tv)))
+
+(defun browser-drag-end ()
+  "The button came up after a press in text: if the drag selected something, that
+   selection becomes PRIMARY and enters the history — once, now, rather than on
+   every motion event, or the history would fill with every intermediate stretch."
+  (when *drag-tv*
+    (let ((text (editor-region-text *drag-tv*)))
+      (when (and text (null *drag-origin*))          ; it really was a drag
+        (lol.clipboard:clip-select text)
+        (clip-status "selected" text)))))
+
+;;; Rectangles: the region's two corners are the rectangle's (C-x SPC shows it as
+;;; one, but any region works, as in Emacs).
+
+(defun editor-rectangle (tv key)
+  "C-x r KEY. k kill, M-w copy, y yank, d delete, o open, c clear, t string."
+  (setf *browser-status* nil)                  ; the rectangle-mark hint has done its job
+  (let ((lines (lol.textview:tv-lines tv)))
+    (multiple-value-bind (al ac pl pc) (lol.textview:tv-region tv)
+      (flet ((corners () (values al ac pl pc))
+             (top-left () (values (min al pl) (min ac pc))))
+        (cond
+          ((eql key #\y)
+           (let ((rect (lol.clipboard:clip-rectangle)))
+             (if (null rect)
+                 (setf *browser-status* "C-x r y: no rectangle killed yet")
+                 (multiple-value-bind (new l c)
+                     (lol.clipboard:rect-yank lines rect (lol.textview:tv-point-line tv)
+                                              (lol.textview:tv-point-col tv))
+                   (lol.textview:tv-replace tv new l c)))))
+          ((null al) (setf *browser-status* "C-x r: no region — C-x SPC, then move"))
+          (t
+           (multiple-value-bind (tl tc) (top-left)
+             (multiple-value-bind (a b c d) (corners)
+               (case key
+                 (#\k (multiple-value-bind (new rect) (lol.clipboard:rect-kill lines a b c d)
+                        (lol.clipboard:clip-set-rectangle rect)
+                        (lol.textview:tv-replace tv new tl tc)))
+                 (#\w (lol.clipboard:clip-set-rectangle (lol.clipboard:rect-extract lines a b c d))
+                      (setf *browser-status* "rectangle copied"))
+                 (#\d (lol.textview:tv-replace tv (lol.clipboard:rect-delete lines a b c d) tl tc))
+                 (#\o (lol.textview:tv-replace tv (lol.clipboard:rect-open lines a b c d) tl tc))
+                 (#\c (lol.textview:tv-replace tv (lol.clipboard:rect-clear lines a b c d) tl tc))
+                 (#\t (let ((s (and *value-prompt* (funcall *value-prompt* "string rectangle"))))
+                        (when s
+                          (lol.textview:tv-replace
+                           tv (lol.clipboard:rect-string lines a b c d s) tl tc))))
+                 (t (setf *browser-status* "C-x r: k M-w y d o c t")))))))))))
+
+(defun clipboard-key (tv key state previous)
+  "The clipboard's keys in an editable text view; T when KEY was one of them.
+   Emacs and PC conventions side by side (doc/clipboard.org has the table)."
+  (let ((ctrl (lol.canvas:ctrl-p state))
+        (meta (lol.canvas:meta-p state))
+        (shift (lol.canvas:shift-p state)))
+    (cond
+      ((and ctrl (member key '(#\w #\W)))          (editor-cut tv) t)
+      ((and meta (member key '(#\w #\W)))          (editor-copy tv) t)
+      ((and ctrl (member key '(#\y #\Y)))          (editor-paste tv) t)
+      ((and meta (member key '(#\y #\Y)))          (editor-yank-pop tv previous) t)
+      ((and ctrl (member key '(#\k #\K)))          (editor-kill-line tv previous) t)
+      ((and meta (member key '(#\d #\D)))          (editor-kill-word tv :right previous) t)
+      ((and meta (eq key :backspace))              (editor-kill-word tv :left previous) t)
+      ((and shift (eq key :insert))                (editor-paste tv) t)
+      ((and ctrl (eq key :insert))                 (editor-copy tv) t)
+      ((and shift (eq key :delete))                (editor-cut tv) t)
+      (t nil))))
+
+(defun focused-editor ()
+  "The editable text view keyboard focus is in, or NIL — where a paste goes."
+  (let* ((p (current-pane))
+         (q (if (and *editing-side* (pane-side p)) (pane-side p) p)))
+    (and (pane-tv q) (or (editable-pane-p q) (workspace-pane-p q)) (pane-tv q))))
+
+;;; ---- the clipboard manager (SuperL-h): Parcellite's history, as a palette -----
+
+(defvar *clip-hits* '() "The clipboard manager's painted rows — see HIT-ROW.")
+(defvar *clip-rect* nil "The manager card (x0 y0 x1 y1).")
+
+(defun draw-clipboard-card (canvas w h query results sel)
+  "The browser, dimmed, and the history as a card: the filter line, one row per
+   entry (newest first, numbered by its place in the history), the current one
+   marked. RESULTS is (INDEX . STRING) pairs from CLIP-FILTER."
+  (draw-browser canvas w h)
+  (let* ((cw (min 760 (- w 80)))
+         (cx (floor (- w cw) 2))
+         (cy (+ +bar-h+ 14))
+         (maxrows (max 3 (min (max 1 (length results)) (floor (- h cy 96) +row-h+))))
+         (ch (+ 24 20 8 (* maxrows +row-h+) 24))
+         (maxc (max 10 (floor (- cw 120) (lol.canvas:font-cw *bfont*))))
+         (rows (map 'vector
+                    (lambda (r)
+                      (lol.widgets:make-row (lol.clipboard:clip-label (cdr r) maxc)
+                                            :detail (if (zerop (car r)) "current"
+                                                        (format nil "#~d" (car r)))
+                                            :tint *ui-text*
+                                            :stripe (if (zerop (car r)) *ui-accent* nil)))
+                    results)))
+    (setf *clip-rect* (list cx cy (+ cx cw) (+ cy ch)))
+    (let* ((body (lol.widgets:draw-card canvas cx cy cw ch
+                                        :title "Clipboard history"
+                                        :right (format nil "~d kept" (lol.clipboard:clip-count))
+                                        :dim 105))
+           (qy (lol.widgets:draw-query-line canvas (+ cx 8) (+ body 2) (- cw 16) query))
+           (ly (+ qy 8)))
+      (if (zerop (length rows))
+          (lol.canvas:draw-string canvas *bfont*
+                                  (if (plusp (lol.clipboard:clip-count))
+                                      "nothing matches — Backspace to widen"
+                                      "empty — copy, cut, kill or select something first")
+                                  (+ cx 16) (+ ly 4) *ui-dim*)
+          (multiple-value-bind (top hits)
+              (lol.widgets:draw-list canvas (+ cx 6) ly (- cw 12) (* maxrows +row-h+) rows
+                                     :sel sel :top 0 :follow-sel t)
+            (declare (ignore top))
+            (setf *clip-hits* hits)))
+      (draw-hints canvas (+ cx 12) (+ cy ch -16) (- cw 16)
+                  '(("up/dn" . "move") ("ret" . "make current + paste")
+                    ("Del" . "forget it") ("type" . "filter") ("Esc" . "close"))))))
+
+(defun clipboard-row-at (x y)
+  "The manager's row index at X,Y, :OUTSIDE off the card, or NIL."
+  (if (or (null *clip-rect*)
+          (destructuring-bind (x0 y0 x1 y1) *clip-rect*
+            (not (and (<= x0 x x1) (<= y0 y y1)))))
+      :outside
+      (lol.widgets:hit-row *clip-hits* y)))
+
+(defun clipboard-choose (index)
+  "The manager's Enter: entry INDEX becomes current, and goes in at the caret of
+   the focused editor if there is one (Parcellite pastes on selection too)."
+  (lol.clipboard:clip-promote index)
+  (let ((tv (focused-editor)))
+    (if tv
+        (editor-insert tv (lol.clipboard:clip-current))
+        (clip-status "current" (lol.clipboard:clip-current)))))
+
+(defun open-clipboard-manager ()
+  "SuperL-h, or the tray's clipboard icon."
+  (if (fboundp 'run-clipboard-fb)
+      (funcall 'run-clipboard-fb)
+      (setf *browser-status* "the clipboard manager needs the framebuffer backend")))

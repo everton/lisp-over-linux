@@ -25,7 +25,8 @@
       (load (f "../initramfs/registry.lisp"))          ; defines load-recording (plain load)
       ;; everything else is loaded AND source-captured, so it is all browsable:
       (dolist (m '("../initramfs/model.lisp" "../initramfs/present.lisp"
-                   "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp" "shell.lisp"
+                   "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp"
+                   "clipboard.lisp" "../initramfs/sysinfo.lisp" "shell.lisp"
                    "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"))
         (load-recording (f m))))))
 
@@ -57,10 +58,18 @@
                   (1 (browser-click (lol.x11:event-x e) (lol.x11:event-y e)
                                     (lol.canvas:ctrl-p (lol.x11:event-state e))
                                     (lol.canvas:super-p (lol.x11:event-state e))))
+                  ;; 2 is the middle button (paste PRIMARY / the halo), 3 the right
+                  ;; (the context menu — which says so in the status line here, as
+                  ;; this host backend installs no *CHOOSER*)
+                  (2 (browser-middle-click (lol.x11:event-x e) (lol.x11:event-y e)
+                                           (lol.canvas:super-p (lol.x11:event-state e))))
+                  (3 (browser-context-menu (lol.x11:event-x e) (lol.x11:event-y e)))
                   (4 (browser-scroll (- +wheel-lines+)))
                   (5 (browser-scroll +wheel-lines+))))
                ;; motion with button 1 held (Button1Mask, #x100, in the state) is a
                ;; drag: it extends the selection the press started (BROWSER-DRAG)
+               (:button-release
+                (when (= 1 (lol.x11:event-detail e)) (browser-drag-end)))
                (:motion
                 (when (logtest #x100 (lol.x11:event-state e))
                   (browser-drag (lol.x11:event-x e) (lol.x11:event-y e))))

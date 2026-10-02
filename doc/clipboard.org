@@ -1,0 +1,311 @@
+#+TITLE: The clipboard — a history, PRIMARY, the kill ring and rectangles, as plain data
+#+STARTUP: showall
+
+Sibling docs: [[file:input.org][input.org]] (where the keys and the mouse buttons come from) ·
+[[file:line-editing.org][line-editing.org]] (the console REPL's own editing keys) ·
+[[file:code-browser.org][code-browser.org]] §4¾ (the shell whose editors this clipboard serves).
+
+Code: [[file:../poc/clipboard.lisp][poc/clipboard.lisp]] (package =LOL.CLIPBOARD=) · test:
+[[file:../poc/clipboard-test.lisp][poc/clipboard-test.lisp]] (=sbcl --script poc/clipboard-test.lisp=).
+
+Question that prompted this: /on the desktop I use Parcellite — a history of copies
+I can browse, which refuses to record whitespace. Can the Lisp machine have that,
+plus X's select-to-copy / middle-click-to-paste, plus the Emacs kill and rectangle
+keys my fingers already know?/
+
+*Status (2026-10-02):* *built and wired.* The core is host-tested (63 assertions);
+the keys, the mouse and the manager card are wired in [[file:../poc/shell.lisp::defun clipboard-key][=poc/shell.lisp=]] (the
+"clipboard, wired into the editor" section), [[file:../poc/textview.lisp::defun tv-region][=poc/textview.lisp=]] (the region and
+the rectangle display) and [[file:../initramfs/fb-browser.lisp::defun run-clipboard-fb][=initramfs/fb-browser.lisp=]] (the manager's input
+loop), and verified in the booted guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]]. §6 is the key
+table as built.
+
+* The one-sentence essence
+
+On a desktop the clipboard is a /protocol/ between programs; in this image every
+editor lives in one Lisp process, so the clipboard is just *a list of strings and
+a few rules about it* — and the whole design is choosing the rules.
+
+* 1. Why there is no protocol here
+
+On X11, "copy" does not copy anything. The program you copied from merely
+announces to the X server that it now /owns/ a named selection (=CLIPBOARD=). When
+another program pastes, it asks the server, the server asks the owner, and the
+owner converts its text and sends it over — the ICCCM selection dance. If the
+owner exits, the text is gone. That is why clipboard /managers/ such as Parcellite
+exist at all: a small daemon that watches ownership change, grabs a copy of the
+text each time, and so outlives the programs and remembers a history.
+
+None of that machinery has anything to do here. There is no X server (the browser
+draws on =/dev/fb0=, see [[file:framebuffer.org][framebuffer.org]]), and every text view that can copy
+or paste — the source panes, the Workspace, the side editor — is an object in the
+*same Lisp heap*. Copying in one and pasting in another needs no ownership, no
+conversion and no daemon: both read the same variable,
+[[file:../poc/clipboard.lisp::defvar *clipboard*][=*clipboard*=]]. What is left of "a clipboard manager" is
+the part that was always the interesting part: the /history/ and its manners.
+
+That is also why the file has no dependency on any other file of the project. It
+knows nothing about pixels, keys or text views — the editor decides /when/ to copy
+(which key was pressed, whether this kill continues the last one); this file
+decides /what that does/ to the stored text. Being pure, it is tested on the host
+by a plain =sbcl --script=, no QEMU.
+
+* 2. Parcellite — what we copy and what we don't
+
+Parcellite's options are a good catalogue of what a clipboard history can do. The
+names below are the keys in its config file (=~/.config/parcellite/parcelliterc=),
+read off the host this was written on.
+
+| Parcellite option                 | what it does                                   | here                                       |
+|-----------------------------------+------------------------------------------------+--------------------------------------------|
+| =history_limit= (host value: 25)  | keep at most N entries                         | *yes* — =board-limit=, default 50          |
+| =ignore_whiteonly=                | "ignore any clipboard additions that contain only whitespace" | *yes, always on* (see below) |
+| re-copying an entry               | moves it to the top instead of listing it twice | *yes* — de-duplication                     |
+| =data_size=                       | a cap on entry size                            | *yes* — =board-max-length=, 1 000 000 chars |
+| =single_line= + =item_length= (50) | show each entry as one ellipsised row          | *yes* — [[file:../poc/clipboard.lisp::defun clip-label][=clip-label=]]                 |
+| =type_search= / =case_search=     | type to filter the menu                        | *yes* — [[file:../poc/clipboard.lisp::defun clip-filter][=clip-filter=]], case-insensitive |
+| =history_key= (host: =Ctrl-Alt-H=) | a key that pops the history up                 | *yes* — =SuperL-h= (§7)                     |
+| =use_copy= / =use_primary= / =synchronize= | track CLIPBOARD, PRIMARY, or keep both equal | *partly* — §3: a mouse selection sets both |
+| =trim_wspace_begend= / =trim_newline= | rewrite the text on the way in              | *no* — a copy should paste back exactly    |
+| =save_history= / =persistent_history= | survive a restart                           | *no* — §8, the rootfs is tmpfs              |
+| =hyperlinks_only=, actions (=actions_key=) | URL filtering, run a command on an entry | *no* — no browser, no shell to run it in   |
+
+*Blank refusal* is the rule that gave this file its first test. A copy that is
+all whitespace is almost always a mis-click — a double-click in a margin, a drag
+that caught only the indentation — and recording it would push a real entry off
+the bounded end of the history in exchange for a row you cannot even see. So
+[[file:../poc/clipboard.lisp::defun clip-copy][=clip-copy=]] returns =NIL= with a second value =:BLANK= (or =:TOO-LONG=), so the caller
+can say "nothing copied" rather than silently doing nothing. Note what it does
+/not/ do: the text is still deleted from the buffer by a kill — refusing to
+/record/ is not refusing to /edit/. (Honest aside: on the host this was written
+on, Parcellite's own =ignore_whiteonly= is currently =false=; here the rule is
+always on, because a 50-slot list has no room for invisible entries.)
+
+*De-duplication* differs from Emacs, which by default happily keeps the same text
+twice (=kill-do-not-save-duplicates= is =nil=, and even when set it only compares
+against the newest entry). We follow Parcellite: re-copying anything already in
+the list moves it to the front. In a browsable list, duplicates are pure noise.
+
+* 3. Two selections: CLIPBOARD and PRIMARY
+
+X has two everyday selections, and they are independent:
+
+- *CLIPBOARD* — set by an explicit Copy (=Ctrl-C=, =M-w=, =Ctrl-Insert=), pasted
+  by an explicit Paste.
+- *PRIMARY* — set just by /selecting/ text, with no key at all; pasted by the
+  *middle mouse button*. Select a word in one terminal, middle-click in another,
+  done.
+
+We model them as two different things: the *history* (§2, whose newest entry is
+the CLIPBOARD) and [[file:../poc/clipboard.lisp::defun set-primary][=set-primary=]] / =primary=, a single string with no history,
+exactly as X has.
+
+*Does a mouse selection also enter the history?* The request was "any mouse
+selection automatically copies to the clipboard", so *yes*: [[file:../poc/clipboard.lisp::defun clip-select][=clip-select=]] sets
+PRIMARY /and/ calls =clip-copy= — Parcellite's =synchronize= behaviour. (Emacs's
+equivalent knob, =mouse-drag-copy-region=, is =nil= by default — Emacs puts a
+mouse selection in PRIMARY only. We deliberately go further.)
+
+The trap is the drag. While the button is held, the selection grows on every
+motion event — =f=, =fo=, =foo= — and committing each would fill the history with
+prefixes that de-duplication cannot catch, since they are all different strings.
+So the contract is: *call =clip-select= once, on button RELEASE*, with the final
+selection. Only the release means "this is what I selected".
+
+PRIMARY accepts a blank selection (X does too); only the history refuses it,
+because only the history has slots to protect. Clearing the history leaves
+PRIMARY alone.
+
+* 4. The Emacs kill ring — the same list
+
+Emacs never had a "clipboard"; it has the *kill ring*: every kill (=C-k=, =C-w=,
+=M-d=, ...) and every copy (=M-w=) pushes a string, newest first, bounded
+(=kill-ring-max=, 120 in Emacs 30.2), and =C-y= yanks the newest. That is
+Parcellite's history under another name, so here it is *one list*. Two Emacs verbs
+need more than a list, and both are in =LOL.CLIPBOARD=:
+
+** Consecutive kills accumulate
+
+=C-k C-k C-k= in Emacs does not make three entries: kills issued back-to-back are
+/appended/ into one, so the three lines come back with a single =C-y=. Backward
+kills (=M-DEL=) /prepend/ instead, so the text stays in buffer order. The caller —
+which knows whether the previous command was also a kill — passes
+=:append :after= (or =t=) or =:append :before=.
+
+One subtlety cost a real bug, caught by the host test. =C-k= at the end of a line
+kills only the newline. Alone, that is blank and refused. But as the second half
+of "kill =foo=, then the newline", it is exactly what the user wants. So the
+sequence accumulates in its own slot (=kill-tail=) whether or not each fragment
+was storable, and the blank rule is applied to the /accumulated/ text. The entry
+the sequence owns is compared by =EQ=, so if the user promoted something else in
+between, a continued kill becomes a new entry instead of silently overwriting an
+unrelated one. The bug: a fresh, refused kill left the /previous/ sequence's
+entry marked as owned, and the next append replaced it; =clip-copy= now clears the
+ownership whenever a sequence starts.
+
+=C-k= itself is [[file:../poc/clipboard.lisp::defun kill-line-span][=kill-line-span=]], following Emacs's docstring to the letter:
+"kill the rest of the current line; if no nonblanks there, kill thru newline". A
+blank rest-of-line therefore takes the newline with it.
+
+** Yank-pop walks a pointer, not the ring
+
+=M-y= right after a =C-y= replaces the text just yanked with the next older
+entry; again, and the one before that, wrapping round. Emacs does this by moving
+a /pointer/ (=kill-ring-yank-pointer=), not by rotating the list — so a later
+=C-y= yanks whatever you popped to, and the next new kill puts the pointer back
+on the newest. [[file:../poc/clipboard.lisp::defun clip-yank-pop][=clip-yank-pop=]] is that pointer (=:n -1= goes the other way,
+like =M-- M-y=). The /caller/ has to remember where the yanked text sits in its
+buffer, because only it can replace it — [[file:../poc/clipboard.lisp::defun insert-text][=insert-text=]] returns the end position
+for exactly that.
+
+* 5. Rectangles
+
+A *rectangle*, in Emacs, is the block of text between two corners taken
+/column-wise/: every line from the top corner's line to the bottom one, and on
+each of those, the columns from the left corner's column to the right one —
+whichever corner was point and whichever was the mark. Its use is editing
+/columns/: removing a column of a table, indenting a block by inserting spaces
+down a column, prefixing every line with =;; =.
+
+The difficulty is that lines are *ragged*. Take this buffer and the rectangle
+from line 0, column 2 to line 3, column 5:
+
+#+begin_example
+          col 0123456789
+   line 0     ab[cde]fgh
+   line 1     ab               <- ends AT the left edge
+   line 2     ab[cd ]          <- ends INSIDE the block
+   line 3     ab[cde]fghij
+#+end_example
+
+Every command has to decide what a short line means. We follow
+=lisp/rect.el= of Emacs 30.2 (default behaviour, no prefix argument), checked
+line by line, and the host test pins each case on exactly this buffer:
+
+| Emacs key   | command                  | ours                         | on a ragged line                                           |
+|-------------+--------------------------+------------------------------+------------------------------------------------------------|
+| =C-x r M-w= | =copy-rectangle-as-kill= | [[file:../poc/clipboard.lisp::defun rect-extract][=rect-extract=]] | padded with spaces — a rectangle is always a true block   |
+| =C-x r k=   | =kill-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-kill][=rect-kill=]]    | delete + extract                                          |
+| =C-x r d=   | =delete-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-delete][=rect-delete=]]  | a line ending before the block is left alone              |
+| =C-x r y=   | =yank-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-yank][=rect-yank=]]    | short lines padded out to the column; lines added at the end |
+| =C-x r o=   | =open-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-open][=rect-open=]]    | blanks only where there is text to push right             |
+| =C-x r c=   | =clear-rectangle=        | [[file:../poc/clipboard.lisp::defun rect-clear][=rect-clear=]]   | a line ending inside the block is cut, not space-filled   |
+| =C-x r t=   | =string-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-string][=rect-string=]]  | short lines padded to the left edge, then the string      |
+
+Two properties hold for all of them. Each *returns a new lines vector and never
+mutates its input* — so undo can be "keep the old vector", the same choice
+=textview.lisp= already makes for every edit. And the corners may come in *any
+order*, each axis sorted on its own — unlike a /region/, where only the pair of
+positions is ordered (=order-positions= vs. =rect-bounds= in the code; mixing the
+two up is the rectangle version of the classic selection bug).
+
+A zero-width rectangle (both corners in one column) is useful, not degenerate:
+=rect-string= on it /inserts/ the string down a column — that is how =C-x r t ;; RET=
+comments out a block.
+
+*The rectangle register.* Emacs keeps the last killed rectangle in its own
+variable, =killed-rectangle=, not in the kill ring: a rectangle is a 2-D shape,
+and pasting it as running text would lose the shape. So =C-y= and =C-x r y= never
+compete for a slot. We do the same — [[file:../poc/clipboard.lisp::defun clip-set-rectangle][=clip-set-rectangle=]] / =clip-rectangle= — and a
+rectangle does /not/ appear in the history or the manager.
+
+Tabs: a column here is a character index. Emacs counts display columns, so a tab
+spans several; we do not, which is honest only because the text view inserts
+spaces for =Tab=. Pasted text containing tabs would rectangle-cut by characters.
+
+* 6. The key table, as wired
+
+Bindings verified against =key-binding= in Emacs 30.2 (=emacs --batch=); the shell
+side is [[file:../poc/shell.lisp::defun clipboard-key][=clipboard-key=]] (one place, tested before the editor's own keys) and
+the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-key=]].
+
+| key                     | Emacs / CUA name                  | core call                                     | shell function                   |
+|-------------------------+-----------------------------------+-----------------------------------------------+----------------------------------|
+| =M-w=, =Ctrl-Insert=    | =kill-ring-save= / CUA copy       | =region-text= → =clip-copy=                   | =editor-copy=                    |
+| =C-w=, =Shift-Delete=   | =kill-region= / CUA cut           | =region-text= + =region-delete= → =clip-copy= | =editor-cut=                     |
+| =C-y=, =Shift-Insert=   | =yank= / CUA paste                | =clip-yank= → =insert-text=                   | =editor-paste=                   |
+| =M-y=                   | =yank-pop=                        | =clip-yank-pop=, replace the last yank's span | =editor-yank-pop=                |
+| =C-k=                   | =kill-line=                       | =kill-line-span= → =clip-copy :append=        | =editor-kill-line=               |
+| =M-d=                   | =kill-word=                       | the =move-word= span → =clip-copy :append :after= | =editor-kill-word=           |
+| =M-Backspace=           | =backward-kill-word=              | … =:append :before=                           | =editor-kill-word=               |
+| =C-x h=                 | =mark-whole-buffer=               | —                                             | =editor-select-all=              |
+| =C-x SPC=               | =rectangle-mark-mode=             | — (drawn as a block by =tv-draw=)             | in =edit-pane-key=               |
+| =C-x r M-w= / =k= / =y= | copy / kill / yank rectangle      | =rect-extract= / =rect-kill= / =rect-yank=    | =editor-rectangle=               |
+| =C-x r d= / =o= / =c=   | delete / open / clear rectangle   | =rect-delete= / =rect-open= / =rect-clear=    | =editor-rectangle=               |
+| =C-x r t=               | =string-rectangle=                | =rect-string=, after a one-line prompt        | =editor-rectangle=               |
+| drag, then release      | X PRIMARY                         | =clip-select=, *on release*                   | =browser-drag-end=               |
+| middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =browser-middle-click=           |
+| =SuperL-h=, tray icon   | the manager (§7)                  | =clip-filter= / =clip-promote= / =clip-delete= | =open-clipboard-manager=        |
+
+Where each key comes from, since the console delivers them unevenly:
+
+- *=Insert=* arrives as =ESC [ 2 ~=, now decoded as =:insert=; its Shift or Ctrl is
+  folded in from the keyboard's evdev, because the console sends the same bytes
+  either way ([[file:input.org][input.org]], "A bare modifier needs the keyboard's own evdev").
+- *=M-Backspace=* is =ESC DEL=, decoded as =:backspace= with Meta.
+- *Consecutive kills* are recognised by =*last-edit*=, which every editing key
+  clears and the kill commands set; =M-y= reads the span the last paste recorded
+  there, and refuses after anything else (Emacs's "Previous command was not a
+  yank").
+- *A selection made by the mouse* goes to PRIMARY and into the history; one made
+  with Shift-arrows does not (the request named only the mouse — Emacs would, with
+  =select-active-regions=). Drag-selecting works in *read-only* text too: copying is
+  reading.
+- *Middle click already meant something* — the *halo* ([[file:code-browser.org][code-browser.org]]). The
+  resolution in =browser-middle-click= is by place: in /editable/ text with a
+  PRIMARY to paste, the button pastes; anywhere else, or with =SuperL= held, it
+  opens the halo. Read-only text cannot receive a paste, so there the button is
+  free.
+- *A touchpad has no middle button.* A two-finger press is one, and so is
+  Alt-click ([[file:input.org][input.org]], "Three buttons on a pad with one").
+
+* 7. The manager — a sketch
+
+Parcellite's history is a pop-up menu. Ours should be the shape the environment
+already has for "pick one from many": a *modal card like the Spotter*
+(=SuperL-Space=, [[file:code-browser.org][code-browser.org]] §4¾), drawn with the same list widget.
+
+#+begin_example
+ ┌ Clipboard · 7 entries ────────────────────────────── SuperL-h ┐
+ │ filter: def█                                                  │
+ │ ▶ 0  (defun clip-copy (string &key append ...)\n  "Record...   │
+ │   3  (defparameter *x* 3)                                     │
+ │   5  (defun f ()\n  1)                                        │
+ │ ───────────────────────────────────────────────────────────── │
+ │ PRIMARY: foo-bar                                              │
+ │ ↑↓ move · ↵ make current & paste · Del drop · Esc close       │
+ └───────────────────────────────────────────────────────────────┘
+#+end_example
+
+| key           | does                                                                  |
+|---------------+-----------------------------------------------------------------------|
+| =SuperL-h=    | open the card (so does the clipboard icon in the systray)             |
+| typing        | filter (=clip-filter=, case-insensitive substring); =Backspace= edits it |
+| =↑= / =↓=, =C-p= / =C-n= | move the selection                                         |
+| =↵=           | =clip-promote= the entry, close, and paste it at the caret             |
+| =Delete=      | =clip-delete= the entry (the list stays open)                          |
+| =Esc= / =C-g= | close without changing anything                                       |
+
+Rows come from =clip-filter=, which returns =(index . string)= pairs, so a
+filtered list still promotes and deletes by the real history index. Each row's
+text is =clip-label=: one line, newlines shown as the two characters =\n= (plain
+ASCII, so the bitmap font is sure to have it), runs of blanks collapsed, cut with
+=...=. As built, the newest entry is marked =current=, the others by their place
+(=#1=, =#2= …), and the PRIMARY line in the sketch was left out: PRIMARY is not part
+of the history, and a middle click is the way to use it. =↵= pastes into whichever
+editor had focus; with none, it only makes the entry current. Drawing:
+[[file:../poc/shell.lisp::defun draw-clipboard-card][=draw-clipboard-card=]]; input: [[file:../initramfs/fb-browser.lisp::defun run-clipboard-fb][=run-clipboard-fb=]].
+
+* 8. Limits
+
+- *Not shared with the host.* There is no X server inside the image and no
+  channel to the host's selections; text copied on the laptop's desktop cannot be
+  pasted in the guest, or back. (Under QEMU the net REPL on :4005 is the way to
+  move text in.)
+- *Not persisted.* The root filesystem is the unpacked initramfs, living in RAM
+  ([[file:sbcl-init.org][sbcl-init.org]]), so the history
+  dies with the power-off — the same storage-target question that defers the
+  change set's file-out.
+- *One process.* A second process (the =job= worker of [[file:processes.org][processes.org]]) has its
+  own heap and so its own, empty clipboard. Nothing it does today copies text.
+- *Columns are characters* (see §5's note on tabs).

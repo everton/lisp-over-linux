@@ -75,6 +75,8 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit (with-raw-mode, read-escape,
                                      #   *completer* / token-start / longest-common-prefix) — before
                                      #   shell.lisp, which reuses them for Tab completion in the editor
+  "$POC_DIR/clipboard.lisp"          # lol.clipboard: history + PRIMARY + rectangles (doc/clipboard.org)
+  "$INITRAMFS_DIR/sysinfo.lisp"      # systray data: battery (sysfs power_supply) + clock (doc/systray.org)
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
@@ -162,6 +164,10 @@ printf '(load "%s")\n' "$REGISTRY_SRC" >> "$BUILD_LISP"   # defines load-recordi
 for src in "${LISP_SOURCES[@]}"; do            # then record+load each module, in order
   printf '(load-recording "%s")\n' "$src" >> "$BUILD_LISP"
 done
+# The image has no zoneinfo; local time = UTC + one offset, taken from the build
+# host (= the laptop the image boots on). Fixed: it does not follow DST
+# (doc/systray.org).
+printf '(set-utc-offset "%s")\n' "$(date +%z)" >> "$BUILD_LISP"
 cat >> "$BUILD_LISP" <<LISP
 (sb-ext:save-lisp-and-die "$INITRAMFS_DIR/lisp-init"
   :executable t :toplevel #'init-toplevel)

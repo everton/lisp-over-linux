@@ -389,6 +389,44 @@ Verified in the guest by =check-pointer.lisp=, with QEMU's left button genuinely
 across real =EV_REL= motion: the press alone selects nothing, the drag selects and
 follows the pointer down, the release is seen, and a still click clears it.
 
+** Three buttons on a pad with one
+
+The right button opens a context menu and the middle one a halo or X's paste
+([[file:code-browser.org][code-browser.org]], "The right button and the halo"). A mouse has those buttons —
+=BTN_RIGHT= =#x111= and =BTN_MIDDLE= =#x112=, decoded beside =BTN_LEFT=. A clickpad
+has exactly one physical button, so *which button a press means* is read off the
+pad at the moment it goes down ([[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]):
+
+| on the pad                              | means      | why                                                  |
+|-----------------------------------------+------------+------------------------------------------------------|
+| one finger, bottom-right corner, press  | right      | the software-button zone every buttonless laptop uses |
+| two fingers down, press                 | middle     | what was asked for; libinput's "clickfinger" pattern  |
+| three fingers down, press               | right      | a second route to the menu that needs no aiming       |
+| one finger anywhere else, press         | left       | the ordinary click (and the only one that drags)      |
+
+The finger count is known by then: =synaptics_process_packet= reports
+=BTN_TOOL_*= before =synaptics_report_buttons=, so =*pad-fingers*= is current when
+=BTN_LEFT= arrives. The corner is =*pad-right-zone*= — right of 3/5 of the width,
+below 4/5 of the height; =ABS_Y= grows /downwards/ on this pad (the driver inverts
+the hardware's y in =synaptics_invert_y=).
+
+Two keyboard routes for a pointer that has no middle button and a hand that is on
+the keys anyway:
+
+- *Alt-click* is the middle button. Alt is tracked from the keyboard's evdev
+  (=KEY_LEFTALT= 56 / =KEY_RIGHTALT= 100), the same way Ctrl, Shift and Super are.
+  (Ctrl-click was the other candidate, but it already jumps to a definition —
+  which is the halo's most-used handle anyway.)
+- The *Menu key* (=KEY_COMPOSE=, 127) and *Shift-F10* open the context menu at the
+  caret or the selected row. The console sends no byte for the Menu key, so it too
+  is read from evdev; Shift-F10 arrives as =ESC [ 34 ~= (the keymap calls it F20).
+
+A right or middle press is *not* a click to the overlays (the Spotter, the
+debugger, the cheatsheet): =read-mouse= reports it in a third value, and only the
+browser's own loop reads that one. Verified in the guest by
+[[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle buttons; the pad's
+emulated ones, like the tap, by replaying synthetic Synaptics packets.
+
 * 5. Waiting on three things at once: =poll(2)=
 
 Three input sources, all of which may be idle. Busy-polling would spin PID 1 at
@@ -540,6 +578,7 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 | the record's timestamp, for the tap      | [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]]                                  |
 | track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
 | wait on tty + mouse + keyboard           | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]                                       |
+| which button a pad press means           | [[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]                               |
 | press-and-drag selection                 | [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], =*button-down*= in =read-mouse=     |
 | notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |
 | the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                       |

@@ -667,8 +667,11 @@ matrix or a restart in the condition view drops its value here. Cheap to build �
 the text view we already have, plus four commands and a transcript stream binding
 for =*standard-output*= during a Do-it.
 
-*Built* — =p= at the supervisor menu. The buffer opens on its own cheatsheet, and
-the four verbs sit in the status bar:
+*Built* — =p= at the supervisor menu. The buffer opens on a primer sized to fit one
+1280x800 screen without scrolling: one runnable form per verb (Do it, define with
+=C-c C-c=, Print it, Debug it on =lol.examples:launch=, Inspect it on a worker's view
+and on a closure), plus one line pointing at the Spotter and =SuperL-?= for everything
+else. The verbs also sit in the status bar:
 
 [[file:../media/screenshots/workspace-2026-09-20.png]]
 
@@ -1153,9 +1156,11 @@ and Smalltalk's yellow-button menu — the same seam they all found.
 *The payoff — one command, many surfaces.* Menu, halo, command palette and key
 accelerator are four *renderings* of one command set, exactly as panels are
 renderings of one =present= view:
-- right-click → =commands-for(X)= filtered to =:menu=;
-- halo (future) → the SAME commands filtered to =:halo=, as handles — no new
-  mechanism, a halo is just another view of the command set;
+- right-click → =commands-for(X)= filtered to =:menu= [BUILT 2026-10-02 — see "The
+  right button and the halo" below];
+- middle-click → the SAME commands filtered to =:halo=, as handles round the thing
+  clicked — no new mechanism, a halo is just another view of the command set
+  [BUILT, same section];
 - =M-.= Senders → the same command via its =:key=;
 - =target="_blank"= → an item whose disposition defaults to =:new-trail=.
 One command, declared once on the subject type, appears wherever the shell offers
@@ -1173,6 +1178,51 @@ gracefully* (the tiled shell honours =:menu=/=:new-trail=; a future Morphic shel
 adds =:halo=; a test harness honours none). And extensibility is unchanged: a new
 subject type gets a =present= method and optionally a =commands-for= method; a new
 *surface* needs zero content changes.
+
+** The right button and the halo  [BUILT 2026-10-02]
+
+Both start from one question — *what* is under the pointer — answered by
+[[file:../poc/shell.lisp::defun pointer-target][=pointer-target=]] from the hit maps the last frame recorded: a *row* (and the
+subject it opens), a *word* in text (and the symbol it names), an *instance* on the
+stage, a *tab*, or the pane itself when nothing smaller was hit.
+
+- *Right button* → [[file:../poc/shell.lisp::defun context-menu-entries][=context-menu-entries=]]: the obvious verbs for that kind of thing
+  first — Cut / Copy / Paste / Paste the selection / Select all in text, then Go to
+  definition / Senders / Inspect for the word if it names a symbol; Open / Open in a
+  new tab / Open beside / Copy name on a row — then the subject's own =:menu=
+  commands, then the places you can always go (new Workspace, module index, the
+  Spotter, the clipboard history, the keys). The *type-specific* part is exactly
+  =commands-for=, so a new subject type extends the menu by writing a method, and
+  the menu code never hears about it ([[file:../poc/shell.lisp::defun run-command][=run-command=]] executes one).
+- *Middle button* → the *halo* ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]]): handles ringed round the point,
+  each numbered. *Source* leads — the code that produced the object: a symbol's
+  definition, a function's, and for an instance its class's (for a CLOS object, the
+  code that generated it /is/ its class) — then *Inspect*, the object's own =:halo=
+  commands, and *Copy*. Morphic draws handles round a morph's bounds; ours ring the
+  point, because the things here (a word, a row, a sprite) are small.
+
+*The middle button had two jobs.* X's select-then-middle-click paste (PRIMARY,
+[[file:clipboard.org][clipboard.org]] §3) and Smalltalk's halo both want it. The split is by *place*, in
+[[file:../poc/shell.lisp::defun browser-middle-click][=browser-middle-click=]]: in /editable/ text, with something selected to paste, the
+button pastes at the pointer; anywhere else — a row, a sprite, read-only text, which
+cannot receive a paste — it opens the halo; and =SuperL=-middle forces the halo even
+in editable text. Each place gets the meaning it can use, and the override is one
+held key.
+
+*Where the buttons come from.* A mouse has three. The laptop's clickpad has one, so
+a two-finger press is the middle button and a press in its bottom-right corner (or
+with three fingers) is the right one; Alt-click is the middle button too, and the
+Menu key or Shift-F10 open the menu from the keyboard at the caret or the selected
+row ([[file:input.org][input.org]], "Three buttons on a pad with one"). Ctrl-click keeps its meaning —
+jump to the definition — which is the halo's Source handle anyway.
+
+Both are modal overlays drawn by the shell ([[file:../poc/shell.lisp::defun draw-context-menu][=draw-context-menu=]], [[file:../poc/shell.lisp::defun draw-halo][=draw-halo=]])
+and read by one input loop in the backend ([[file:../initramfs/fb-browser.lisp::defun run-chooser-fb][=run-chooser-fb=]], installed as the
+shell's =*chooser*= hook, the way =*value-prompt*= is): arrows or hover move, Enter
+or a click picks, a digit picks directly, Esc or a click elsewhere leaves. On the
+X11 host backend no chooser is installed, and the buttons say so in the status line.
+Verified in the guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle
+buttons.
 
 (Distinct concern, kept separate: *liveness* — "this content changed, re-render me"
 — is the shell re-=present='ing a subject when its dependency signals, not a
@@ -2137,7 +2187,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   kernel + initramfs, or a separate virtio disk). The producer side is ready —
   =changed-definitions= gives the set, each defn's =:source= is the text to write.
 - *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
-  =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; the browser's default root] Every
+  =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; =SuperL-m= — it was the browser's
+  default root until 2026-10-02, when the environment started opening on the
+  Workspace alone] Every
   definition grouped by the file it came from, over =model.lisp='s
   =categorize :file=. Listed here because this section is the authoritative
   status and it would otherwise be invisible to anyone reading only the phases.
@@ -2160,6 +2212,13 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
     drillable.
   Still owed from that doc: *settable debugger frame locals* (§5.4 there), which is
   the state-side twin of Phase 6's frame inspection.
+- *Not a phase: the desk around the editor* (2026-10-02). [DONE] The environment
+  opens on the Workspace alone (the index is =SuperL-m=, the flat CL-USER list
+  =SuperL-l=); a *clipboard* with Parcellite's history, X's PRIMARY and the Emacs
+  kill and rectangle keys ([[file:clipboard.org][clipboard.org]], manager on =SuperL-h=); the *right-button
+  menu* and the *halo* (§4½, "The right button and the halo"); a *systray* with the
+  battery and the clock, copied from the host's StumpWM mode line ([[file:systray.org][systray.org]]);
+  and a pointer that hides when idle ([[file:framebuffer.org][framebuffer.org]] §9.5).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

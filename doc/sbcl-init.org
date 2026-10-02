@@ -150,6 +150,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../poc/fb.lisp][=poc/fb.lisp=]]      | the =/dev/fb0= presenter + =KD_GRAPHICS= ([[file:framebuffer.org][framebuffer.org]] §9) |
   | [[file:../initramfs/ansi.lisp][=ansi.lisp=]]        | 16-colour SGR helpers (used by line-editor + repl)        |
   | [[file:../initramfs/line-editor.lisp][=line-editor.lisp=]] | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
+  | [[file:../poc/clipboard.lisp][=poc/clipboard.lisp=]] | =lol.clipboard=: the history, PRIMARY, the kill ring and the rectangle commands, pure ([[file:clipboard.org][clipboard.org]]) |
+  | [[file:../initramfs/sysinfo.lisp][=sysinfo.lisp=]]     | the systray's data: =battery-status= (sysfs =power_supply=), =clock-string= (=*utc-offset*=), =tray-items= ([[file:systray.org][systray.org]]) |
   | [[file:../poc/shell.lisp][=poc/shell.lisp=]]   | the drill-down accordion shell (present + canvas + textview + line-editor) |
   | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
@@ -184,10 +186,10 @@ dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
 =worker-main=, =spawn-worker=.
 
 *Boot goes straight into the environment.* After its diagnostics (input devices,
-DHCP, the network REPL, interfaces) =supervisor-main= calls =run-browser-fb= on
-the module index — the environment is what the machine is for, so it should not
-wait behind a menu. The menu is the *fallback*: you reach it by leaving the
-environment (=SuperL-q=, or =q= on a list pane), and you land on it if the
+DHCP, the network REPL, interfaces) =supervisor-main= calls =run-browser-fb=, which
+opens on the Workspace alone — the environment is what the machine is for, so it
+should not wait behind a menu. The menu is the *fallback*: you reach it by leaving
+the environment (=SuperL-q=, or =q= on a list pane), and you land on it if the
 environment dies, because =run-browser-fb= catches any =serious-condition=, prints
 it and returns. The screen is cleared /before/ the environment opens, not after, so
 a dying environment's last words stay above the menu. With no framebuffer at all
@@ -197,10 +199,10 @@ The supervisor menu is read from the console ([[file:../initramfs/supervisor.lis
 print-menu]] prints it, and the =cond= right below it dispatches):
   r) run a Lisp REPL              -> read-eval-print loop; :quit (or EOF) returns
   b) the environment              -> reopen the tabbed pixel browser on /dev/fb0,
-                                     the one the image booted into, opening
-                                     on the MODULE INDEX: every definition grouped
-                                     by the file it came from, which is the only
-                                     root that shows the whole system (the lol.*
+                                     the one the image booted into, on the
+                                     Workspace; SuperL-m adds the MODULE INDEX
+                                     (every definition by the file it came from,
+                                     the only view of the whole system, lol.*
                                      toolkit included). =run-browser-fb= with no
                                      root; [[file:code-browser.org][code-browser.org]] §4⅔
   p) Lisp workspace               -> a scratch buffer: Do it / Print it / Inspect it

@@ -23,7 +23,10 @@
   (:export #:textview #:make-textview #:tv-draw #:tv-key #:tv-click #:tv-drag
            #:tv-wheel
            #:tv-text #:tv-set-text #:tv-lines #:tv-point-line #:tv-point-col
-           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p))
+           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p
+           ;; for the clipboard (shell.lisp): the region, and replacing the buffer
+           #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
+           #:tv-rect-mode #:tv-mark-active #:tv-pos-at))
 
 (in-package :lol.textview)
 
@@ -32,6 +35,8 @@
   (point-line 0) (point-col 0)
   (anchor-line 0) (anchor-col 0)   ; selection anchor; = point means no selection
   (mark-active nil)                ; Emacs C-SPC: motion extends the region until cleared
+  (rect-mode nil)                  ; Emacs C-x SPC: the region is a RECTANGLE (a column
+                                   ; block between anchor and point), drawn as one
   (scroll 0)                       ; first visible line
   (x 0) (y 0) (w 0) (h 0)          ; the rectangle we own, in pixels
   (pad 8)
@@ -84,7 +89,46 @@
    so a fresh click or an edit ends 'mark active' the way it ends the selection."
   (setf (tv-anchor-line tv) (tv-point-line tv)
         (tv-anchor-col tv)  (tv-point-col tv)
-        (tv-mark-active tv) nil))
+        (tv-mark-active tv) nil
+        (tv-rect-mode tv) nil))
+
+;;; The clipboard (poc/clipboard.lisp, wired in shell.lisp) works on the buffer as a
+;;; vector of lines and two positions, and hands back a NEW vector. These four are
+;;; the whole interface it needs: read the region, put a buffer back, select all,
+;;; and place point.
+
+(defun tv-region (tv)
+  "(values ANCHOR-LINE ANCHOR-COL POINT-LINE POINT-COL) when there is a selection,
+   else NIL. Not normalised — a rectangle needs the corners as they are."
+  (when (selection-p tv)
+    (values (tv-anchor-line tv) (tv-anchor-col tv) (tv-point-line tv) (tv-point-col tv))))
+
+(defun tv-replace (tv lines line col)
+  "Install LINES (a fresh simple-vector) as the buffer, point at LINE/COL, no
+   selection, and the caret scrolled into view."
+  (setf (tv-lines tv) (if (zerop (length lines)) (vector "") lines)
+        (tv-point-line tv) line (tv-point-col tv) col)
+  (clamp-point tv)
+  (collapse tv)
+  (ensure-visible tv))
+
+(defun tv-select-all (tv)
+  "C-x h: anchor at the start, point at the end."
+  (let ((last (1- (length (tv-lines tv)))))
+    (setf (tv-anchor-line tv) 0 (tv-anchor-col tv) 0
+          (tv-point-line tv) last (tv-point-col tv) (length (line-at tv last)))))
+
+(defun tv-move-point (tv line col)
+  "Put point (and no selection) at LINE/COL, clamped."
+  (setf (tv-point-line tv) line (tv-point-col tv) col)
+  (clamp-point tv)
+  (collapse tv)
+  (ensure-visible tv))
+
+(defun tv-pos-at (tv px py)
+  "The (values LINE COL) under pixel PX,PY — what a click there would pick."
+  (let ((l (line-at-y tv py)))
+    (values l (col-at-x tv l px))))
 
 (defun delete-selection (tv)
   (when (selection-p tv)
@@ -460,8 +504,12 @@
                    (fill-rect canvas (+ x0 1) (- ly 2) (- w 2) lh *cur-ln*))
                  ;; selection band for this line
                  (when (and (selection-p tv) (<= sl0 li) (<= li sl1))
-                   (let* ((a (if (= li sl0) sc0 0))
-                          (b (if (= li sl1) sc1 (length line)))
+                   (let* ((a (if (tv-rect-mode tv)        ; a rectangle: the same
+                                 (min (tv-anchor-col tv) (tv-point-col tv))   ; columns
+                                 (if (= li sl0) sc0 0)))  ; on every line
+                          (b (if (tv-rect-mode tv)
+                                 (max (tv-anchor-col tv) (tv-point-col tv))
+                                 (if (= li sl1) sc1 (length line))))
                           (xa (x-of-col tv a))
                           (xb (x-of-col tv b)))
                      ;; a selected newline shows as a sliver past end-of-line

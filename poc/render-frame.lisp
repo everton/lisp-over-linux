@@ -58,6 +58,8 @@
     "poc/widgets.lisp"            ; phase 3 toolkit: panel / list / scrollbar / grid
     "initramfs/ansi.lisp"         ; needed by line-editor
     "initramfs/line-editor.lisp"  ; token-start / longest-common-prefix, used by the shell
+    "poc/clipboard.lisp"          ; lol.clipboard — the shell's copy / paste / rectangles
+    "initramfs/sysinfo.lisp"      ; the systray's battery + clock
     "poc/shell.lisp"              ; draw-browser itself
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise

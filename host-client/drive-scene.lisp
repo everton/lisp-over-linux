@@ -147,13 +147,13 @@
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).
     ("spotter"   "l" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5) (:type "coll")))
-    ;; a FUNCTION as an object (doc/inspector-history.org §5.5): the four PageDowns
-    ;; park point at the end of the primer, on the MAKE-COUNTER call, so Inspect it
-    ;; opens the closure rather than a symbol. The payload is the two capture rows —
-    ;; one marked (settable) because SBCL boxed it in a VALUE-CELL when something
-    ;; assigned to it, one not because it is only ever read. That difference is a
-    ;; decision the compiler made about your code, made visible.
-    ("closure"   "p" ((:wait 1.0) (:key "pgdn") (:key "pgdn") (:key "pgdn") (:key "pgdn")
+    ;; a FUNCTION as an object (doc/inspector-history.org §5.5): the primer fits one
+    ;; screen, so ONE PageDown parks point on its last line; MAKE-COUNTER is the last
+    ;; real form above it (only comments follow), so Inspect it opens the closure.
+    ;; The payload is the two capture rows — one marked (settable) because SBCL boxed
+    ;; it in a VALUE-CELL when something assigned to it, one not because it is only
+    ;; ever read: a decision the compiler made about your code, made visible.
+    ("closure"   "p" ((:wait 1.0) (:key "pgdn")
                       (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 2.5)))
     ;; a SECOND PROCESS contributing a view (doc/processes.org §7). Typed rather than
     ;; paged to, because what is being shown is that the pid in the provenance row is
@@ -263,17 +263,17 @@
           (progn
             ;; leave the environment ('q' on its list) for the supervisor menu, where
             ;; 'r' enters the REPL (a cooked read-line, so it needs the Enter)
-            (lol.qmp:key "q") (sleep 1.5)
+            (lol.qmp:hold "meta_l" "q") (sleep 1.5)
             (lol.qmp:key "r") (sleep 0.2) (lol.qmp:key "ret") (sleep 1.5)
             ;; each Enter triggers eval + a coloured result line
             (dolist (form *forms*)
               (lol.qmp:type-string form) (sleep 0.3)
               (lol.qmp:key "ret") (sleep 1.5))
             (sleep 1.0))                      ; let the last redraw + alien settle
-          ;; The image boots into the module index, which is what menu 'b' opens, so a
-          ;; 'b' scene starts right there. Any other root ('l' the flat package list,
-          ;; 'p' the Workspace) is a trip through the menu: 'q' leaves the
-          ;; environment, then the menu letter. The menu read is COOKED, so it needs
+          ;; The image boots into the environment on its Workspace; a 'b' scene (the
+          ;; module index) opens it with SuperL-m. Any other root ('l' the flat
+          ;; package list, 'p' the Workspace) is a trip through the menu: SuperL-q
+          ;; leaves the environment, then the menu letter. The menu read is COOKED, so it needs
           ;; the Enter; from then on the browser owns the keyboard in raw mode and
           ;; single keycodes are what it wants.
           (let* ((entry (and (string= mode "scene")
@@ -282,12 +282,16 @@
                  (menu-key (if entry (second entry) "b"))
                  (steps (if entry (third entry)
                             (mapcar (lambda (k) (list :key k)) *browser-keys*))))
-            (unless (string= menu-key "b")
-              (lol.qmp:key "q") (sleep 1.5)
-              (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")
-              ;; Give it time to build the view, open evdev and paint the first
-              ;; full-screen frame.
-              (sleep 8.0))
+            (if (string= menu-key "b")
+                ;; the environment opens on the Workspace; SuperL-m opens the module
+                ;; index in a fresh tab, row 0 selected — the state 'b' used to boot to
+                (progn (lol.qmp:hold "meta_l" "m") (sleep 2.0))
+                (progn
+                  (lol.qmp:hold "meta_l" "q") (sleep 1.5)
+                  (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")
+                  ;; Give it time to build the view, open evdev and paint the first
+                  ;; full-screen frame.
+                  (sleep 8.0)))
             (mapc #'run-step steps)
             (sleep 2.0)))                     ; let the final frame settle
       (lol.qmp:screendump (namestring (merge-pathnames ppm)))

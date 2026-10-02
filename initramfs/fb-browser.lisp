@@ -118,8 +118,14 @@
          (values (case b (65 :up) (66 :down) (67 :right) (68 :left)
                          (72 :home) (70 :end) (t :ignore)) state))
         ((= b 126)                           ; '~' final: n1 selects the key
-         (values (case n1 (1 :home) (7 :home) (4 :end) (8 :end)
-                          (3 :delete) (5 :page-up) (6 :page-down) (t :ignore)) state))
+         ;; 2 Insert (Shift-Insert pastes, Ctrl-Insert copies — the modifier is
+         ;; folded in from evdev); 21 F10, and 34 is what the console keymap sends
+         ;; for Shift-F10 (it calls it F20): the keyboard's way to the context menu
+         (case n1
+           (34 (values :f10 (logior state 1)))
+           (t (values (case n1 (1 :home) (7 :home) (4 :end) (8 :end) (2 :insert)
+                               (3 :delete) (5 :page-up) (6 :page-down) (21 :f10) (t :ignore))
+                      state))))
         (t (values :ignore 0))))))
 
 (defun fb-read-key (fd)
@@ -140,6 +146,8 @@
                ;; ESC <printable> = Meta-<char> (bit 3): Alt-key on the console, or a
                ;; fast Esc-then-key. M-. reaches browser-key as (#\. + Meta).
                ((and b1 (<= 33 b1 126)) (values (code-char b1) 8))
+               ;; ESC DEL = M-Backspace (Alt-Backspace on the console): kill a word back
+               ((eql b1 127) (values :backspace 8))
                (t (values :ignore 0))))
            (values :escape 0)))
       ((member c '(13 10)) (values :return 0))
@@ -158,6 +166,8 @@
   than it reports a bare Ctrl.")
 (defvar *super-down* nil "Is a Super/Meta (Windows) key held? Tracked from the
   keyboard's evdev — the spatial layer's modifier, and what SuperL-? needs.")
+(defvar *alt-down* nil "Is an Alt key held? Tracked from the keyboard's evdev, for
+  Alt-click — the middle button for a pointer that has none.")
 
 (defun scan-input-device (device-ok-p)
   "The first device in /proc/bus/input/devices that DEVICE-OK-P accepts, as
@@ -236,6 +246,30 @@
   "The last contact as the tap rule saw it — (:ms :peak :tap) — kept for TUNING:
    print it in the Workspace after a tap that did or did not click, and you have
    the two numbers *TAP-MIN-US* and *TAP-MIN-PRESSURE* are compared against.")
+(defparameter *pad-right-zone* '(3/5 . 4/5)
+  "Where a clickpad's physical press means RIGHT: the bottom-right corner, right of
+   this fraction of the pad's width and below this fraction of its height. The
+   software-button area every laptop with a buttonless pad uses for it.")
+
+(defun pad-press-button (x y)
+  "Which button a press on the pointer means, given the finger at pad units X,Y.
+   A mouse has real buttons, so its BTN_LEFT is just :LEFT. A clickpad has ONE
+   physical button, and the fingers on it say which was meant:
+     three fingers                 -> :RIGHT
+     two fingers                   -> :MIDDLE  (the halo, X's paste)
+     one, in the bottom-right zone -> :RIGHT   (*PAD-RIGHT-ZONE*)
+     one, anywhere else            -> :LEFT
+   The finger count is known by then: a Synaptics packet reports BTN_TOOL_* before
+   its buttons (synaptics_report_buttons comes last in synaptics_process_packet)."
+  (cond ((not *pointer-pad-p*) :left)
+        ((>= *pad-fingers* 3) :right)
+        ((= *pad-fingers* 2) :middle)
+        ((and x y
+              (> x (+ *abs-x-min* (* (car *pad-right-zone*) (- *abs-x-max* *abs-x-min*))))
+              (> y (+ *abs-y-min* (* (cdr *pad-right-zone*) (- *abs-y-max* *abs-y-min*)))))
+         :right)
+        (t :left)))
+
 (defvar *button-down* nil
   "Is the left button held right now? On a clickpad that is the pad PHYSICALLY
    pressed. Pointer motion while it is down is a drag (BROWSER-DRAG).")
@@ -355,11 +389,15 @@
    *ctrl-down* / *shift-down* / *super-down*. Text still arrives through the cooked
    tty (fd 0); this fd exists only for the modifier state the tty can't report — a
    bare modifier produces no byte there. Super is what makes the spatial layer (and
-   its SuperL-? cheatsheet) reachable on the bare console at all."
+   its SuperL-? cheatsheet) reachable on the bare console at all.
+
+   Returns :MENU when the Menu key (KEY_COMPOSE, the one beside Right Ctrl) was
+   pressed: the console keymap sends no byte for it either, and it is the keyboard's
+   way to the right-button menu."
   (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
-    (loop
+    (loop with menu = nil do
       (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
-        (when (< n 24) (return))
+        (when (< n 24) (return menu))
         (let ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
               (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
               (val  (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8))))
@@ -370,7 +408,11 @@
               ((or (= code 42) (= code 54))              ; KEY_LEFTSHIFT / KEY_RIGHTSHIFT
                (setf *shift-down* (plusp val)))
               ((or (= code 125) (= code 126))            ; KEY_LEFTMETA / KEY_RIGHTMETA (Super)
-               (setf *super-down* (plusp val))))))))))
+               (setf *super-down* (plusp val)))
+              ((or (= code 56) (= code 100))             ; KEY_LEFTALT / KEY_RIGHTALT
+               (setf *alt-down* (plusp val)))
+              ((and (= code 127) (= val 1))              ; KEY_COMPOSE: the Menu key
+               (setf menu :menu)))))))))
 
 (defun abs-to-screen (val lo hi res)
   "Map an absolute reading in LO..HI onto 0..RES-1."
@@ -450,11 +492,13 @@
 
 (defun read-mouse (fd xres yres)
   "Drain pending 24-byte input_event records; move *cursor-x/y*. Returns
-   (values CLICKED WHEEL): CLICKED is T on a left-button press — or, on a touchpad,
+   (values CLICKED WHEEL BUTTON): CLICKED is T on a left-button press — or, on a touchpad,
    on a TAP, which reports no button at all (see *TAP-MAX-US*); WHEEL is the summed
    scroll notches this drain (REL_WHEEL, + = up / away from the user, - = down), 0
-   when there was none. Callers that want only the click keep working on the first
-   value.
+   when there was none. BUTTON is :LEFT, :RIGHT or :MIDDLE for the press this drain
+   saw (or NIL) — on a clickpad decided by PAD-PRESS-BUTTON. Callers that want only
+   the left click keep working on the first value, and a right or middle press is
+   NOT a click there, so the modal overlays ignore those buttons.
 
    Three kinds of pointer, sorted out once by OPEN-MOUSE:
 
@@ -466,7 +510,7 @@
 
    Absolute axes are gathered across the packet and applied at SYN_REPORT rather
    than record by record, so X and Y move together and one drag is one delta."
-  (let ((clicked nil) (wheel 0) (nx nil) (ny nil))
+  (let ((clicked nil) (wheel 0) (nx nil) (ny nil) (button nil))
     (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
       (loop
         (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
@@ -496,12 +540,19 @@
                  (8 (incf wheel val))))          ; REL_WHEEL: +1 up / -1 down
               ((= type 1)                       ; EV_KEY — a button is just a key
                (case code
-                 (#x110 (when (= val 1) (setf clicked t))        ; BTN_LEFT press
-                        ;; held until it reports 0: motion meanwhile is a drag
-                        (setf *button-down* (plusp val))
+                 (#x110 (if (= val 1)                            ; BTN_LEFT press:
+                            ;; on a clickpad, which button it means depends on the
+                            ;; fingers; only a LEFT press clicks and can drag
+                            (let ((b (pad-press-button (or nx *pad-x*) (or ny *pad-y*))))
+                              (setf button b)
+                              (when (eq b :left) (setf clicked t *button-down* t)))
+                            ;; released: the drag, if any, is over
+                            (when (= val 0) (setf *button-down* nil)))
                         ;; a real press is not also a tap — a clickpad reports both
                         ;; the button and the finger resting on it
                         (setf *tap-live* nil))
+                 (#x111 (when (= val 1) (setf button :right)))   ; BTN_RIGHT
+                 (#x112 (when (= val 1) (setf button :middle)))  ; BTN_MIDDLE
                  ;; BTN_TOUCH / BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP} only change
                  ;; value when the contact does: a finger landed, lifted, or was
                  ;; joined by another. All three move the point the pad reports, so
@@ -536,7 +587,7 @@
                              (setf *last-touch* (list :ms (and dt (round dt 1000))
                                                       :peak *tap-peak-z*
                                                       :tap (and tap t))))
-                           (when tap (setf clicked t))
+                           (when tap (setf clicked t button :left))
                            (setf *pad-fingers* 0 *tap-live* nil *tap-peak-z* nil
                                  *tap-down-us* nil *tap-x* nil *tap-y* nil))))
                     ;; a second finger means scroll, or a right-click we have no
@@ -547,7 +598,7 @@
               ((and (= type 0) (= code 0) *pointer-pad-p*)   ; EV_SYN/SYN_REPORT
                (incf wheel (pad-motion nx ny xres yres))
                (setf nx nil ny nil)))))))
-    (values clicked wheel)))
+    (values clicked wheel button)))
 
 (defparameter *cursor-bits*
   #("K"
@@ -560,15 +611,25 @@
     "KWWWWWWK"
     "KWWWWWWWK"
     "KWWWWWWWWK"
-    "KWWWWWKKKK"
-    "KWWKKWWK"
-    "KWK KWWK"
-    "KK  KWWK"
-    "K   KWWK"
-    "    KKKK")
+    "KWWWWWWWWWK"
+    "KWWWWWWKKKKK"
+    "KWWWKWWK"
+    "KWWK KWWK"
+    "KWK  KWWK"
+    "KK    KWWK"
+    "K     KWWK"
+    "       KWWK"
+    "       KWWK"
+    "        KK")
   "The pointer as a tiny bitmap — K = black edge, W = white fill, space =
    transparent. A north-west arrow: the arrowhead, its lower-left barb, and the
-   tail/stem below (a plain triangle read as 'unfinished', so draw the whole glyph).")
+   tail below it.
+
+   The tail LEANS: it steps one pixel right every two rows, along the arrow's own
+   axis, the way the classic X and Windows arrows draw it. The first version stood
+   it straight up (four columns, dead vertical), and against a head that points up
+   and to the left a vertical tail reads as bent — the base of the arrow looked
+   twisted to the left. Drawn along the axis, head and tail are one straight object.")
 
 (defun draw-cursor (canvas x y)
   "Blit *cursor-bits* with its tip (the top-left K) at X,Y — one pixel per cell."
@@ -606,6 +667,19 @@
 
 (defvar *cursor-patch* nil "Scratch canvas the pointer is composited into.")
 
+;;; The pointer HIDES itself after a few seconds without mouse activity — the arrow
+;;; parked over the text you are typing is in the way — and comes back on the next
+;;; move, click or wheel notch. Typing alone never brings it back: that is exactly
+;;; when you want it gone. Hiding is the same trick as a move: re-send the canvas
+;;; rectangle under the arrow, and simply do not draw it again.
+(defparameter +cursor-idle-ms+ 3000 "Mouse inactivity, in ms, before the pointer hides.")
+(defvar *cursor-hidden* nil "Is the pointer currently hidden for inactivity?")
+(defvar *pointer-active-at* 0 "Internal-real-time of the last mouse activity.")
+
+(defun ms-since (time)
+  "Milliseconds elapsed since internal-real-time TIME."
+  (round (* 1000 (- (get-internal-real-time) time)) internal-time-units-per-second))
+
 (defun put-cursor (canvas x y)
   "Show the pointer at X,Y over CANVAS's pixels, sending only the arrow's patch."
   (let* ((patch (or *cursor-patch*
@@ -621,15 +695,65 @@
     (lol.fb:present-fb patch :x0 x :y0 y)))
 
 (defun show-frame (canvas)
-  "Send a freshly drawn CANVAS to the screen, then the pointer over it."
+  "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is
+   hidden for inactivity)."
   (lol.fb:present-fb canvas)
-  (when *fb-mouse* (put-cursor canvas *cursor-x* *cursor-y*)))
+  (when (and *fb-mouse* (not *cursor-hidden*)) (put-cursor canvas *cursor-x* *cursor-y*)))
 
 (defun move-cursor (canvas old-x old-y)
   "The pointer moved and nothing else changed: put back what was under it (straight
-   from CANVAS), then draw it at its new place. Two tiny writes instead of a frame."
-  (lol.fb:present-fb-rect canvas old-x old-y +cursor-w+ +cursor-h+)
+   from CANVAS), then draw it at its new place. Two tiny writes instead of a frame.
+   A hidden pointer has nothing to put back; it just reappears."
+  (unless *cursor-hidden*
+    (lol.fb:present-fb-rect canvas old-x old-y +cursor-w+ +cursor-h+))
+  (setf *cursor-hidden* nil)
   (put-cursor canvas *cursor-x* *cursor-y*))
+
+(defun pointer-activity ()
+  "The mouse did something: restart the idle clock. Returns T when the pointer was
+   hidden, so the caller knows it must be drawn again even if it did not move."
+  (setf *pointer-active-at* (get-internal-real-time))
+  (shiftf *cursor-hidden* nil))
+
+(defun hide-cursor (canvas)
+  "Take the pointer off the screen: re-send the canvas pixels under it."
+  (unless *cursor-hidden*
+    (lol.fb:present-fb-rect canvas *cursor-x* *cursor-y* +cursor-w+ +cursor-h+)
+    (setf *cursor-hidden* t)))
+
+(defun cursor-idle-timeout ()
+  "Ms until the visible pointer is due to hide, or -1 when it is hidden or absent."
+  (if (or *cursor-hidden* (null *fb-mouse*))
+      -1
+      (max 0 (- +cursor-idle-ms+ (ms-since *pointer-active-at*)))))
+
+;;; The systray's clock is the second thing on screen that changes without input
+;;; (the stage is the first). It does NOT repaint the frame: DRAW-TRAY repaints the
+;;; tray's own strip of the canvas, and only that rectangle is sent — the same
+;;; economy as the pointer.
+(defun tray-timeout ()
+  "Ms until the clock's next tick: the next wall-clock second, or minute when the
+   tray shows no seconds (*CLOCK-SECONDS*), plus a few ms so we land just past it."
+  (multiple-value-bind (sec usec) (sb-ext:get-time-of-day)
+    (+ 5 (- (if *clock-seconds* 1000 (* 1000 (- 60 (mod sec 60))))
+            (floor usec 1000)))))
+
+(defun tick-tray (canvas w)
+  "Repaint the tray strip and send just that rectangle; put the pointer back on top
+   if it was over it."
+  (draw-tray canvas w)
+  (when *tray-rect*
+    (destructuring-bind (x y tw th) *tray-rect*
+      (lol.fb:present-fb-rect canvas x y tw th)
+      (when (and *fb-mouse* (not *cursor-hidden*)
+                 (< (- x +cursor-w+) *cursor-x* (+ x tw))
+                 (< *cursor-y* (+ y th)))
+        (put-cursor canvas *cursor-x* *cursor-y*)))))
+
+(defun earliest-timeout (&rest timeouts)
+  "The soonest of several poll timeouts in ms, where -1 means 'no deadline'."
+  (let ((real (remove -1 timeouts)))
+    (if real (reduce #'min real) -1)))
 
 ;;; ---- the stage's heartbeat (§3b) -----------------------------------------
 ;;; The browser has always been a pure function of state that only input changes, and
@@ -719,20 +843,20 @@
    returns to the supervisor menu. Any error is caught and printed, so a dying
    environment drops you at the menu instead of crashing PID 1.
 
-   ROOT defaults to the MODULE INDEX (subj-modules), not to the CL-USER package.
-   Two reasons. It is a table of contents rather than one flat 300-plus-row list;
-   and it is the only root that shows the WHOLE system — it groups by the file a
-   definition came from, so the toolkit in its own lol.* packages (canvas,
-   textview, fb, shell) is visible, where a CL-USER root cannot show it at all.
-   The flat package view is still one keypress away (supervisor menu 'l'), and
-   any package is reachable through the Spotter."
+   ROOT defaults to the WORKSPACE alone. It used to be the module index with a
+   Workspace tab beside it; but the environment is something you WORK in, and a
+   table of contents you did not ask for was the first thing in the way. The index
+   is one key away (SuperL-m; it is still the only view that shows the whole system,
+   lol.* toolkit included), the flat CL-USER package is SuperL-l, and anything at all
+   is SuperL-Space."
   (handler-case
       (progn
         (unless *bfont* (set-browser-font (lol.canvas:load-font "/cozette.lolf")))
         ;; installed by NAME, not by #', because run-browser-fb is compiled before
         ;; fb-prompt-value is defined further down this same file
         (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
-        (open-environment (or root (subj-modules)))
+        (setf *chooser* 'run-chooser-fb)          ; ... and shows its menus and halos
+        (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
                 (mouse  (open-mouse))
@@ -740,7 +864,8 @@
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
                   *ctrl-down* nil *shift-down* nil *super-down* nil
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
-                  *fb-mouse* mouse *fb-kbd* kbd)
+                  *fb-mouse* mouse *fb-kbd* kbd
+                  *cursor-hidden* nil *pointer-active-at* (get-internal-real-time))
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
@@ -757,8 +882,14 @@
                        ;; without being asked, so it — and only it — makes the loop
                        ;; wake on a deadline rather than sleeping until input.
                        (multiple-value-bind (kb ms kev)
-                           (fbb-wait 0 mouse kbd (live-stage-timeout))
-                         (when kev (read-keyboard-evdev kbd))   ; refresh Ctrl/Shift/Super first
+                           (fbb-wait 0 mouse kbd (earliest-timeout (live-stage-timeout)
+                                                                   (cursor-idle-timeout)
+                                                                   (tray-timeout)))
+                         ;; refresh Ctrl/Shift/Super first; the Menu key opens the
+                         ;; context menu where the caret (or selected row) is
+                         (when (and kev (eq :menu (read-keyboard-evdev kbd)))
+                           (keyboard-context-menu)
+                           (setf dirty t))
                          (when kb
                            (setf dirty t)
                            (multiple-value-bind (key state) (fb-read-key 0)
@@ -774,29 +905,52 @@
                                          (eq :quit (browser-key key state)))
                                  (return)))))
                          (when (and mouse ms)
-                           (let ((ox *cursor-x*) (oy *cursor-y*))
-                             (multiple-value-bind (clicked wheel) (read-mouse mouse xres yres)
+                           (let ((ox *cursor-x*) (oy *cursor-y*)
+                                 (was-down *button-down*)
+                                 (was-hidden (pointer-activity)))
+                             (multiple-value-bind (clicked wheel button) (read-mouse mouse xres yres)
                                ;; wheel first: a notch scrolls the current pane a few
                                ;; lines (up = toward the start), point untouched.
                                (unless (zerop wheel)
                                  (browser-scroll (* (- wheel) +wheel-lines+))
                                  (setf dirty t))
+                               ;; Alt-click is the middle button, for a pointer that
+                               ;; has none (doc/input.org, "Three buttons")
+                               (when (and clicked *alt-down*)
+                                 (setf clicked nil button :middle *button-down* nil))
                                (when clicked
                                  (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*)
                                  (setf dirty t))
+                               (case button
+                                 (:right  (browser-context-menu *cursor-x* *cursor-y*)
+                                          (setf dirty t))
+                                 (:middle (browser-middle-click *cursor-x* *cursor-y* *super-down*)
+                                          (setf dirty t)))
                                ;; moved with the button still held: a drag, which
                                ;; extends the text selection the press started
                                (when (and *button-down* (not clicked)
                                           (or (/= ox *cursor-x*) (/= oy *cursor-y*))
                                           (browser-drag *cursor-x* *cursor-y*))
                                  (setf dirty t))
+                               ;; the button came up: a drag that selected something
+                               ;; hands it to PRIMARY and the clipboard (X's rule)
+                               (when (and was-down (not *button-down*))
+                                 (browser-drag-end))
                                ;; a bare move: the frame is still right, only the arrow
                                ;; is in the wrong place (a redraw would move it anyway)
                                (when (and (not dirty)
-                                          (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                                          (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
                                  (move-cursor canvas ox oy)))))
-                         ;; nothing was ready: the deadline fired, so advance the world
-                         (unless (or kb ms kev) (tick-live-stage) (setf dirty t))))))
+                         ;; Nothing was ready: a deadline fired. Which one? A running
+                         ;; stage advances the world; an idle pointer hides.
+                         (unless (or kb ms kev)
+                           (when (/= -1 (live-stage-timeout))
+                             (tick-live-stage) (setf dirty t))
+                           (when (zerop (cursor-idle-timeout))
+                             (hide-cursor canvas))
+                           ;; the clock: cheap, so simply on every timeout — a
+                           ;; stage frame or a hide repaints an unchanged tray
+                           (unless dirty (tick-tray canvas xres)))))))
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
@@ -1185,77 +1339,119 @@
   '(("Navigate"
      ("up / down"          "move the selection / caret")
      ("Enter"              "drill into the selection")
-     ("right"              "focus the right column (edit / walk it)")
-     ("Backspace / C-g"    "back  (C-g also un-focuses the right column)")
+     ("S-Enter"            "open it BESIDE the list (editable)")
+     ("right"              "focus the right column")
+     ("Backspace / C-g"    "back (C-g also leaves the right column)")
      ("PageUp / PageDown"  "page the list / source")
-     ("mouse wheel"        "scroll the pane")
-     ("q"                  "quit  (list & reference panes)"))
-    ("Spatial  (Super)"
-     ("Super-Space"        "the Spotter — find anything, opens a new tab")
-     ("Super-1 … 9"        "jump to tab N")
+     ("mouse wheel"        "scroll; two fingers on the pad")
+     ("Esc"                "Meta prefix: Esc . = M-.")
+     ("q"                  "quit (list & reference panes)"))
+    ("Places  (Super)"
+     ("Super-Space"        "the Spotter: find anything")
+     ("Super-m"            "the module index: every definition")
+     ("Super-l"            "the CL-USER package, flat")
+     ("Super-h"            "the clipboard history")
+     ("Super-?"            "this cheatsheet")
+     ("Super-q"            "leave the environment (menu)"))
+    ("Tabs  (Super)"
+     ("Super-1..9"         "jump to tab N")
+     ("Super-S-1..9"       "move this tab to slot N")
      ("Super-Tab"          "cycle tabs (Shift: backwards)")
      ("Super-Enter/click"  "open the selection in a NEW tab")
      ("Super-w"            "close the current tab")
-     ("Super-Left"         "back in the trail")
-     ("Super-?"            "this cheatsheet")
-     ("Super-q"            "quit the browser"))
-    ("Edit  (source / workspace)"
-     ("Tab"                "complete the symbol  (else indent)")
-     ("C-c C-c"            "Accept — compile into the image")
-     ("C-c C-c (inspector)" "set the selected field to a new value")
-     ("C-x C-e"            "Do it — eval, value to status")
-     ("C-c C-p"            "Print it — weave result inline")
-     ("C-c C-i"            "Inspect it — open the value")
-     ("C-c C-d"            "Debug it — eval, debugger armed"))
+     ("Super-o"            "focus list <-> side pane")
+     ("Super-Left"         "back in the trail"))
+    ("Workspace & source"
+     ("Tab"                "complete the symbol (else indent)")
+     ("C-c C-c"            "Accept / define the form")
+     ("C-x C-e"            "Do it: value to the status line")
+     ("C-c C-p"            "Print it: result woven inline")
+     ("C-c C-i"            "Inspect it: open the value")
+     ("C-c C-d"            "Debug it: debugger armed"))
+    ("Inspector"
+     ("C-c C-c"            "set the selected field")
+     ("C-c C-e"            "evaluate in the object (SELF)")
+     ("C-c C-a"            "apply this function"))
+    ("Jump"
+     ("M-. / Ctrl-click"   "the definition at point / clicked")
+     ("M-,"                "senders of the symbol at point"))
     ("Motion & selection"
-     ("C-Left / C-Right"   "move by word")
-     ("M-b / M-f"          "move by word")
-     ("Shift + motion"     "extend the selection")
-     ("C-Space"            "set the mark (motion extends)")
+     ("C-Left / C-Right"   "by word  (also M-b / M-f)")
      ("C-a / C-e"          "line start / end")
      ("C-Home / C-End"     "buffer start / end")
-     ("C-k"                "kill to end of line"))
-    ("Jump"
-     ("M-."                "jump to the definition at point")
-     ("Ctrl-click"        "jump to the definition clicked"))
+     ("Shift + motion"     "extend the selection")
+     ("C-Space"            "set the mark (motion extends)")
+     ("C-x Space"          "rectangle mark (column block)")
+     ("C-x h"              "select all"))
+    ("Clipboard  (Emacs + PC)"
+     ("C-w / S-Delete"     "cut the region")
+     ("M-w / C-Insert"     "copy the region")
+     ("C-y / S-Insert"     "paste the newest copy")
+     ("M-y"                "after a paste: the one before")
+     ("C-k"                "kill the line (repeat: append)")
+     ("M-d / M-Backspace"  "kill a word forward / back")
+     ("mouse select"       "copies to PRIMARY + history")
+     ("middle click"       "pastes PRIMARY into text"))
+    ("Rectangles  (C-x r)"
+     ("C-x r k / M-w"      "kill / copy the rectangle")
+     ("C-x r y"            "yank the last rectangle")
+     ("C-x r d / c"        "delete / blank it out")
+     ("C-x r o"            "open: shift text right")
+     ("C-x r t"            "replace each line's span"))
+    ("Mouse & pad"
+     ("click / tap"        "select, drill, place caret")
+     ("press + drag"       "select text")
+     ("right / Menu key"   "context menu  (S-F10 too)")
+     ("pad corner press"   "right button (bottom right)")
+     ("middle"             "halo: source, inspect, ...")
+     ("2-finger press"     "middle button  (Alt-click too)")
+     ("Super-middle"       "halo even in editable text"))
     ("Debugger"
      ("0-9 / up-down"      "select a restart")
      ("Tab"                "focus the backtrace, walk frames")
-     ("M-."                "view the selected frame's source")
+     ("M-."                "the selected frame's source")
      ("Enter / click"      "invoke the selected restart")
      ("C-g"                "abort"))
     ("Stage  (§3b)"
-     ("Space"              "run / pause the world")
-     ("n"                  "one tick")
-     ("s / a / m / t"      "spawn ship / asteroid / missile / station")
-     ("Tab / click"        "select a sprite")
-     ("Enter"              "inspect the selected instance")
-     ("w"                  "the Workspace beside (C-c C-c defines)")
-     ("r"                  "reset the stage")))
+     ("Space / n"          "run-pause / one tick")
+     ("s / a / m / t"      "spawn ship/asteroid/missile/station")
+     ("Tab / click"        "select a sprite;  Enter inspects")
+     ("w / r"              "the Workspace beside / reset")))
   "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET
-   lays it out in two columns.")
+   lays it out in columns.")
 
 (defun draw-cheatsheet (canvas w h)
-  "Render *cheatsheet* as a full-screen two-column overlay. Group titles in amber,
-   the keys in accent, the descriptions in text."
+  "Render *cheatsheet* as a full-screen overlay: as many columns as the width
+   allows (three at 1280), the groups poured into them in order, each column
+   filled before the next starts. Group titles in amber, the keys in accent, the
+   descriptions in text."
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   (lol.canvas:fill-rect canvas 0 0 w 22 *ui-hi*)
   (lol.canvas:draw-string canvas *bfont*
     "Keys  —  press any key or click to dismiss" 12 4 *ui-accent*)
-  (let ((col-x (vector 40 (+ (floor w 2) 20)))
-        (col-y (vector 44 44))
-        (half  (ceiling (length *cheatsheet*) 2)))
-    (loop for g in *cheatsheet* for i from 0
-          for c = (if (< i half) 0 1)
-          do (let ((x (aref col-x c)) (y (aref col-y c)))
-               (lol.canvas:draw-string canvas *bfont* (car g) x y *ui-amber*)
-               (incf y 20)
-               (dolist (row (cdr g))
-                 (lol.canvas:draw-string canvas *bfont* (first row)  (+ x 12)  y *ui-accent*)
-                 (lol.canvas:draw-string canvas *bfont* (second row) (+ x 168) y *ui-text*)
-                 (incf y 16))
-               (incf y 12)
-               (setf (aref col-y c) y)))))
+  (let* ((ncols (max 1 (min 4 (floor (- w 40) 410))))
+         (colw (floor (- w 40) ncols))
+         (keyw 150)
+         (maxc (max 8 (floor (- colw keyw 24) (lol.canvas:font-cw *bfont*))))
+         (rows (+ (* 2 (length *cheatsheet*))           ; title + gap per group
+                  (loop for g in *cheatsheet* sum (length (cdr g)))))
+         (per-col (ceiling rows ncols))
+         (c 0) (y 34) (used 0))
+    (dolist (g *cheatsheet*)
+      ;; start a new column when this group would overflow the share of this one
+      (when (and (plusp used) (< c (1- ncols))
+                 (> (+ used (length (cdr g)) 1) per-col))
+        (incf c) (setf y 34 used 0))
+      (let ((x (+ 20 (* c colw))))
+        (lol.canvas:draw-string canvas *bfont* (car g) x y *ui-amber*)
+        (incf y 18)
+        (dolist (row (cdr g))
+          (lol.canvas:draw-string canvas *bfont* (first row) (+ x 10) y *ui-accent*)
+          (lol.canvas:draw-string canvas *bfont* (clip-text (second row) maxc)
+                                  (+ x 10 keyw) y *ui-text*)
+          (incf y 15))
+        (incf y 9)
+        (incf used (+ 2 (length (cdr g))))))))
 
 (defun run-cheatsheet-fb ()
   "Draw the cheatsheet over the browser's live canvas and block until any key or
@@ -1273,6 +1469,103 @@
               (when (read-mouse *fb-mouse* w h) (return))   ; a click dismisses
               (when (or (/= ox *cursor-x*) (/= oy *cursor-y*))
                 (move-cursor canvas ox oy)))))))))
+
+;;; ---- menus and halos: one modal chooser -----------------------------------
+;;; The right-button menu and the middle-button halo are the same interaction — a
+;;; short list of things you can do, pick one or leave — drawn two ways. The shell
+;;; decides WHAT is offered (context-menu-entries, halo-entries) and how each looks
+;;; (draw-context-menu, draw-halo); this loop only reads input, the same way the
+;;; Spotter's does. It is installed as the shell's *CHOOSER* hook.
+
+(defun run-chooser-fb (kind entries x y &optional object)
+  "Show ENTRIES as a :MENU card at X,Y or a :HALO round it, and return the entry
+   picked, or NIL. Keys: up/down (left/right too, for the ring) move, Return picks,
+   1-9 pick directly, Esc leaves. A click picks what is under it; a click anywhere
+   else leaves. A press of the button that opened it, on the same spot, does not
+   count — only a new click does."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (sel 0) (n (length entries)))
+    (when (and canvas entries)
+      (flet ((draw ()
+               (if (eq kind :halo)
+                   (draw-halo canvas w h object entries sel x y)
+                   (draw-context-menu canvas w h entries sel x y)))
+             (hit (px py)
+               (if (eq kind :halo) (halo-handle-at px py) (menu-entry-at px py))))
+        (loop with dirty = t do
+          (when dirty (draw) (show-frame canvas) (setf dirty nil))
+          (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+            (when kev (read-keyboard-evdev *fb-kbd*))
+            (when kb
+              (setf dirty t)
+              (let ((key (fb-read-key 0)))
+                (cond
+                  ((member key '(:escape :eof)) (return nil))
+                  ((member key '(:return #\Return)) (return (nth sel entries)))
+                  ((member key '(:up :left))    (setf sel (mod (1- sel) n)))
+                  ((member key '(:down :right :tab)) (setf sel (mod (1+ sel) n)))
+                  ((and (characterp key) (digit-char-p key) (<= 1 (digit-char-p key) n))
+                   (return (nth (1- (digit-char-p key)) entries))))))
+            (when (and *fb-mouse* ms)
+              (let ((ox *cursor-x*) (oy *cursor-y*))
+                (multiple-value-bind (clicked wheel button) (read-mouse *fb-mouse* w h)
+                  (declare (ignore wheel))
+                  (cond
+                    ((or clicked button)
+                     (let ((i (hit *cursor-x* *cursor-y*)))
+                       (cond ((eq i :outside) (return nil))
+                             ((integerp i) (return (nth i entries))))))
+                    ((or (/= ox *cursor-x*) (/= oy *cursor-y*))
+                     ;; hovering a menu row selects it, the way every menu behaves
+                     (let ((i (hit *cursor-x* *cursor-y*)))
+                       (if (and (integerp i) (/= i sel))
+                           (setf sel i dirty t)
+                           (move-cursor canvas ox oy))))))))))))))
+
+;;; ---- the clipboard manager: SuperL-h (doc/clipboard.org) -------------------
+;;; Parcellite's history window as a palette, the Spotter's shape: type to filter,
+;;; arrows to move, Enter makes the entry current and pastes it where the caret was,
+;;; Delete forgets it, Esc leaves. Drawing: draw-clipboard-card in shell.lisp.
+
+(defun run-clipboard-fb ()
+  "The clipboard history, modal over the browser."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (query "") (sel 0))
+    (when canvas
+      (loop with dirty = t
+            for results = (lol.clipboard:clip-filter query) do
+        (setf sel (max 0 (min sel (1- (length results)))))
+        (when dirty
+          (draw-clipboard-card canvas w h query results sel)
+          (show-frame canvas)
+          (setf dirty nil))
+        (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
+          (when kev (read-keyboard-evdev *fb-kbd*))
+          (when kb
+            (setf dirty t)
+            (multiple-value-bind (key state) (fb-read-key 0)
+              (let ((ctrl (logbitp 2 state)))
+                (cond
+                  ((or (member key '(:escape :eof)) (and ctrl (eql key #\g))) (return))
+                  ((member key '(:return #\Return))
+                   (when results (clipboard-choose (car (nth sel results))))
+                   (return))
+                  ((or (eq key :up) (and ctrl (eql key #\p))) (decf sel))
+                  ((or (eq key :down) (and ctrl (eql key #\n))) (incf sel))
+                  ((eq key :delete)
+                   (when results (lol.clipboard:clip-delete (car (nth sel results)))))
+                  ((eq key :backspace)
+                   (when (plusp (length query))
+                     (setf query (subseq query 0 (1- (length query))) sel 0)))
+                  ((and (characterp key) (graphic-char-p key) (not ctrl))
+                   (setf query (concatenate 'string query (string key)) sel 0))))))
+          (when (and *fb-mouse* ms)
+            (let ((ox *cursor-x*) (oy *cursor-y*))
+              (if (read-mouse *fb-mouse* w h)
+                  (let ((i (clipboard-row-at *cursor-x* *cursor-y*)))
+                    (cond ((eq i :outside) (return))
+                          ((and (integerp i) (< i (length results)))
+                           (clipboard-choose (car (nth i results))) (return))))
+                  (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                    (move-cursor canvas ox oy))))))))))
 
 ;;; ---- the Spotter: SuperL-Space fuzzy finder (§4¾) -------------------------
 ;;; A modal overlay over the browser's live canvas + input, like the debugger and

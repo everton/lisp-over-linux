@@ -277,9 +277,10 @@
   (let ((s (probe form-string seconds)))
     (ignore-errors (parse-integer (string-trim " " s)))))
 
-;;; The image BOOTS INTO the environment (supervisor.lisp); the menu only appears
-;;; once you leave it. So a test that wants the module index just waits for it, and
-;;; one that wants another root ('l', 'p', 'r') leaves first and then uses the menu.
+;;; The image BOOTS INTO the environment (supervisor.lisp), on the Workspace; the menu
+;;; only appears once you leave it. So a test that wants the environment just waits
+;;; for it, and one that wants another root ('l', 'r') leaves first and then uses the
+;;; menu.
 
 (defun wait-for-browser (&optional (seconds 30))
   "Block until the boot-time environment is up: *FB-CANVAS* is set just before the
@@ -291,10 +292,11 @@
         do (sleep 0.5)))
 
 (defun leave-browser ()
-  "Quit the environment to the supervisor menu: 'q' on a list pane, which the
-   module index at boot is. The menu then waits in a cooked READ-LINE, so the next
-   menu letter needs its Enter."
-  (qmp-key "q") (sleep 1.5))
+  "Quit the environment to the supervisor menu: SuperL-q, which works from any pane —
+   the environment opens on the Workspace, where a plain 'q' would just be typed.
+   The menu then waits in a cooked READ-LINE, so the next menu letter needs its
+   Enter."
+  (qmp-hold "meta_l" "q") (sleep 1.5))
 
 (defun quiet-kernel-console ()
   "Lower the console log level, so a late printk cannot repaint over whatever the

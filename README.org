@@ -29,10 +29,11 @@ editing — its own source.
 [[./media/screenshots/browser-2026-09-20.png]]
 
 /The code browser running as PID 1 on the bare framebuffer — the image boots
-straight into it (and =b= at the supervisor menu reopens it). It opens on the
-*module index* — every definition grouped by the file it came from, with the selected module's contents kind-coloured beside
-it. That is the only root that shows the whole system: the toolkit lives in its
-own =lol.*= packages, so a single-package root cannot list it at all./
+straight into it, on a Workspace (and =b= at the supervisor menu reopens it).
+=Super-m= opens what is shown here, the *module index*: every definition grouped by
+the file it came from, with the selected module's contents kind-coloured beside it.
+That is the only view that shows the whole system: the toolkit lives in its own
+=lol.*= packages, so a single-package root cannot list it at all./
 
 A few of the affordances, without turning this into a manual: *tabs* across the
 top, each holding an independent navigation *trail*; a *drill-down accordion* —
@@ -40,8 +41,10 @@ press ↵ on anything and the next pane opens on it, =Super-←= steps back; =Su
 summons the *Spotter* to find any definition, package or object; a source pane is
 *live* — edit it and =C-c C-c= compiles the definition back into the running image;
 and an error opens a real *debugger* with restarts, an =sb-di= backtrace and frame
-locals. If one flat alphabetical list is what you actually want, =l= at the
-supervisor menu opens the =CL-USER= package view instead.
+locals. The right button opens a context menu, the middle one a Smalltalk *halo*
+(or pastes, X-style, in text); the clipboard keeps a Parcellite-style history
+(=Super-h=) and knows the Emacs kill and rectangle keys; a systray shows the battery
+and the clock. =Super-?= lists every key.
 
 The full design and the phase-by-phase state live in [[file:doc/code-browser.org][code-browser.org]]; the
 host-runnable prototype (same toolkit, in a window on your desktop, from a plain

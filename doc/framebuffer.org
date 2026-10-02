@@ -616,7 +616,7 @@ That works if the canvas never contains the arrow:
 - [[file:../initramfs/fb-browser.lisp::defun move-cursor][=move-cursor=]] handles a move with nothing else changed: the pixels under the
   *old* position are still sitting untouched in the canvas, so erasing the arrow is
   re-sending that small rectangle (=lol.fb:present-fb-rect=); then =put-cursor= at
-  the new position. Two writes of 16 short rows each.
+  the new position. Two writes of 20 short rows each.
 
 Every event loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — the browser, the source viewer, the value
 prompt, the debugger, the cheatsheet, the Spotter — follows one pattern: a =dirty=
@@ -634,3 +634,18 @@ spun, repainting, from the first twitch of the pointer until you pressed Enter.)
 counts =draw-browser= calls across real QMP pointer motion (zero), checks the
 screendump (arrow at the new place, the canvas's own pixel back at the old one),
 and checks the canvas never holds the arrow.
+
+*The pointer hides when idle* (2026-10-02). After =+cursor-idle-ms+= (3 s) with no
+mouse activity — no motion, button or wheel — [[file:../initramfs/fb-browser.lisp::defun hide-cursor][=hide-cursor=]] re-sends the canvas
+rectangle under the arrow and stops drawing it, exactly the erase half of a move.
+The next motion, click or wheel notch brings it back
+([[file:../initramfs/fb-browser.lisp::defun pointer-activity][=pointer-activity=]]); typing never does, because typing is when an arrow parked
+over the text is in the way. The deadline joins the poll timeout
+([[file:../initramfs/fb-browser.lisp::defun earliest-timeout][=earliest-timeout=]]), beside the stage's frame and the systray's clock
+([[file:systray.org][systray.org]] §5), so an idle browser still sleeps until something is due.
+
+*The arrow's shape.* The first bitmap stood the tail straight up, four columns
+wide; against a head that points up and to the left, a vertical tail reads as bent
+— "the base of the arrow is twisted to the left". [[file:../initramfs/fb-browser.lisp::defparameter *cursor-bits*][=*cursor-bits*=]] now draws
+the tail along the arrow's own axis, one pixel right every two rows, the way the
+classic X and Windows arrows do; it is 12×20.

@@ -67,7 +67,7 @@
           (sb-unix:unix-getpid) (lisp-implementation-version)
           (software-type) (software-version))
   (format t "  r) run a Lisp REPL~%")
-  (format t "  b) environment — the module index, tabs, Super-Space to find anything~%")
+  (format t "  b) environment — the Workspace; Super-m modules, Super-Space anything~%")
   (format t "  p) Lisp workspace (a scratch buffer: Do it / Print it / Inspect it)~%")
   (format t "  c) change set (definitions edited live this session)~%")
   (format t "  l) all definitions in CL-USER (the flat package view)~%")
