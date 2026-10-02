@@ -60,6 +60,12 @@
 
 (defvar *work* nil "Scratch directory for this run; set by BOOT-GUEST.")
 
+(defparameter *host-port*
+  (or (ignore-errors (parse-integer (sb-posix:getenv "LOL_PORT"))) 4005)
+  "The HOST end of the net-REPL forward (the guest always listens on 4005).
+   LOL_PORT=4025 lets two runs boot guests side by side: each forwards its own
+   host port, so neither connects to the other's guest.")
+
 (defun path (name) (concatenate 'string *work* name))
 
 ;;; ---- QEMU ----------------------------------------------------------------
@@ -68,14 +74,20 @@
 
 (defun boot-guest (&optional (name "guest"))
   "Boot iso_root headless with a QMP control socket and the net REPL forwarded.
-   NAME only distinguishes the scratch directory, so two runs cannot collide."
+   NAME (plus our pid) names the scratch directory, which holds the QMP socket, so
+   two runs cannot collide there; LOL_PORT keeps their net-REPL forwards apart.
+   LOL_QEMU_CPU=max (or any QEMU -cpu model) swaps the default qemu64 CPU — the
+   switch that cornered the LOGCOUNT bug (doc/inspector-history.org §5.6)."
   (setf *work* (format nil "/tmp/lol-~a-~d/" name (sb-posix:getpid)))
   (ensure-directories-exist *work*)
   (sb-ext:run-program "cp" (list *ovmf-vars* (path "vars.fd")) :search t :wait t)
   (setf *qemu*
         (sb-ext:run-program
          "qemu-system-x86_64"
-         (list "-machine" "q35,accel=kvm:tcg" "-m" "2048"
+         (list* "-machine" "q35,accel=kvm:tcg" "-m" "2048"
+               (append
+                (let ((cpu (sb-posix:getenv "LOL_QEMU_CPU"))) (and cpu (list "-cpu" cpu)))
+                (list
                "-drive" (format nil "if=pflash,format=raw,readonly=on,file=~a" *ovmf-code*)
                "-drive" (format nil "if=pflash,format=raw,file=~a" (path "vars.fd"))
                ;; built as a pathname, not spliced into a format string: the first
@@ -83,24 +95,24 @@
                ;; the s, and QEMU dutifully looked for a directory called iro_root
                "-drive" (format nil "file=fat:rw:~a,format=raw,if=ide"
                                 (namestring (merge-pathnames "iso_root/" *root*)))
-               "-netdev" "user,id=net0,hostfwd=tcp::4005-:4005"
+               "-netdev" (format nil "user,id=net0,hostfwd=tcp::~d-:4005" *host-port*)
                "-device" "virtio-net-pci,netdev=net0"
                "-serial" (format nil "file:~a" (path "serial.log"))
                "-display" "none" "-no-reboot"
-               "-qmp" (format nil "unix:~a,server,nowait" (path "qmp.sock")))
+               "-qmp" (format nil "unix:~a,server,nowait" (path "qmp.sock")))))
          :search t :wait nil
          :error (path "qemu.err") :if-error-exists :supersede)))
 
 (defun kill-guest ()
   (when *qemu* (ignore-errors (sb-ext:process-kill *qemu* 9))))
 
-(defun port-4005-free-p ()
-  "True when nothing is listening on :4005. A previous guest that has not finished
+(defun host-port-free-p ()
+  "True when nothing is listening on the host port (*HOST-PORT*). A previous guest that has not finished
    dying still holds it, QEMU's hostfwd then fails for OURS, and the symptom is a
    connection to the WRONG guest that resets mid-test. Cheaper to refuse."
   (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
     (unwind-protect (not (ignore-errors
-                          (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005) t))
+                          (sb-bsd-sockets:socket-connect s #(127 0 0 1) *host-port*) t))
       (ignore-errors (sb-bsd-sockets:socket-close s)))))
 
 (defun preflight ()
@@ -112,10 +124,10 @@
       (error "missing ~a — run ./build.sh first" f)))
   ;; give a lingering guest a moment, then insist
   (dotimes (i 20)
-    (when (port-4005-free-p) (return))
+    (when (host-port-free-p) (return))
     (sleep 1))
-  (unless (port-4005-free-p)
-    (error "something is already listening on :4005 — another guest is still up")))
+  (unless (host-port-free-p)
+    (error "something is already listening on :~d — another guest is still up" *host-port*)))
 
 ;;; ---- QMP: a line protocol, and we only ever emit JSON ---------------------
 
@@ -207,8 +219,8 @@
 
 (defun repl-connect (&optional (tries 120))
   "Connect to the guest's net REPL and confirm it is really EVALUATING — QEMU's
-   hostfwd opens the host side of :4005 at t=0, so connecting proves nothing."
-  (dotimes (i tries (error "net REPL on :4005 never answered"))
+   hostfwd opens the host port at t=0, so connecting proves nothing."
+  (dotimes (i tries (error "net REPL on :~d never answered" *host-port*))
     ;; The ENTIRE attempt is guarded, not just the connect. QEMU's hostfwd listens
     ;; on the host port from the moment QEMU starts, long before the guest has a
     ;; REPL behind it, so an early attempt connects and is then RESET when the
@@ -217,7 +229,7 @@
     ;; peer" instead of simply retrying.
     (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
       (when (ignore-errors
-             (sb-bsd-sockets:socket-connect s #(127 0 0 1) 4005)
+             (sb-bsd-sockets:socket-connect s #(127 0 0 1) *host-port*)
              (setf *repl* (sb-bsd-sockets:socket-make-stream
                            s :input t :output t :buffering :none
                            :element-type 'character :external-format :latin-1))

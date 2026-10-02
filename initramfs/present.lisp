@@ -806,13 +806,11 @@
 ;; C-c C-a applies it (try 3); C-c C-e evals with SELF bound to it.
 (lol.examples:make-counter 10 2)
 
-;; The Lispier way builds that closure here with COMPILE. DO NOT RUN IT: compiling
-;; generic arithmetic at runtime faults the guest (#x1A) -- and so does C-c C-c on
-;; any definition doing arithmetic. Open bug: doc/inspector-history.org S5.6.
-;;   (funcall (compile nil '(lambda (start step)
-;;                            (lambda (&optional (bump 1))
-;;                              (incf start (* step bump)))))
-;;            10 2)
+;; The Lispier way builds that closure right here, with COMPILE. C-c C-i it too.
+(funcall (compile nil '(lambda (start step)
+                         (lambda (&optional (bump 1))
+                           (incf start (* step bump)))))
+         10 2)
 "))
 
 (defmethod present ((s subj-change-set))

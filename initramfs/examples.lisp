@@ -185,11 +185,11 @@
 ;;; S5.5) -- because a closure is a record whose fields are the variables it closed
 ;;; over, and half of those are editable.
 ;;;
-;;; They live HERE, compiled into the image at build time, rather than being typed
-;;; into the Workspace as a (compile nil (lambda ...)) -- which matters more than it
-;;; looks. Runtime compilation of generic arithmetic currently faults in the guest
-;;; (see doc/inspector-history.org S5.6), so a specimen you COMPILE in the Workspace
-;;; cannot be made there; a specimen you CALL is just a function call, and works.
+;;; They live HERE, compiled into the image at build time, so the Workspace line is
+;;; a plain CALL. They moved here when runtime compilation of generic arithmetic
+;;; faulted in the guest (doc/inspector-history.org S5.6 -- an SBCL 2.6.8 LOGCOUNT
+;;; bug on CPUs without POPCNT, since repaired by logcount-fix.lisp); now the
+;;; Workspace also builds the same closure with COMPILE, and both work.
 ;;;
 ;;; The didactic payload is the difference between the two captures of MAKE-COUNTER:
 ;;; START is assigned (INCF) so SBCL boxes it in a VALUE-CELL and the inspector can

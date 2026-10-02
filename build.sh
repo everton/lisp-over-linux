@@ -62,7 +62,9 @@ REGISTRY_SRC="$INITRAMFS_DIR/registry.lisp"
 # baked — it is host-only; the guest presents via lol.fb (framebuffer).
 POC_DIR="$MICRO/poc"
 LISP_SOURCES=(
-  "$INITRAMFS_DIR/model.lisp"        # CLOS/introspection model: classes, GFs, categories, inspector
+  "$INITRAMFS_DIR/logcount-fix.lisp" # FIRST: repairs SBCL 2.6.8's no-POPCNT LOGCOUNT (qemu64 has
+                                     #   no POPCNT; without this, compiling arithmetic crashes the guest)
+  "$INITRAMFS_DIR/model.lisp"       # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
   "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
   "$INITRAMFS_DIR/stage.lisp"        # the COLLIDE stage (S3b): bodies, both-ways dispatch, eql enact

@@ -27,7 +27,9 @@ wrong in the estimate. §5.4 (settable frame locals) is still owed.
 
 §5.6 is a *separate and larger* finding the work turned up: *compiling generic
 arithmetic at runtime faults the guest*, which breaks =C-c C-c= live editing for most
-real definitions. Measured, not fixed.
+real definitions. *Fixed 2026-10-02*: it was an SBCL 2.6.8 bug in =LOGCOUNT= that
+only shows on CPUs without the POPCNT instruction — which QEMU's default CPU is —
+repaired at build time by [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]]. §5.6 keeps the hunt, wrong turns included.
 
 * 1. Why the viewer is the degenerate form
 
@@ -599,11 +601,13 @@ subject so the view can be checked without booting.
 
 A worked example ships *in the Workspace itself* — a closure maker, with instructions to
 inspect it and read the settable/not-settable split off the screen. It was first written
-as a =COMPILE= of the maker; §5.6 is why it is now a call to the build-time
-=make-counter=, with the =COMPILE= version kept beside it as a comment. It is the last runnable form of the Workspace primer in [[file:../initramfs/present.lisp][present.lisp]]: open the
-Workspace, put point after the =make-counter= call and =C-c C-i=.
+as a =COMPILE= of the maker; §5.6 is why it became a call to the build-time
+=make-counter=, with the =COMPILE= version kept beside it as a comment. Since the §5.6
+fix both are live, the =COMPILE= one last, in the Workspace primer in
+[[file:../initramfs/present.lisp][present.lisp]]: open the Workspace, put point after either form and =C-c C-i= — the
+same two captures either way.
 
-** 5.6 The bug the example found: runtime arithmetic does not compile in the guest
+** 5.6 The bug the example found: runtime arithmetic did not compile in the guest (fixed)
 
 The Workspace example written for §5.5 was the obvious Lispy thing —
 
@@ -653,6 +657,11 @@ proving it means looking at where SBCL maps static space in the guest versus on 
 host, and whether =save-lisp-and-die :executable t= plus the guest's mapping leaves the
 runtime compiler computing from a stale base.
 
+/(2026-10-02: both readings above were wrong, and are kept because they were reasonable./
+/The calls to =GENERIC-*= are fine, and nothing about static space differs. The address/
+/is a bit COUNT used as a pointer, and "generic arithmetic" was only the commonest way to/
+/make the compiler count bits. See "Resolved" at the end of this section.)/
+
 *Why nobody had noticed.* Nothing in the image needed the compiler at runtime until
 now. The REPL evaluates most forms through SBCL's simple evaluator, which handles a
 plain function call — =(+ 1 1)= at the REPL returns 2, and =(subj-worker :self)= in the
@@ -696,8 +705,78 @@ time, so the Workspace line is a plain CALL and works. The primer keeps the =com
 version in a comment, labelled with what it does and why, because the example is a good
 one and the bug is worth meeting deliberately rather than by accident.
 
-*Not fixed.* This is a kernel/image-level problem, not a browser one, and it wants its
-own session. It is the largest known limitation of the running system.
+/(Superseded 2026-10-02 — the paragraph that stood here read:)/ *Not fixed.* This is a
+kernel/image-level problem, not a browser one, and it wants its own session. It is the
+largest known limitation of the running system.
+
+*** Resolved (2026-10-02): SBCL 2.6.8's LOGCOUNT, on a CPU without POPCNT
+
+It was neither the kernel nor the image. It was *the CPU QEMU emulates*, meeting a bug
+in SBCL itself. Bisected in this order, every row measured:
+
+| where                                                        | =(* x 2)= compiles? | =(unsigned-byte 32)= prints as |
+|--------------------------------------------------------------+---------------------+-------------------------------|
+| the shipped =lisp-init=, run on the HOST (=unshare -rn=, menu =r=) | yes, =42=             | —                             |
+| the guest, QEMU default CPU (qemu64)                         | *memory fault*      | =(MOD 4294967296)=              |
+| the guest, *same* kernel and image, =-cpu max=                 | yes, =42=             | =(UNSIGNED-BYTE 32)=            |
+| plain =./sbcl= core on the host, POPCNT bit cleared by hand    | *memory fault*      | =(MOD 4294967296)=              |
+| host SBCL 2.6.6, POPCNT bit cleared by hand                    | —                   | =(UNSIGNED-BYTE 32)=            |
+
+Row 1 clears the image and everything =build.sh= does to it; row 3 clears the kernel,
+PID 1, the environment and the memory map — one QEMU flag fixes it. qemu64's
+=/proc/cpuinfo= has no =popcnt= (nor =ssse3=/=sse4=); the laptop's has it. Row 4 makes it
+reproducible in a second on the host: SBCL's compiled code asks "does this CPU have
+POPCNT?" by testing bit 1 of a byte in static space, =[NIL+97]= (=CPU-FEATURE-BITS=, which
+the C runtime fills from CPUID at startup), and clearing that bit sends the host down the
+guest's path. Row 5 says when it broke.
+
+*The bug.* =LOGCOUNT= on a word is compiled inline as "POPCNT if the CPU has it, else call
+the assembly routine =LOGCOUNT=". The caller puts the argument in RDX and reads the answer
+from RDX, because its VOP hardcodes =rdx-offset= (=sbcl/src/assembly/x86-64/arith.lisp=,
+the =def-it= macrolet). The routine takes "Lisp argument register 0". In 2.6.6 those
+registers were RDX RDI RSI (=sb-vm::*register-arg-offsets*= is =(2 7 6)=), so they agreed;
+in 2.6.8 they are RDI RSI RDX, =(7 6 2)=, and the routine moved to RDI while its only
+caller stayed on RDX. So without POPCNT, =(logcount x)= returns =x= unchanged *and* the
+routine overwrites RDI with a bit count. Both symptoms fall out of that:
+
+- *the NIL*: the type printer asks whether 2^32 is a power of two as
+  =(= (logcount 2^32) 1)=, hears no, prints =(unsigned-byte 32)= as =(mod 4294967296)=, and
+  =find-saetp= has no entry by that name;
+- *the fault*: =BIGNUM-LOGCOUNT= keeps the bignum's address in RDI across the call, then
+  loads through it — the =CORRUPTION WARNING= names it, =memory fault at 0x11= in
+  =SB-BIGNUM:BIGNUM-LOGCOUNT=. A small bit count used as an address: that, not a tagged
+  fixnum 13, is what the =#x1A= was. Untyped arithmetic reaches it because the compiler
+  derives types with word- and bignum-sized bounds (=(type-specifier (specifier-type
+  '(signed-byte 64)))= faults on its own); the declared-fixnum forms only met the
+  wrong-answer half, which costs at most a missed optimisation.
+
+The laptop has POPCNT, so *the image on real hardware never had this bug*; neither does
+any developer machine, which is why SBCL's own tests could not see it.
+
+*The fix* ([[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]], first in =LISP_SOURCES=): rewrite the routine, in place,
+to use RDX — the contract its one caller actually relies on. A register operand lives in
+the instruction's ModRM byte; RDI is 7 and RDX is 2, neither needs a REX change, so 13
+ModRM bytes change and no instruction changes length. It refuses to patch anything that
+is not byte-for-byte the 2.6.8 routine, and it proves itself at build time by clearing
+the POPCNT bit and asking the questions that used to fail, so the build stops rather than
+ships a patch that does not work. Patching the SBCL tree instead would be the upstream
+fix, but =./sbcl= is an external tree we do not carry changes in.
+
+*Verified in the guest* by [[file:../check-compile.lisp][check-compile.lisp]] (qemu64, fails first if the CPU it got has
+POPCNT): =(funcall (compile nil '(lambda (x) (* x 2))) 21)= is 42, =+ - < 1+= compile, the
+=AREF= probe compiles, =accept-source= of =(defun zz-b (x) (* x 2))= returns =ZZ-B= and
+=(zz-b 21)= is 42 — 15/15 pass. Run against an image built *without* the fix, 13 of those
+fail (the two that pass are "the CPU lacks POPCNT" and "the guest is still alive": over
+the net REPL the faults were survivable).
+
+*Ruled out on the way, so nobody re-searches it:* =build.sh= (no tree shaking or
+variable-clearing — and row 4 is the untouched =sbcl.core=); PID 1, =SBCL_HOME= and the
+missing-file theories, static-space placement (all row 3: same image, same kernel, same
+mapping code — only the CPU differs); SBCL's AVX2 routine variants, which also swap on
+CPU features (=restore-cpu-specific-routines= on the host reproduces nothing); the kernel
+config (row 3 runs the same bzImage). =sb-vm::*specialized-array-element-type-properties*=
+was never NIL — =find-saetp '(unsigned-byte 32)= works in the guest; the NIL was the lookup
+by the wrong name.
 
 * 6. What it cost, and where the estimate was wrong
 
@@ -784,3 +863,9 @@ noticing later — a rotted image link is exactly the quiet, nothing-breaks drif
   should show, and became the largest part of the work. §6 replaced the cost *estimate*
   with what it actually cost and four ways the estimate was wrong. Still owed: §5.4,
   settable debugger frame locals. Unlike [[file:processes.org][processes.org]], this one changed the code.
+- *2026-10-02* — §5.6 *resolved*: an SBCL 2.6.8 register mismatch in =LOGCOUNT='s
+  no-POPCNT path, reached only because QEMU's default CPU has no POPCNT. Bisected
+  host-image vs. guest vs. =-cpu max= vs. a hand-cleared feature bit; fixed at build
+  time by [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]]; asserted in the guest by [[file:../check-compile.lisp][check-compile.lisp]]. The
+  static-space-fixup hypothesis is kept, marked wrong. The Workspace primer's =COMPILE=
+  example is live again.
