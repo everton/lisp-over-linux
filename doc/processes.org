@@ -473,13 +473,13 @@ environment, and no pixels cross between them. It is ~150 lines rather than the
 
 ** Run it without typing anything
 
-The Workspace primer carries the forms, so =p= at the supervisor menu and
-=C-c C-i= (Inspect it) with point after one of them opens it as a pane:
+The Workspace primer carries the first two forms, so =C-c C-i= (Inspect it) with
+point after one of them opens it as a pane; the third is for the REPL:
 
 #+begin_src lisp
   (subj-worker :self)         ; proof a different process answered: compare pids
   (subj-worker :signallers)   ; the whole-image sweep; each row drills
-  (show-worker :self)         ; the same thing printed, for the REPL
+  (show-worker :self)         ; the same thing printed, for the REPL (not in the primer)
 #+end_src
 
 What comes back looks like this — a =provenance= row naming the pid that did the

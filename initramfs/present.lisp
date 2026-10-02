@@ -781,76 +781,38 @@
 (defmethod present ((s subj-workspace))
   (make-view
    :title "workspace" :kind :workspace :subject s
-   :text ";; Workspace -- a Lisp scratch buffer (not the REPL; this is the notebook).
-;;   C-x C-e   Do it       eval the form before point (result in the status line)
-;;   C-c C-p   Print it    eval and weave the result inline, after the form
-;;   C-c C-i   Inspect it   eval and open the value in the inspector
-;;   C-c C-d   Debug it     eval with the debugger armed (try a form that errors)
-;;   C-g       leave
-;; Editing is the text view's: caret, selection, syntax, auto-indent.
+   :text ";; Workspace -- a Lisp scratch buffer. Put point after a form, then a verb.
+;; SuperL-Space finds anything (the Spotter); SuperL-? lists every key.
 
+;; C-x C-e  Do it: the value shows in the status line.
 (+ 1 2)
 
-;; ---- a SECOND PROCESS drawing into this environment (doc/processes.org) ----
-;; No pixels cross between them. The child sends a VIEW -- labels, kinds, names --
-;; and this image's own toolkit renders it, which is why a worker's rows tint,
-;; scroll and drill exactly like native ones. Put point after a form and C-c C-i
-;; (Inspect it) to open it as a pane you can drill; C-c C-p prints it inline.
+;; C-c C-c  define it, live (it joins the change set); then
+;; C-c C-p  Print it: the result is woven into the buffer, under the form.
+(defun greet (who) (list :hello who))
+(greet \"lisp\")
 
-;; Proof that it really is another process: compare this pid with the supervisor's.
+;; C-c C-d  Debug it: STEER signals inside a RESTART-CASE -- pick a way out.
+(lol.examples:launch)
+
+;; C-c C-i  Inspect it: a SECOND PROCESS sends a view, not pixels -- its pid
+;; is not the supervisor's; the sweep's rows drill (doc/processes.org).
 (subj-worker :self)
-
-;; The job that earns the boundary -- every recorded definition's source read back
-;; and walked for signalling calls. CLOS cannot answer this; only source can. Each
-;; row drills into that condition's real view.
 (subj-worker :signallers)
 
-;; Same thing from the REPL, printed rather than opened:
-(show-worker :self)
-
-;; ---- a CLOSURE is a record, and its captures are its FIELDS ----------------
-;; Most tools show a function as a dead end. It is not one: a closure is a record
-;; whose fields are the variables it closed over. Put point after the form below
-;; and press C-c C-i (Inspect it). You get the function view, and in it:
-;;
-;;   identity      :name, :lambda-list, :documentation (that one IS settable)
-;;   captures      one row per closed-over variable, drillable like any value
-;;   doors         source / senders / disassembly / why is this alive?
-;;
-;; Look at the two capture rows. ONE SAYS (settable) AND THE OTHER DOES NOT, and
-;; that is not arbitrary: SBCL boxes a captured variable in a VALUE-CELL exactly
-;; when the code ASSIGNS to it. In MAKE-COUNTER, START is INCF-d, so it lives in a
-;; cell and is a real place; STEP is only read, so it is stored inline and there is
-;; no cell to write through. The inspector shows PLACES, not values, and here you
-;; can see the difference the compiler made to your own code.
-;;
-;;   C-c C-c   on the settable capture -- type a number and the live closure's
-;;             state changes. Call it again and watch it count from there.
-;;   C-c C-a   Apply it... -- call the closure with arguments you type (try: 3).
-;;   C-c C-e   Evaluate in context... -- eval with SELF bound to the closure
-;;             (try: (funcall self 10)).
-;;
-;; Captures are labelled by POSITION, not name, on purpose: SBCL's debug info lists
-;; variable names sorted alphabetically and mixed in with the inner lambda's own
-;; parameters, so there is no honest way to say which name belongs to which slot.
-;; :closes-over reports the names it can verify, as an unordered set.
+;; C-c C-i  on a closure: its captures are its FIELDS. START is INCF-d, so SBCL
+;; boxes it in a VALUE-CELL: (settable) -- C-c C-c on that row rewrites the live
+;; counter. STEP is only read, stored inline: no place to write. In that view,
+;; C-c C-a applies it (try 3); C-c C-e evals with SELF bound to it.
 (lol.examples:make-counter 10 2)
 
-;; MAKE-COUNTER is an ordinary function compiled into the image (initramfs/
-;; examples.lisp), so the line above is just a CALL. The more Lispy thing to write
-;; would be to build the same closure right here with COMPILE:
-;;
-;;   (funcall (compile nil (quote (lambda (start step)
-;;                                  (lambda (&optional (bump 1))
-;;                                    (incf start (* step bump))
-;;                                    start))))
+;; The Lispier way builds that closure here with COMPILE. DO NOT RUN IT: compiling
+;; generic arithmetic at runtime faults the guest (#x1A) -- and so does C-c C-c on
+;; any definition doing arithmetic. Open bug: doc/inspector-history.org S5.6.
+;;   (funcall (compile nil '(lambda (start step)
+;;                            (lambda (&optional (bump 1))
+;;                              (incf start (* step bump)))))
 ;;            10 2)
-;;
-;; Do not run that one yet. It CRASHES THE GUEST with an unhandled memory fault at
-;; #x1A -- not because of the inspector, but because compiling generic ARITHMETIC
-;; at runtime faults in this image. The same fault means C-c C-c live editing
-;; cannot recompile any definition that does arithmetic. Open bug, measured and
-;; written up in doc/inspector-history.org S5.6.
 "))
 
 (defmethod present ((s subj-change-set))

@@ -597,10 +597,11 @@ opens the true name.
 arguments you type and opens the result. =render-frame.lisp= gained a =function:NAME=
 subject so the view can be checked without booting.
 
-A worked example ships *in the Workspace itself* — a =COMPILE= of a maker whose body is
-a lambda, with instructions to inspect it and read the settable/not-settable split off
-the screen. It is the last section of the Workspace primer in [[file:../initramfs/present.lisp][present.lisp]]; press =p=
-at the supervisor menu, page to the end, put point after the form and =C-c C-i=.
+A worked example ships *in the Workspace itself* — a closure maker, with instructions to
+inspect it and read the settable/not-settable split off the screen. It was first written
+as a =COMPILE= of the maker; §5.6 is why it is now a call to the build-time
+=make-counter=, with the =COMPILE= version kept beside it as a comment. It is the last runnable form of the Workspace primer in [[file:../initramfs/present.lisp][present.lisp]]: open the
+Workspace, put point after the =make-counter= call and =C-c C-i=.
 
 ** 5.6 The bug the example found: runtime arithmetic does not compile in the guest
 
