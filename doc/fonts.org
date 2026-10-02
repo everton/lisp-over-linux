@@ -249,6 +249,13 @@ so ≤8 wide today; wider needs the PSF2 / multi-byte-row path below.)
   *indexed by real codepoint* ([[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] / =load-font=, §7): =#\·= (183) is the
   middle dot, verified. The trap only bites raw =load-psf= use — still, keep UI
   text to characters the font actually has ([[file:code-browser.org][§6.2]]).
+- *Past 255 there is no glyph — so it is folded, not wrapped.* =draw-string= used to
+  index the glyph vector with =(logand code #xff)=, so a character beyond Latin-1
+  silently became a /different/ one: the em dash U+2014 drew glyph =#x14=, a
+  box-drawing tee, and every "a — b" title in the browser read "a ┤ b" for months;
+  the ellipsis U+2026 drew as =&=. [[file:../poc/canvas.lisp::defun glyph-index][=glyph-index=]] now folds the punctuation the
+  UI uses (dashes, ellipsis, curly quotes, arrows) to its ASCII cousin, and anything
+  else past 255 to =?=, which at least looks missing rather than wrong.
 - *Aliased, not antialiased.* Bitmap glyphs are pure on/off — crisp and fast, no
   grey edges. Antialiasing only arrives with the TrueType path (§7 Path C).
 - *cell vs glyph.* =cw=/=ch= are the *cell* (the box a character occupies, incl.

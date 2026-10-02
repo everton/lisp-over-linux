@@ -226,6 +226,26 @@
   "Pixel width STRING will occupy — the metric the layout code needs."
   (* (length string) (font-cw font) scale))
 
+(declaim (inline glyph-index))
+(defun glyph-index (code)
+  "The glyph for character CODE. The font holds 256 glyphs, indexed by codepoint, so
+   anything past Latin-1 has no glyph of its own -- and it used to be drawn as
+   (LOGAND CODE #xFF), which is a DIFFERENT glyph: an em dash (U+2014) landed on
+   #x14 and drew as a box-drawing tee, so every title of the form 'a -- b' in the
+   UI read with a tee in the middle, and an ellipsis (U+2026) drew as an ampersand.
+   The punctuation the UI actually uses folds to its ASCII cousin; anything else
+   past 255 is a question mark, which at least looks missing rather than wrong."
+  (declare (fixnum code))
+  (if (< code 256)
+      code
+      (case code
+        ((#x2013 #x2014 #x2212) 45)        ; en dash, em dash, minus -> hyphen
+        (#x2026 46)                        ; ellipsis -> one full stop (one cell)
+        ((#x2018 #x2019) 39)               ; curly single quotes -> apostrophe
+        ((#x201C #x201D) 34)               ; curly double quotes -> straight
+        (#x2192 62) (#x2190 60)            ; arrows -> > <
+        (t 63))))
+
 (defun draw-string (canvas font string x y color &key (scale 1))
   "Draw STRING with its top-left at X,Y. Returns the x just past the last glyph,
    so callers can chain runs of different colors — which is exactly how the
@@ -239,7 +259,7 @@
     (declare (type pixmap px) (fixnum cw chh fw fh pen)
              ((unsigned-byte 32) color))
     (loop for c across string do
-      (let ((g (svref glyphs (logand (char-code c) #xff))))
+      (let ((g (svref glyphs (glyph-index (char-code c)))))
         (declare (type (simple-array (unsigned-byte 8) (*)) g))
         (dotimes (row fh)
           (let ((bits (aref g row)))
