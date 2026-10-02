@@ -113,6 +113,42 @@
 (defstruct (subj-instances   (:constructor subj-instances   (class-name))) class-name)
 (defstruct (subj-retention   (:constructor subj-retention   (object)))     object)
 (defstruct (subj-disassembly (:constructor subj-disassembly (function)))   function)
+;; SUBJ-OBJECT: "this value AS AN OBJECT" — its fields, whatever PRESENT would
+;; otherwise show. Every SUBJ-* above is the browser's handle on a view, and PRESENT
+;; on it shows that view: presenting SUBJ-WORKSPACE opens the Workspace. Usually that
+;; is the point; but when you point at something and ask to INSPECT it, you mean the
+;; instance — its slots, settable in place — not the screen it stands for. Wrapping
+;; the value in SUBJ-OBJECT is the third use of the "which subject you hand to
+;; PRESENT" trick, and it is what the halo's Inspect opens (poc/shell.lisp).
+(defstruct (subj-object (:constructor subj-object (value))) value)
+
+(defun subject-value (subject)
+  "The object a pane's SUBJECT is about: the wrapped value of a SUBJ-OBJECT, else the
+   subject itself. Evaluate-in-context and Apply act on THIS, never on the wrapper."
+  (if (subj-object-p subject) (subj-object-value subject) subject))
+
+(defun inspect-subject (x)
+  "The subject that inspects X field by field. X itself when PRESENT would already
+   do that (no more specific method than the T fallback); SUBJ-OBJECT around it when
+   X has a view of its own that would hide its fields — a browser handle, a pane, a
+   text view. Functions, classes, packages and symbols keep their own views: those
+   ARE their inspectors, and richer than a slot list."
+  (if (or (typep x '(or function class package symbol number character string))
+          (equal (sb-mop:method-specializers
+                  (first (compute-applicable-methods #'present (list x))))
+                 (list (find-class t))))
+      x
+      (subj-object x)))
+
+(defun object-title (x)
+  "A short name for X as an object: `a PANE', `a LOL.TEXTVIEW:TEXTVIEW', or its
+   bounded printout for anything that prints small. A structure's default printout
+   is every slot, recursively — a title must not be a screenful."
+  (if (typep x '(or structure-object standard-object condition))
+      (format nil "a ~s" (type-of x))
+      (let ((*print-length* 6) (*print-level* 2) (*print-lines* 1))
+        (let ((s (prin1-to-string x)))
+          (if (> (length s) 80) (concatenate 'string (subseq s 0 79) "…") s)))))
 
 (defun module-index ()
   "Alist of (CATEGORY . COUNT) over every recorded definition, keyed by the module
@@ -990,30 +1026,53 @@
 
 ;;; ---- the T fallback: the inspector. NOTHING is a dead end ----------------
 
-(defmethod present ((x t))
-  "The inspector, and the reason nothing is ever a dead end. Each row drills into its
-   VALUE — and, where the field is a real place, carries the setter that writes a new
-   one back (INSPECT-PLACES). So the inspector is a view of LOCATIONS, not just of
-   contents, which is what lets the shell offer to change one."
-  (make-view :title (format nil "~s" x) :kind :inspector :subject x
+(defun inspector-view (x &key (subject x) raw)
+  "The field-by-field view of X. Each row drills into its VALUE — and, where the field
+   is a real place, carries the setter that writes a new one back (INSPECT-PLACES). So
+   the inspector is a view of LOCATIONS, not just of contents, which is what lets the
+   shell offer to change one. RAW (the SUBJ-OBJECT reading) keeps drilling AS OBJECTS:
+   once you asked for the instance, a field holding a pane opens that pane's fields,
+   not the screen the pane draws."
+  (make-view :title (format nil "~:[~;inspect ~]~a" raw (object-title x))
+             :kind :inspector :subject subject
              :items (mapcar (lambda (p)
                               (make-item :label  (format nil "~s" (getf p :label))
                                          :detail (let ((*print-length* 6) (*print-level* 3))
                                                    (format nil "~s" (getf p :value)))
                                          :edit (getf p :set)
-                                         :subject (getf p :value)))   ; drill the value
+                                         :subject (if raw   ; drill the value
+                                                      (inspect-subject (getf p :value))
+                                                      (getf p :value))))
                             (inspect-places x))))
+
+(defmethod present ((x t))
+  "The inspector, and the reason nothing is ever a dead end."
+  (inspector-view x))
+
+(defmethod present ((s subj-object))
+  (inspector-view (subj-object-value s) :subject s :raw t))
 
 (defmethod commands-for ((x t))
   "What ANY object affords. `Evaluate in context' is the important one: it is the
    Smalltalk inspector's code pane, and it turns this fixed list into an open one —
    anything we did not build a command for, you can type. See model.lisp's
    EVAL-IN-CONTEXT and doc/inspector-history.org."
-  (list (make-command :label "Inspect" :key "C-c C-i" :surfaces '(:menu :halo) :target x)
+  (list (make-command :label "Inspect" :key "C-c C-i" :surfaces '(:menu :halo)
+                      :target (inspect-subject x))
         (make-command :label "Evaluate in context..." :key "C-c C-e"
                       :surfaces '(:menu :palette :key) :target x)
         (make-command :label "Why is this alive?" :surfaces '(:menu :palette)
                       :target (subj-retention x) :disposition :new-trail)))
+
+(defmethod commands-for ((s subj-object))
+  "The instance's commands, plus the way back to what it normally shows."
+  (let ((x (subj-object-value s)))
+    (list (make-command :label "Open its view" :surfaces '(:menu :palette)
+                        :target x :disposition :in-place)
+          (make-command :label "Evaluate in context..." :key "C-c C-e"
+                        :surfaces '(:menu :palette :key) :target s)
+          (make-command :label "Why is this alive?" :surfaces '(:menu :palette)
+                        :target (subj-retention x) :disposition :new-trail))))
 
 ;;; ---- REPL demo: render a view (and its commands) as text -----------------
 
