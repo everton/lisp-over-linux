@@ -148,8 +148,9 @@
     ;; cooked-tty split (lol.qmp:hold explains why).
     ("spotter"   "l" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5) (:type "coll")))
     ;; a FUNCTION as an object (doc/inspector-history.org §5.5): the primer fits one
-    ;; screen, so ONE PageDown parks point on its last line; MAKE-COUNTER is the last
-    ;; real form above it (only comments follow), so Inspect it opens the closure.
+    ;; screen, so ONE PageDown parks point on its last line; the last form above it is
+    ;; the COMPILE-d twin of MAKE-COUNTER (runnable in the guest since logcount-fix),
+    ;; so Inspect it opens that closure — the same two captures.
     ;; The payload is the two capture rows — one marked (settable) because SBCL boxed
     ;; it in a VALUE-CELL when something assigned to it, one not because it is only
     ;; ever read: a decision the compiler made about your code, made visible.
@@ -157,8 +158,7 @@
                       (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 2.5)))
     ;; a SECOND PROCESS contributing a view (doc/processes.org §7). Typed rather than
     ;; paged to, because what is being shown is that the pid in the provenance row is
-    ;; not 1. NB: a plain CALL is safe to type here; a form the compiler would have to
-    ;; compile generic arithmetic for is not — see inspector-history.org §5.6.
+    ;; not 1.
     ("worker"    "p" ((:wait 1.0) (:type "(subj-worker :self)") (:wait 0.8)
                       (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 3.0)))))
 

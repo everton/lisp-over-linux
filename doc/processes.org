@@ -431,7 +431,10 @@ measured in [[file:inspector-history.org][inspector-history.org]] §5.6, and it 
 must be written with a body the guest can compile at all, or it will blame the
 library for something that is not the library's fault. The termios probe here
 used =with-raw-mode=, which does no arithmetic, so its verdict stands — checked
-again afterwards against a trivial lambda as a control.
+again afterwards against a trivial lambda as a control. (/2026-10-02:/ that deeper
+problem is fixed — an SBCL 2.6.8 =LOGCOUNT= bug on POPCNT-less CPUs such as QEMU's
+default, repaired by [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]] — so the guest now compiles arithmetic too,
+and this caveat only matters for an image built without that fix.)
 
 This is a sharper constraint than "does it fit in the image", and it applies to
 every future dependency — including the org parser of [[file:code-browser.org][code-browser.org]] §8½ and

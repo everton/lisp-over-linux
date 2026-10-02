@@ -22,7 +22,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/networking.org` | Networking: kernel `NET`/`INET`/`virtio-net` + userland `sb-bsd-sockets`, static IP/DHCP, the TCP REPL. Wired path working; DNS/Wi-Fi ahead. |
 | `doc/code-browser.org` | **The active major effort.** Full design + phase tracker for the Smalltalk/Pharo-style code browser: the `present` drill-down protocol, the accordion shell, trails/tabs/Spotter, the debugger. The longest doc here and the best maintained — treat its phase list as truth. |
 | `doc/fonts.org` | How our pure-Lisp renderer turns a character into pixels (PSF/`.lolf` bitmap → `draw-string`), and how to change the font or its size. |
-| `doc/inspector-history.org` | **Design doc that became code (2026-09-20).** What an inspector could do on Interlisp-D, the Lisp Machines, Smalltalk, CLIM and SLIME — a 13-power catalogue — then which four are cheap here, each *prototyped against `./sbcl` before being written down* (`all-instances` via the heap walker, `search-roots` for "why is this alive", Smalltalk-style eval-in-the-object's-context, settable `sb-di` frame locals), with measured numbers and effort. Four of them now ship; §6 records what they actually cost and four ways the estimate was wrong. Still owed: settable debugger frame locals (§5.4). |
+| `doc/inspector-history.org` | **Design doc that became code (2026-09-20).** What an inspector could do on Interlisp-D, the Lisp Machines, Smalltalk, CLIM and SLIME — a 13-power catalogue — then which four are cheap here, each *prototyped against `./sbcl` before being written down* (`all-instances` via the heap walker, `search-roots` for "why is this alive", Smalltalk-style eval-in-the-object's-context, settable `sb-di` frame locals), with measured numbers and effort. Four of them now ship; §6 records what they actually cost and four ways the estimate was wrong. Still owed: settable debugger frame locals (§5.4). §5.6 is the guest compile bug's whole hunt, wrong hypotheses kept and marked. |
 | `doc/agent.org` | **PLAN.** An LLM client written in Lisp and living in the image: HTTP/JSON/SSE over the existing sockets, `registry.lisp`/`model.lisp`/`present.lisp` as its tool surface, doorways from the REPL / a browser tab / the debugger, and TLS 1.3 from scratch as a late sub-project. Also records why we are *not* running the `claude` CLI in the guest. |
 | `doc/x11.org` | The pure-Lisp X11 **client** (`poc/x11.lisp`): the wire format, MIT-MAGIC-COOKIE auth, `PutImage` + banding, keycodes vs keysyms. The host dev backend — deliberately NOT in `LISP_SOURCES`, so it never ships in the image. |
 | `doc/processes.org` | **Concurrent components that share graphical resources.** Why exactly one process may write `/dev/fb0`, the split between a peer that sends a *view* (cheap — `present` is not a pixel protocol) and one that sends *pixels* (a compositor, declined with reasons), what two processes would do to one mouse, and fork/exec vs copy-on-write. §6 is the **`sb-posix` audit**, which concluded by changing nothing: its inline entry points cannot be RECOMPILED in the guest, so using them would cost live editing — a rule that binds every future dependency. §7 is **built** (`initramfs/worker.lisp`).|
@@ -36,12 +36,14 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `check-scroll.lisp` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. |
 | `check-clipboard.lisp` | Boot the image under QEMU and **assert the desk around the editor**: the Workspace-only start, the Emacs/PC clipboard keys (`C-k` accumulation, `C-y`, Shift-Insert), drag → PRIMARY + history, middle-click paste, `C-x r k`, the right-button menu, the middle-button halo (walking its layers out to a `PANE`, Inspect on the instance, `Code: tv-draw` from the text view), `SuperL-h`, the idle pointer hiding, the systray. `LOL_SHOTS=DIR` keeps screendumps of the overlays. |
 | `check-pointer.lisp` | Boot the image under QEMU and **assert that a bare mouse move does not redraw the browser** — counts `draw-browser` calls (via `sb-int:encapsulate`) across real QMP pointer motion, and checks the screendump: arrow at the new place, no smear at the old, never in the canvas. Also asserts **press-and-drag selects text** (QEMU's left button held across real motion), and prints what a full frame and a pointer move cost in that guest. |
+| `check-compile.lisp` | Boot the image under QEMU and **assert the guest can compile at runtime**: untyped `(* x 2)` and friends, the `AREF` probe, the Workspace's `COMPILE`-d counter, and `accept-source` of `(defun zz-b (x) (* x 2))` (what `C-c C-c` calls). Fails first if the guest CPU *has* POPCNT, since then it would prove nothing. All guest checks honour `LOL_PORT` (host port of the net-REPL forward, default 4005 — set it to run two guests at once) and `LOL_QEMU_CPU` (a QEMU `-cpu` model; default qemu64). |
 | `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the `code-browser.org` illustrations (`--scenes` lists them). |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): boots straight into the environment (`run-browser-fb`), and falls back to the REPL / worker / power-off menu when you leave it or it dies. |
 | `initramfs/registry.lisp` | The definition registry: `load-recording` captures every module's source INTO the image, so the running system can show its own code (`source-of`, `show-source`, `senders`). Phase 0 of the code browser — see `doc/code-browser.org`. |
 | `initramfs/model.lisp` | The code browser's MODEL layer (Phase 1): CLOS introspection via `sb-mop` — class DAG (`show-class`), GF/method graph (`show-gf`, `applicable-methods`), `categorize`, object inspector (`show-inspect`). Also the **inspector powers** (`doc/inspector-history.org`): a closure's captures as places (`closure-captures` — settable only when SBCL boxed them), `all-instances` (heap walk), `retention-path` (`sb-ext:search-roots`), `eval-in-context` (Smalltalk's `self` pane), `apply-function`. Headless/REPL-driven. |
-| `initramfs/present.lisp` | The drill-down `present`/`commands-for` protocol + affordance model (code browser §4½). `(present subject)`→a view of drillable items; `(commands-for subject)`→declarative commands (menu/halo/palette/key). Includes the **function view** (a closure's captures as fields, source/senders/disassembly doors) and the instances / retention / disassembly subjects, and `subj-object` — "this value as an object", what the halo's Inspect opens so a pane or a browser handle shows its fields rather than its view. Headless; `(show-view subject)` demos it. The Workspace primer fits one screen: an example per verb, a runnable closure to inspect (`make-counter`), and the `COMPILE` version only as a commented do-not-run (it crashes the guest — see the compile fact below). |
+| `initramfs/logcount-fix.lisp` | **A patch to SBCL itself**, first in `LISP_SOURCES`: rewrites SBCL 2.6.8's `LOGCOUNT` assembly routine in place (RDI→RDX in 13 ModRM bytes) so its no-POPCNT path agrees with its only caller, then proves it at build time with POPCNT switched off. Without it the guest cannot compile arithmetic (see the compile fact below). |
+| `initramfs/present.lisp` | The drill-down `present`/`commands-for` protocol + affordance model (code browser §4½). `(present subject)`→a view of drillable items; `(commands-for subject)`→declarative commands (menu/halo/palette/key). Includes the **function view** (a closure's captures as fields, source/senders/disassembly doors) and the instances / retention / disassembly subjects, and `subj-object` — "this value as an object", what the halo's Inspect opens so a pane or a browser handle shows its fields rather than its view. Headless; `(show-view subject)` demos it. The Workspace primer fits one screen: an example per verb, a runnable closure to inspect (`make-counter`), and last its `COMPILE`-d twin, live since the guest compile bug was fixed (see the compile fact below). |
 | `initramfs/fb-browser.lisp` | The code browser **on the bare framebuffer** as PID 1 (menu `b`): `poc/shell.lisp`'s shell rendered via `present-fb` under `KD_GRAPHICS`, keyboard + evdev mouse multiplexed with `poll(2)`, the Spotter overlay, the live debugger (`run-debugger-fb`), the menus/halo chooser (`run-chooser-fb`), the clipboard manager (`run-clipboard-fb`), the touchpad's emulated buttons (`pad-press-button`), the idle-hiding pointer and the systray's per-second tick. The image boots straight into it, on the Workspace. |
 | `initramfs/framebuffer.lisp` | `/dev/fb0` basics: read the live geometry from sysfs (`read-fb-geometry`) and blit the Land-of-Lisp alien (`draw-alien`). See `doc/framebuffer.org`. |
 | `initramfs/line-editor.lisp` | "Poor man's readline" in pure Lisp: raw-mode termios via FFI, history, completion. See `doc/line-editing.org`. |
@@ -260,24 +262,31 @@ protocol in a tiled, keyboard-first shell. Progress:
 - Real UEFI has no VGA text mode → need `FB_EFI` + `FRAMEBUFFER_CONSOLE`, or the screen is blank.
 - PID 1 must never return, or the kernel panics.
 - A saved SBCL image is a **frozen heap**: install libraries *before* `save-lisp-and-die`, not at runtime. No Quicklisp/`require` at runtime (no contrib fasls, no network).
-- **Runtime compilation of GENERIC ARITHMETIC faults in the guest** (found 2026-09-20,
-  not fixed): compiling `(lambda (x) (* x 2))` — or any untyped `+ - * <  1+` — dies with
-  `Unhandled memory fault at #x1A`. Declare the types (`fixnum`, `double-float`) and it
-  compiles fine; `car`/`length`/closures compile fine; the same forms compile fine in a
-  frozen core on the *host*. So it is generic arithmetic's static-space call fixup, in
-  the guest only. **This breaks `C-c C-c` live editing**: `accept-source` faults on
-  `(defun zz-b (x) (* x 2))` and succeeds on `(defun zz-a () :ok)`, so *accepting an
-  edit* to any definition doing untyped arithmetic takes the guest down — and most real
-  definitions do arithmetic somewhere. Read the split as **compile vs. accept, not
-  compile vs. Workspace**: `Do it` on a plain call is fine (SBCL's simple evaluator
-  never invokes the compiler, which is why nothing noticed before), `Accept` on
-  arithmetic is not. Full measurements: `doc/inspector-history.org` §5.6.
-  A second shape, seen 2026-09-29: compiling `(aref (lol.canvas:canvas-pixels c) 5)` —
-  an `aref` on a `(unsigned-byte 32)` vector the compiler cannot see the type of —
-  signals `NIL is not of type SB-VM::SPECIALIZED-ARRAY-ELEMENT-TYPE-PROPERTIES` in the
-  guest. It bites **net-REPL probes**, because `probe` wraps the form in
-  `ignore-errors` and so forces a compile; send a form of plain nested calls with no
-  wrapper and the simple evaluator runs it (`check-pointer.lisp`'s `probe-plain`).
+- **The guest compiles at runtime — because `logcount-fix.lisp` patches SBCL**
+  (found 2026-09-20, root-caused and fixed 2026-10-02). The symptoms were: compiling
+  untyped arithmetic (`(lambda (x) (* x 2))`, any `+ - * < 1+`) died with `Unhandled
+  memory fault at #x1A`, a typed `aref` on `(unsigned-byte 32)` signalled `NIL is not of
+  type SB-VM::SPECIALIZED-ARRAY-ELEMENT-TYPE-PROPERTIES`, and so `C-c C-c` could not
+  accept most real definitions. **Cause: SBCL 2.6.8 itself, on a CPU without POPCNT.**
+  QEMU's default CPU (qemu64) has no POPCNT; the laptop does, so real hardware never
+  had the bug. Compiled `LOGCOUNT` falls back to an assembly routine; 2.6.8 reordered
+  the Lisp argument registers to RDI RSI RDX and the routine moved to RDI, but its one
+  caller still passes and reads RDX — so `(logcount x)` returned `x` and the routine
+  clobbered the caller's RDI (the fault: `BIGNUM-LOGCOUNT` loading through a bit count;
+  the NIL: `(unsigned-byte 32)` printed as `(mod 4294967296)`, which `find-saetp` does not
+  know). **Fix:** `initramfs/logcount-fix.lisp`, first in `LISP_SOURCES`, rewrites the
+  routine to RDX at build time and self-tests with the POPCNT bit (`[NIL+97]`, bit 1)
+  cleared; `check-compile.lisp` asserts it in the guest. **Ruled out** (don't re-search):
+  `build.sh`/tree-shaking (the plain `./sbcl` core shows it too with the bit cleared),
+  PID 1 / `SBCL_HOME` / environment / static-space mapping / kernel config (the same
+  image and bzImage under `-cpu max` compile fine), SBCL's AVX2 routine variants, and
+  "static-space call fixups for `GENERIC-*`" (the old hypothesis; `#x1A` was a bit count,
+  not a tagged 13). **Reproduce on the host in a second**: clear that bit with
+  `(setf (sap-ref-8 (int-sap (+ (get-lisp-obj-address nil) 97)) 0) …)` in a plain
+  `./sbcl` and print `(sb-kernel:type-specifier (sb-kernel:specifier-type '(signed-byte
+  64)))`. If `./sbcl` is ever bumped, the patch refuses to touch an unfamiliar routine and
+  warns; then re-check whether upstream fixed it. Full story: `doc/inspector-history.org`
+  §5.6. (`check-pointer.lisp`'s `probe-plain` dodged the `aref` shape and is kept as is.)
 - **Networking is on** (tag #21 onward): `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
   Details: `kernel-config.org` and `doc/networking.org`.

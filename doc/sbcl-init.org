@@ -21,7 +21,9 @@ with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabl
 tag #21 = IPv4 networking + QEMU virtio-net (kernel half; the userland half has
 since landed too — see [[file:networking.org][networking.org]]); tag #22 = dropped legacy BSD PTYs
 (/dev declutter; Unix98 PTYs stay); tag #23 = rebased onto Linux 7.1.3; tag #24 =
-rebased onto Linux 7.2.5 (and SBCL 2.6.6 -> 2.6.8).
+rebased onto Linux 7.2.5 (and SBCL 2.6.6 -> 2.6.8). That SBCL bump broke runtime
+compilation on POPCNT-less CPUs such as QEMU's default; [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]] repairs
+it at build time (2026-10-02, userland only, still tag #24).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -139,6 +141,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 [[file:../build.sh::LISP_SOURCES][build.sh → LISP_SOURCES]], and that array is the truth. Reproduced here in order:
 
   | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
+  | [[file:../initramfs/logcount-fix.lisp][=logcount-fix.lisp=]] | *first*: patches SBCL 2.6.8's =LOGCOUNT= routine for CPUs without POPCNT (QEMU's default qemu64), then self-tests with POPCNT switched off — without it, compiling arithmetic at runtime faults the guest ([[file:inspector-history.org][inspector-history.org]] §5.6) |
   | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector — incl. closures-as-records, =all-instances=, =retention-path=, =eval-in-context= ([[file:inspector-history.org][inspector-history.org]]) |
   | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless); the function/instances/retention/disassembly views |
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
@@ -165,7 +168,10 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 Ordering constraints, so you know which moves are safe: =line-editor= must precede
 =repl= and =shell= (both use its =with-raw-mode= macro at load time); =canvas=
 precedes =textview=/=fb=/=shell=; =model= precedes =present=; =net= precedes
-=dhcp=; and =supervisor= is last because it is the entry point. Everything else
+=dhcp=; =logcount-fix= goes first so the image is repaired before anything else
+lands (nothing at build time needs it — the build host has POPCNT — but first is
+where a reader looks for a patch to SBCL itself); and =supervisor= is last because
+it is the entry point. Everything else
 is grouped for readability rather than forced.
 
 Note that the =poc/= toolkit is not a copy — =build.sh= loads those files
@@ -307,6 +313,7 @@ generates:
   (load ".../initramfs/registry.lisp")          ; defines load-recording (plain load)
   ;; …then one (load-recording "…") per module, in LISP_SOURCES order — see the
   ;; table above; the list is generated, so it never drifts from build.sh.
+  (load-recording ".../initramfs/logcount-fix.lisp") ; patches SBCL, self-tests
   (load-recording ".../initramfs/model.lisp")
   ;;  …
   (load-recording ".../initramfs/supervisor.lisp")

@@ -57,9 +57,10 @@
   "PROBE without its IGNORE-ERRORS wrapper, parsed as an integer. A form of nothing
    but nested function calls is evaluated by SBCL's simple evaluator WITHOUT the
    compiler; wrapped in IGNORE-ERRORS it is compiled first — and the guest compiler
-   is what fails on this AREF (\"NIL is not of type SPECIALIZED-ARRAY-ELEMENT-TYPE-
-   PROPERTIES\") and on untyped arithmetic (the #x1A memory fault, AGENTS.md). So:
-   no wrapper, and the index is computed here on the host."
+   USED to fail on this AREF (\"NIL is not of type SPECIALIZED-ARRAY-ELEMENT-TYPE-
+   PROPERTIES\"), until initramfs/logcount-fix.lisp (check-compile.lisp asserts
+   it). Kept plain anyway: one less compile per pixel read, and the index is
+   computed here on the host."
   (write-string (format nil "(format t \"~~%<<~~s>>~~%\" ~a)" form-string) *repl*)
   (write-char #\Newline *repl*) (force-output *repl*)
   (flet ((answer (s) (between-markers (strip-ansi s))))
