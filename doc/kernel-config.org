@@ -31,7 +31,8 @@ grep -E 'CONFIG_(EFI|EFI_STUB|FB|FB_EFI|FRAMEBUFFER_CONSOLE|VT|VT_CONSOLE|PCI|\
 PCI_MSI|PCIEPORTBUS|USB|XHCI|EHCI|OHCI|HID|INPUT_EVDEV|INPUT_KEYBOARD|\
 KEYBOARD_ATKBD|SERIO|I2C|ACPI|DEVTMPFS|TMPFS|TTY|SERIAL_8250|BLK_DEV_INITRD|\
 INITRAMFS_SOURCE|PRINTK|BINFMT_ELF|FUTEX|MULTIUSER|FONTS|FONT_|\
-NET|INET|UNIX|PACKET|NETDEVICES|VIRTIO|VIRTIO_PCI|VIRTIO_NET)=' .config | sort
+NET|INET|UNIX|PACKET|NETDEVICES|VIRTIO|VIRTIO_PCI|VIRTIO_NET|\
+POWER_SUPPLY|ACPI_AC|ACPI_BATTERY|RTC_MC146818_LIB)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -150,12 +151,25 @@ nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the bro
 | Option        | State | Role                                                          |
 |---------------+-------+---------------------------------------------------------------|
 | =CONFIG_ACPI= | y     | Power-off (=reboot(RB_POWER_OFF)= -> =_S5=); depends on PCI    |
+| =CONFIG_ACPI_BATTERY= | y | The battery in =/sys/class/power_supply/BAT0/= (the systray) |
+| =CONFIG_ACPI_AC=      | y | The adapter's =online= file (=/sys/class/power_supply/AC/=)  |
+| =CONFIG_POWER_SUPPLY= | y | The sysfs class both register into; =select=-ed by both      |
+| =CONFIG_RTC_MC146818_LIB= | y | Reading the CMOS clock at boot; =select=-ed by =config X86= |
+| =CONFIG_RTC_CLASS=    | n | Not needed: x86 reads the CMOS clock itself (no =/dev/rtc=)  |
 
 The path from our Lisp to the machine actually stopping: [[file:../initramfs/process.lisp::defun power-off][=power-off=]] FFI-calls
 =reboot(2)=, which lands in [[file:../linux/kernel/reboot.c][=kernel/reboot.c=]]; for =RB_POWER_OFF= that ends in
 ACPI's =_S5= handling in [[file:../linux/drivers/acpi/sleep.c][=drivers/acpi/sleep.c=]]. This is why the option depends
 on PCI: evaluating =_S5= needs ACPI operation regions that address PCI config
 space, so with =CONFIG_PCI= off the shutdown silently halted instead.
+
+The battery and AC rows were never chosen by hand — both are =default y= under
+=CONFIG_ACPI= in [[file:../linux/drivers/acpi/Kconfig][=drivers/acpi/Kconfig=]], so they arrived with it at tag #19
+and sat unused until the browser's systray read them. Listed here because the tray
+now depends on them. Likewise the clock: with =RTC_CLASS= off there is no RTC
+driver, yet the system time is right at boot, because x86's =timekeeping_init()=
+path reads the CMOS chip directly through =RTC_MC146818_LIB=. Both stories, and why
+the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 — no rebuild involved.)
 
 * 5. Filesystems & userland glue
 

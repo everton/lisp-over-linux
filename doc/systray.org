@@ -1,0 +1,206 @@
+#+TITLE: The systray — battery from sysfs, time from the CMOS clock
+#+STARTUP: showall
+
+Sibling docs: [[file:kernel-config.org][kernel-config.org]] §4 (the options that make the battery
+visible) · [[file:code-browser.org][code-browser.org]] (the browser whose tab strip carries the tray) ·
+[[file:input.org][input.org]] (the same "the kernel already exposes it as a file" lesson, for
+the mouse).
+
+Question that prompted this: /the browser fills the whole screen, so where do the
+battery and the time go?/ Into a small tray at the right end of the tab strip. This
+doc is about the *data* behind it — [[file:../initramfs/sysinfo.lisp][=initramfs/sysinfo.lisp=]]. The drawing is the
+shell's.
+
+* The one-sentence essence
+
+The battery is a handful of one-line text files the kernel keeps under
+=/sys/class/power_supply/=, and the time is =get-universal-time= plus one fixed
+number — the UTC offset — because the image has no time-zone database.
+
+* 1. The model: the host's StumpWM mode line
+
+The user's host runs StumpWM, and the tray copies its mode line so the two machines
+look alike. From =~/.stumpwmrc= (=*screen-mode-line-format*=), right-aligned after
+the window list, separated by =" | "=:
+
+| # | Field             | Host source                                                   | Here                                  |
+|---+-------------------+---------------------------------------------------------------+---------------------------------------|
+| 1 | battery           | =~/.local/bin/battery-modeline= (parses =acpi -b=)             | *done* — =battery-string=             |
+| 2 | Wi-Fi SSID        | =iwgetid -r=, else =Not connected!=                            | roadmap — needs a Wi-Fi driver first  |
+| 3 | date and time     | =%d= with =*time-modeline-string*= = ="%F %T"=                 | *done* — =clock-string=               |
+| 4 | tray icons        | =%T= — the stumptray module's placeholder                      | the shell's icons (clipboard first)   |
+
+So the clock reads =2026-10-02 09:01:52= — ISO date, 24-hour time, seconds — and
+the battery reads exactly what the host's script prints:
+
+| State                         | Text            | Tone        | Host colour |
+|-------------------------------+-----------------+-------------+-------------|
+| discharging, ≥ 50 %           | =BAT -72% 3:05= | =:ok=       | green       |
+| discharging, 20–49 %          | =BAT -45% 1:20= | =:warn=     | yellow      |
+| discharging, < 20 %           | =BAT -12% 0:18= | =:low=      | red         |
+| charging / full / not charging | =BAT +37% 3:13=, =BAT 100%= | =:charging= | green |
+
+=+= is charging, =-= discharging, and =H:MM= is time to full or to empty. A status
+of =Unknown= is coloured as if discharging, as the host script does.
+
+*Roadmap* (fields the host has and we don't yet): the Wi-Fi SSID (blocked on the
+kernel — real-hardware Wi-Fi NICs are deliberately off, [[file:kernel-config.org][kernel-config.org]]
+"Deliberately OFF"); the wired link's state would be a natural stand-in until
+then. A second battery (some ThinkPads have two) is read as "the first one" today,
+as =acpi -b='s first line is on the host.
+
+* 2. Battery: the power_supply class in sysfs
+
+*sysfs* is a filesystem the kernel synthesises in memory and mounts at =/sys=
+(our [[file:../initramfs/preinit.c][=preinit.c=]] mounts it): every file is a window onto one kernel variable,
+and reading it makes the kernel format that value as text on the spot. Nothing is
+stored on disk; =cat= is the whole API.
+
+The *power_supply class* is the kernel's one vocabulary for anything that powers
+the machine. Each supply registers a directory under =/sys/class/power_supply/=
+(a symlink into the device tree), with one attribute per file. On the host
+laptop today:
+
+#+begin_example
+/sys/class/power_supply/AC/type       Mains
+/sys/class/power_supply/AC/online     1
+/sys/class/power_supply/BAT0/type     Battery
+/sys/class/power_supply/BAT0/status   Full
+/sys/class/power_supply/BAT0/capacity 100
+/sys/class/power_supply/BAT0/charge_now  2306000    (µAh)
+/sys/class/power_supply/BAT0/charge_full 2306000
+/sys/class/power_supply/BAT0/current_now 1000       (µA — a trickle, while full)
+#+end_example
+
+Who fills them in on a laptop is ACPI: =CONFIG_ACPI_BATTERY= ([[file:../linux/drivers/acpi/battery.c][=drivers/acpi/battery.c=]])
+evaluates the firmware's =_BIF=/=_BST= methods and registers the battery, and
+=CONFIG_ACPI_AC= ([[file:../linux/drivers/acpi/ac.c][=drivers/acpi/ac.c=]]) does the adapter. Both are =default y= in
+[[file:../linux/drivers/acpi/Kconfig][=drivers/acpi/Kconfig=]] and both =select POWER_SUPPLY=, so they have been in our
+kernel ever since =CONFIG_ACPI= went on at tag #19 — *no kernel change was needed
+for the tray* (checked at tag #24; the =grep= is in [[file:kernel-config.org][kernel-config.org]] §4).
+
+Four details the code honours, each learned from the source rather than assumed:
+
+- *Go by =type=, not by name.* The adapter is =AC= here, =ADP1= or =ACAD= on other
+  firmware. [[file:../initramfs/sysinfo.lisp::defun supply-type][=supply-type=]] reads the file.
+- *Two unit families.* The firmware's =_BIF= declares a power unit, and
+  =battery.c= then exposes either =charge_now=/=charge_full=/=current_now= (µAh, µA)
+  or =energy_now=/=energy_full=/=power_now= (µWh, µW) — never both. This laptop is
+  the charge kind. Time left is =now/rate= hours in either family, so
+  [[file:../initramfs/sysinfo.lisp::defun battery-amounts][=battery-amounts=]] never converts — it only refuses to mix.
+- *Not every battery is the battery.* A wireless mouse's battery is also
+  =type=Battery=, with =scope=Device=; an empty bay says =present=0=.
+  [[file:../initramfs/sysinfo.lisp::defun system-battery-p][=system-battery-p=]] skips both.
+- *The status vocabulary is closed*: exactly =Unknown=, =Charging=, =Discharging=,
+  =Not charging=, =Full= (=POWER_SUPPLY_STATUS_TEXT= in
+  [[file:../linux/drivers/power/supply/power_supply_sysfs.c][=power_supply_sysfs.c=]]).
+
+Reading the battery runs a firmware method each time, so =battery-status= caches
+its answer for =*battery-cache-seconds*= (5) while the clock beside it ticks every
+second.
+
+*QEMU cannot show any of this.* It emulates no ACPI battery or adapter (QEMU 11.1's
+=-device help= lists neither), so under =build.sh --run= the directory is empty and
+the tray shows only the clock — which is also the right answer on a desktop. The
+battery path is tested on the host instead, against fake sysfs trees:
+=sbcl --script poc/sysinfo-test.lisp= ([[file:../poc/sysinfo-test.lisp][source]]).
+
+* 3. Time: the CMOS clock, UTC, and a fixed offset
+
+** Who sets the clock at boot
+
+A PC keeps time while off in the *RTC* — the battery-backed "CMOS clock", a
+MC146818-compatible chip at I/O ports =0x70/0x71=. Usually a userspace tool
+(=hwclock=) or an RTC driver copies it into the kernel's clock at boot. We have
+neither: =# CONFIG_RTC_CLASS is not set=, so there is no =/dev/rtc= and no
+=rtc-cmos= driver. The clock is right anyway, because x86 reads the chip *itself*,
+very early, without the RTC class:
+
+1. =timekeeping_init()= ([[file:../linux/kernel/time/timekeeping.c][=kernel/time/timekeeping.c=]]) calls
+   =read_persistent_wall_and_boot_offset()=, which calls =read_persistent_clock64()=;
+2. on x86 that is [[file:../linux/arch/x86/kernel/rtc.c][=arch/x86/kernel/rtc.c=]], which calls =x86_platform.get_wallclock=;
+3. which defaults to =mach_get_cmos_time= ([[file:../linux/arch/x86/kernel/x86_init.c][=x86_init.c=]]), reading the chip
+   through =mc146818_get_time()= — library code that =config X86= =select=s
+   (=RTC_MC146818_LIB=y= in our =.config=, independent of =RTC_CLASS=).
+
+What it cannot do without =RTC_CLASS= is *write* the time back, or let userspace
+read the chip — fine for a machine that only displays the time.
+
+** UTC or local?
+
+The chip stores a date and time with no zone, and =mach_get_cmos_time= converts it
+with =rtc_tm_to_time64()= — that is, *as UTC*. The kernel only treats it as local
+time if userspace says so (=timekeeping_warp_clock()=, triggered by the first
+=settimeofday= with a zone — what =hwclock --systz= does in local mode). We never
+do that, so the image needs a UTC RTC. The laptop has one — checked on the host
+(the image boots on the same machine):
+
+#+begin_example
+$ timedatectl
+               Local time: Fri 2026-10-02 09:01:52 -03
+           Universal time: Fri 2026-10-02 12:01:52 UTC
+                 RTC time: Fri 2026-10-02 12:01:52
+                Time zone: America/Sao_Paulo (-03, -0300)
+          RTC in local TZ: no
+$ tail -1 /etc/adjtime
+UTC
+#+end_example
+
+A dual-boot with Windows would break this (Windows keeps the RTC in local time),
+and the tray would then read three hours ahead.
+
+** From UTC to local, with no zoneinfo
+
+A time zone is normally a file in =/usr/share/zoneinfo= holding the zone's whole
+history of offsets and DST switches. The image has none, so *a time zone here is
+one integer*: =*utc-offset*=, seconds east of UTC, the sign =date +%z= uses
+(=-0300= → =-10800=). [[file:../initramfs/sysinfo.lisp::defun clock-string][=clock-string=]] passes it to =decode-universal-time= as
+CL's =time-zone= argument — which counts *hours west*, the opposite sign, and may
+be a ratio for zones like =+0530=. Passing it explicitly is also what keeps SBCL
+from asking libc for the local zone, which has nothing to find in the image.
+
+The value is meant to be baked in by =build.sh= from the host's =date +%z= at build
+time (the host and the image are the same laptop, in the same place), and can be
+changed live: =(set-utc-offset "+0100")=.
+
+*The DST caveat.* A fixed offset cannot follow daylight saving. For this host that
+costs nothing: =America/Sao_Paulo='s last transition was 2019-02-16, when Brazil
+abolished DST (=zdump -v -c 2017,2027 America/Sao_Paulo= lists nothing after it).
+In a DST zone, an image built in winter is an hour off all summer, until rebuilt or
+=set-utc-offset= is called. The honest fix, if it is ever needed, is to bake the
+one zone's rules (a POSIX =TZ= string such as =CET-1CEST,M3.5.0,M10.5.0/3= is a
+single line) rather than the whole database.
+
+* 4. The API
+
+All in =CL-USER=, all safe to call every frame — none of them signals:
+
+| Function                     | Returns                                                                   |
+|------------------------------+---------------------------------------------------------------------------|
+| =(battery-status &key fresh)= | =(:percent 87 :status :discharging :ac nil :minutes-left 192 :name "BAT0")= or =NIL= |
+| =(battery-string b)=         | ="BAT -87% 3:12"=                                                          |
+| =(battery-tone b)=           | =:ok= / =:warn= / =:low= / =:charging=                                     |
+| =(clock-string &optional ut)= | ="2026-10-02 09:01:52"= (no seconds when =*clock-seconds*= is =NIL=)      |
+| =(tray-items)=               | a list of plists left to right, each with =:kind= (=:battery=, =:clock=) and =:text= |
+| =(set-utc-offset "-0300")=   | sets =*utc-offset*= (accepts an integer of seconds too)                    |
+
+=*power-supply-root*= (default ="/sys/class/power_supply/"=) is what the host test
+repoints at a scratch directory.
+
+* 5. Drawing it: one strip, repainted by itself
+
+The shell draws the tray at the right end of the tab strip, where the app's name
+used to sit — [[file:../poc/shell.lisp::defun draw-tray][=draw-tray=]]: the clipboard icon (lit while the history holds
+something; a click opens the manager, [[file:clipboard.org][clipboard.org]] §7), then each item of
+=tray-items=, battery coloured by its tone. The tabs stop short of it
+([[file:../poc/shell.lisp::defun tray-width][=tray-width=]]).
+
+The clock is the second thing on screen that changes with nobody touching
+anything (the stage is the first), and it ticks every second. Redrawing the frame
+for it would be cheap — 3 ms under KVM, 5 ms on the laptop
+([[file:framebuffer.org][framebuffer.org]] §9.4) — but it does not have to: the browser's loop wakes at
+the next wall-clock second ([[file:../initramfs/fb-browser.lisp::defun tray-timeout][=tray-timeout=]], from =sb-ext:get-time-of-day=), and
+[[file:../initramfs/fb-browser.lisp::defun tick-tray][=tick-tray=]] repaints only the tray's strip of the canvas and sends only that
+rectangle — the same economy as the pointer (framebuffer.org §9.5). If the pointer
+is parked over the tray it is put back on top. With =*clock-seconds*= nil the wake
+is once a minute.
