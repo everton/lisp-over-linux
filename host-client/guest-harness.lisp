@@ -306,9 +306,10 @@
 (defun leave-browser ()
   "Quit the environment to the supervisor menu: SuperL-q, which works from any pane —
    the environment opens on the Workspace, where a plain 'q' would just be typed.
-   The menu then waits in a cooked READ-LINE, so the next menu letter needs its
-   Enter."
-  (qmp-hold "meta_l" "q") (sleep 1.5))
+   SuperL-q asks first (console or power off): 1 is the console. The supervisor's
+   menu then waits in a cooked READ-LINE, so the next menu letter needs its Enter."
+  (qmp-hold "meta_l" "q") (sleep 1.5)
+  (qmp-key "1") (sleep 1.5))
 
 (defun quiet-kernel-console ()
   "Lower the console log level, so a late printk cannot repaint over whatever the

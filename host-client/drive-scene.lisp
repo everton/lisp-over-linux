@@ -261,9 +261,10 @@
       (finish-output)
       (if (string= mode "repl")
           (progn
-            ;; leave the environment ('q' on its list) for the supervisor menu, where
+            ;; leave the environment (SuperL-q, then 1) for the supervisor menu, where
             ;; 'r' enters the REPL (a cooked read-line, so it needs the Enter)
             (lol.qmp:hold "meta_l" "q") (sleep 1.5)
+            (lol.qmp:key "1") (sleep 1.5)     ; SuperL-q asks: 1 = the console
             (lol.qmp:key "r") (sleep 0.2) (lol.qmp:key "ret") (sleep 1.5)
             ;; each Enter triggers eval + a coloured result line
             (dolist (form *forms*)
@@ -288,6 +289,7 @@
                 (progn (lol.qmp:hold "meta_l" "m") (sleep 2.0))
                 (progn
                   (lol.qmp:hold "meta_l" "q") (sleep 1.5)
+                  (lol.qmp:key "1") (sleep 1.5)   ; SuperL-q asks: 1 = the console
                   (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")
                   ;; Give it time to build the view, open evdev and paint the first
                   ;; full-screen frame.
