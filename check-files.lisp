@@ -12,6 +12,7 @@
 ;;;;   - "+" then a typed name makes a folder — on the disk, owned by the user;
 ;;;;   - libstbi.so loads in the guest and decodes the progressive JPEG;
 ;;;;   - the Spotter's path grammar completes "~/Pic" to Pictures/;
+;;;;   - q on an opened image goes back, and the environment survives it;
 ;;;;   - power-off asks lol-rootd to remount the disk read-only.
 ;;;;
 ;;;; LOL_SHOTS=DIR keeps a screendump of the file manager on Pictures/.
@@ -76,6 +77,20 @@
   (probe "(progn (trail-push (subj-dir (concatenate 'string (sb-ext:posix-getenv \"HOME\") \"/Pictures\") :select \"progressive.jpg\")) t)")
   (qmp-key "down") (qmp-key "up") (sleep 2)
   (shot "file-manager")
+  ;; q on an opened image is BACK. It used to return :quit and kill the whole
+  ;; environment (dropping to the supervisor menu). Popped means the folder is
+  ;; focused again; alive means the loop still reads keys, so a down moves the row.
+  (format t "~&~%== q is back, never leave ==~%")
+  (qmp-key "ret") (sleep 2)
+  (row "opened" (probe "(type-of (pane-subject (current-pane)))"))
+  (qmp-key "q") (sleep 1.5)
+  (check "q on an opened image goes back to its folder"
+         (search "Pictures" (row "focused after q"
+                                 (probe "(ignore-errors (subj-dir-path (pane-subject (current-pane))))"))))
+  (let ((before (probe-int "(pane-sel (current-pane))")))
+    (qmp-key "up") (sleep 1.5)
+    (check "the environment still reads keys after q"
+           (/= before (row "selection after up" (probe-int "(pane-sel (current-pane))")))))
   (format t "~&~%== power-off releases the disk ==~%")
   (probe "(progn (release-disk) t)" 6.0)
   (check "lol-rootd remounted /home read-only"

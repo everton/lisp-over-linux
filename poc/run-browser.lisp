@@ -8,7 +8,7 @@
 ;;;; browser: root at CL-USER, drill a definition, read its code, drill its senders.
 ;;;;
 ;;;; Keys: up/down move · Enter drill · Backspace back · click a breadcrumb to pop
-;;;; to that level · PageUp/PageDown and the mouse WHEEL scroll · q quits.
+;;;; to that level · PageUp/PageDown and the mouse WHEEL scroll · SuperL-q quits (q is back).
 ;;;;
 ;;;; Esc does NOT quit — it is the Emacs Meta prefix (so Esc . is M-., jump to
 ;;;; definition, and Esc , is M-, Senders). Quit with q, or SuperL-q from anywhere.
@@ -42,7 +42,7 @@
        (canvas (lol.canvas:make-canvas w h))
        (d (lol.x11:open-display w h :title "lol - code browser")))
   (open-environment (find-package :cl-user))           ; browser + Workspace tabs
-  (format t "~&Code browser open. up/down move · Enter drill · Backspace back · q quits.~%")
+  (format t "~&Code browser open. up/down move · Enter drill · Backspace back · SuperL-q quits (q is back).~%")
   (format t "Try: drill DRAW-ALIEN for its source, back out, drill a class, inspect a value.~%")
   (finish-output)
   (let ((quit nil))

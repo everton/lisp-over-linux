@@ -399,7 +399,12 @@ line all read the same declarations.
   =SuperL-f= over QMP opens the file manager at =$HOME= (=/home/<user>=); =+= then a typed name
   makes a folder on the ext4 disk owned by uid 1000 (because PID 1 now runs as the
   user — [[file:storage.org][storage.org]] §5); the Spotter completes =~/Pic= to =Pictures/=; and a
-  screendump shows =~/Pictures= with a JPEG decoded by =libstbi.so= in the preview.
+  screendump shows =~/Pictures= with a JPEG decoded by =libstbi.so= in the preview;
+  and =q= on the opened JPEG goes back to the folder with the environment still
+  reading keys. (A bare =q= used to return =:quit= from =browser-key= — a relic of
+  the browser as a menu-launched app — so in any viewer or list without a =q= of its
+  own it dropped you to the supervisor menu. =q= is now /back/; leaving is only
+  =SuperL-q=, which asks.)
   The older guest suites (clipboard, scroll, pointer, compile) still pass with the
   file manager loaded. *Still unverified in the guest:* the Esc interrupt of a long
   find, and the laptop's real =/home= (only the stand-in so far).

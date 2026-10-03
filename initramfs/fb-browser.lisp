@@ -1370,7 +1370,7 @@
      ("PageUp / PageDown"  "page the list / source")
      ("mouse wheel"        "scroll; two fingers on the pad")
      ("Esc"                "Meta prefix: Esc . = M-.")
-     ("q"                  "quit (list & reference panes)"))
+     ("q"                  "back, like Backspace (never leaves)"))
     ("Places  (Super)"
      ("Super-Space"        "the Spotter (C-n / C-p move)")
      ("Super-m"            "the module index: every definition")

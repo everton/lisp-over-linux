@@ -1979,7 +1979,10 @@
          (:down      (lol.textview:tv-key (pane-tv p) :down 0))
          (:page-up   (lol.textview:tv-key (pane-tv p) :page-up 0))
          (:page-down (lol.textview:tv-key (pane-tv p) :page-down 0))
-         (#\q :quit)
+         ;; q is BACK, never "leave": it once returned :quit, a relic of the browser
+         ;; as a menu-launched app, and killed the whole environment from a viewer
+         ;; (an image, say). Leaving is SuperL-q, which asks.
+         (#\q (trail-pop) nil)
          (t nil)))
       ;; --- a subject's own keys on its list (the file manager's letters) ---
       ((and (null (pane-tv p))
@@ -1990,7 +1993,7 @@
       ;; --- list pane: plain-key navigation (nothing to edit) ---
       (t
        (cond
-         ((eql key #\q) :quit)
+         ((eql key #\q) (trail-pop) nil)               ; back, as above — never leave
          ((eq key :up)   (set-pane-sel p (1- (pane-sel p))))
          ((eq key :down) (set-pane-sel p (1+ (pane-sel p))))
          ((eq key :page-up)   (set-pane-sel p (- (pane-sel p) +list-page+)))
