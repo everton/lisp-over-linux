@@ -286,8 +286,25 @@ No root needed: =mke2fs -d DIR= populates the new filesystem from a directory an
 copies each file's owner from the source — us, uid 1000. =build.sh --run= and
 =--interactive= attach the image as virtio-blk whenever it exists
 (=LOL_TEST_DISK== names another, =LOL_TEST_DISK== empty boots diskless). The
-guest harnesses (=check-*.lisp=) start their own QEMU without it, so they keep
-testing the diskless, root-run system they were written for.
+guest harness attaches it only when asked — =LOL_GUEST_DISK=test-disk.img= — and
+then with QEMU's =snapshot=on=, so the guest's writes go to a throwaway overlay
+and the image is identical for the next run. The older checks don't ask, so they
+keep testing the diskless, root-run system they were written for (all five still
+pass at #25).
+
+[[file:../check-files.lisp][=check-files.lisp=]] is the guest test for this doc: mounts, uid 1000, the
+capability mask, a folder made with the file manager owned by the user, JPEG
+through =libstbi.so=, the Spotter's =~/= completion, and =release-disk=:
+
+#+begin_src sh
+  ./make-test-disk.sh
+  LOL_GUEST_DISK=test-disk.img sbcl --script check-files.lisp
+#+end_src
+
+One trap found writing it: the harness's answer markers refuse a =~= (so the echo
+of a =FORMAT= string can never match), and every path row the Spotter returns
+starts with =~/= — a probe that returns those labels reads as "no answer". Ask
+the guest for a boolean instead.
 
 * 9. Before the first real boot
 

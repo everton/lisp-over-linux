@@ -87,6 +87,15 @@
          (list* "-machine" "q35,accel=kvm:tcg" "-m" "2048"
                (append
                 (let ((cpu (sb-posix:getenv "LOL_QEMU_CPU"))) (and cpu (list "-cpu" cpu)))
+                ;; LOL_GUEST_DISK=test-disk.img attaches the stand-in for the laptop's
+                ;; disk (make-test-disk.sh, doc/storage.org). snapshot=on: the guest's
+                ;; writes go to a throwaway overlay, so a test can mkdir and delete
+                ;; freely and the image is identical for the next run. Without it the
+                ;; guest boots diskless, as root — what the older checks expect.
+                (let ((disk (sb-posix:getenv "LOL_GUEST_DISK")))
+                  (and disk (plusp (length disk))
+                       (list "-drive" (format nil "file=~a,format=raw,if=virtio,snapshot=on"
+                                              (namestring (merge-pathnames disk *root*))))))
                 (list
                "-drive" (format nil "if=pflash,format=raw,readonly=on,file=~a" *ovmf-code*)
                "-drive" (format nil "if=pflash,format=raw,file=~a" (path "vars.fd"))
@@ -190,7 +199,7 @@
    punctuation marks these tests need are spelled out."
   (loop for ch across string
         do (qmp-key (case ch
-                      (#\- "minus") (#\Space "spc") (#\. "dot")
+                      (#\- "minus") (#\Space "spc") (#\. "dot") (#\/ "slash")
                       (t (string-downcase (string ch)))))
            (sleep cps)))
 
