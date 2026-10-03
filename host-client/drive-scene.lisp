@@ -49,7 +49,9 @@
 (defparameter *browser-keys* '())
 
 ;;; ---- the named scenes ----------------------------------------------------
-;;; Each is (MENU-KEY . STEPS). A step is one of:
+;;; Each is (MENU-KEY . STEPS). MENU-KEY "b" opens the module index (SuperL-m), "e"
+;;; leaves the environment as it booted, anything else is a supervisor-menu letter.
+;;; A step is one of:
 ;;;   (:key   qcode)        a single key
 ;;;   (:chord qcode…)       a chord, e.g. (:chord "ctrl" "c")
 ;;;   (:hold  mod key)      press key while mod is HELD (see lol.qmp:hold)
@@ -160,7 +162,29 @@
     ;; paged to, because what is being shown is that the pid in the provenance row is
     ;; not 1.
     ("worker"    "p" ((:wait 1.0) (:type "(subj-worker :self)") (:wait 0.8)
-                      (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 3.0)))))
+                      (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 3.0)))
+    ;; ---- the DISK scenes: refresh-screenshot.sh attaches test-disk.img (snapshot=on)
+    ;; for these, so they show the stand-in home of make-test-disk.sh, never the real
+    ;; one. Menu key "e" = the environment as it boots (no SuperL-m).
+    ;; the file manager (doc/file-manager.org): SuperL-f opens $HOME; the live filter
+    ;; ("/") narrows it to Pictures — counted rows broke once, because the symlink
+    ;; notes -> Documents/notes sorts among the folders. Inside, five files sort
+    ;; browser, gradient, orange, plasma, progressive: three downs park on the JPEG,
+    ;; previewed beside the listing through libstbi.so (doc/previews.org).
+    ("files"     "e" ((:hold "meta_l" "f") (:wait 1.5)
+                      (:key "slash") (:type "Pic") (:key "ret") (:key "ret") (:wait 1.0)
+                      (:key "down") (:key "down") (:key "down") (:wait 2.5)))
+    ;; an archive previewed without unpacking: the live filter ("/") narrows $HOME to
+    ;; Documents, and inside it to backup.tar.gz, whose preview is gzip inflated in Lisp, then the tar headers read
+    ;; as a member list. Filtered rather than counted down, so a new dotfile or a
+    ;; changed sort cannot move the target.
+    ("files-archive" "e" ((:hold "meta_l" "f") (:wait 1.5)
+                          (:key "slash") (:type "Doc") (:key "ret") (:key "ret") (:wait 1.0)
+                          (:key "slash") (:type "backup") (:key "ret") (:wait 2.0)))
+    ;; the Spotter reading a PATH (doc/file-manager.org §9): "~/Pic" completes to the
+    ;; Pictures folder of the stand-in home.
+    ("spotter-path" "e" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5)
+                         (:type "~/Pic") (:wait 1.5)))))
 
 ;;; ---- the net REPL: readiness, and quieting the kernel console ------------
 
@@ -283,11 +307,13 @@
                  (menu-key (if entry (second entry) "b"))
                  (steps (if entry (third entry)
                             (mapcar (lambda (k) (list :key k)) *browser-keys*))))
-            (if (string= menu-key "b")
+            (cond
+              ((string= menu-key "e"))        ; the environment as booted: nothing to open
+              ((string= menu-key "b")
                 ;; the environment opens on the Workspace; SuperL-m opens the module
                 ;; index in a fresh tab, row 0 selected — the state 'b' used to boot to
-                (progn (lol.qmp:hold "meta_l" "m") (sleep 2.0))
-                (progn
+                (lol.qmp:hold "meta_l" "m") (sleep 2.0))
+              (t
                   (lol.qmp:hold "meta_l" "q") (sleep 1.5)
                   (lol.qmp:key "1") (sleep 1.5)   ; SuperL-q asks: 1 = the console
                   (lol.qmp:key menu-key) (sleep 0.2) (lol.qmp:key "ret")

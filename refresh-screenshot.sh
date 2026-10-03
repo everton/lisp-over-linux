@@ -20,7 +20,8 @@
 #   scene NAME         one CONCEPT illustration for doc/code-browser.org: the
 #                      module index, the dispatch matrix, the live debugger,
 #                      the COLLIDE stage,
-#                      the Workspace, the Spotter.
+#                      the Workspace, the Spotter; and, booted with the
+#                      stand-in disk (test-disk.img), the file manager.
 #                      -> media/screenshots/<name>-<date>.png
 #
 #   ./refresh-screenshot.sh                    the REPL shot (default)
@@ -87,7 +88,11 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace closure worker"
+SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace closure worker files files-archive spotter-path"
+# These boot with the STAND-IN disk attached (test-disk.img from ./make-test-disk.sh,
+# snapshot=on so nothing persists), so the file manager shows its fake home. Never
+# the real disk — doc/storage.org says why.
+DISK_SCENES="files files-archive spotter-path"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;
@@ -126,6 +131,12 @@ fi
 [ -e "$ISO_ROOT/efi/boot/bootx64.efi" ] || { echo "ERROR: no kernel in iso_root — run ./build.sh --kernel first" >&2; exit 1; }
 [ -e "$ISO_ROOT/initramfs.cpio" ]        || { echo "ERROR: no initramfs in iso_root — run ./build.sh first" >&2; exit 1; }
 
+DISK_ARGS=()
+if [ "$MODE" = scene ] && case " $DISK_SCENES " in *" $SCENE "*) true ;; *) false ;; esac; then
+  [ -f "$MICRO/test-disk.img" ] || { echo "ERROR: scene '$SCENE' needs test-disk.img — run ./make-test-disk.sh" >&2; exit 1; }
+  DISK_ARGS=(-drive file="$MICRO/test-disk.img",format=raw,if=virtio,snapshot=on)
+fi
+
 # ---- scratch dir + cleanup -------------------------------------------------
 WORK="$(mktemp -d)"
 QPID=""
@@ -145,6 +156,7 @@ qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
   -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
   -netdev user,id=net0,hostfwd=tcp::$REPL_PORT-:4005 \
   -device virtio-net-pci,netdev=net0 \
+  "${DISK_ARGS[@]}" \
   -serial file:"$WORK/serial.log" -display none -no-reboot \
   -qmp unix:"$QMP",server,nowait 2>"$WORK/qemu.err" &
 QPID=$!

@@ -1,9 +1,9 @@
 #+TITLE: The file manager — the disk as subjects
 #+STARTUP: showall
 
-The machine boots into the browser and has no shell. Once the coordinating work on
-storage lands (the laptop's =/home= bind-mounted onto ours, PID 1 running as the
-user), there is real data on a real disk — and this file manager is the *only* way
+The machine boots into the browser and has no shell. Since tag #25 the laptop's
+=/home= is bind-mounted onto ours and PID 1 runs as the user ([[file:storage.org][storage.org]]), so
+there is real data on a real disk — and this file manager is the *only* way
 to make a folder, rename a file, delete something or edit a text file. That is the
 bar it is built to: genuinely usable from the keyboard, like dired or ranger, and
 unable to take PID 1 down whatever the disk says.
@@ -187,6 +187,18 @@ What a file is comes from its *bytes*, not its name: =sniff= reads the first 64 
 and checks *magic numbers* — the fixed signatures formats put at their start precisely
 so a program can tell what it holds — the way =file(1)= does.
 
+=SuperL-f=, the live filter (=/=) down to =Pictures=, three rows down: the JPEG is
+decoded by =libstbi.so= and scaled into the preview beside the listing. (Every shot
+here is the stand-in home of =make-test-disk.sh=, captured at tag #25 by
+=./refresh-screenshot.sh --scene files=; see §12.)
+
+[[file:../media/screenshots/files-2026-10-03.png]]
+
+An archive previews as its *member list*, without unpacking: =backup.tar.gz= is
+inflated in Lisp, then only the tar headers are read (=--scene files-archive=):
+
+[[file:../media/screenshots/files-archive-2026-10-03.png]]
+
 | type | detected by | preview | open (Enter) | caps |
 |------+-------------+---------+--------------+------|
 | folder | lstat | its listing | the folder | 2 000 / 20 000 entries |
@@ -306,6 +318,11 @@ is empty the folder itself is the first row. *Tab* completes the common prefix �
 single folder gets its slash, so the next Tab lists inside it. The labels keep the
 form you typed (=~/Doc= completes to =~/Documents/=, not to =/home/…=).
 
+=SuperL-Space= then =~/Pic= over the Workspace (=--scene spotter-path=): one row, the
+folder with its slash, and the footer saying what Enter will do.
+
+[[file:../media/screenshots/spotter-path-2026-10-03.png]]
+
 *Enter* on a folder opens the file manager there in a new tab. On a *file* it opens
 the file manager at the file's *parent with the file selected* — a choice: the Spotter
 finds /places/, and that landing shows the file previewed on the right beside its
@@ -378,10 +395,16 @@ line all read the same declarations.
 - The whole =LISP_SOURCES= list loads in order, warning-free, with plain
   =load-recording= in a fresh =./sbcl= (2.6.8).
 - *In the guest* (tag #25, [[file:../check-files.lisp][check-files.lisp]] with the stand-in disk): a real held
-  =SuperL-f= over QMP opens the file manager at =/home/everton=; =+= then a typed name
+  =SuperL-f= over QMP opens the file manager at =$HOME= (=/home/<user>=); =+= then a typed name
   makes a folder on the ext4 disk owned by uid 1000 (because PID 1 now runs as the
   user — [[file:storage.org][storage.org]] §5); the Spotter completes =~/Pic= to =Pictures/=; and a
   screendump shows =~/Pictures= with a JPEG decoded by =libstbi.so= in the preview.
   The older guest suites (clipboard, scroll, pointer, compile) still pass with the
   file manager loaded. *Still unverified in the guest:* the Esc interrupt of a long
   find, and the laptop's real =/home= (only the stand-in so far).
+- *Screenshots* — the three above are reproducible, not hand-made:
+  [[file:../refresh-screenshot.sh][refresh-screenshot.sh]] =--scene files | files-archive | spotter-path= boots the
+  image headless with =test-disk.img= attached (=snapshot=on=, as the guest test does)
+  and drives it over QMP with the steps in [[file:../host-client/drive-scene.lisp][drive-scene.lisp]]. The scenes *filter*
+  their way to a row instead of counting downs: the first =files= capture landed on
+  =notes/= because the symlink to a folder sorts among the folders.

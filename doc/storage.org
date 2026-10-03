@@ -292,6 +292,10 @@ and the image is identical for the next run. The older checks don't ask, so they
 keep testing the diskless, root-run system they were written for (all five still
 pass at #25).
 
+The same image backs the file manager's screenshots: [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]]
+attaches it, =snapshot=on=, for its disk scenes (=--scene files=, =files-archive=,
+=spotter-path=) and for no others ([[file:file-manager.org][file-manager.org]] shows them).
+
 [[file:../check-files.lisp][=check-files.lisp=]] is the guest test for this doc: mounts, uid 1000, the
 capability mask, a folder made with the file manager owned by the user, JPEG
 through =libstbi.so=, the Spotter's =~/= completion, and =release-disk=:
