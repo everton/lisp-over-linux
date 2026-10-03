@@ -1577,7 +1577,7 @@
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
          ((member key '(#\? #\/))                                              ; Super-? — every binding
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
-         ((member key '(#\q #\Q)) :quit)
+         ((member key '(#\q #\Q)) (leave-menu))                             ; shut down / console
          (t nil)))
       ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
       ;;     SuperL-o (above) hands focus back to the list/stage. This MUST precede the
@@ -1774,6 +1774,56 @@
   "A press just placed TV's caret at X,Y: a drag from here selects in TV."
   (setf *drag-tv* tv *drag-origin* (cons x y)))
 
+;;; Double and triple click, as X does it: a second press on the same spot soon after
+;;; the first selects the WORD there, a third the whole LINE (its newline included, as
+;;; xterm does), and a fourth starts over with a plain caret. What gets selected goes
+;;; straight to PRIMARY and the history, like a drag's — that is the point of it in X:
+;;; double-click a word, middle-click it somewhere else.
+
+(defparameter +multi-click-ms+ 400
+  "How soon a press must follow the last one to count as the next click of a run.")
+
+(defvar *last-press* nil
+  "(TV X Y TIME COUNT) of the last left press in text: what MULTI-CLICK counts from.")
+
+(defun press-count (tv x y)
+  "This press on TV at X,Y is the Nth of a run (1, 2, 3, then 1 again): the same view,
+   within +DRAG-SLOP+ of the last press and +MULTI-CLICK-MS+ after it."
+  (let* ((now (get-internal-real-time))
+         (n (destructuring-bind (&optional ltv lx ly lt (lc 0)) *last-press*
+              (if (and (eq ltv tv)
+                       (<= (abs (- x lx)) +drag-slop+) (<= (abs (- y ly)) +drag-slop+)
+                       (<= (- now lt) (* +multi-click-ms+ (/ internal-time-units-per-second 1000))))
+                  (1+ (mod lc 3))
+                  1))))
+    (setf *last-press* (list tv x y now n))
+    n))
+
+(defun text-press (tv x y)
+  "A left press in text view TV at X,Y: place the caret and arm a drag, or — as the
+   second or third click of a run — select the word or the line there."
+  (lol.textview:tv-click tv x y)
+  (let ((n (press-count tv x y))
+        (l (lol.textview:tv-point-line tv))
+        (lines (lol.textview:tv-lines tv)))
+    (case n
+      (1 (arm-drag tv x y))
+      (2 (multiple-value-bind (start end)
+             ;; the glyph UNDER the pointer (floor), not the caret gap nearest it
+             (token-span (aref lines l)
+                         (floor (- x (lol.textview::tv-x tv) (lol.textview::tv-pad tv)
+                                   lol.textview::*gutter-w*)
+                                (lol.textview::tv-cw tv)))
+           (when start (lol.textview:tv-select-span tv l start l end))))
+      (3 (if (< (1+ l) (length lines))
+             (lol.textview:tv-select-span tv l 0 (1+ l) 0)
+             (lol.textview:tv-select-span tv l 0 l (length (aref lines l))))))
+    (when (> n 1)
+      (let ((text (editor-region-text tv)))
+        (when text
+          (lol.clipboard:clip-select text)
+          (clip-status "selected" text))))))
+
 (defun browser-click (x y &optional ctrl super)
   "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
    list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
@@ -1818,8 +1868,7 @@
        (cond
          (ctrl (jump-to-definition (pane-tv p) x y))
          ((lol.textview:tv-hit-p (pane-tv p) x y)
-          (lol.textview:tv-click (pane-tv p) x y)
-          (arm-drag (pane-tv p) x y))))
+          (text-press (pane-tv p) x y))))
       ;; dispatch matrix: a cell drills its effective-method onion
       ((eq (view-kind (pane-view p)) :matrix)
        (matrix-cell-click p x y))
@@ -1848,7 +1897,7 @@
               ((and tv (lol.textview:tv-hit-p tv x y))
                (if ctrl
                    (jump-to-definition tv x y)
-                   (progn (lol.textview:tv-click tv x y) (arm-drag tv x y))))
+                   (text-press tv x y)))
               ;; a list in the right column: select the row that was drawn there,
               ;; read back from its OWN hit map (see *SIDE-ROWS*)
               ((null tv)
@@ -2477,6 +2526,28 @@
   (let ((i (position-if (lambda (trail) (typep (pane-subject (first trail)) 'subj-modules))
                         *trails*)))
     (if i (activate-trail i) (new-trail (subj-modules)))))
+
+(defvar *leave-action* nil
+  "How the environment was left: :POWER-OFF or :CONSOLE (the supervisor's menu), set
+   by LEAVE-MENU. The backend reads it once it has given the screen back.")
+
+(defun leave-menu ()
+  "SuperL-q: ask how to leave — straight to power-off, or down to the supervisor's
+   console menu (the REPL, the worker, the other roots). Returns :QUIT with
+   *LEAVE-ACTION* set, or NIL when the menu is dismissed. The console comes first so
+   that a reflexive Return is the step you can come back from. With no menus on this
+   backend (the X11 host) there is nothing to power off, so it simply quits."
+  (if (null *chooser*)
+      (progn (setf *leave-action* :console) :quit)
+      (let* ((screen (car (last *drawn*)))         ; DRAW-BROWSER's first record
+             (e (funcall *chooser* :menu
+                         (list (menu-entry "Supervisor console" :console :key "1" :group "leave")
+                               (menu-entry "Shut down" :power-off :key "2" :group "leave"))
+                         (- (floor (or (third screen) 800) 2) 100)
+                         (- (floor (or (fourth screen) 600) 2) 40))))
+        (when e
+          (setf *leave-action* (getf e :action))
+          :quit))))
 
 (defun keyboard-context-menu ()
   "The Menu key, or Shift-F10: the right-button menu without a pointer, anchored at

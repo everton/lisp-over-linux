@@ -195,7 +195,8 @@ dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
 DHCP, the network REPL, interfaces) =supervisor-main= calls =run-browser-fb=, which
 opens on the Workspace alone — the environment is what the machine is for, so it
 should not wait behind a menu. The menu is the *fallback*: you reach it by leaving
-the environment (=SuperL-q=, or =q= on a list pane), and you land on it if the
+the environment (=SuperL-q=, which first asks: this console, or power off straight
+away — or =q= on a list pane), and you land on it if the
 environment dies, because =run-browser-fb= catches any =serious-condition=, prints
 it and returns. The screen is cleared /before/ the environment opens, not after, so
 a dying environment's last words stay above the menu. With no framebuffer at all

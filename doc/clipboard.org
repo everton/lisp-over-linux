@@ -234,6 +234,7 @@ the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-ke
 | =C-x r d= / =o= / =c=   | delete / open / clear rectangle   | =rect-delete= / =rect-open= / =rect-clear=    | =editor-rectangle=               |
 | =C-x r t=               | =string-rectangle=                | =rect-string=, after a one-line prompt        | =editor-rectangle=               |
 | drag, then release      | X PRIMARY                         | =clip-select=, *on release*                   | =browser-drag-end=               |
+| double / triple click   | X: select the word / the line     | =clip-select=, at once                        | =text-press=                     |
 | middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =browser-middle-click=           |
 | =SuperL-h=, tray icon   | the manager (§7)                  | =clip-filter= / =clip-promote= / =clip-delete= | =open-clipboard-manager=        |
 

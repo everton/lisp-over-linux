@@ -26,7 +26,7 @@
            #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p
            ;; for the clipboard (shell.lisp): the region, and replacing the buffer
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
-           #:tv-rect-mode #:tv-mark-active #:tv-pos-at))
+           #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span))
 
 (in-package :lol.textview)
 
@@ -117,6 +117,13 @@
   (let ((last (1- (length (tv-lines tv)))))
     (setf (tv-anchor-line tv) 0 (tv-anchor-col tv) 0
           (tv-point-line tv) last (tv-point-col tv) (length (line-at tv last)))))
+
+(defun tv-select-span (tv l0 c0 l1 c1)
+  "Select from L0/C0 (the anchor) to L1/C1 (point): a double click's word, a
+   triple click's line."
+  (setf (tv-anchor-line tv) l0 (tv-anchor-col tv) c0
+        (tv-point-line tv) l1 (tv-point-col tv) c1
+        (tv-mark-active tv) nil (tv-rect-mode tv) nil))
 
 (defun tv-move-point (tv line col)
   "Put point (and no selection) at LINE/COL, clamped."

@@ -839,8 +839,9 @@
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
    it once at boot, and again from its menu ('b', 'p', 'c', 'l'). Blocks until you
-   leave it (SuperL-q, or q on a list pane), then restores the text console and
-   returns to the supervisor menu. Any error is caught and printed, so a dying
+   leave it (SuperL-q, which asks: the supervisor's console or power off; or q on a
+   list pane), then restores the text console and returns to the supervisor menu,
+   or powers off. Any error is caught and printed, so a dying
    environment drops you at the menu instead of crashing PID 1.
 
    ROOT defaults to the WORKSPACE alone. It used to be the module index with a
@@ -954,7 +955,11 @@
               (when mouse (%fbb-close mouse))
               (when kbd (%fbb-close kbd))))))
     (serious-condition (c)
-      (format t "~&code browser: ~a~%" c) (finish-output))))
+      (format t "~&code browser: ~a~%" c) (finish-output)))
+  ;; SuperL-q chose to power off: only now, with the text console back, so the
+  ;; kernel's last words (and POWER-OFF's own) are readable if it is refused
+  (when (eq (shiftf *leave-action* nil) :power-off)
+    (power-off)))
 
 ;;; ---- the debugger: a condition made interactive (§3) ---------------------
 ;;; Entered from *debugger-hook* with the stack STILL STANDING, so the restarts are
@@ -1347,12 +1352,12 @@
      ("Esc"                "Meta prefix: Esc . = M-.")
      ("q"                  "quit (list & reference panes)"))
     ("Places  (Super)"
-     ("Super-Space"        "the Spotter: find anything")
+     ("Super-Space"        "the Spotter (C-n / C-p move)")
      ("Super-m"            "the module index: every definition")
      ("Super-l"            "the CL-USER package, flat")
      ("Super-h"            "the clipboard history")
      ("Super-?"            "this cheatsheet")
-     ("Super-q"            "leave the environment (menu)"))
+     ("Super-q"            "leave: console or shut down"))
     ("Tabs  (Super)"
      ("Super-1..9"         "jump to tab N")
      ("Super-S-1..9"       "move this tab to slot N")
@@ -1401,6 +1406,7 @@
     ("Mouse & pad"
      ("click / tap"        "select, drill, place caret")
      ("press + drag"       "select text")
+     ("double / triple"    "select the word / the line")
      ("right / Menu key"   "context menu  (S-F10 too)")
      ("pad corner press"   "right button (bottom right)")
      ("middle"             "halo: source, inspect, code")
@@ -1510,6 +1516,11 @@
             (when kb
               (setf dirty t)
               (multiple-value-bind (key state) (fb-read-key 0)
+                ;; C-p / C-n move the selection; in a halo they go round the
+                ;; handles, since Up and Down there walk the layers
+                (let ((k (emacs-arrow key state)))
+                  (unless (eq k key)
+                    (setf key (if (halo-p) (if (eq k :up) :left :right) k))))
                 (cond
                   ((member key '(:escape :eof)) (return nil))
                   ((member key '(:return #\Return)) (return (nth sel entries)))
@@ -1602,6 +1613,16 @@
 ;;; The card's own scrim, hit map and dismissal box come back through
 ;;; lol.widgets:scrim / spotter-row-at* / spotter-outside-p*.
 
+(defun emacs-arrow (key state)
+  "C-p / C-n as :UP / :DOWN, any other KEY as itself — for the modal lists (the
+   Spotter, the menus), where nothing is edited so the Emacs line keys are free. A
+   control byte reaches us as its letter plus the Ctrl bit (FB-READ-KEY), so without
+   this C-n would type an n into the Spotter's query."
+  (cond ((not (logbitp 2 state)) key)
+        ((member key '(#\p #\P)) :up)
+        ((member key '(#\n #\N)) :down)
+        (t key)))
+
 (defun run-spotter-fb ()
   "The Spotter (SuperL-Space): fuzzy-find any definition, package or surface and open
    it in a new trail. Modal over the browser's canvas + input; live-filters on each
@@ -1624,7 +1645,7 @@
             (when kb
               (setf dirty t)
               (multiple-value-bind (key state) (fb-read-key 0)
-                (declare (ignore state))
+                (setf key (emacs-arrow key state))
                 (cond
                   ((eq key :escape) (return))
                   ((member key '(:return #\Return))
@@ -1636,7 +1657,7 @@
                   ((eq key :backspace)
                    (when (plusp (length query))
                      (setf query (subseq query 0 (1- (length query)))) (refilter)))
-                  ((and (characterp key) (graphic-char-p key))
+                  ((and (characterp key) (graphic-char-p key) (not (logbitp 2 state)))
                    (setf query (concatenate 'string query (string key))) (refilter)))))
             (when (and *fb-mouse* ms)
               (let ((ox *cursor-x*) (oy *cursor-y*))

@@ -2281,7 +2281,10 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   layers under the pointer — word, element, pane, screen — to the instance and the
   code that draws it; a *systray* with the
   battery and the clock, copied from the host's StumpWM mode line ([[file:systray.org][systray.org]]);
-  and a pointer that hides when idle ([[file:framebuffer.org][framebuffer.org]] §9.5).
+  and a pointer that hides when idle ([[file:framebuffer.org][framebuffer.org]] §9.5). Then three
+  small ones: X's double click (the word) and triple click (the line) into PRIMARY,
+  =C-n= / =C-p= in the Spotter and the menus, and =SuperL-q= asking whether to drop
+  to the supervisor's console or power off.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

@@ -19,6 +19,8 @@
 ;;;;   G. SuperL-h opens the clipboard manager
 ;;;;   H. the pointer hides after a few idle seconds and comes back on a move
 ;;;;   I. the systray is drawn
+;;;;   J. double click selects a word, triple click the line (into PRIMARY); C-n / C-p
+;;;;      move the Spotter's selection; SuperL-q asks how to leave
 ;;;;
 ;;;; The touchpad's emulated buttons (two-finger press = middle, bottom-right press =
 ;;;; right) cannot be driven here — QEMU emulates no touchpad — so they were checked by
@@ -199,6 +201,44 @@
   (shot "cheatsheet")
   (qmp-key "esc") (sleep 0.8)
   (shot "tray")
+
+  (format t "~&~%== J. double / triple click, C-n in the Spotter, SuperL-q ==~%")
+  ;; the Workspace tab is showing tv-draw's source since F2: aim at line 0, column 2,
+  ;; which is inside "defun"
+  (probe "(setf (lol.textview::tv-scroll (pane-tv (current-pane))) 0)")
+  (let* ((geo (probe "(let ((tv (pane-tv (current-pane)))) (list (+ (lol.textview::tv-x tv) (lol.textview::tv-pad tv) lol.textview::*gutter-w* (floor (* 5 (lol.textview::tv-cw tv)) 2)) (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) (floor (lol.textview:tv-line-height tv) 2))))"))
+         (xy (read-from-string geo))
+         (line0 (probe "(aref (lol.textview:tv-lines (pane-tv (current-pane))) 0)")))
+    (glide-to (first xy) (second xy))
+    (flet ((fast-click ()                          ; BUTTON's pauses would be too slow
+             (dolist (down '("true" "false"))
+               (qmp-events (format nil "{\"type\":\"btn\",\"data\":{\"down\":~a,\"button\":\"left\"}}" down))
+               (sleep 0.05))))
+      (fast-click) (fast-click) (sleep 0.6)
+      (format t "~&  after a double click PRIMARY is ~a~%" (probe "(lol.clipboard:primary)"))
+      (check "a double click selects the word" (string= (probe "(lol.clipboard:primary)") "\"defun\""))
+      (sleep 1.0)
+      (fast-click) (fast-click) (fast-click) (sleep 0.6)
+      (check "a triple click selects the whole line, newline included"
+             (string= (probe "(lol.clipboard:primary)")
+                      (format nil "\"~a~%\"" (read-from-string line0))))))
+
+  (qmp-hold "meta_l" "spc") (sleep 1.5)
+  (qmp-type "draw") (sleep 1.0)
+  (qmp-chord "ctrl" "n") (qmp-chord "ctrl" "n") (qmp-chord "ctrl" "p")
+  (let ((before (probe-int "(length *trails*)")))
+    (qmp-key "ret") (sleep 1.5)
+    (format t "~&  opened: ~a~%" (probe "(view-title (pane-view (current-pane)))"))
+    (check "C-n C-n C-p in the Spotter: the SECOND hit for \"draw\" opens (no n or p typed)"
+           (and (eql (probe-int "(length *trails*)") (1+ before))
+                (yes "(equal (view-title (pane-view (current-pane))) (view-title (present (getf (nth 1 (spotter-results \"draw\" (spotter-candidates) 60)) :subject))))"))))
+
+  (probe "(setf *menu-rect* nil)")
+  (qmp-hold "meta_l" "q") (sleep 1.5)
+  (shot "leave-menu")
+  (check "SuperL-q asks: a menu, and the environment still running" (yes "(and *menu-rect* t)"))
+  (qmp-key "esc") (sleep 1.0)
+  (check "Esc keeps you in the environment" (yes "(and *fb-canvas* (eq *leave-action* nil) t)"))
   t)
 
 (run-guest-checks "check-clipboard" #'checks)
