@@ -1460,7 +1460,50 @@
       (serious-condition (c)
         (setf *browser-status* (format nil "Accept failed: ~a" c))))))
 
+(defmacro with-undo ((tv &key insert) &body body)
+  "Run BODY, a command on text view TV, and record what it changed for undo (see
+   \"Undo, the Emacs way\" in textview.lisp). Every path that edits a buffer — a
+   key, a menu entry, a middle-click paste — goes through this."
+  (let ((v (gensym "TV")) (before (gensym "BEFORE")))
+    `(let* ((,v ,tv) (,before (and ,v (lol.textview:tv-undo-checkpoint ,v))))
+       (multiple-value-prog1 (progn ,@body)
+         (when ,v (lol.textview:tv-undo-note ,v ,before :insert ,insert))))))
+
+(defun undo-key-p (key state)
+  "C-_ or C-/ (one key in Emacs: X sends C-/ and C-_ alike, the console sends C-_ as
+   byte 31 and C-/ as DEL, see FB-READ-KEY), or C-x u — the third key of an Emacs
+   undo, read here with the C-x prefix already pending."
+  (or (and (lol.canvas:ctrl-p state) (member key '(#\_ #\/)))
+      (and (eq *pending-prefix* :c-x) (not (lol.canvas:ctrl-p state)) (member key '(#\u #\U)))))
+
+(defun editor-undo (tv)
+  "C-_: take back the last change in TV; repeat to go further back. Any other
+   command ends the run, after which C-_ undoes the undos — Emacs's redo."
+  (setf *pending-prefix* nil)
+  (setf *browser-status*
+        (if (lol.textview:tv-undo tv)
+            (format nil "Undo  (~d more)" (lol.textview:tv-undo-count tv))
+            "No further undo information")))
+
 (defun edit-pane-key (p key state)
+  "An editable pane's key, recorded for undo: C-_ / C-/ / C-x u undo, a key that
+   only starts a chord (C-c, C-x, C-x r) leaves a run of undos going, and anything
+   else is EDIT-PANE-COMMAND under WITH-UNDO."
+  (let ((tv (pane-tv p)))
+    (cond
+      ((null tv) (edit-pane-command p key state))
+      ((undo-key-p key state) (editor-undo tv) nil)
+      (t (let ((before (lol.textview:tv-undo-checkpoint tv)))
+           (prog1 (edit-pane-command p key state)
+             ;; a prefix key is not a command yet: C-x u after C-_ must continue
+             ;; the run, as it does in Emacs
+             (unless (and *pending-prefix* (eq (first before) (lol.textview:tv-lines tv)))
+               (lol.textview:tv-undo-note
+                tv before
+                :insert (and (characterp key) (graphic-char-p key)
+                             (not (lol.canvas:ctrl-p state)) (not (lol.canvas:meta-p state)))))))))))
+
+(defun edit-pane-command (p key state)
   "Handle a key for an EDITABLE pane P — a source (Accept) or the Workspace (eval verbs).
    Chords ride *pending-prefix*: C-c {C-c Accept | C-p Print | C-i Inspect | C-d Debug},
    C-x C-e Do it; a bare Tab completes; anything else edits. Shared by the current pane
@@ -2106,11 +2149,13 @@
          (g "edit"))
     (append
      (remove nil
-             (list (when (and editable sel) (menu-entry "Cut" (lambda () (editor-cut tv)) :key "C-w" :group g))
+             (list (when (and editable sel) (menu-entry "Cut" (lambda () (with-undo (tv) (editor-cut tv))) :key "C-w" :group g))
                    (when sel (menu-entry "Copy" (lambda () (editor-copy tv)) :key "M-w" :group g))
-                   (when editable (menu-entry "Paste" (lambda () (editor-paste tv)) :key "C-y" :group g))
-                   (when editable (menu-entry "Paste the selection" (lambda () (editor-paste-primary tv))
+                   (when editable (menu-entry "Paste" (lambda () (with-undo (tv) (editor-paste tv))) :key "C-y" :group g))
+                   (when editable (menu-entry "Paste the selection" (lambda () (with-undo (tv) (editor-paste-primary tv)))
                                               :key "middle" :group g))
+                   (when (and editable (plusp (lol.textview:tv-undo-count tv)))
+                     (menu-entry "Undo" (lambda () (editor-undo tv)) :key "C-_" :group g))
                    (menu-entry "Select all" (lambda () (editor-select-all tv)) :key "C-x h" :group g)))
      (when (and sym (symbolp sym))
        (let ((gs (format nil "~(~a~)" sym)))
@@ -2686,8 +2731,9 @@
 (defun paste-primary-at (target)
   "X's middle click: put the caret where the pointer is, then paste PRIMARY there."
   (let ((tv (getf target :tv)))
-    (lol.textview:tv-move-point tv (getf target :line) (getf target :col))
-    (editor-paste-primary tv)))
+    (with-undo (tv)
+      (lol.textview:tv-move-point tv (getf target :line) (getf target :col))
+      (editor-paste-primary tv))))
 
 (defun browser-drag-end ()
   "The button came up after a press in text: if the drag selected something, that

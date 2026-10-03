@@ -26,7 +26,9 @@
            #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p
            ;; for the clipboard (shell.lisp): the region, and replacing the buffer
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
-           #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span))
+           #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span
+           ;; undo (shell.lisp drives it: C-_ / C-/ / C-x u)
+           #:tv-undo-checkpoint #:tv-undo-note #:tv-undo #:tv-undo-count))
 
 (in-package :lol.textview)
 
@@ -41,7 +43,12 @@
   (x 0) (y 0) (w 0) (h 0)          ; the rectangle we own, in pixels
   (pad 8)
   font
-  (focus nil))
+  (focus nil)
+  ;; undo — see "Undo, the Emacs way" below
+  (undo-list '())                  ; states before each change, newest first
+  (undo-pending nil)               ; during a run of undos: the states still to visit
+  (undo-run nil)                   ; T while the last command was an undo
+  (undo-inserts 0))                ; self-inserts folded into the newest record
 
 (defun tv-line-height (tv) (+ (font-ch (tv-font tv)) 3))
 (defun tv-cw (tv) (font-cw (tv-font tv)))
@@ -124,6 +131,71 @@
   (setf (tv-anchor-line tv) l0 (tv-anchor-col tv) c0
         (tv-point-line tv) l1 (tv-point-col tv) c1
         (tv-mark-active tv) nil (tv-rect-mode tv) nil))
+
+;;; ---- Undo, the Emacs way -------------------------------------------------
+;;; The buffer is PERSISTENT: no edit ever writes into a lines vector — every one
+;;; (insert-char, backspace, the clipboard's region-delete, a rectangle kill, the
+;;; Workspace weaving a printed value in) builds a NEW vector and installs it. So the
+;;; state before an edit is simply the old vector, kept: an undo record costs one
+;;; cons and three numbers, however big the buffer, and "did that key change the
+;;; text?" is an EQ test. Nothing is diffed and nothing is copied.
+;;;
+;;; The protocol is Emacs's, and it is the one thing about Emacs undo worth copying
+;;; exactly, because it means undo can never lose anything:
+;;;
+;;;   - every change pushes the state it replaced onto UNDO-LIST;
+;;;   - C-_ walks back through that list, one record per press — and each step is
+;;;     ITSELF a change, so it pushes the state it leaves onto the same list;
+;;;   - any other command ends the run. Undoing now walks back over the undos first,
+;;;     which is how Emacs redoes: there is no separate redo stack to fall off.
+;;;
+;;; Typing amalgamates as in Emacs: up to 20 consecutive self-inserted characters
+;;; are one record, so C-_ takes back a word or so, not a letter.
+
+(defparameter +undo-amalgamate+ 20 "Self-inserts folded into one undo record (Emacs's 20).")
+(defparameter +undo-limit+ 1000 "Records kept per buffer; the oldest fall off.")
+
+(defun tv-undo-checkpoint (tv)
+  "The state to give back if the next command changes TV: (LINES LINE COL)."
+  (list (tv-lines tv) (tv-point-line tv) (tv-point-col tv)))
+
+(defun tv-undo-note (tv before &key insert)
+  "A command other than undo just ran on TV; BEFORE is its checkpoint. Record the
+   change if there was one — INSERT says it was a self-inserted character, which
+   joins the previous record while the run is short — and end any run of undos."
+  (setf (tv-undo-run tv) nil (tv-undo-pending tv) nil)
+  (cond
+    ((eq (first before) (tv-lines tv)) (setf (tv-undo-inserts tv) 0))  ; no change
+    ((and insert (< 0 (tv-undo-inserts tv) +undo-amalgamate+))
+     (incf (tv-undo-inserts tv)))                       ; folded into the last record
+    (t (push before (tv-undo-list tv))
+       (setf (tv-undo-inserts tv) (if insert 1 0))
+       (let ((tail (nthcdr (1- +undo-limit+) (tv-undo-list tv))))
+         (when tail (setf (cdr tail) nil))))))
+
+(defun tv-undo (tv)
+  "C-_: take back one more change. Returns T, or NIL when there is nothing further
+   to undo (Emacs: \"No further undo information\")."
+  (unless (tv-undo-run tv)                              ; a new run starts from the top
+    (setf (tv-undo-run tv) t (tv-undo-pending tv) (tv-undo-list tv)))
+  (let ((state (pop (tv-undo-pending tv))))
+    (when state
+      ;; the undo is a change too: what it replaces goes on the list, so a later run
+      ;; can undo this undo (the redo). PENDING was taken before, so this run does
+      ;; not walk back into its own steps.
+      (push (tv-undo-checkpoint tv) (tv-undo-list tv))
+      (setf (tv-undo-inserts tv) 0)
+      (destructuring-bind (lines line col) state
+        (setf (tv-lines tv) lines)
+        (setf (tv-point-line tv) line (tv-point-col tv) col)
+        (clamp-point tv)
+        (collapse tv)
+        (ensure-visible tv))
+      t)))
+
+(defun tv-undo-count (tv)
+  "How many changes TV can still take back in this run (or from the top)."
+  (length (if (tv-undo-run tv) (tv-undo-pending tv) (tv-undo-list tv))))
 
 (defun tv-move-point (tv line col)
   "Put point (and no selection) at LINE/COL, clamped."

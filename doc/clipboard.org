@@ -236,6 +236,7 @@ the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-ke
 | drag, then release      | X PRIMARY                         | =clip-select=, *on release*                   | =browser-drag-end=               |
 | double / triple click   | X: select the word / the line     | =clip-select=, at once                        | =text-press=                     |
 | middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =browser-middle-click=           |
+| =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)      | — (=tv-undo=, §6½)                            | =editor-undo=                    |
 | =SuperL-h=, tray icon   | the manager (§7)                  | =clip-filter= / =clip-promote= / =clip-delete= | =open-clipboard-manager=        |
 
 Where each key comes from, since the console delivers them unevenly:
@@ -259,6 +260,54 @@ Where each key comes from, since the console delivers them unevenly:
   free.
 - *A touchpad has no middle button.* A two-finger press is one, and so is
   Alt-click ([[file:input.org][input.org]], "Three buttons on a pad with one").
+
+* 6½. Undo — the other history beside the kill ring
+
+The kill ring remembers what you /took out/; undo remembers what the buffer /was/.
+Both are Emacs's, and the second is wired the Emacs way too: =C-_=, =C-/= or
+=C-x u= ([[file:../poc/shell.lisp::defun editor-undo][=editor-undo=]] over [[file:../poc/textview.lisp::defun tv-undo][=tv-undo=]]).
+
+*Why it costs almost nothing here.* The text view's buffer is /persistent/: no
+edit ever writes into a lines vector. Every one — a typed character
+(=replace-line= copies), a newline, the clipboard's =region-delete= and
+=insert-text=, a rectangle kill, the Workspace weaving a printed value in — builds
+a /new/ vector and installs it (§1 already relied on this: the clipboard
+functions return new vectors). So the state before an edit is just the old
+vector, kept. An undo record is =(LINES LINE COL)=: one list and two numbers,
+whatever the buffer's size, and "did this command change the text?" is an =EQ=
+test. Nothing is diffed and nothing is copied. (Checked: the only =setf aref= on a
+lines vector in =textview.lisp= and =clipboard.lisp= writes into a fresh copy.)
+
+*The protocol is Emacs's, exactly*, because it is what makes undo unable to lose
+anything:
+
+| step | what happens |
+|------+--------------|
+| an edit | the state it replaced is pushed on the buffer's undo list |
+| =C-_= | restore the next older state — and push the one it leaves, since an undo is a change too |
+| =C-_= again | keep walking back (the run's own steps are not revisited) |
+| any other command | the run ends; motion counts, as in Emacs |
+| =C-_= after that | walks back over the /undos/ first — Emacs's redo; there is no redo stack to fall off |
+
+Typing amalgamates: up to 20 consecutive self-inserted characters are one record
+(Emacs's =amalgamating-undo-limit=), so =C-_= takes back a word or so rather than a
+letter. A newline, a kill, a paste each make their own. A key that only starts a
+chord (=C-x=, =C-c=) does not end a run, so =C-_ C-x u= is two undos, as in Emacs.
+The list keeps the last 1000 records per buffer. Every path that edits goes
+through one macro, [[file:../poc/shell.lisp::defmacro with-undo][=with-undo=]]: the editing keys, the right-button menu's
+Cut / Paste / Paste the selection (which also gains an Undo entry), and the middle
+click's paste.
+
+*Where the keys come from on the console* ([[file:../linux/drivers/tty/vt/defkeymap.c_shipped][defkeymap.c_shipped]], the default
+keymap): Ctrl-minus is byte 31, decoded as =C-_=; but Ctrl-/ is byte 127, /the
+same/ as plain Backspace (=ctrl_map[53]= is =0xf07f=). Only the keyboard's evdev,
+which says Ctrl is held, tells them apart (as with every bare modifier —
+[[file:input.org][input.org]]). Ctrl-Backspace sends byte 8, so =fb-read-key= now gives byte 8 the
+Ctrl bit and a DEL read /with/ Ctrl held is =C-/=. Under X both arrive as
+keysyms, so neither trick is needed there.
+
+Host test: [[file:../poc/undo-test.lisp][poc/undo-test.lisp]] (=sbcl --script poc/undo-test.lisp=, 18
+assertions); in the guest, section K of [[file:../check-clipboard.lisp][check-clipboard.lisp]].
 
 * 7. The manager — a sketch
 

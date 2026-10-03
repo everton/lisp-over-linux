@@ -21,6 +21,8 @@
 ;;;;   I. the systray is drawn
 ;;;;   J. double click selects a word, triple click the line (into PRIMARY); C-n / C-p
 ;;;;      move the Spotter's selection; SuperL-q asks how to leave
+;;;;   K. undo: C-_ takes back typing, C-/ goes further, a motion ends the run and
+;;;;      C-x u then redoes (Emacs's undo-the-undo)
 ;;;;
 ;;;; The touchpad's emulated buttons (two-finger press = middle, bottom-right press =
 ;;;; right) cannot be driven here — QEMU emulates no touchpad — so they were checked by
@@ -239,6 +241,32 @@
   (check "SuperL-q asks: a menu, and the environment still running" (yes "(and *menu-rect* t)"))
   (qmp-key "esc") (sleep 1.0)
   (check "Esc keeps you in the environment" (yes "(and *fb-canvas* (eq *leave-action* nil) t)"))
+
+  (format t "~&~%== K. undo ==~%")
+  (qmp-hold "meta_l" "w") (sleep 1.0)               ; close the Spotter's tab
+  (qmp-hold "meta_l" "1") (sleep 1.0)
+  (qmp-chord "ctrl" "g") (sleep 0.8)                ; tv-draw -> back to the Workspace
+  (check "back on the Workspace" (string= (probe "(view-kind (pane-view (current-pane)))") ":WORKSPACE"))
+  (let ((start (probe "(lol.textview:tv-text (pane-tv (current-pane)))")))
+    (qmp-chord "ctrl" "end")
+    (qmp-key "ret") (qmp-type "undo me") (sleep 0.5)
+    (qmp-key "ret") (qmp-type "and me") (sleep 0.5)
+    (check "typed two lines" (ws-text-has (format nil "undo me~%and me")))
+    (qmp-chord "ctrl" "minus")
+    (format t "~&  status: ~a~%" (probe "*browser-status*"))
+    (check "C-_ takes back the last word typed" (and (ws-text-has "undo me") (not (ws-text-has "and me"))))
+    (qmp-chord "ctrl" "slash") (qmp-chord "ctrl" "slash") (qmp-chord "ctrl" "slash")
+    (check "C-/ (DEL + a held Ctrl) goes further back, to before the typing"
+           (string= (probe "(lol.textview:tv-text (pane-tv (current-pane)))") start))
+    (qmp-key "right")                                ; any other command ends the run
+    ;; the run's LAST undo took out the first newline, so the first redo puts back
+    ;; exactly that — and a second C-x u (the run goes on across the C-x prefix) the line
+    (qmp-chord "ctrl" "x") (qmp-key "u") (sleep 0.6)
+    (check "after a motion, C-x u undoes the last undo (Emacs's redo): the newline"
+           (string= (probe "(lol.textview:tv-text (pane-tv (current-pane)))")
+                    (prin1-to-string (format nil "~a~%" (read-from-string start)))))
+    (qmp-chord "ctrl" "x") (qmp-key "u") (sleep 0.6)
+    (check "and C-x u again, the line typed after it" (ws-text-has (format nil "~%undo me"))))
   t)
 
 (run-guest-checks "check-clipboard" #'checks)

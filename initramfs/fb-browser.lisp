@@ -151,7 +151,12 @@
                (t (values :ignore 0))))
            (values :escape 0)))
       ((member c '(13 10)) (values :return 0))
-      ((member c '(8 127)) (values :backspace 0))
+      ;; Backspace sends DEL (127); Ctrl-Backspace and C-h send BS (8), so BS carries
+      ;; the Ctrl bit. That leaves a DEL read while Ctrl is held meaning C-/, which the
+      ;; console's default keymap also sends as DEL — see the main loop.
+      ((= c 127)           (values :backspace 0))
+      ((= c 8)             (values :backspace 4))
+      ((= c 31)            (values #\_ 4))                    ; C-_ (Ctrl-minus): undo
       ((= c 9)             (values :tab 0))
       ((= c 0)             (values #\Space 4))               ; C-Space / C-@ = NUL -> C-Space
       ((<= 1 c 26)         (values (code-char (+ c 96)) 4))   ; C-a..C-z, bit 2 = Ctrl
@@ -894,6 +899,11 @@
                          (when kb
                            (setf dirty t)
                            (multiple-value-bind (key state) (fb-read-key 0)
+                             ;; Ctrl-/ reaches the tty as DEL, Backspace's own byte
+                             ;; (defkeymap: ctrl_map[53] = 0x7f), so only the held Ctrl
+                             ;; tells them apart: undo, as C-/ is in Emacs
+                             (when (and (eq key :backspace) (zerop state) *ctrl-down*)
+                               (setf key #\/ state 4))
                              ;; The cooked tty sends a bare ESC[A for EVERY arrow and no
                              ;; byte for a held modifier — it lives only in the evdev
                              ;; state, so fold it in (Ctrl-arrow = word, Shift = select,
@@ -1387,7 +1397,8 @@
      ("Shift + motion"     "extend the selection")
      ("C-Space"            "set the mark (motion extends)")
      ("C-x Space"          "rectangle mark (column block)")
-     ("C-x h"              "select all"))
+     ("C-x h"              "select all")
+     ("C-_ / C-/ / C-x u"  "undo (again: further; Emacs redo)"))
     ("Clipboard  (Emacs + PC)"
      ("C-w / S-Delete"     "cut the region")
      ("M-w / C-Insert"     "copy the region")
