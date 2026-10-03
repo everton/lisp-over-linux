@@ -26,7 +26,10 @@
       ;; everything else is loaded AND source-captured, so it is all browsable:
       (dolist (m '("../initramfs/model.lisp" "../initramfs/present.lisp"
                    "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp"
-                   "clipboard.lisp" "../initramfs/sysinfo.lisp" "shell.lisp"
+                   "clipboard.lisp" "../initramfs/sysinfo.lisp"
+                   "inflate.lisp" "image.lisp"
+                   "../initramfs/files.lisp" "../initramfs/file-views.lisp"
+                   "shell.lisp" "file-manager.lisp"
                    "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"))
         (load-recording (f m))))))
 

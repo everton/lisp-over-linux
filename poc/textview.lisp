@@ -23,7 +23,7 @@
   (:export #:textview #:make-textview #:tv-draw #:tv-key #:tv-click #:tv-drag
            #:tv-wheel
            #:tv-text #:tv-set-text #:tv-lines #:tv-point-line #:tv-point-col
-           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p
+           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p #:tv-syntax
            ;; for the clipboard (shell.lisp): the region, and replacing the buffer
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
            #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span
@@ -44,6 +44,9 @@
   (pad 8)
   font
   (focus nil)
+  (syntax :lisp)                   ; :lisp colours with LEX-LINE; :plain draws every line
+                                   ; in the text colour (a README is not Lisp, and lexing
+                                   ; it as Lisp lights every apostrophe and semicolon)
   ;; undo — see "Undo, the Emacs way" below
   (undo-list '())                  ; states before each change, newest first
   (undo-pending nil)               ; during a run of undos: the states still to visit
@@ -569,9 +572,10 @@
     (fill-rect canvas x0 y0 w h *bg*)
     ;; paren depth AND open-string state must be correct at the first VISIBLE line, so
     ;; lex the hidden prefix for them only. (A real editor caches this per line.)
-    (dotimes (i first)
-      (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
-        (declare (ignore r)) (setf depth d instr s)))
+    (when (eq (tv-syntax tv) :lisp)
+      (dotimes (i first)
+        (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
+          (declare (ignore r)) (setf depth d instr s))))
 
     (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
       (loop for li from first below last
@@ -598,7 +602,10 @@
                  (draw-string canvas font (format nil "~3d" (1+ li))
                               (+ x0 pad) ly *gutter*)
                  ;; the text, run by coloured run
-                 (multiple-value-bind (runs new-depth new-instr) (lex-line line depth instr)
+                 (multiple-value-bind (runs new-depth new-instr)
+                     (if (eq (tv-syntax tv) :lisp)
+                         (lex-line line depth instr)
+                         (values (list (list* 0 (length line) *c-text*)) 0 nil))
                    (setf depth new-depth instr new-instr)
                    (dolist (r runs)
                      (destructuring-bind (s e . color) r

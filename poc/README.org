@@ -37,6 +37,8 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =clipboard-test.lisp= | its host test: =sbcl --script poc/clipboard-test.lisp=, PASS/FAIL per assertion, non-zero exit on failure. |
 | =undo-test.lisp= | host test for the text view's Emacs-style undo (=tv-undo= in =textview.lisp=): amalgamated typing, the run, undo-the-undo as redo. =sbcl --script poc/undo-test.lisp=; exits non-zero on failure. See [[file:../doc/clipboard.org][doc/clipboard.org]] §6½. |
 | =sysinfo-test.lisp= | host test for the systray data ([[file:../initramfs/sysinfo.lisp][initramfs/sysinfo.lisp]]): builds fake =/sys/class/power_supply= trees and checks battery parsing, the cache, and the clock against =date=. =sbcl --script poc/sysinfo-test.lisp=; exits non-zero on failure. See [[file:../doc/systray.org][doc/systray.org]]. |
+| =file-manager.lisp= | the file manager's hands: the letters a folder binds (r rename, d delete, / filter, …), its minibuffer prompts, the operations and =C-x C-s=. The data and the views live in [[file:../initramfs/files.lisp][initramfs/files.lisp]] and [[file:../initramfs/file-views.lisp][file-views.lisp]]; design: [[file:../doc/file-manager.org][doc/file-manager.org]]. |
+| =files-test.lisp= | host test for the file manager's data layer, in a fresh scratch directory (=$FILES_TEST_DIR=, else =/tmp=; never =$HOME=): create / rename / delete / links / copy / move / the atomic save / hidden / sort / bounded find / the Spotter's path grammar / the sniffers. =sbcl --script poc/files-test.lisp=; exits non-zero on failure. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
 | =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
 | =bdf2font.lisp=  | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |
@@ -134,7 +136,23 @@ and holding down Super:
 #+begin_src sh
   sbcl --script poc/render-frame.lisp modules --spotter coll   # 9 matches, banded
   sbcl --script poc/render-frame.lisp modules --spotter ""     # the recents band
+  sbcl --script poc/render-frame.lisp workspace --spotter "~/"  # a PATH: completions
 #+end_src
+
+*The file manager.* =dir:PATH= opens it on a folder and =file:PATH= drills a file
+(an editor for text); PATH may be absolute, =~/…= or relative. With =-k=, its letters
+replay like any key, so the minibuffer prompts render too
+([[file:../doc/file-manager.org][doc/file-manager.org]]):
+
+#+begin_src sh
+  sbcl --script poc/render-frame.lisp dir:~/lisp-over-linux/poc                 # listing + preview
+  sbcl --script poc/render-frame.lisp dir:~/lisp-over-linux/poc -k "/ l i s p"  # the live filter
+  sbcl --script poc/render-frame.lisp dir:~ -k ". s"          # dot files shown, sorted by date
+  sbcl --script poc/render-frame.lisp dir:/tmp -k "down r"    # the rename prompt
+#+end_src
+
+/Careful: a replayed key really runs. =-k "… C-x C-s"= writes the file and =-k "d y"=
+deletes — point =dir:= at a scratch copy for those./
 
 *And the halo.* =--halo X,Y[,D]= opens the middle-button halo at X,Y on layer D (0 is
 the innermost thing under the point) and prints the layers and the handles — the

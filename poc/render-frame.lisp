@@ -64,7 +64,12 @@
     "initramfs/line-editor.lisp"  ; token-start / longest-common-prefix, used by the shell
     "poc/clipboard.lisp"          ; lol.clipboard — the shell's copy / paste / rectangles
     "initramfs/sysinfo.lisp"      ; the systray's battery + clock
+    "poc/inflate.lisp"            ; lol.inflate — gzip previews
+    "poc/image.lisp"              ; lol.image — image previews
+    "initramfs/files.lisp"        ; the file system as data
+    "initramfs/file-views.lisp"   ; folders and files as subjects
     "poc/shell.lisp"              ; draw-browser itself
+    "poc/file-manager.lisp"       ; the file manager's keys and prompts
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).
@@ -108,6 +113,11 @@ exactly as open-environment does in the guest):
   function:NAME            the FUNCTION object: captures, doors, disassembly
   workspace                the Workspace scratch buffer
   changes                  the change set
+  dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
+  file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
+                           (PATH: absolute, ~/..., or relative to the current
+                           directory; a FILE opens beside its folder's listing so
+                           the frame shows the file manager's split as well)
 
 OPTIONS
 
@@ -192,6 +202,15 @@ OPTIONS
          (dotimes (i n) (step-stage st))
          (subj-stage 'lol.examples:collide)))
       ((string= head "workspace") (subj-workspace))
+      ;; dir:PATH / file:PATH — the file manager (doc/file-manager.org). The path is
+      ;; resolved like a prompt's: ~ is $HOME, a relative path is relative to where
+      ;; the harness was started.
+      ((and (member head '("dir" "file") :test #'string=) rest)
+       (let ((path (fm-resolve rest (string-right-trim "/" (sb-ext:native-namestring
+                                                               *default-pathname-defaults*)))))
+         (if (string= head "dir")
+             (subj-dir path)
+             (subj-file path))))
       ((string= head "changes")   (subj-change-set))
       ((null rest) (error "subject ~s needs an argument — see -h" spec))
       ((string= head "package")

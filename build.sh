@@ -81,7 +81,11 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/sysinfo.lisp"      # systray data: battery (sysfs power_supply) + clock (doc/systray.org)
   "$POC_DIR/inflate.lisp"            # lol.inflate: DEFLATE / zlib / gzip in pure Lisp (gzip previews)
   "$POC_DIR/image.lisp"              # lol.image: PNG/GIF/BMP/... -> canvas pixels (image previews; uses inflate)
+  "$INITRAMFS_DIR/files.lisp"        # the file system as data: lstat/readdir/rename/... via sb-unix + libc
+                                     #   (doc/file-manager.org; after sysinfo for *utc-offset*)
+  "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
+  "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)

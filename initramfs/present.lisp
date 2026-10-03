@@ -46,6 +46,9 @@
   text                   ; body text for :source / :reference views
   data                   ; structured payload for a non-text render (a :matrix grid)
   (sel 0)                ; the row a list view opens focused on (default: the first)
+  (syntax :lisp)         ; how a text body is coloured: :lisp (the source lexer) or
+                         ; :plain (one colour). A file manager shows text that is not
+                         ; Lisp, and a README lexed as Lisp lights every apostrophe.
   subject)               ; back-reference to the presented subject
 
 (defstruct command
@@ -262,7 +265,20 @@
                                    :subject (if gf (fdefinition name) (subj-defn name)))
                              out)))))
                *registry*))
+    (dolist (c (spotter-extra-candidates)) (push c out))
     (nreverse out)))
+
+;; Other modules add candidates without present.lisp naming them: each entry is a
+;; function of no arguments returning a list of candidate plists. The file manager
+;; (initramfs/file-views.lisp) adds its "files" / "home" surfaces this way — it loads
+;; after this file, so a direct call would be a forward reference.
+(defvar *spotter-sources* '()
+  "Functions returning extra Spotter candidates (plists, the shape above).")
+
+(defun spotter-extra-candidates ()
+  "Every candidate the *SPOTTER-SOURCES* offer, each source guarded on its own."
+  (loop for fn in *spotter-sources*
+        append (ignore-errors (copy-list (funcall fn)))))
 
 (defvar *spotter-recents* '()
   "The subjects most recently opened, newest first, as Spotter candidate plists. The
@@ -327,6 +343,15 @@
 
 (defgeneric commands-for (subject)
   (:documentation "The COMMANDs SUBJECT affords, by type. Pure."))
+
+(defgeneric present-preview (subject)
+  (:documentation "The VIEW of SUBJECT for the nav split's right-hand column — the
+    look you get by MOVING the selection, as against PRESENT, the view you get by
+    DRILLING in (doc/code-browser.org: preview = side, drill = vertical). The two are
+    the same for almost everything, so the default is PRESENT itself. A subject whose
+    full view is expensive or editable says otherwise: a file previews as its first
+    lines, read-only, and opens as the whole file in an editor.")
+  (:method (subject) (present subject)))
 
 ;;; ---- packages and modules: lists of definitions --------------------------
 

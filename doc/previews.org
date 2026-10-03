@@ -351,7 +351,8 @@ the speed the image gets). Timer granularity is 4 ms.
 | heap the two files add (after GC) | | ~0.75 MB |
 
 The guest's QEMU CPU is slower than this laptop; real hardware boots this same
-laptop. The first lossless-WebP version took 560 ms for 3 MP; declaring types in
+laptop. In the guest (tag #25, [[file:../check-files.lisp][check-files.lisp]]) =libstbi.so= loads from
+=/usr/lib/lol/= and decodes the stand-in disk's 320x200 progressive JPEG. The first lossless-WebP version took 560 ms for 3 MP; declaring types in
 the pixel loop and the transforms, and computing a per-byte average with the
 =(a & b) + ((a ^ b) & 0xFEFEFEFE) >> 1= bit trick, brought it to 200 ms.
 

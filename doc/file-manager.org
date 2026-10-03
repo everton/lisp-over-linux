@@ -1,0 +1,387 @@
+#+TITLE: The file manager — the disk as subjects
+#+STARTUP: showall
+
+The machine boots into the browser and has no shell. Once the coordinating work on
+storage lands (the laptop's =/home= bind-mounted onto ours, PID 1 running as the
+user), there is real data on a real disk — and this file manager is the *only* way
+to make a folder, rename a file, delete something or edit a text file. That is the
+bar it is built to: genuinely usable from the keyboard, like dired or ranger, and
+unable to take PID 1 down whatever the disk says.
+
+It is not an app. A folder is one more *subject*, presented by the same =present=
+protocol as a package or a class ([[file:code-browser.org][code-browser.org]] §4½), so everything the browser
+already does — trails and tabs, the nav split's preview, breadcrumbs, the Spotter,
+the right-button menu and the halo — works on files without a line of new chrome.
+
+| file | layer |
+|------+-------|
+| [[file:../initramfs/files.lisp][initramfs/files.lisp]] | the disk as *data*: lstat, readdir, rename, links, the atomic save, sort, filter, the bounded find, the Spotter's path grammar. Headless. |
+| [[file:../initramfs/file-views.lisp][initramfs/file-views.lisp]] | the data as *subjects*: =present= / =present-preview= / =commands-for=, the sniffers, the archive readers. Pure — reads the disk, never writes it. |
+| [[file:../poc/file-manager.lisp][poc/file-manager.lisp]] | the *hands*: the keys, the minibuffer prompts, every operation that changes the disk, =C-x C-s=. |
+| [[file:../poc/files-test.lisp][poc/files-test.lisp]] | the host test, in a scratch directory (69 checks). |
+
+* 1. Why a subject, and not a separate app
+
+The browser's spine is one generic function: =(present subject)= returns a VIEW of
+ITEMs, and an item that carries a subject is a door. A folder fits that exactly — its
+entries are the items, and a sub-folder's item carries the sub-folder. So:
+
+- =SUBJ-DIR= /(path, select, filter, marks)/ presents a listing; drilling a
+  folder row opens the folder below it in the same trail, and the breadcrumbs above
+  are the path you walked.
+- =SUBJ-FILE= presents a file: an *editor* for text, a picture for an image, a member
+  list for an archive, a hex dump for the rest.
+- =SUBJ-FIND= is a finished recursive search; =SUBJ-FILE-INFO= is everything lstat
+  knows, as a table.
+
+Building it as a separate application would have meant a second list widget, a second
+preview pane, a second set of tabs, and a second way of saying "open this". Instead
+the only genuinely new machinery is what a file manager has and a code browser did
+not: a way to *ask a question* (the minibuffer, §5), *verbs bound to plain letters*
+on a list (=SUBJECT-KEY=, below), and *preview ≠ open* (=PRESENT-PREVIEW=, §6). All
+three are generic — none of them names a file — and each is small.
+
+Two generic functions in [[file:../poc/shell.lisp][shell.lisp]] carry the subject-specific keys:
+=SUBJECT-KEY= (a subject's own keys on its list pane, called before the generic list
+keys and only without Ctrl/Meta/Super) and =SUBJECT-HINTS= (its status-line hints).
+The file manager is their first user; a future process monitor could bind =k= to
+kill the same way.
+
+* 2. Reaching the kernel — and why not sb-posix
+
+Every syscall goes through one of two layers ([[file:../initramfs/files.lisp][files.lisp]]'s header):
+
+- *=SB-UNIX=*, SBCL's own wrappers, where they are ordinary functions:
+  =unix-lstat= / =unix-stat= (through the runtime's =stat_wrapper=, which copies the
+  libc =struct stat= into a fixed layout so we never count its offsets),
+  =unix-readlink=, =unix-mkdir=, =unix-rename=, =unix-unlink=, =unix-open=,
+  =unix-write=, =unix-realpath=.
+- *=EXTERN-ALIEN= to libc* for the rest — =symlink=, =link=, =rmdir=, =chmod=,
+  =fchmod=, =fsync=, =renameat2=, =opendir=/=readdir=/=closedir=, =statvfs= — with only
+  =int= / =unsigned= / =c-string= / pointer types.
+
+=sb-posix= is out for the reason [[file:processes.org][processes.org]] §6 records: its entry points are
+=declaim inline= over groveled structs, which do not survive =save-lisp-and-die=,
+so code calling them *cannot be recompiled in the guest* — and then =C-c C-c= on any
+definition in these files would fail. The basic alien types are in the core, so
+everything here recompiles live.
+
+/Ruled out, so nobody tries it again:/ SBCL's own =sb-unix:unix-opendir= and
+friends. They exist in the source but are listed in =*!removable-symbols*=, and the
+shipped core has dropped them — the symbol is not even interned (checked against
+=./sbcl='s core: =Symbol "UNIX-OPENDIR" not found in the SB-UNIX package=). Hence
+our own readdir.
+
+** readdir by hand: struct dirent
+
+=readdir(3)= returns a pointer to a =struct dirent=. On x86-64 Linux — glibc and musl
+agree — it is:
+
+| offset | field | type | |
+|--------+-------+------+---|
+| 0 | =d_ino= | u64 | the inode number |
+| 8 | =d_off= | i64 | an opaque cookie for =seekdir= |
+| 16 | =d_reclen= | u16 | this record's length |
+| 18 | =d_type= | u8 | =DT_DIR= 4, =DT_REG= 8, =DT_LNK= 10, … 0 = unknown |
+| 19 | =d_name= | char[] | NUL-terminated |
+
+=d_type= comes free with the name, which is what lets the recursive find skip an
+lstat per plain file. A file system may answer =DT_UNKNOWN=; then only lstat can tell.
+A name that is not valid UTF-8 (Linux allows any bytes but =/= and NUL) is shown with
+=?= in the bad places — visible, but not addressable: an operation on it reports
+ENOENT. That is a known limit, not a crash.
+
+** Errors are conditions, and conditions are sentences
+
+Every operation that changes the disk either returns or signals =FS-ERROR=, which
+carries the operation, the path and the errno, and reports itself as strerror's
+sentence *plus* the C name: =rename /x/y: File exists (EEXIST)= — the sentence to
+read, the name to search for. The UI catches it (=WITH-FS-ERRORS=) and puts it in the
+status line. EACCES, ENOTEMPTY, EXDEV, EROFS are messages; nothing reaches the
+debugger, and nothing reaches PID 1's top level.
+
+* 3. Listing: hidden files, sorting, filtering
+
+A listing is =list-directory= (every entry, lstat'd — a symlink is described *as a
+link*, with what it resolves to recorded beside it) → =filter-entries= →
+=sort-entries= → items.
+
+- *Hidden files are hidden by default*, as =ls= without =-a=: a home folder is mostly
+  configuration you did not come to look at. =.= toggles them for every folder
+  (=*SHOW-HIDDEN*=). When a folder holds /only/ dot files the listing says so
+  instead of looking empty.
+- *Sorting* is a preference, not per-folder state: walk into a sub-folder and it is
+  sorted the way you just asked (ranger and Finder behave so). =s= cycles name →
+  date → size → type, each in its *natural reading order* — names A–Z (digit-aware:
+  =file2= before =file10=), dates *newest* first, sizes *largest* first, types by
+  extension then name — and =S= reverses. Ties fall back to the name, so a listing
+  always reads the same. *Folders are grouped first whichever way you sort*: reversing
+  a list should not bury the folders at the bottom.
+- *The filter* (=/=) is per folder: a case-insensitive *substring*, or a *glob* when
+  you type =*= or =?= (=*.lisp=). It filters live as you type; Enter keeps it (the
+  title says =12 items of 340=), Esc drops it. Substring rather than the Spotter's
+  fuzzy subsequence: in a folder you are narrowing a list you can see, and a fuzzy
+  match keeps rows that visibly do not contain what you typed.
+- *Big folders* are capped: a listing lstat's at most 20 000 entries
+  (=+listing-cap+=) and a *preview* at most 2 000 (=+preview-listing-cap+=), with a
+  note row when it stopped. A folder of a million files is a click away on any
+  machine, and lstat'ing it whole would freeze PID 1 for minutes.
+
+Each row shows what it is before you read it: the name with =/= for a folder, =name
+-> target= for a link (=(broken)= when the target is missing), size and date in the
+right-hand column, =exec= for an executable. The kind stripe borrows the hue of the
+Lisp concept it most resembles ([[file:../poc/widgets.lisp][widgets.lisp]] =*concept-colors*=), so the palette
+does not grow a second vocabulary: folder gold (a container, like a package), symlink
+purple (an indirection, like a macro), executable green, broken link or device red.
+A plain file has no stripe and reads as plain text.
+
+* 4. Find, bounded
+
+=f= asks for a name and searches *below the current folder* (=find-files=):
+breadth-first, so near results come first; the same matching as the filter. It runs
+on the UI thread of PID 1, so it is *bounded* — it stops at whichever comes first:
+
+| cap | default | why |
+|-----+---------+-----|
+| results | 500 | a list longer than that is not an answer |
+| folders visited | 20 000 | a home folder; not the whole disk |
+| time | 3 s | the screen must come back |
+| interrupt | Esc / C-g | polled every 32 folders, from the first (=*fm-interrupt-fn*=, installed by [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) |
+
+and it *never descends a symlink* (a link to an ancestor is an infinite tree), never a
+hidden folder unless dot files are shown, and never crosses onto another file system
+(=find -xdev=) — under =/= that is what keeps it out of =/proc=, =/sys= and the host's
+read-only mount. Unreadable folders are skipped, not fatal. The result is a
+=SUBJ-FIND= holding the entries: the walk runs *once*, when you ask, not on every
+re-present — =present= must stay cheap. The view says how many folders were searched
+and, when a cap stopped it, which one.
+
+* 5. Asking questions: the minibuffer
+
+The browser already had a prompt, =*value-prompt*=: a *modal loop* the framebuffer
+backend runs. It cannot redraw what is behind it, it does not exist on the X11 host,
+and a frame rendered by [[file:../poc/render-frame.lisp][render-frame.lisp]] can never show it.
+
+The file manager asks a lot of questions, so it got Emacs's answer: a *minibuffer*
+([[file:../poc/shell.lisp][shell.lisp]], =minibuffer-read=). It is *state, not a loop*: =*minibuffer*= holds the
+prompt, =browser-key= hands it every key while it is up, =draw-status-line= draws it
+over the status line. So it works identically on the framebuffer, on X11 and in a
+rendered frame, and everything above it stays live — which is what makes the
+*live* filter possible (=ON-CHANGE= runs on every keystroke). The price is that the
+answer comes through a callback (=ON-DONE=) rather than as a return value; in Lisp
+that is a closure and costs nothing. It edits like a line should: ←/→, =C-a=/=C-e=,
+=C-k=, =C-u= clears, =M-Backspace= deletes a word, *Tab completes paths*, Enter
+answers, Esc or =C-g= cancels, and a click anywhere ends it.
+
+* 6. Previews: preview = side, drill = vertical
+
+The browser's navigation rule is that /moving/ the selection previews it on the right
+and /drilling/ (Enter) opens it below. For code the two are the same view. For files
+they cannot be: drilling a text file opens an *editor* over the whole file, and doing
+that every time the arrow passes a 200 MB log would be absurd. So [[file:../initramfs/present.lisp][present.lisp]] grew
+one generic, =PRESENT-PREVIEW=, whose default is simply =PRESENT=; a file overrides it
+with a capped, read-only look. The shell's nav split calls it, =→= (focus the
+preview) and Enter call =PRESENT=.
+
+What a file is comes from its *bytes*, not its name: =sniff= reads the first 64 KB
+and checks *magic numbers* — the fixed signatures formats put at their start precisely
+so a program can tell what it holds — the way =file(1)= does.
+
+| type | detected by | preview | open (Enter) | caps |
+|------+-------------+---------+--------------+------|
+| folder | lstat | its listing | the folder | 2 000 / 20 000 entries |
+| text | no NUL, valid UTF-8 (a cut multibyte tail forgiven) | first 200 lines, tabs expanded, Lisp-coloured for =.lisp= &c. | *the editor* (§7) | 64 KB preview; editable up to 2 MB, then a read-only head |
+| image | PNG =89 50 4E 47=, JPEG =FF D8 FF=, GIF8, RIFF…WEBP, =qoif=, BMP/netpbm (+ name), TGA/ICO/PSD/HDR (name + lol.image agrees) | the picture, scaled to fit | the same, full pane | 8 MB to preview, 48 MB to open; lol.image refuses > 40 Mpx |
+| symlink | lstat | the *target's* preview, titled =link name -> target= | the target, through the link | — |
+| broken link | stat fails | where it points, and its folder | same | — |
+| gzip | =1F 8B= | inflated: text, or a tar listing for =.tar.gz=; the original name from the header | same, longer | 16 MB compressed, 64 MB inflated (its trailer says) |
+| tar | =ustar= at byte 257 | member list (name, size, date), headers only | same | 5 000 members |
+| zip | =PK 03 04= / =PK 05 06= | member list from the *central directory* (the index at the end), data never read | same | 5 000 members; zip64 named, not parsed |
+| ELF | =7F 45 4C 46= | class, endianness, type, machine, entry; =PT_INTERP= → "dynamically linked, interpreter …" or "statically linked"; + hex | same | 4 KB of hex |
+| other binary | everything else | a =file(1)=-style name (PDF, SQLite, cpio — an initramfs is one —, a bzImage, PSF, wasm, xz, …) + a hex dump | same | 1 KB hex preview, 4 KB open |
+| FIFO, socket, device | lstat | information only | information only | *never opened*: reading a FIFO blocks forever |
+
+Two decoders are optional modules written alongside this one — =lol.image= and
+=lol.inflate= ([[file:previews.org][previews.org]]). They are reached by *name at run time*
+(=optional-fn=), so if either is missing the preview degrades to what can be said
+without it — an image's format and dimensions read straight out of its header (PNG
+keeps them in IHDR at bytes 16–23), a gzip's original name and inflated size — and
+says which module is absent.
+
+An *image* is a new view kind, =:image=: the view carries decoded pixels in the
+canvas's own =#x00RRGGBB= layout, and =draw-image-body= scales them into the pane —
+shrunk with lol.image's area-average =scale-to-fit= (cached per pane size, so a
+redraw is a copy), or enlarged only by a *whole* factor up to 8×, so an icon stays
+crisp. Both backends present this same canvas, so drawing into it is all /dev/fb0
+and X11 need.
+
+* 7. Editing a file, and saving it safely
+
+Enter on a text file opens a =:file= pane: the same text view as source code, but its
+save is =C-x C-s=, the Emacs way. A =.lisp= file also keeps the Workspace's verbs —
+=C-x C-e= Do it and =C-c C-c= define the form before point — so a Lisp file on disk
+can be edited, tried and saved without leaving it. The pane's title says
+=[modified - C-x C-s saves]= while it has unsaved changes; the test is one =EQ=,
+because the text view's buffer is a persistent vector replaced on every edit and
+restored by undo. =C-g= on a modified pane warns once; a second =C-g= discards.
+
+*The save never truncates your file.* =write-file-atomically=:
+
+1. resolves the path through any symlinks (=realpath=), so a link stays a link and
+   its target is what changes;
+2. writes the bytes to a temp file *beside* it (=.NAME.lol-save-PID-N=, =O_EXCL=;
+   same folder means same file system, which rename requires) and =fsync=s it, so the
+   bytes are on the disk;
+3. gives it the original's permission bits (=fchmod=);
+4. =rename(2)=s it over the original. rename is atomic: every reader sees the old
+   inode or the new one, at any instant, through any crash.
+
+On any failure the temp file is removed and the original is untouched. If the file
+changed on disk since it was opened, the first =C-x C-s= only warns and a second
+overwrites. Honest limits: other *hard links* to the old inode keep the old contents
+(rename makes a new inode — Emacs's default does the same), and the owner is whoever
+writes, which on this machine is always the user. A file that is valid UTF-8 in its
+first 64 KB but not throughout opens *read-only* as hex: saving it through the editor
+would rewrite the bad bytes as replacement characters.
+
+/Fragile, on purpose not fixed:/ the font's tab glyph is blank and one cell wide, so
+in the *editor* a tab shows as a narrow gap (previews expand tabs to 8 columns). The
+editor keeps the real tab — silently changing a file's bytes is not ours to do.
+
+* 8. Making, renaming, deleting — and links
+
+Three rules run through [[file:../poc/file-manager.lisp][file-manager.lisp]], because it is the only way to change the
+disk:
+
+1. *Everything is guarded* — an FS-ERROR is a sentence in the status line.
+2. *Nothing destructive happens without a question.* Delete always asks: a file, a
+   link or an empty folder is =y/n=; anything containing a *non-empty folder* must be
+   confirmed by *typing =yes=*, and the prompt quotes what is inside (=Delete folder
+   build/ and the 1,204 entries inside (38M)? Type yes:=), counted by =tree-size=
+   (capped at 200,000, then shown as =200,000+=). Recursive delete =lstat=s every
+   entry and *unlinks symlinks rather than following them*: a link to =/= inside the
+   tree deletes one link.
+3. *Nothing is overwritten implicitly.* Rename uses =renameat2(…, RENAME_NOREPLACE)=,
+   which makes "fail if the target exists" atomic (plain =rename(2)= silently replaces
+   a file); a file system without the flag falls back to an lstat check. Create uses
+   =O_CREAT|O_EXCL=. Copy writes with =O_EXCL=. So do links.
+
+*Copy and move* read a destination path (Tab completes it): an existing folder, or
+anything ending in =/=, means /into/ it; otherwise it is the new name. A move is a
+rename; across file systems (EXDEV — rename cannot move an inode between disks) it is
+a copy followed by a delete, as =mv(1)= does. A copy keeps permission bits, re-makes a
+symlink with the *same text* (so a relative link still points at its sibling in the
+copy), skips FIFOs, sockets and devices (and counts them), and refuses to copy a
+folder into itself.
+
+*Why links are created the way they are.* A symbolic link is *text*, resolved only
+when used, and a relative text is relative to the *link's* folder, not to wherever
+you happened to be. So =l= writes the target's bare *name* when the link sits in the
+target's own folder — the pair then keeps working when the folder is moved, renamed or
+reached through another mount — and the target's *absolute path* anywhere else, which
+survives moving the link. =L= makes a *hard* link: no text at all, a second name for
+the same inode; the kernel allows it only on the same file system (EXDEV) and never to
+a folder (EPERM).
+
+*Marks* (dired's): Space marks the selected entry and moves down; =d=, =c= and =m= then
+act on all marked entries; =U= clears them.
+
+* 9. The Spotter reads paths
+
+Anything typed into the Spotter that *looks like a path* is not a fuzzy query
+(=path-query-p=):
+
+| typed | means |
+|-------+-------|
+| =/…= | absolute |
+| =~= or =~/…= | from =$HOME= |
+| =./…=, =../…=, =.=, =..= | relative to the *focused file manager's folder* (or the folder of a focused file), else to =$HOME= |
+| =file://…= | the scheme stripped and =%XX= decoded as UTF-8 octets (=file://host/x= keeps only =/x=) |
+
+The rows are the entries of the folder that *complete the last component*, the way a
+shell's Tab lists them: a case-sensitive prefix match first, then case-insensitive,
+then substring (so =~/doc= finds =~/Documents=); dot files only when what you typed
+starts with a dot; folders first, each with its trailing =/=. When the last component
+is empty the folder itself is the first row. *Tab* completes the common prefix — a
+single folder gets its slash, so the next Tab lists inside it. The labels keep the
+form you typed (=~/Doc= completes to =~/Documents/=, not to =/home/…=).
+
+*Enter* on a folder opens the file manager there in a new tab. On a *file* it opens
+the file manager at the file's *parent with the file selected* — a choice: the Spotter
+finds /places/, and that landing shows the file previewed on the right beside its
+neighbours, one Enter from the editor. The pure logic is =parse-path-query=,
+=path-completions= and =complete-path-query= in [[file:../initramfs/files.lisp][files.lisp]] (host-tested), the rows
+=spotter-path-results= in [[file:../initramfs/file-views.lisp][file-views.lisp]], and the Spotter's existing
+=spotter-results= switches on =path-query-p= — so the framebuffer's =run-spotter-fb=
+and =render-frame.lisp --spotter= both get it. (The X11 host runner has no Spotter
+loop of its own.) The Spotter also lists =files= and =home= as surfaces, through a new
+hook, =*spotter-sources*=, so present.lisp does not name the file manager.
+
+* 10. Getting there
+
+- =SuperL-f= — the file manager: focuses the tab already showing a folder, or opens
+  one at =$HOME= (from that tab, a new one). =SuperL-f= was free; nothing was moved.
+- The Spotter: =files=, =home=, or any path (§9).
+- The right-button menu's environment section: /Files/.
+
+* 11. Keys
+
+In a folder (plain letters are verbs, as in dired — a list has no text to type them
+into; arrows, Enter, Backspace, =q= and everything with Ctrl or Super keep their
+meaning in every list):
+
+| key | does |
+|-----+------|
+| ↑ ↓ PgUp PgDn | move; the selection is previewed on the right |
+| Enter | open: a folder below, a file in the editor / viewer |
+| =S-Enter=, → | open beside / focus the preview (as in every list) |
+| Backspace, ← | back up the trail |
+| =^= | parent folder (back, when the trail came down from it; else replaces the pane) |
+| =~= | home |
+| =/= | filter, live (Enter keeps, Esc drops) |
+| =f= | find by name below this folder (bounded; Esc stops it) |
+| =s= / =S= | next sort order / reverse |
+| =.= | show / hide dot files |
+| =+= / =n= | new folder / new empty file |
+| =r= | rename |
+| =c= / =m= | copy / move to … (a folder = into it) |
+| =d= or Delete | delete (asks; =yes= for a non-empty folder) |
+| =l= / =L= | make a symbolic / hard link to the entry |
+| =x= | toggle executable (=r--= → =r-x= for whoever may read) |
+| Space / =U= | mark (and move down) / clear marks |
+| =y= | copy the path to the clipboard |
+| =i= | information (lstat, as a table) |
+| =j= | jump to a symlink's target |
+| =g= | refresh |
+
+In a file you are editing: =C-x C-s= saves, =C-_= undoes, =C-g= closes (twice if
+modified), plus every editor key ([[file:clipboard.org][clipboard.org]]); a Lisp file adds =C-x C-e= and
+=C-c C-c=. In the minibuffer: §5. Every folder and file command is also in the
+right-button menu and the halo, from =commands-for= — the menu, the keys and the status
+line all read the same declarations.
+
+* 12. Verified, and how
+
+- =sbcl --script poc/files-test.lisp= — 69 checks in a fresh scratch directory
+  (never =$HOME=): every operation above including the refusals (EEXIST on rename /
+  create / copy, ENOTEMPTY, EPERM for a hard-linked folder), a recursive delete that
+  must leave alone what a link inside pointed at, the save through a link keeping
+  mode 0640 and leaving no temp file, sort orders, the find's three caps and its
+  interrupt, a 30-deep find past a symlink cycle, the path grammar, and the sniffers
+  and archive readers against files made by the system's own =tar=, =gzip= and =zip=.
+- Frames rendered with [[file:../poc/render-frame.lisp][render-frame.lisp]] (=dir:PATH=, =file:PATH=, =-k=,
+  =--spotter=) and looked at: the listing, sorted, filtered, dot files shown, symlink
+  and broken-link rows, previews of text / Lisp / image / gzip / tar / zip / ELF / a
+  FIFO, an opened image, the editor before and after =C-x C-s= (which really wrote
+  the scratch file and kept its mode), the rename and both delete prompts, a find's
+  results, and the Spotter on =~/…= and =./…=.
+- The whole =LISP_SOURCES= list loads in order, warning-free, with plain
+  =load-recording= in a fresh =./sbcl= (2.6.8).
+- *In the guest* (tag #25, [[file:../check-files.lisp][check-files.lisp]] with the stand-in disk): a real held
+  =SuperL-f= over QMP opens the file manager at =/home/everton=; =+= then a typed name
+  makes a folder on the ext4 disk owned by uid 1000 (because PID 1 now runs as the
+  user — [[file:storage.org][storage.org]] §5); the Spotter completes =~/Pic= to =Pictures/=; and a
+  screendump shows =~/Pictures= with a JPEG decoded by =libstbi.so= in the preview.
+  The older guest suites (clipboard, scroll, pointer, compile) still pass with the
+  file manager loaded. *Still unverified in the guest:* the Esc interrupt of a long
+  find, and the laptop's real =/home= (only the stand-in so far).

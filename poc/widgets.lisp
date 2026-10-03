@@ -85,7 +85,18 @@
         :condition        !#FF6B6B   ; red
         :restart          !#FF9F43   ; amber
         :variable         !#FF9F43   ; amber
-        :constant         !#FF9F43)  ; amber
+        :constant         !#FF9F43   ; amber
+        ;; the file manager's kinds (doc/file-manager.org) — not Lisp concepts, but
+        ;; each borrows the hue of the Lisp concept it most resembles, so the palette
+        ;; does not grow a second vocabulary: a folder CONTAINS, gold like a package; a
+        ;; symlink is an INDIRECTION, purple like a macro; an executable RUNS, green like
+        ;; a method; a broken link or a device node is a hazard, red like a condition.
+        ;; A plain file has no kind at all, and reads as plain text.
+        :directory        !#FFCB6B   ; gold
+        :symlink          !#C792EA   ; purple
+        :executable       !#A8FF78   ; green
+        :special          !#FF6B6B   ; red
+        :broken           !#FF6B6B)  ; red
   "Colour per Lisp concept. A kind with no entry falls back to *UI-TEXT*.")
 
 (defun concept-color (kind)
@@ -219,9 +230,13 @@
     (when selected
       (lol.canvas:fill-rect canvas x by w +row-h+ *ui-sel*)
       (lol.canvas:fill-rect canvas x by 2 +row-h+ *ui-accent*))
-    (let* ((label (princ-to-string (row-label row)))
-           (tint (or (row-tint row) *ui-text*))
-           (marker-x (- (+ x w) 16)))
+    (let* ((marker-x (- (+ x w) 16))
+           ;; a label longer than the row is CLIPPED: drawn whole it ran under the
+           ;; marker and on into the next column (a long file name in the file
+           ;; manager's left half wrote itself across the preview beside it)
+           (label (clip-text (princ-to-string (row-label row))
+                             (max 4 (floor (- marker-x x 12) (lol.canvas:font-cw *font*)))))
+           (tint (or (row-tint row) *ui-text*)))
       (when (row-stripe row)
         (lol.canvas:fill-rect canvas (+ x 3) by 3 +row-h+ (row-stripe row)))
       (lol.canvas:draw-string canvas *font* label (+ x 8) ty tint)
@@ -237,12 +252,15 @@
                 (lol.canvas:fill-rect canvas (- vx 6) by 1 +row-h+ *ui-rule*) ; column rule
                 (lol.canvas:draw-string canvas *font* (clip-text dt room) vx ty *ui-text*))
               ;; otherwise: right-align it into its own column when it fits, else run
-              ;; it on after the label — a long label must never be overwritten
+              ;; it on after the label — a long label must never be overwritten — but
+              ;; only as far as the marker: what does not fit there is clipped
               (let ((rx (- marker-x (lol.canvas:string-px *font* dt) 8)))
                 (if (> rx (+ x 8 label-px 14))
                     (lol.canvas:draw-string canvas *font* dt rx ty *ui-dim*)
-                    (lol.canvas:draw-string canvas *font* (format nil "  ~a" dt)
-                                            (+ x 8 label-px) ty *ui-dim*))))))
+                    (let ((room (floor (- marker-x (+ x 8 label-px) 8) (lol.canvas:font-cw *font*))))
+                      (when (> room 6)
+                        (lol.canvas:draw-string canvas *font* (clip-text (format nil "  ~a" dt) room)
+                                                (+ x 8 label-px) ty *ui-dim*))))))))
       (when (row-marker row)
         ;; » = "drilling this opens something"; amber when it opens ELSEWHERE
         (lol.canvas:draw-string canvas *font* (string (code-char #xBB)) marker-x ty

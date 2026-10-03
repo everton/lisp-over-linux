@@ -1455,6 +1455,11 @@ the top row is still the best match overall — which matters, because that is t
 =↵= opens. And an *empty* query opens on your *recents* (=note-recent=, filled by
 =trail-push= / =new-trail=), since "where was I" is the only question an empty finder
 can usefully answer.
+*It reads paths, too.* A query that starts with =/=, =~=, =./=, =../= or =file://= is
+not a fuzzy search: its rows are the folder's entries completing the last component,
+=Tab= completes like a shell, and =↵= opens the file manager there — on a file, at its
+folder with the file selected. =./= is relative to the focused file manager's folder.
+The grammar and the reasons: [[file:file-manager.org][file-manager.org]] §9.
 The Spotter's *drawing* lives in the shell with the rest of the shell's drawing;
 only the modal input loop is in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]. That is phase 3's rule applied to
 the last surface that ignored it, and it pays immediately: the palette can be
@@ -1486,6 +1491,7 @@ list where the design puts it.
 | =SuperL-⇧-n=                      | move this trail to slot /n/ (swap with whatever is there) |
 | =SuperL-Tab= / =SuperL-⇧-Tab=     | cycle to next / previous trail         |
 | =SuperL-Space=                    | the Spotter                           |
+| =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])     |
 | =SuperL-↵= / =SuperL-click=       | open the selection in a NEW trail      |
 | =↵=                              | drill in place (same trail)            |
 | =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
@@ -2286,6 +2292,19 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   =C-n= / =C-p= in the Spotter and the menus, and =SuperL-q= asking whether to drop
   to the supervisor's console or power off. And Emacs's *undo* in every editor
   (=C-_=, =C-/=, =C-x u=; [[file:clipboard.org][clipboard.org]] §6½).
+- *Not a phase: the file manager* (2026-10-03). [DONE — [[file:file-manager.org][file-manager.org]]] With
+  no shell on the machine, the browser became the only way to change the user's disk.
+  Built the browser's way: folders and files are SUBJECTS ([[file:../initramfs/file-views.lisp][file-views.lisp]] over the
+  headless [[file:../initramfs/files.lisp][files.lisp]]), so trails, tabs, the nav split, the menu and the halo all
+  work on them unchanged. Hidden files hidden by default, four sort orders with folders
+  first, a live filter and a *bounded* recursive find; create / rename / copy / move /
+  delete / symlink / hard link behind minibuffer prompts that never overwrite and always
+  confirm a delete; previews for text, images, gzip, tar, zip, ELF and anything else as
+  hex; a text editor of real files saving with =C-x C-s= through a temp file and a rename.
+  It added three GENERIC pieces the shell lacked: the *minibuffer* (a non-modal prompt,
+  [[file:file-manager.org][file-manager.org]] §5), =subject-key= / =subject-hints= (a subject's own keys on its list), and
+  =present-preview= (preview = side may differ from drill = vertical). Reached by
+  =SuperL-f= and by typing a path into the Spotter.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

@@ -862,6 +862,7 @@
         ;; fb-prompt-value is defined further down this same file
         (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
         (setf *chooser* 'run-chooser-fb)          ; ... and shows its menus and halos
+        (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
         (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres))
@@ -970,6 +971,15 @@
   ;; kernel's last words (and POWER-OFF's own) are readable if it is refused
   (when (eq (shiftf *leave-action* nil) :power-off)
     (power-off)))
+
+(defun fb-stop-requested-p ()
+  "True when a key is waiting and it is Esc or C-g — the file manager's recursive find
+   polls this between folders (*FM-INTERRUPT-FN*), so a search that is taking too long
+   can be stopped from the keyboard. Any OTHER key read here is lost: typing ahead
+   during a find is not supported, and the find takes three seconds at most anyway."
+  (and (fbb-ready-p 0 0)
+       (multiple-value-bind (key state) (fb-read-key 0)
+         (or (eq key :escape) (and (logbitp 2 state) (member key '(#\g #\G)))))))
 
 ;;; ---- the debugger: a condition made interactive (§3) ---------------------
 ;;; Entered from *debugger-hook* with the stack STILL STANDING, so the restarts are
@@ -1366,6 +1376,7 @@
      ("Super-m"            "the module index: every definition")
      ("Super-l"            "the CL-USER package, flat")
      ("Super-h"            "the clipboard history")
+     ("Super-f"            "the file manager (home)")
      ("Super-?"            "this cheatsheet")
      ("Super-q"            "leave: console or shut down"))
     ("Tabs  (Super)"
@@ -1424,6 +1435,16 @@
      ("  again / Up / Tab" "halo: the thing around it")
      ("2-finger press"     "middle button  (Alt-click too)")
      ("Super-middle"       "halo even in editable text"))
+    ("Files  (in a folder)"
+     ("/  f"               "filter here / find below")
+     ("s  S  ."            "sort, reverse, dot files")
+     ("+  n"               "new folder / new file")
+     ("r  c  m  d"         "rename copy move delete")
+     ("l  L  x"            "symlink, hard link, chmod +x")
+     ("Space  U"           "mark (d/c/m act on all) / clear")
+     ("^  ~  i  y"         "up, home, info, copy path")
+     ("C-x C-s"            "save a file you are editing")
+     ("Spotter ~/ or /"    "type a path; Tab completes"))
     ("Debugger"
      ("0-9 / up-down"      "select a restart")
      ("Tab"                "focus the backtrace, walk frames")
@@ -1661,8 +1682,13 @@
                   ((eq key :escape) (return))
                   ((member key '(:return #\Return))
                    (let ((hit (nth sel results)))
-                     (when hit (new-trail (getf hit :subject))))
+                     (when (and hit (getf hit :subject)) (new-trail (getf hit :subject))))
                    (return))
+                  ;; Tab completes a PATH query the way a shell does (common prefix;
+                  ;; a single folder gets its slash) — SPOTTER-COMPLETE, shell.lisp
+                  ((eq key :tab)
+                   (let ((new (spotter-complete query)))
+                     (unless (string= new query) (setf query new) (refilter))))
                   ((eq key :up)   (setf sel (max 0 (1- sel))))
                   ((eq key :down) (setf sel (min (max 0 (1- (length results))) (1+ sel))))
                   ((eq key :backspace)

@@ -60,20 +60,31 @@
                           ; a focused preview must not, or leaving it would strand you
                           ; in a different layout from the one you arrived in.
 
-(defun open-pane (subject)
+(defun open-pane (subject &key preview)
   "Build a PANE for SUBJECT: present it, and for text views wrap the body in a
    textview (reusing its lexer + layout). A :SOURCE view (your code) is EDITABLE —
-   it gets focus and Accept; a :REFERENCE view (a builtin) is read-only."
-  (let ((v (present subject)))
-    (make-pane
-     :subject subject :view v
-     :sel (max 0 (min (view-sel v) (max 0 (1- (length (view-items v))))))  ; view's preferred focus
-     :tv (when (and (member (view-kind v) '(:source :reference :workspace)) (view-text v))
-           (let ((tv (lol.textview:make-textview
-                      :font *bfont*
-                      :focus (member (view-kind v) '(:source :workspace)))))
-             (lol.textview:tv-set-text tv (view-text v))
-             tv)))))
+   it gets focus and Accept; a :REFERENCE view (a builtin) is read-only; a :FILE view
+   (a real file on disk, doc/file-manager.org) is editable and saves with C-x C-s.
+   PREVIEW asks for PRESENT-PREVIEW instead — the nav split's look at a selection,
+   which for a file is its first lines rather than the whole file in an editor."
+  (let ((v (if preview (present-preview subject) (present subject))))
+    (let ((pane
+            (make-pane
+             :subject subject :view v
+             :sel (max 0 (min (view-sel v) (max 0 (1- (length (view-items v))))))  ; view's preferred focus
+             :tv (when (and (member (view-kind v) '(:source :reference :workspace :file)) (view-text v))
+                   (let ((tv (lol.textview:make-textview
+                              :font *bfont*
+                              :syntax (view-syntax v)
+                              :focus (member (view-kind v) '(:source :workspace :file)))))
+                     (lol.textview:tv-set-text tv (view-text v))
+                     tv)))))
+      ;; a file pane remembers the buffer it was loaded (or last saved) as: the buffer
+      ;; is a persistent vector, replaced on every edit and restored by undo, so "is
+      ;; it modified?" is one EQ test (FILE-PANE-DIRTY-P), not a string compare
+      (when (and (eq (view-kind v) :file) (pane-tv pane) (listp (view-data v)))
+        (setf (getf (view-data v) :saved-lines) (lol.textview:tv-lines (pane-tv pane))))
+      pane)))
 
 (defun editable-pane-p (pane)
   "True when PANE is your-own-code source — editable, with Accept."
@@ -82,6 +93,33 @@
 (defun workspace-pane-p (pane)
   "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
+
+(defun file-pane-p (pane)
+  "True when PANE edits a real FILE on disk (C-x C-s saves it; doc/file-manager.org)."
+  (and (pane-tv pane) (eq (view-kind (pane-view pane)) :file)))
+
+(defun lisp-file-pane-p (pane)
+  "A file pane holding Lisp: it gets the Workspace's verbs too — C-x C-e Do it and
+   C-c C-c define — on the form before point, so a .lisp file on disk can be edited,
+   tried and saved without leaving it."
+  (and (file-pane-p pane) (eq (view-syntax (pane-view pane)) :lisp)))
+
+(defun editor-pane-p (pane)
+  "Any pane you can TYPE into: a source pane, the Workspace, or a file."
+  (or (editable-pane-p pane) (workspace-pane-p pane) (file-pane-p pane)))
+
+(defun file-pane-dirty-p (pane)
+  "Has a file pane's buffer changed since it was loaded or last saved?"
+  (and (file-pane-p pane)
+       (not (eq (lol.textview:tv-lines (pane-tv pane))
+                (getf (view-data (pane-view pane)) :saved-lines)))))
+
+(defun pane-title (pane)
+  "The title a pane's header shows: its view's, plus a marker when it is a file with
+   unsaved changes — Emacs's ** in the mode line, in words."
+  (if (file-pane-dirty-p pane)
+      (format nil "~a   [modified - C-x C-s saves]" (view-title (pane-view pane)))
+      (view-title (pane-view pane))))
 
 (defun view-kind-concept (kind)
   "A VIEW's kind (:source :matrix :class …) mapped to the Lisp CONCEPT it is a view
@@ -92,6 +130,8 @@
   (case kind
     (:workspace :restart)                  ; amber: a surface, not a definition
     ((:source :reference) :function)
+    (:file :function)                      ; a text file reads like source
+    (:image :macro)
     ((:matrix :generic :stage) :generic-function)
     (:class :class)
     (:inspector :variable)
@@ -153,7 +193,8 @@
   (setf *active* (mod (+ *active* dir) (length *trails*))))
 (defparameter +title-kind-words+
   '("modules" "module" "package" "class" "condition" "matrix" "effective" "definition"
-    "function" "generic-function" "method" "macro" "struct" "type" "senders" "referrers")
+    "function" "generic-function" "method" "macro" "struct" "type" "senders" "referrers"
+    "folder" "file" "link" "image" "archive" "info" "find")
   "Leading words in a view title that name the view's KIND rather than its subject.")
 
 (defun short-title (title)
@@ -229,11 +270,18 @@
    (:YANK TV L0 C0 L1 C1) — the span the last paste inserted, which M-y replaces.
    Any other key clears it (EDIT-PANE-KEY).")
 
+(defvar *unsaved-warned* nil
+  "The file pane the last C-g warned about (it had unsaved changes), so a SECOND C-g
+   on the same pane closes it. Any other pane, and the warning starts over.")
+
 (defvar *pending-meta* nil
   "T after a lone Esc — the Emacs Meta prefix (§4¾). The next key is Meta-modified,
    so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
    cleared on the next keystroke.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
+(defvar *minibuffer* nil
+  "The open minibuffer (an MB — see \"the minibuffer\" below), or NIL. Declared up here
+   because the status line, drawn earlier in this file, has to know.")
 (defvar *value-prompt* nil
   "A hook: (funcall *value-prompt* LABEL) -> the string the user typed, or NIL if they
    cancelled. Reading a line is a modal input loop, which only a BACKEND can run — so
@@ -994,7 +1042,7 @@
   (when subject
     (unless (eq subject *preview-subject*)
       (setf *preview-subject* subject
-            *preview-pane* (ignore-errors (open-pane subject)))
+            *preview-pane* (ignore-errors (open-pane subject :preview t)))
       (let ((tv (and *preview-pane* (pane-tv *preview-pane*))))
         (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
     *preview-pane*))
@@ -1018,13 +1066,103 @@
     ((eq (view-kind (pane-view pane)) :stage)
      (note-drawn x y w h (view-data (pane-view pane)) '(draw-stage-body) "stage")
      (draw-stage-body canvas pane x y w h))
+    ((eq (view-kind (pane-view pane)) :image)
+     (note-drawn x y w h (view-data (pane-view pane)) '(draw-image-body) "image")
+     (draw-image-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h into))))
+
+(defparameter +non-list-kinds+ '(:matrix :stage :image)
+  "View kinds with no textview that are NOT lists either: they draw themselves, and
+   the list machinery (rows, the nav split, row hit-tests) must leave them alone.")
+
+;;; ---- an image (doc/file-manager.org): pixels, scaled into the pane ---------------
+;;; The view carries the decoded pixels in the canvas's own #x00RRGGBB layout
+;;; (lol.image, poc/image.lisp, decodes into exactly that), so showing one is a
+;;; scaled copy and nothing else — and since both backends present this same canvas,
+;;; drawing it here is enough for /dev/fb0 and X11 alike.
+
+(defun image-fit (iw ih w h)
+  "The size IW x IH is drawn at inside W x H: shrunk to fit with its aspect kept (the
+   same rounding as lol.image's SCALE-TO-FIT, so its result can be used as is); a
+   small image is enlarged only by a WHOLE factor (up to 8x), so pixel art stays crisp
+   instead of smearing across fractional pixels."
+  (if (or (> iw w) (> ih h))
+      (let ((s (min (/ w iw) (/ h ih))))
+        (values (max 1 (min w (round (* iw s)))) (max 1 (min h (round (* ih s))))))
+      (let ((k (max 1 (min 8 (floor w iw) (floor h ih)))))
+        (values (* iw k) (* ih k)))))
+
+(defun scaled-pixels (data nw nh)
+  "DATA's pixels (a view-data plist: :width :height :pixels) resampled to NW x NH.
+   lol.image's SCALE-TO-FIT (an area average, so a photo shrinks without shimmering)
+   when it is loaded and the image is shrinking, else nearest neighbour — which is
+   also exactly right for the whole-factor enlargement IMAGE-FIT asks for. The caller
+   caches the result per size, so this runs once per pane size, not per frame."
+  (let* ((iw (getf data :width)) (ih (getf data :height)) (src (getf data :pixels))
+         (fit (let* ((p (find-package "LOL.IMAGE"))
+                     (s (and p (find-symbol "SCALE-TO-FIT" p))))
+                (and s (fboundp s) (symbol-function s)))))
+    (or (and fit (or (> iw nw) (> ih nh))
+             (ignore-errors
+               (multiple-value-bind (w2 h2 p2) (funcall fit iw ih src nw nh)
+                 (and (eql w2 nw) (eql h2 nh) p2))))
+        (let ((out (make-array (* nw nh) :element-type '(unsigned-byte 32))))
+          (dotimes (y nh)
+            (let ((sy (* (floor (* y ih) nh) iw)))
+              (dotimes (x nw)
+                (setf (aref out (+ (* y nw) x))
+                      (aref src (+ sy (floor (* x iw) nw)))))))
+          out))))
+
+(defun draw-image-body (canvas pane x y w h)
+  "Render an :IMAGE view: the picture centred and fitted in the rect, on a
+   checkerboard ground (so a transparent region is visibly transparent rather than
+   'black'), with a caption of its true size and the scale it is shown at."
+  (let* ((data (view-data (pane-view pane)))
+         (iw (getf data :width)) (ih (getf data :height))
+         (cap-h 18) (bh (max 10 (- h cap-h))))
+    (multiple-value-bind (nw nh) (image-fit iw ih (- w 8) (- bh 8))
+      (let* ((px (let ((cache (getf data :scaled)))
+                   (if (and cache (= (first cache) nw) (= (second cache) nh))
+                       (third cache)
+                       (let ((p (scaled-pixels data nw nh)))
+                         (setf (getf (view-data (pane-view pane)) :scaled) (list nw nh p))
+                         p))))
+             (ox (+ x (floor (- w nw) 2)))
+             (oy (+ y (floor (- bh nh) 2)))
+             (dst (lol.canvas:canvas-pixels canvas))
+             (cw (lol.canvas:canvas-w canvas)) (ch (lol.canvas:canvas-h canvas)))
+        (declare (type (simple-array (unsigned-byte 32) (*)) px dst))
+        (lol.canvas:fill-rect canvas x y w bh !#101216)
+        ;; the checkerboard, under the image only
+        (loop for cy from 0 below nh by 8 do
+          (loop for cx from 0 below nw by 8 do
+            (when (evenp (+ (floor cx 8) (floor cy 8)))
+              (lol.canvas:fill-rect canvas (+ ox cx) (+ oy cy) (min 8 (- nw cx)) (min 8 (- nh cy))
+                                    !#1E2228))))
+        ;; the copy, clipped to the canvas. Pixels whose top byte is zero are opaque in
+        ;; the canvas layout; a decoder that keeps alpha there marks transparency with
+        ;; #xFF000000-free words, which we cannot tell from black — so draw them all.
+        (dotimes (r nh)
+          (let ((dy (+ oy r)))
+            (when (< -1 dy ch)
+              (dotimes (c nw)
+                (let ((dx (+ ox c)))
+                  (when (< -1 dx cw)
+                    (setf (aref dst (+ (* dy cw) dx))
+                          (logand #xFFFFFF (aref px (+ (* r nw) c))))))))))
+        (lol.canvas:draw-rect canvas (1- ox) (1- oy) (+ nw 2) (+ nh 2) *ui-rule*)
+        (lol.canvas:draw-string canvas *bfont*
+                                (format nil "~dx~d~@[ ~a~]   shown at ~d%"
+                                        iw ih (getf data :format)
+                                        (round (* 100 (/ nw (max 1 iw)))))
+                                (+ x 4) (+ y bh 2) *ui-dim*)))))
 
 (defun list-pane-splittable-p (pane)
   "True when PANE is a plain list whose selection has something to preview — the
    condition for the nav split (a list on the left, its selection previewed right)."
   (and (null (pane-tv pane))
-       (not (member (view-kind (pane-view pane)) '(:matrix :stage)))
+       (not (member (view-kind (pane-view pane)) +non-list-kinds+))
        (let ((sel (selected-item pane)))
          (and sel (item-subject sel)))))
 
@@ -1048,11 +1186,22 @@
       (note-drawn 8 y (- w 16) (- h y 24) cur '(draw-pane-body lol.widgets:draw-panel)
                   (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
       (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y 24)
-                              :title (view-title (pane-view cur))
+                              ;; when the pane is about to split, its title owns only
+                              ;; the left half: the right one carries the preview's
+                              ;; own title on the same line, and a long path in the
+                              ;; first used to run straight through the second
+                              :title (if (and (null (pane-tv cur))
+                                              (not (member (view-kind (pane-view cur)) +non-list-kinds+))
+                                              (or (pane-side cur)
+                                                  (let ((it (selected-item cur))) (and it (item-subject it)))))
+                                         (clip-text (pane-title cur)
+                                                    (max 8 (floor (- (max 260 (floor (* (- w 24) 42) 100)) 40)
+                                                                  (lol.canvas:font-cw *bfont*))))
+                                         (pane-title cur))
                               :tint (view-kind-color (pane-view cur))
                               :badge (string-downcase (symbol-name (view-kind (pane-view cur)))))
       (let ((is-list (and (null (pane-tv cur))
-                          (not (member (view-kind (pane-view cur)) '(:matrix :stage))))))
+                          (not (member (view-kind (pane-view cur)) +non-list-kinds+)))))
         (cond
           ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
           ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
@@ -1101,7 +1250,9 @@
              (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *ui-rule*)
              (if preview
                  (progn
-                   (lol.canvas:draw-string canvas *bfont* (view-title (pane-view preview))
+                   (lol.canvas:draw-string canvas *bfont*
+                                           (clip-text (view-title (pane-view preview))
+                                                      (max 8 (floor (- prev-w 40) (lol.canvas:font-cw *bfont*))))
                                            prev-x (- body-y 15) *ui-dim*)
                    (draw-pane-body canvas preview prev-x body-y prev-w body-h :side))
                  (lol.canvas:draw-string canvas *bfont* "(no preview)"
@@ -1116,6 +1267,7 @@
     (note-drawn 0 (- h 22) w 22 *browser-status* '(draw-status-line draw-hints)
                 "the status line")
     (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *ui-hi*)
+    (when *minibuffer* (return-from draw-status-line (draw-minibuffer canvas w h)))
     (if *browser-status*
         (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *ui-accent*)
         (draw-hints canvas 10 (- h 18) w
@@ -1134,6 +1286,12 @@
                             '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
                               ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")
                               ("C-c C-c" . "define")))
+                           ((lisp-file-pane-p cur)
+                            '(("C-x C-s" . "save") ("C-x C-e" . "Do it") ("C-c C-c" . "define")
+                              ("C-_" . "undo") ("C-g" . "close")))
+                           ((file-pane-p cur)
+                            '(("C-x C-s" . "save") ("C-_" . "undo") ("C-g" . "close")))
+                           ((ignore-errors (subject-hints (pane-subject cur) cur)))
                            ((eq (view-kind (pane-view cur)) :stage)
                             '(("spc" . "run/pause") ("n" . "step") ("s/a/m/t" . "spawn")
                               ("w" . "workspace") ("r" . "reset")
@@ -1187,12 +1345,31 @@
     (loop for g in order
           append (remove-if-not (lambda (r) (equal g (or (getf r :group) "other"))) results))))
 
+(defun spotter-cwd ()
+  "The folder ./ means in a Spotter path query: the focused pane's, when it is a file
+   manager (or a file) — else NIL, which the path grammar reads as $HOME."
+  (ignore-errors (and *trails* (folder-of-subject (pane-subject (current-pane))))))
+
 (defun spotter-results (query candidates &optional (limit 200))
   "The Spotter's results for QUERY: ranked, then BANDED. One function, because the
    caller indexes this list with its selection and the renderer draws it in order — if
    the banding happened at draw time, arrowing to row 3 would open whatever row 3 was
-   before the bands moved it."
-  (spotter-band (spotter-filter query candidates limit)))
+   before the bands moved it.
+
+   A query that is a PATH (/…, ./…, ../…, ~/…, ~, file://…) is not a fuzzy search at
+   all: its rows are the folder's entries completing it, the way a shell's Tab lists
+   them (SPOTTER-PATH-RESULTS, initramfs/file-views.lisp; the grammar is PATH-QUERY-P
+   in initramfs/files.lisp and doc/file-manager.org)."
+  (if (path-query-p query)
+      (or (ignore-errors (spotter-path-results query :cwd (spotter-cwd) :limit limit)) '())
+      (spotter-band (spotter-filter query candidates limit))))
+
+(defun spotter-complete (query)
+  "Tab in the Spotter: a path query is completed like a shell's (COMPLETE-PATH-QUERY);
+   any other query is left alone."
+  (if (path-query-p query)
+      (or (ignore-errors (complete-path-query query :cwd (spotter-cwd))) query)
+      query))
 
 (defun spotter-kind (r)
   "The Lisp-concept keyword for a Spotter candidate: its explicit :KIND when it has
@@ -1272,7 +1449,11 @@
       ;; the footer says what the keys do, because the palette is modal and nothing
       ;; else on screen can say it
       (draw-hints canvas (+ cx 12) (+ cy ch -16) (- cw 16)
-                  '(("up/dn" . "move") ("ret" . "open in a new tab") ("Esc" . "close"))))))
+                  (if (path-query-p query)
+                      '(("tab" . "complete") ("up/dn" . "move") ("ret" . "open the folder in a new tab")
+                        ("Esc" . "close"))
+                      '(("up/dn" . "move") ("ret" . "open in a new tab") ("~/ or /" . "a path")
+                        ("Esc" . "close")))))))
 
 (defun spotter-row-at* (x y)
   "The visible Spotter row index at X,Y, or NIL — read back from what the draw
@@ -1286,6 +1467,138 @@
   (or (null *spotter-rect*)
       (destructuring-bind (x0 y0 x1 y1) *spotter-rect*
         (not (and (<= x0 x x1) (<= y0 y y1))))))
+
+;;; ---- the minibuffer: a one-line prompt that is not modal ------------------
+;;; Emacs's answer to "ask the user something": one line at the bottom of the frame,
+;;; edited in place, while everything above stays live and drawn. The other prompt in
+;;; this browser, *VALUE-PROMPT*, is a MODAL loop the framebuffer backend runs — fine
+;;; for a debugger restart, but it exists only on /dev/fb0, it cannot redraw what is
+;;; behind it, and a frame rendered by poc/render-frame.lisp can never show it.
+;;;
+;;; This one is STATE, not a loop: *MINIBUFFER* holds the prompt; BROWSER-KEY hands it
+;;; every key while it is up; DRAW-STATUS-LINE draws it. So it works identically on the
+;;; framebuffer, on X11 and in a rendered frame, and a caller that wants to watch the
+;;; text change (the file manager's live filter) gets ON-CHANGE on every keystroke.
+;;; The price is that the answer arrives through a CALLBACK (ON-DONE) instead of as a
+;;; return value — a closure, which in Lisp costs nothing to write.
+
+(defstruct mb
+  prompt                 ; "Rename to: " — drawn in amber before the text
+  (text "")              ; what has been typed (or the initial value)
+  (point 0)              ; the caret, an index into TEXT
+  on-done                ; (lambda (text)) — Enter
+  on-change              ; (lambda (text)) or NIL — after every edit
+  on-cancel              ; (lambda ()) or NIL — Esc / C-g
+  completer              ; (lambda (text)) -> new text, or NIL — Tab
+  single-key             ; T: the next key answers (y/n), no Enter needed
+  hint)                  ; a short dim note at the right end, or NIL
+
+(defun minibuffer-read (prompt on-done &key (initial "") on-change on-cancel completer
+                                             single-key hint)
+  "Open the minibuffer with PROMPT, pre-filled with INITIAL and the caret at its end.
+   ON-DONE is called with the final text on Enter (or with the key's character, for
+   a SINGLE-KEY prompt); everything else is optional. Returns at once — the answer
+   comes later, through ON-DONE."
+  (setf *minibuffer* (make-mb :prompt prompt :text initial :point (length initial)
+                              :on-done on-done :on-change on-change :on-cancel on-cancel
+                              :completer completer :single-key single-key :hint hint))
+  nil)
+
+(defun minibuffer-finish (fn &rest args)
+  "Close the minibuffer, THEN call FN — so a callback that opens the next prompt (a
+   rename that then asks to confirm) is not immediately closed by us. Errors in FN
+   land in the status line: a callback runs in PID 1 like everything else."
+  (setf *minibuffer* nil)
+  (when fn
+    (handler-case (apply fn args)
+      (serious-condition (c) (setf *browser-status* (princ-to-string c))))))
+
+(defun minibuffer-edited (mb)
+  (when (mb-on-change mb)
+    (handler-case (funcall (mb-on-change mb) (mb-text mb))
+      (serious-condition (c) (setf *browser-status* (princ-to-string c))))))
+
+(defun minibuffer-key (key state)
+  "A key while the minibuffer is up. Enter answers, Esc / C-g cancels, Tab completes;
+   the rest is a small line editor: Left/Right, C-a/C-e (Home/End), C-b/C-f,
+   Backspace / C-d (Delete), C-k kills to the end, C-u clears the line, M-Backspace
+   deletes a word. Returns NIL (BROWSER-KEY's 'carry on')."
+  (let* ((mb *minibuffer*)
+         (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
+         (ctrl (lol.canvas:ctrl-p state)) (meta (lol.canvas:meta-p state)))
+    (flet ((set-text (new point)
+             (setf (mb-text mb) new (mb-point mb) (max 0 (min point (length new))))
+             (minibuffer-edited mb)))
+      (cond
+        ((or (eq key :escape) (and ctrl (member key '(#\g #\G))))
+         (minibuffer-finish (mb-on-cancel mb)))
+        ((mb-single-key mb)
+         (minibuffer-finish (mb-on-done mb) (if (characterp key) key :other)))
+        ((member key '(:return #\Return #\Newline))
+         (minibuffer-finish (mb-on-done mb) text))
+        ((and (eq key :tab) (mb-completer mb))
+         (let ((new (ignore-errors (funcall (mb-completer mb) text))))
+           (when (and new (string/= new text)) (set-text new (length new)))))
+        ((and meta (eq key :backspace))
+         (let ((start (or (position-if (lambda (c) (member c '(#\/ #\Space #\. #\- #\_)))
+                                       text :end (max 0 (1- pt)) :from-end t)
+                          -1)))
+           (set-text (concatenate 'string (subseq text 0 (1+ start)) (subseq text pt)) (1+ start))))
+        ((eq key :backspace)
+         (when (plusp pt) (set-text (concatenate 'string (subseq text 0 (1- pt)) (subseq text pt)) (1- pt))))
+        ((or (eq key :delete) (and ctrl (member key '(#\d #\D))))
+         (when (< pt (length text))
+           (set-text (concatenate 'string (subseq text 0 pt) (subseq text (1+ pt))) pt)))
+        ((or (eq key :left) (and ctrl (member key '(#\b #\B)))) (setf (mb-point mb) (max 0 (1- pt))))
+        ((or (eq key :right) (and ctrl (member key '(#\f #\F)))) (setf (mb-point mb) (min (length text) (1+ pt))))
+        ((or (eq key :home) (and ctrl (member key '(#\a #\A)))) (setf (mb-point mb) 0))
+        ((or (eq key :end) (and ctrl (member key '(#\e #\E)))) (setf (mb-point mb) (length text)))
+        ((and ctrl (member key '(#\k #\K))) (set-text (subseq text 0 pt) pt))
+        ((and ctrl (member key '(#\u #\U))) (set-text "" 0))
+        ((and (characterp key) (graphic-char-p key) (not ctrl) (not meta))
+         (set-text (concatenate 'string (subseq text 0 pt) (string key) (subseq text pt)) (1+ pt)))
+        (t nil))))
+  nil)
+
+(defun draw-minibuffer (canvas w h)
+  "The minibuffer, over the status line: an amber rule, the prompt in amber, the
+   text and a caret. A long text scrolls so the caret is always on screen."
+  (let* ((mb *minibuffer*)
+         (cw (lol.canvas:font-cw *bfont*))
+         (y (- h 22))
+         (px (+ 10 (lol.canvas:string-px *bfont* (mb-prompt mb))))
+         (hint-w (if (mb-hint mb) (+ 16 (lol.canvas:string-px *bfont* (mb-hint mb))) 0))
+         (room (max 4 (floor (- w px 14 hint-w) cw)))
+         (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
+         (first (max 0 (- pt (1- room))))
+         (shown (subseq text first (min (length text) (+ first room)))))
+    (lol.canvas:fill-rect canvas 0 y w 22 *ui-hi*)
+    (lol.canvas:fill-rect canvas 0 y w 2 *ui-amber*)
+    (note-drawn 0 y w 22 mb '(draw-minibuffer) "the minibuffer")
+    (lol.canvas:draw-string canvas *bfont* (mb-prompt mb) 10 (+ y 4) *ui-amber*)
+    (lol.canvas:draw-string canvas *bfont* shown px (+ y 4) *ui-text*)
+    (lol.canvas:fill-rect canvas (+ px (* (- pt first) cw)) (+ y 3) 2 16 *ui-accent*)
+    (when (mb-hint mb)
+      (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
+                              (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (+ y 4) *ui-dim*))))
+
+;;; ---- a subject's own keys, and its own hints --------------------------------
+;;; Two generic functions so a subject type can bring keys to its LIST pane without
+;;; this file naming it — the file manager (poc/file-manager.lisp) is the first user:
+;;; in a folder, plain letters are verbs (r rename, d delete, / filter …), exactly as
+;;; in dired, because a list pane has no text to type them into.
+
+(defgeneric subject-key (subject pane key state)
+  (:documentation "Handle KEY for a list PANE showing SUBJECT; true when it was
+    consumed. Called before the generic list keys, only without Ctrl/Meta/Super.")
+  (:method (subject pane key state)
+    (declare (ignore subject pane key state))
+    nil))
+
+(defgeneric subject-hints (subject pane)
+  (:documentation "The status-line hints ((CHORD . MEANING) …) for a pane showing
+    SUBJECT, or NIL for the shell's defaults.")
+  (:method (subject pane) (declare (ignore subject pane)) nil))
 
 ;;; ---- input ---------------------------------------------------------------
 
@@ -1446,7 +1759,7 @@
    the change set (§3b, beat 4).
 
    Sets *browser-status* to the outcome."
-  (let ((text (if (workspace-pane-p pane)
+  (let ((text (if (or (workspace-pane-p pane) (file-pane-p pane))
                   (form-text-before-point (pane-tv pane))   ; the form before the caret
                   (lol.textview:tv-text (pane-tv pane))))
         (subj (pane-subject pane)))
@@ -1454,7 +1767,7 @@
       (return-from accept-pane (setf *browser-status* "Accept: no form before point")))
     (handler-case
         (multiple-value-bind (name kind label)
-            (if (workspace-pane-p pane) (values nil nil nil) (accept-target subj))
+            (if (or (workspace-pane-p pane) (file-pane-p pane)) (values nil nil nil) (accept-target subj))
           (let ((n (accept-source text name kind label)))
             (setf *browser-status* (format nil "Accepted: ~(~a~)" n))))
       (serious-condition (c)
@@ -1535,8 +1848,15 @@
          (setf *pending-prefix* nil)
          (cond
            ((and (eq prefix :c-c) c (eql key #\c)
-                 (or (editable-pane-p p) (workspace-pane-p p)))
+                 (or (editable-pane-p p) (workspace-pane-p p) (lisp-file-pane-p p)))
             (accept-pane p))
+           ;; C-x C-s — save, the Emacs way. A file pane writes its file (safely: a
+           ;; temp file and a rename, poc/file-manager.lisp); anywhere else there is
+           ;; no file to write, and saying so beats doing nothing.
+           ((and (eq prefix :c-x) c (eql key #\s))
+            (if (file-pane-p p)
+                (funcall 'save-file-pane p)
+                (setf *browser-status* "C-x C-s: this pane is not a file")))
            ((and (eq prefix :c-c) c (eql key #\p) (workspace-pane-p p)) (workspace-print-it p))
            ;; C-c C-i Inspect it: Ctrl-I *is* Tab (byte 9) on any tty, so the console
            ;; delivers this chord as C-c then :tab — accept both.
@@ -1544,7 +1864,8 @@
                  (workspace-pane-p p))
             (workspace-inspect-it p))
            ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
-           ((and (eq prefix :c-x) c (eql key #\e) (workspace-pane-p p)) (workspace-do-it p)))
+           ((and (eq prefix :c-x) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
+            (workspace-do-it p)))
          nil))
       ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
       ((and c (eql key #\x)) (setf *pending-prefix* :c-x) nil)
@@ -1555,6 +1876,8 @@
 (defun browser-key (key state)
   "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
    Returns :quit to exit. STATE is the X modifier bitmask."
+  ;; an open minibuffer takes EVERY key — it is where the user is typing
+  (when *minibuffer* (return-from browser-key (minibuffer-key key state)))
   (let* ((p (current-pane))
          ;; Meta = the Alt/Esc-prefix bit on this key, OR a sticky Esc from last time.
          ;; Consume the sticky flag every keystroke; the Esc branch below re-arms it.
@@ -1589,7 +1912,12 @@
          ;; the trail as well would throw away the split you are standing in, when
          ;; all you asked for was to stop editing.
          ((and *editing-side* (pane-side p)) (unfocus-side p))
-         ((cdr (current-trail)) (trail-pop)))
+         ;; closing a file with unsaved edits: the first C-g only warns. Emacs asks
+         ;; "Modified buffer exists; kill anyway?" — the same question, one key cheaper.
+         ((and (file-pane-dirty-p p) (not (eq *unsaved-warned* p)))
+          (setf *browser-status* "unsaved changes - C-x C-s saves, C-g again discards them"
+                *unsaved-warned* p))
+         ((cdr (current-trail)) (setf *unsaved-warned* nil) (trail-pop)))
        nil)
       ;; --- SuperL layer: tab navigation, the Spotter + the cheatsheet, over ANY pane
       ;;     (never the editor's). Super arrives via the keyboard's evdev (folded into
@@ -1615,6 +1943,7 @@
             (when (and it (item-subject it)) (new-trail (item-subject it))))
           nil)
          ((member key '(#\m #\M)) (open-modules) nil)                         ; the module index
+         ((member key '(#\f #\F)) (funcall 'open-files) nil)                   ; the file manager
          ((member key '(#\l #\L))                                              ; the CL-USER package
           (new-trail (find-package :cl-user)) nil)
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
@@ -1639,7 +1968,7 @@
       ;; --- editable panes: source (Accept) and workspace (eval verbs). Chords go
       ;;     through *pending-prefix*: C-c then {C-c Accept | C-p Print | C-i Inspect},
       ;;     C-x then C-e Do it. Any other key edits. ---
-      ((or (editable-pane-p p) (workspace-pane-p p)) (edit-pane-key p key state))
+      ((editor-pane-p p) (edit-pane-key p key state))
       ;; --- read-only reference pane: scroll only ---
       ((and (pane-tv p) (or (and (lol.canvas:meta-p state) (member key '(#\w #\W)))
                             (and (lol.canvas:ctrl-p state) (eq key :insert))))
@@ -1652,6 +1981,12 @@
          (:page-down (lol.textview:tv-key (pane-tv p) :page-down 0))
          (#\q :quit)
          (t nil)))
+      ;; --- a subject's own keys on its list (the file manager's letters) ---
+      ((and (null (pane-tv p))
+            (not (lol.canvas:ctrl-p state)) (not meta)
+            (not (eq *pending-prefix* :c-c))
+            (ignore-errors (subject-key (pane-subject p) p key state)))
+       nil)
       ;; --- list pane: plain-key navigation (nothing to edit) ---
       (t
        (cond
@@ -1883,6 +2218,9 @@
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
   (setf *drag-tv* nil *drag-origin* nil)    ; only a caret placed below re-arms it
+  ;; a click ends a prompt: it is a change of subject, like C-g. (The live filter
+  ;; keeps what was typed — its ON-CANCEL decides that, not us.)
+  (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*)))
   ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
   ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
   (when (< y +bar-h+)
@@ -2022,7 +2360,7 @@
          (sym (resolve-symbol token)))
     (multiple-value-bind (start end) (and token (token-span line at))
       (list :kind :text :pane pane :tv tv
-            :editable (or (editable-pane-p pane) (workspace-pane-p pane))
+            :editable (editor-pane-p pane)
             :token token :symbol sym :line l :col c :start start :end end))))
 
 (defun row-target (pane hits y)
@@ -2059,7 +2397,7 @@
            (if b
                (list :kind :sprite :pane p :body b :subject (body-obj b))
                (pane-itself p))))
-        ((and (null (pane-tv p)) (not (eq (view-kind (pane-view p)) :matrix)))
+        ((and (null (pane-tv p)) (not (member (view-kind (pane-view p)) +non-list-kinds+)))
          (or (row-target p *list-rows* y) (pane-itself p)))
         (t (pane-itself p))))))
 
@@ -2189,6 +2527,7 @@
   "What any right-click ends with: the places you can always go."
   (list (menu-entry "New Workspace" (lambda () (new-trail (subj-workspace))) :group "environment")
         (menu-entry "Module index" (lambda () (open-modules)) :key "SuperL-m" :group "environment")
+        (menu-entry "Files" (lambda () (funcall 'open-files)) :key "SuperL-f" :group "environment")
         (menu-entry "Find anything..." (lambda () (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)))
                     :key "SuperL-spc" :group "environment")
         (menu-entry "Clipboard history..." (lambda () (open-clipboard-manager))
@@ -2806,7 +3145,7 @@
   "The editable text view keyboard focus is in, or NIL — where a paste goes."
   (let* ((p (current-pane))
          (q (if (and *editing-side* (pane-side p)) (pane-side p) p)))
-    (and (pane-tv q) (or (editable-pane-p q) (workspace-pane-p q)) (pane-tv q))))
+    (and (pane-tv q) (editor-pane-p q) (pane-tv q))))
 
 ;;; ---- the clipboard manager (SuperL-h): Parcellite's history, as a palette -----
 
