@@ -1,0 +1,12 @@
+stb_image.h — vendored, unmodified.
+
+  Source : https://github.com/nothings/stb/blob/master/stb_image.h
+           (fetched 2026-10-03, stb master 2c980bb59875b0d32144a71867fbdebb2f77cd20)
+  Version: v2.30
+  SHA-256: 594c2fe35d49488b4382dbfaec8f98366defca819d916ac95becf3e75f4200b3
+  License: public domain (Unlicense) OR MIT, at your choice — the full text is
+           at the end of the header itself. Author: Sean Barrett.
+
+Used only by poc/stbi-shim.c (built by poc/build-stbi.sh into libstbi.so) for the
+formats poc/image.lisp does not decode in Lisp: JPEG (baseline + progressive), PSD,
+HDR, PIC. See doc/previews.org, "Why stb_image for JPEG".

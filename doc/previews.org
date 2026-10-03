@@ -1,0 +1,429 @@
+#+TITLE: Previews — decoding images (and DEFLATE) in the Lisp image
+#+STARTUP: showall
+
+Sibling docs: [[file:framebuffer.org][framebuffer.org]] (where the pixels end up) ·
+[[file:fonts.org][fonts.org]] (the other thing we turn into pixels by hand) ·
+[[file:processes.org][processes.org]] §6 (the FFI rule this design had to respect).
+
+Code: [[file:../poc/inflate.lisp][poc/inflate.lisp]] (package =LOL.INFLATE=) ·
+[[file:../poc/image.lisp][poc/image.lisp]] (package =LOL.IMAGE=) ·
+[[file:../poc/stbi-shim.c][poc/stbi-shim.c]] + [[file:../poc/build-stbi.sh][poc/build-stbi.sh]] (the one C part) ·
+[[file:../poc/vendor/README][poc/vendor/]] (the vendored =stb_image.h=) · test:
+[[file:../poc/image-test.lisp][poc/image-test.lisp]] (=sbcl --script poc/image-test.lisp=).
+
+Question that prompted this: /the environment is getting a file manager, and I
+want almost everything that could have a preview to have one./ Text previews are
+easy. Pictures are not: every image format is a compressed encoding, and the
+image is a frozen SBCL heap with libc and libm and nothing else — no =libpng=,
+no =zlib=, no =libjpeg=.
+
+*Status (2026-10-03):* *built and host-tested* — 294 checks against ImageMagick,
+all passing on SBCL 2.6.8 (=./sbcl=) and the host's 2.6.6. *Not yet in the image:*
+the file-manager work wires the two Lisp files into =build.sh='s =LISP_SOURCES=
+and =libstbi.so= into the cpio (§11 says exactly how).
+
+* The one-sentence essence
+
+Most image formats are a small container around a simple coding, and those are
+decoded here in Lisp; JPEG is a genuine signal-processing pipeline, so it — and
+only it, plus three freebies — goes through a 47 KB public-domain C decoder
+loaded on first use; either way the result is the canvas's own =#x00RRGGBB=
+array, and nothing the decoder meets can bring down PID 1.
+
+* 1. What a preview needs
+
+A preview is a picture the shell can draw. The shell draws with
+[[file:../poc/canvas.lisp][poc/canvas.lisp]], whose pixel is one =(unsigned-byte 32)= holding =#x00RRGGBB= —
+chosen because on x86 that sits in memory as B,G,R,0, which is exactly what
+=efifb= and a 24-bit X server want (canvas.lisp's header, and
+[[file:framebuffer.org][framebuffer.org]] §8). So every decoder here ends in that format, row-major,
+top row first, and the caller can blit it with no conversion.
+
+Three rules shape the API, all because the caller is PID 1:
+
+- *Never signal.* =decode-image= returns =(values w h pixels format)= or
+  =(values nil reason format)=. Inside, every decoder is free to signal — a
+  truncated file is an array index out of bounds, a bad Huffman code is an
+  =inflate-error= — and one =handler-case= on =serious-condition= at the top turns
+  all of it, heap exhaustion included, into a one-line reason. =SAFETY= stays at
+  1 in every hot loop: that is what makes "an index out of bounds" a condition
+  rather than a write into someone else's memory.
+- *Refuse bombs before allocating.* A 60-byte PNG may claim to be 60000 x 60000.
+  Each decoder checks =w*h= against =*max-pixels*= (40 megapixels: a 7300x5500
+  photo, already 160 MB as =#x00RRGGBB=) as soon as it has read the header, and
+  INFLATE is told the exact output size a PNG may expand to (=:max-output=).
+- *Transparency is the decoder's problem, not the caller's.* Internally every
+  decoder produces =#xAARRGGBB= plus a flag "alpha is in use"; one final pass
+  (=finish-pixels=) composites onto =:background= — by default an 8-pixel
+  checkerboard of two dark greys (=*checker-colors*=, the image-editor
+  convention, which reads as "transparent" on a dark UI), or any =#xRRGGBB=, or
+  =nil= to drop alpha. One compositing rule for nine formats.
+
+* 2. DEFLATE — the decompressor everything else needs
+
+[[file:../poc/inflate.lisp][poc/inflate.lisp]] is the reading half of [[file:../host-client/png.lisp][host-client/png.lisp]], which writes
+DEFLATE. PNG needs it (every PNG's pixels are a zlib stream), and so will the file
+manager's =.gz=, =.zip= and =.tar.gz= previews, so it is its own package.
+
+** The stream
+
+A DEFLATE stream (RFC 1951) is a sequence of /blocks/. Three header bits each:
+=BFINAL= (last block?) and =BTYPE= — 0 /stored/ (raw bytes, length-prefixed), 1
+/fixed Huffman/ (a code table every decoder already knows), 2 /dynamic Huffman/
+(the block first sends its own table). A Huffman block is a stream of
+/symbols/: 0-255 are literal bytes, 256 ends the block, 257-285 mean "copy
+LENGTH bytes from DISTANCE bytes back" — LZ77 — with the length refined by a few
+/extra bits/ and the distance coded by a second Huffman table plus its own extra
+bits. Decoding is the cheap direction: the encoder did all the searching, the
+decoder just follows instructions.
+
+One subtlety in the copy: a distance may be /shorter/ than the length ("copy 100
+bytes from 1 byte back" is how a run of 100 equal bytes is written). Such a copy
+re-reads bytes it has just written, so it must go byte by byte; non-overlapping
+copies use =replace= (a =memmove=).
+
+** Huffman codes from lengths alone
+
+DEFLATE never transmits a code tree, only each symbol's code /length/. The codes
+are /canonical/: shorter codes first, and within one length in symbol order, each
+code is the previous plus one — so the lengths determine the codes completely
+(RFC 1951 §3.2.2; =build-huff=). A dynamic block even compresses its list of
+lengths with a third, tiny Huffman code (19 symbols, including "repeat the
+previous length 3-6 times" and "3-138 zeros"), whose own lengths come in a
+fixed, most-likely-first order (=*clen-order*=).
+
+** The bit-order trap
+
+The stream is packed LSB-first — the first bit is bit 0 of the first byte — but
+Huffman codes are written MSB-first. The encoder's header warns about this from
+the other side. In a decoder that keeps an LSB-first /bit buffer/, a code
+therefore appears bit-reversed, so the lookup table is indexed by the
+reversed code and the problem disappears.
+
+** Why it is fast
+
+Two things, as in every serious inflater:
+
+1. *A bit buffer.* A fixnum holds up to 56 unread bits; it is topped up a byte
+   at a time when it drops below 32. No function call per bit. The state lives in
+   local variables of one function (=MACROLET=, not closures), so SBCL keeps them
+   in registers.
+2. *Table-driven decoding.* Peek the next 10 bits, index a 1024-entry table,
+   read =symbol*16 + length= in one =AREF=. Every code of length L <= 10 owns all
+   2^(10-L) table slots whose low bits match it. Longer codes — by construction
+   the rarest symbols — leave their slots 0 and fall to a slow canonical walk
+   (=huff-slow=, the method of zlib's reference decoder /puff/).
+
+Measured on the host (§10): 2 MB of incompressible data (all stored blocks) in
+~8 ms, 0.5 MB of source text in ~4 ms.
+
+** zlib and gzip
+
+=zlib-decompress= (RFC 1950) checks a two-byte header (method 8, header a multiple
+of 31, no preset dictionary — PNG forbids one), inflates, then verifies the
+/Adler-32/ of the output: two running sums mod 65521, with the modulo deferred
+5552 bytes at a time (the most that cannot overflow 32 bits — zlib's =NMAX=).
+=gunzip= (RFC 1952) skips the optional header fields (extra, file name, comment,
+header CRC), inflates, checks the /CRC-32/ and the length, and loops: =cat a.gz
+b.gz= is a valid gzip file and decompresses to the concatenation. =decompress=
+sniffs which of the three it was given. Corrupt input signals =inflate-error= —
+the test flips and truncates a gzip 200 ways and checks nothing else ever escapes.
+
+* 3. PNG
+
+A PNG is an 8-byte signature and a list of /chunks/: length, a 4-letter type,
+data, CRC-32. Four matter: =IHDR= (width, height, bit depth, colour type,
+interlace), =PLTE= (the palette), =tRNS= (transparency: per palette entry, or one
+"key" colour for grey/RGB images) and =IDAT= — whose payloads, /concatenated/,
+form one zlib stream. Chunk CRCs are only checked on request
+(the internal =lol.image::decode-png :verify-crc t=); the zlib stream's Adler-32 already guards the pixels.
+
+** Filters
+
+The inflated bytes are scanlines, each preceded by a /filter byte/. The encoder
+replaced every byte with its difference from a prediction — the byte to the
+left (Sub), above (Up), their mean (Average), or the /Paeth/ guess — because
+smooth images then become runs of small numbers, which DEFLATE compresses well.
+Decoding adds the prediction back, in place, row by row (=png-unfilter=).
+
+Paeth (named after Alan Paeth) is the clever one: estimate =p = left + up -
+upleft= (the value a linear gradient would have), then predict with whichever
+of left, up, upleft is /closest/ to p. "Left" means one whole pixel back, so for
+RGBA16 it is 8 bytes back, and for sub-byte depths 1 byte.
+
+** Bit depths, colour types, Adam7
+
+Five colour types (grey, RGB, palette, grey+alpha, RGBA) at depths 1-16 give
+fifteen legal combinations; all are decoded. 8-bit RGB, RGBA, grey and palette —
+nearly every PNG in the wild — get straight loops in =png-emit=; the rest share a
+general per-sample path. 16-bit samples round to 8 (=(v+128)/257=, what libpng's
+=strip_16= does); a =tRNS= key colour is compared against the /raw/ 16-bit
+sample, before rounding, as the spec requires.
+
+/Adam7/ interlacing stores the image as seven sub-images on finer and finer
+grids (every 8th pixel, then the ones between, ...), so a browser can show a blurry
+whole picture early. Each pass is filtered on its own; we unfilter each and
+scatter its pixels to their place.
+
+* 4. JPEG — and why this one is C
+
+** The pipeline
+
+A baseline JPEG is a signal-processing pipeline run backwards:
+
+1. *Huffman decoding* of each 8x8 block's 64 coefficients (stored in zig-zag
+   order, low frequencies first, with run-lengths of zeros);
+2. *dequantisation* — multiply each coefficient by its quantisation-table entry
+   (the lossy step was the encoder's division);
+3. *inverse DCT* — turn 64 frequency coefficients back into 64 samples; this is
+   the arithmetic-heavy step, done with a fixed-point butterfly;
+4. *upsampling* — colour (Cb, Cr) is usually stored at half resolution
+   (4:2:0) because eyes resolve brightness better than hue; it must be
+   interpolated back up;
+5. *YCbCr -> RGB*, a 3x3 matrix per pixel.
+
+A *progressive* JPEG — most phone and web photos — sends the same coefficients
+in several /scans/: first the DC terms of every block (a blurry preview), then
+bands of AC coefficients (/spectral selection/), then the remaining low bits of
+everything (/successive approximation/, with its notoriously fiddly "refinement"
+scan). The decoder must keep every block's coefficients until the last scan.
+
+** The decision: stb_image, behind a 50-line shim
+
+Every other format in this file is "container + a simple coding" — short, safe,
+and fast enough in Lisp. JPEG is not: a correct progressive decoder with a good
+IDCT and fancy upsampling is a 1500-line project with a long tail of
+encoder-specific quirks. =stb_image.h= (Sean Barrett, public domain or MIT,
+vendored unmodified as v2.30, provenance and SHA-256 in [[file:../poc/vendor/README][poc/vendor/README]])
+already does it, in one header, needing only libc and libm — both of which the
+image ships anyway for the SBCL runtime.
+
+[[file:../poc/stbi-shim.c][poc/stbi-shim.c]] compiles it with =STBI_ONLY_JPEG= (+ PSD, HDR, PIC, which come
+for free), memory input only, and exports four functions with plain C types:
+=lol_stbi_info= (dimensions, so the 40 MP cap applies /before/ stb allocates),
+=lol_stbi_load= (always RGBA8), =lol_stbi_free=, =lol_stbi_reason=. What it costs,
+measured:
+
+| | |
+|-+-|
+| =libstbi.so= (stripped, gcc -O2) | 47 136 bytes |
+| its dependencies (=ldd=) | =libm.so.6=, =libc.so.6=, =ld-linux-x86-64.so.2= — all already in the cpio |
+| build | =poc/build-stbi.sh OUTDIR=, under a second; fails if =ldd= shows anything else |
+
+On the Lisp side ([[file:../poc/image.lisp::defun decode-stbi][decode-stbi]]) the library is loaded *lazily*, on the first
+JPEG, with =load-shared-object ... :dont-save t=. A shared object loaded /before/
+=save-lisp-and-die= is re-opened by path at every boot, which would turn a missing
+file into a boot problem; loaded at first use, it is only ever a preview problem.
+The search path is =$LOL_STBI=, then =/usr/lib/lol/libstbi.so= (guest), then
+=poc/out/libstbi.so= next to the source (host). If none loads, JPEG/PSD/HDR/PIC
+return =NIL= with "needs libstbi.so: ..." and everything else still works.
+
+The functions are looked up by name at call time and called through
+=sap-alien=, so =image.lisp= compiles and loads where the library has never
+existed — and, unlike =sb-posix='s inline wrappers ([[file:processes.org][processes.org]] §6), every call
+uses only the primitive alien types =int=, pointer and =c-string=, so a function
+here can still be recompiled live in the guest with =C-c C-c=.
+
+The Lisp<->C hand-off: the input octet vector is /pinned/
+(=with-pinned-objects=, so the garbage collector cannot move it while C reads
+it) and passed as a raw pointer; stb returns =malloc='d RGBA, which is copied
+into a Lisp array with R and B swapped (memory R,G,B,A is the little-endian word
+=#xAABBGGRR=) and freed in an =unwind-protect=.
+
+*EXIF orientation* is done in Lisp: phones store pixels as the sensor saw them
+and record in EXIF tag =0x0112= how to turn them. stb ignores it, so
+=jpeg-orientation= walks the APP1 segment's little TIFF directory for that one
+tag and =reorient= applies it (all eight cases, the mirrored ones included).
+
+Ruled out: a pure-Lisp JPEG decoder (the size and the risk above, for a format
+where a mature public-domain decoder exists); =libjpeg-turbo= (~600 KB and a
+SIMD build for no visible gain in a preview). For lossy WebP, =libwebp= is the
+only realistic route: =libwebp.so.7= is 600 KB and pulls =libsharpyuv= besides
+libc/libm — an /option/ recorded here, deliberately not taken.
+
+* 5. GIF — LZW
+
+A GIF is a palette and a stream of colour /indices/ compressed with LZW. LZW
+transmits no dictionary: both sides grow the /same/ one as they go. Every code
+read outputs a string and adds a new entry, "the previous string + the first
+character of this one". Codes start at (min-code-size+1) bits and widen as the
+table fills, up to 12 bits; a /clear/ code restarts. The one subtle case,
+"KwKwK": a code that is not in the table /yet/ — the encoder used an entry the
+moment it created it. It can only mean "previous string + its own first
+character", and =lzw-decode= handles it in two lines.
+
+We decode the first frame, honour its Graphic Control Extension's transparent
+index, place it on the logical screen (the area outside a smaller frame is
+transparent), and de-interlace (rows 0, 8, 16.. then 4, 12.. then 2, 6.. then
+odd). Animation is not played: a preview is a still.
+
+* 6. The small formats
+
+- *BMP* — a 14-byte file header pointing at the pixels, then a DIB header whose
+  /size/ says which of six historical versions it is (12 = OS/2 ... 124 =
+  V5). Rows are padded to 4 bytes and, when the height is positive, stored
+  /bottom-up/. 1/2/4/8-bit palettes, 24-bit BGR, 16/32-bit with BITFIELDS masks
+  (decoded generically: shift each mask's bits down, rescale to 8 bits —
+  =mask-shift-bits=), and RLE8/RLE4 runs. A 32-bit alpha channel that is zero
+  everywhere is a writer that did not use it and is ignored.
+- *ICO / CUR* — a directory of images; we preview the largest (then deepest). An
+  entry is either a whole PNG (Vista+ icons) or a headerless DIB whose height is
+  doubled because a 1-bit /AND mask/ (1 = transparent) follows the colours.
+- *PNM* — Netpbm's P1-P6 (bitmap/grey/RGB, ASCII or binary) and P7 (PAM, with
+  alpha). Maxval up to 65535, rescaled with rounding.
+- *QOI* — "the Quite OK Image format", a one-page spec: six opcodes (raw pixel,
+  index into a 64-entry hash of recent colours, small difference, luma-relative
+  difference, run). Trivially fast to decode.
+- *TGA* — Truevision Targa: no magic number, so it is sniffed last by header
+  plausibility (or its 2.0 footer). True colour, grey, colour-mapped, each raw or
+  RLE; origin bits for bottom-up/top-down and right-to-left.
+
+* 7. Lossless WebP
+
+A WebP file is a RIFF container. Its =VP8L= chunk is /lossless/ (RFC 9649), a
+compact design worth having in Lisp:
+
+- the image is ARGB words, coded with five Huffman codes (green+lengths+cache,
+  red, blue, alpha, distance) — built canonically exactly as DEFLATE's are;
+- LZ77 back-references whose short distances are a 120-entry table of 2-D
+  offsets ("one up", "one up, one left", ...), so a match against the row above
+  costs a tiny code;
+- a /colour cache/ of recently used colours, indexed by a multiplicative hash;
+- optional /meta prefix codes/: a small sub-image choosing a different code group
+  per block;
+- up to four invertible /transforms/ applied before coding, which the decoder
+  undoes in reverse: predict each pixel from its neighbours (14 predictors, PNG's
+  idea generalised), decorrelate colours, subtract green from red and blue, or
+  index a palette with 2/4/8 pixels packed per word.
+
+Its =VP8 = chunk is /lossy/ WebP: a VP8 video keyframe. Not supported (§9).
+
+* 8. Thumbnails — scale-to-fit
+
+=(scale-to-fit w h pixels max-w max-h)= keeps the aspect ratio and uses a /box
+filter/: each output pixel is the average of the source rectangle it covers. So
+a 4000-pixel photo shrunk to 300 stays smooth instead of aliasing into noise
+(which picking every 13th pixel would do), and every source pixel is read
+exactly once — 3000x2000 to 640x480 in ~20 ms. It never enlarges unless
+=:upscale t= (then nearest-neighbour, which keeps pixel art crisp), and returns
+the input itself when it already fits. Against ImageMagick's =-filter box= the
+mean difference is 0.65/255 (the box edges are placed slightly differently).
+
+* 9. What is NOT supported, and why
+
+| Format | Why not |
+|--------+---------|
+| Lossy WebP (VP8) | A video codec's keyframe: intra prediction, a DCT variant, a boolean arithmetic coder. =libwebp= could do it (§4: 600 KB + =libsharpyuv=), not taken |
+| AVIF | An AV1 video frame in an ISO-BMFF box: =libavif= + =dav1d=, megabytes |
+| HEIC | HEVC in the same box, patent-encumbered; =libheif= + =libde265= |
+| JPEG XL | =libjxl= is C++ (=libstdc++=), and large |
+| TIFF | A container of /everything/ (LZW, JPEG, Deflate, planar, tiles, 32-bit float). Uncompressed + LZW TIFF would be cheap with the GIF and inflate code if ever needed |
+| SVG | Not an image but a program: XML + CSS + path rasterising. =librsvg= drags in cairo, pango, glib |
+| PDF | A page-description language with fonts; =mupdf= / =poppler= |
+| Video | Container + codec; the same story as AVIF, many times over |
+| Animation | GIF and WebP previews show the first frame |
+| Colour management | ICC profiles, PNG =gAMA=/=cHRM= are ignored — pixels are taken as sRGB |
+| 16-bit precision | Rounded to 8 bits: the framebuffer has 8 per channel |
+
+=image-format= still /recognises/ TIFF, AVIF, HEIC, JPEG XL, PDF and SVG by their
+magic bytes, so the file manager can say "HEIC — no preview" rather than
+"unknown".
+
+* 10. Measured
+
+Host numbers — Intel i7-1065G7 (laptop), SBCL 2.6.8 (=./sbcl=), files loaded with
+plain =load= (SBCL compiles each top-level form natively as it loads, so this is
+the speed the image gets). Timer granularity is 4 ms.
+
+| What | Size | Time |
+|------+------+------|
+| =gunzip=, 2 MB random data (stored blocks) | 1953 KB | ~8 ms |
+| =gunzip=, the =poc/*.lisp= sources | ~490 KB | ~4 ms |
+| PNG RGB 2000x1500 (plasma) | 2.3 MB | ~175 ms |
+| PNG RGB 3000x2000 (plasma, no blur) | 9.9 MB | ~265 ms |
+| PNG RGB 3000x2000, Adam7 | 10 MB | ~265 ms |
+| JPEG baseline 2000x1500 (stb) | 287 KB | ~20 ms |
+| JPEG progressive 2000x1500 (stb) | 279 KB | ~40 ms |
+| JPEG progressive 3000x2000 (stb) | 1.7 MB | ~145 ms |
+| lossless WebP 2000x1500 | 1.8 MB | ~200 ms |
+| =scale-to-fit= 3000x2000 -> 640x480 | | ~20 ms |
+| loading =inflate.lisp= + =image.lisp= (compiling them) | | ~1.3 s |
+| heap the two files add (after GC) | | ~0.75 MB |
+
+The guest's QEMU CPU is slower than this laptop; real hardware boots this same
+laptop. The first lossless-WebP version took 560 ms for 3 MP; declaring types in
+the pixel loop and the transforms, and computing a per-byte average with the
+=(a & b) + ((a ^ b) & 0xFEFEFEFE) >> 1= bit trick, brought it to 200 ms.
+
+* 11. Integration — what the file manager calls
+
+#+begin_src lisp
+  (lol.image:decode-image octets &key (background :checker) (orient t)
+                                      (max-pixels lol.image:*max-pixels*))
+  ;; => w h pixels format      pixels: (simple-array (unsigned-byte 32) (*)),
+  ;;                           #x00RRGGBB, row-major, top-down — canvas format
+  ;; => nil reason format      on any failure; NEVER signals
+  (lol.image:decode-image-file path &key background orient max-pixels)  ; same values
+  (lol.image:image-format octets)   ; => :png :jpeg :gif :bmp :pnm :qoi :tga :ico
+                                    ;    :webp :psd :hdr :pic, or recognised-but-
+                                    ;    undecodable :tiff :avif :heic :jxl :pdf :svg,
+                                    ;    or NIL
+  (lol.image:scale-to-fit w h pixels max-w max-h &key upscale)  ; => nw nh npixels
+  (lol.image:supported-formats)     ; decodable now (stb's four only if the .so loads)
+  (lol.image:stbi-available-p)      ; loads libstbi.so on first call
+
+  (lol.inflate:gunzip octets)  (lol.inflate:zlib-decompress octets)
+  (lol.inflate:inflate octets :start s)   ; => octets, index after the stream
+  (lol.inflate:decompress octets)         ; sniffs gzip / zlib / raw
+  ;; these signal LOL.INFLATE:INFLATE-ERROR on corrupt input — wrap them
+#+end_src
+
+=decode-image-file= reads at most 256 MB. Decode once per file and keep the
+/scaled/ pixels: the full-size array of a 12 MP photo is 48 MB.
+
+Wiring it into the image (owned by whoever edits =build.sh=):
+
+- =LISP_SOURCES=: add =$POC_DIR/inflate.lisp= then =$POC_DIR/image.lisp= (that
+  order; both before anything that calls them). Each starts with its
+  =defpackage=/=in-package= like [[file:../poc/clipboard.lisp][poc/clipboard.lisp]], and every top-level form
+  reads with the standard reader and =*read-eval*= off, as =load-recording=
+  requires.
+- =build.sh=: run =poc/build-stbi.sh "$POC_DIR/out"= (needs =gcc=; output is
+  gitignored).
+- =initramfs.sbcl.list=: =dir /usr/lib/lol 0755 0 0= and
+  =file /usr/lib/lol/libstbi.so poc/out/libstbi.so 0755 0 0=.
+
+* 12. How it is tested
+
+[[file:../poc/image-test.lisp][poc/image-test.lisp]] generates every fixture on the fly with ImageMagick into a
+temporary directory: one 301x203 picture (odd on purpose: every row-padding and
+partial-block edge gets exercised) with a plasma, hard-edged shapes, and an
+alpha-gradient twin, written in 78 variants — PNG in all colour types and
+depths, Adam7, filters, tRNS; JPEG 4:4:4/4:2:2/4:2:0, grey, restart markers,
+progressive, CMYK, all eight EXIF orientations; GIF plain/interlaced/transparent;
+BMP 1/4/8/16/24/32-bit and RLE8; PNM P1-P7; QOI; TGA raw/RLE/palette/grey/alpha;
+ICO with BMP and PNG entries; lossless WebP with palettes of 2, 4 and 12 colours
+and encoder methods 0 and 6. Each decode is compared with ImageMagick's own
+decoding (=magick FILE -depth 8 ppm:-=): exact for lossless formats, mean error
+for JPEG (stb's IDCT and upsampler are not libjpeg's: 0.01-0.13/255 measured), and
+translucent images again after compositing onto a colour, against =-flatten=.
+Then every fixture is truncated or byte-flipped 12 ways (900 damaged files): none
+makes =decode-image= signal.
+
+Findings that are /not/ bugs, recorded so nobody re-investigates them:
+
+- *4-bit and 5/6-bit BMP channels differ from ImageMagick by up to 15 and 1.*
+  We scale an n-bit value exactly (4-bit 15 -> 255, i.e. x17); ImageMagick
+  shifts (15 -> 240). The test allows exactly that difference.
+- *16-bit grey PNG differs by 1.* We round 16 -> 8 bits (as libpng does);
+  ImageMagick truncates for grey (it rounds for RGB, which matches exactly).
+- *ImageMagick's =-orient= writes no EXIF tag* into a picture that has no EXIF
+  profile, so the first orientation tests compared an unrotated image with an
+  unrotated image and passed vacuously. The test now splices a minimal APP1
+  segment carrying only tag =0x0112=.
+- An early run of the gzip-corruption test reported one damaged file
+  "slipping through" every check. Its "damage" was =(setf byte (random 256))=,
+  which leaves the byte unchanged one time in 256 (a 1-in-3 chance over 100
+  flips) — the likeliest explanation, and a test artifact, not a finding. The test now XORs with a non-zero byte. (A change /can/ still
+  legitimately pass: the unused padding bits of a stream's last byte are covered
+  by no checksum.)
