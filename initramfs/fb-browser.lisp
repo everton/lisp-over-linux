@@ -1439,10 +1439,12 @@
      ("/  f"               "filter here / find below")
      ("s  S  ."            "sort, reverse, dot files")
      ("+  n"               "new folder / new file")
-     ("r  c  m  d"         "rename copy move delete")
+     ("r  c  m  d  Del"    "rename copy move delete")
      ("l  L  x"            "symlink, hard link, chmod +x")
      ("Space  U"           "mark (d/c/m act on all) / clear")
      ("^  ~  i  y"         "up, home, info, copy path")
+     ("j  g"               "follow a link / refresh")
+     ("Esc (during f)"     "stop a running find")
      ("C-x C-s"            "save a file you are editing")
      ("Spotter ~/ or /"    "type a path; Tab completes"))
     ("Debugger"

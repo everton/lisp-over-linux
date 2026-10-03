@@ -345,7 +345,8 @@ hook, =*spotter-sources*=, so present.lisp does not name the file manager.
 
 In a folder (plain letters are verbs, as in dired — a list has no text to type them
 into; arrows, Enter, Backspace, =q= and everything with Ctrl or Super keep their
-meaning in every list):
+meaning in every list). =SuperL-?= shows the same keys in its /Files/ group
+(=*cheatsheet*= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), condensed — keep the two in step:
 
 | key | does |
 |-----+------|
