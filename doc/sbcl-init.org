@@ -6,8 +6,9 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #24). A C preinit mounts
-/proc /sys /dev /tmp and execs a Lisp *supervisor* (PID 1), which boots straight
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #25). A C preinit mounts
+/proc /sys /dev /tmp — and, since #25, the laptop's disk (only =/home= shared;
+[[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
 leave it or it dies — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
@@ -23,7 +24,9 @@ since landed too — see [[file:networking.org][networking.org]]); tag #22 = dro
 (/dev declutter; Unix98 PTYs stay); tag #23 = rebased onto Linux 7.1.3; tag #24 =
 rebased onto Linux 7.2.5 (and SBCL 2.6.6 -> 2.6.8). That SBCL bump broke runtime
 compilation on POPCNT-less CPUs such as QEMU's default; [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]] repairs
-it at build time (2026-10-02, userland only, still tag #24).
+it at build time (2026-10-02, userland only, still tag #24); tag #25 = storage:
+NVMe + ext4, the host's =/home= bind-mounted, the Lisp running as the user
+([[file:storage.org][storage.org]]).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -372,22 +375,33 @@ no files present.
 
 * The C preinit
 
-[[file:../initramfs/preinit.c][=initramfs/preinit.c=]] — the whole file, ~40 lines:
-#+begin_src c :tangle initramfs/preinit.c
-  /* Preinit: PID 1 entry. Mount the basics so SBCL can find /proc/self/exe,
-   * then become SBCL via execv (process stays PID 1). */
-  #include <sys/mount.h>
-  #include <unistd.h>
-  #include <stdio.h>
+[[file:../initramfs/preinit.c][=initramfs/preinit.c=]] began as ~40 lines and still has that core: mount
+=/proc=, =/sys=, =/dev=, =/tmp=, then =execv= the Lisp (the process stays PID 1).
+Since tag #25 (storage) it is ~430 lines, because it also does every *privileged*
+setup step, once, before the Lisp exists:
 
+1. read =/etc/lol.conf= (written by =build.sh=: the user and the disk UUID) and
+   any =lol.user== / =lol.disk== on the kernel command line;
+2. find the disk by reading ext4 superblocks itself (no udev/blkid), mount it at
+   =/mnt/host=, bind-mount only its =/home= onto ours, make =/mnt/host= read-only;
+3. look the user up in the host's =/etc/passwd= / =/etc/group=, chown the device
+   nodes the Lisp opens, fork =lol-rootd= (the one process that stays root: device
+   hotplug + read-only remount at power-off);
+4. drop to the user, keeping five capabilities through =execve= via the *ambient*
+   set, and =execve= the Lisp with =HOME=, =USER=, =LOL_ROOTD_PID=.
+
+Every step is non-fatal; with no disk it is exactly the old shim and the Lisp runs
+as root. The full story — why each mount flag, why capabilities, why in C and not
+in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skeleton, unchanged:
+#+begin_src c
   int main(void) {
       mount("proc",     "/proc", "proc",     0, NULL);
       mount("sysfs",    "/sys",  "sysfs",    0, NULL);
       mount("devtmpfs", "/dev",  "devtmpfs", 0, NULL);
       mount("tmpfs",    "/tmp",  "tmpfs",    0, "size=64m,mode=1777");
-
+      /* ... storage + identity (tag #25) ... */
       char *argv[] = { "/sbin/lisp", NULL };
-      execv("/sbin/lisp", argv);
+      execve("/sbin/lisp", argv, envp);
 
       /* Only reached if exec failed. */
       perror("preinit: execv /sbin/lisp");
@@ -395,7 +409,10 @@ no files present.
       return 1;
   }
 #+end_src
-Built tiny with musl: =musl-gcc -static -O2 -s -o preinit preinit.c=.
+Built tiny with musl: =musl-gcc -static -O2 -s -o preinit preinit.c= (62,864 bytes
+at tag #25). musl ships no kernel headers, so the five capability numbers and the
+=capset= structs are copied into the file from the kernel's
+=include/uapi/linux/capability.h=.
 
 * The initramfs description (gen_init_cpio)
 
@@ -412,12 +429,18 @@ root, which is why we use it instead of =find | cpio=:
   dir  /usr                       0755 0 0
   dir  /usr/lib                   0755 0 0
   dir  /usr/lib/x86_64-linux-gnu  0755 0 0
+  # --- storage (tag #25, storage.org): config, the host disk's mount point, /home ---
+  dir  /etc                       0755 0 0
+  dir  /mnt                       0755 0 0
+  dir  /mnt/host                  0755 0 0
+  dir  /home                      0755 0 0
   # --- device nodes (so stdio works before devtmpfs is mounted) ---
   nod  /dev/console 0600 0 0 c 5 1
   nod  /dev/null    0666 0 0 c 1 3
   nod  /dev/tty     0666 0 0 c 5 0
   # --- the C preinit is /init ---
   file /init      initramfs/preinit   0755 0 0
+  file /etc/lol.conf initramfs/lol.conf 0644 0 0   # generated by build.sh
   # --- the SBCL standalone image ---
   file /sbin/lisp initramfs/lisp-init 0755 0 0
   # --- glibc runtime the SBCL binary needs (paths matter) ---

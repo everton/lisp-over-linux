@@ -515,9 +515,12 @@ path is absent (=EFI_NOT_FOUND=) — see =efi_load_initrd()= in
     pick it from the firmware's own menu (F12 etc.) — with the same ESP-root
     constraint on the cpio. Worth it if the point is to see the firmware do it.
 
-Safety: the image cannot even see the host's disk. No NVMe, SATA, USB-storage
-or ext4 support is built in (tag #24), and the root filesystem is the initramfs
-in RAM — so booting it cannot touch the installed system. Secure Boot must be
+Safety: up to tag #24 the image could not even see the host's disk. *Since tag
+#25 it can, on purpose*: NVMe + ext4 are built in, and preinit mounts the
+laptop's root privately — the host's =/= read-only at =/mnt/host=, only =/home=
+writable — then runs the environment as the user, so it can write nowhere the
+user could not ([[file:storage.org][storage.org]]). Do not boot it while the host is *hibernated*:
+mounting a filesystem a sleeping kernel also holds open corrupts it. Secure Boot must be
 off, as for the stick — GRUB's =linux= command refuses an unsigned kernel under
 shim.
 

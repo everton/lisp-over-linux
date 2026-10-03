@@ -11,7 +11,8 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#24* (rebased the config onto Linux 7.2.5; built on top of #23 =
+Current tag: *#25* (storage: NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]]; built on
+top of #24 = rebased the config onto Linux 7.2.5, #23 =
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
 16x32 fbcon font — *since reverted*, see the Display table and
 [[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
@@ -32,7 +33,9 @@ PCI_MSI|PCIEPORTBUS|USB|XHCI|EHCI|OHCI|HID|INPUT_EVDEV|INPUT_KEYBOARD|\
 KEYBOARD_ATKBD|SERIO|I2C|ACPI|DEVTMPFS|TMPFS|TTY|SERIAL_8250|BLK_DEV_INITRD|\
 INITRAMFS_SOURCE|PRINTK|BINFMT_ELF|FUTEX|MULTIUSER|FONTS|FONT_|\
 NET|INET|UNIX|PACKET|NETDEVICES|VIRTIO|VIRTIO_PCI|VIRTIO_NET|\
-POWER_SUPPLY|ACPI_AC|ACPI_BATTERY|RTC_MC146818_LIB)=' .config | sort
+POWER_SUPPLY|ACPI_AC|ACPI_BATTERY|RTC_MC146818_LIB|\
+BLK_DEV_NVME|NVME_CORE|EXT4_FS|EXT4_FS_POSIX_ACL|JBD2|VIRTIO_BLK|\
+MSDOS_PARTITION|EFI_PARTITION)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -180,6 +183,11 @@ the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 �
 | =CONFIG_FUTEX=      | y     | Fast userspace mutexes (threads in SBCL/glibc)             |
 | =CONFIG_MULTIUSER=  | y     | uid/gid model glibc assumes                                |
 | =CONFIG_PRINTK=     | y     | Kernel log messages                                       |
+| =CONFIG_BLK_DEV_NVME= | y | #25: the laptop's disk is NVMe (selects =NVME_CORE=; needs =PCI=) — [[file:storage.org][storage.org]] §2 |
+| =CONFIG_EXT4_FS=      | y | #25: the laptop's root (holding =/home=) is ext4 (selects =JBD2=, =FS_MBCACHE=, =CRC16=) |
+| =CONFIG_EXT4_FS_POSIX_ACL= | y | #25: the host mounts with =acl=; honour ACLs rather than silently ignore them |
+| =CONFIG_VIRTIO_BLK=   | y | #25: QEMU's paravirtual disk — the test stand-in (=make-test-disk.sh=) |
+| =CONFIG_MSDOS_PARTITION= / =EFI_PARTITION= | y | partition tables (GPT on the laptop) → =nvme0n1p2= |
 
 * 6. Debug / serial (for QEMU testing, not the laptop)
 
@@ -229,6 +237,13 @@ What is still OFF on the kernel side: real-hardware NIC drivers (=CONFIG_E1000=,
 (see below).
 
 * Deliberately OFF (and what it would take to turn on)
+
+** Other storage — SATA/AHCI, USB mass storage, vfat, modules — OFF (tag #25)
+Only the path to /this/ laptop's disk is built: NVMe → GPT → ext4. =ATA=/=SATA_AHCI=
+(a SATA disk), =USB_STORAGE= + =SCSI= + =BLK_DEV_SD= (the boot stick, or any USB
+drive) and =VFAT_FS= (the ESP, most sticks) stay off until something needs them.
+=CONFIG_MODULES= stays off too: everything is built in, so there is no =modprobe=
+and no =/lib/modules= to keep in step. Reasons and the rest: [[file:storage.org][storage.org]] §2.
 
 ** IPv6 — OFF (IPv4 only, to keep the surface small)
 
@@ -320,3 +335,16 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   verbatim — =PREEMPT_LAZY=y= with =TINY_RCU=y= (not =PREEMPT_RCU=), on
   =SMP=n=/=NR_CPUS=1=. /Verified end-to-end: boots clean in QEMU+OVMF
   (=Linux version 7.2.5=), supervisor menu, REPL, and the framebuffer browser./
+- =#25= *storage* (2026-10-03): =BLK_DEV_NVME= + =EXT4_FS= + =EXT4_FS_POSIX_ACL= +
+  =VIRTIO_BLK=. =make olddefconfig= then selected only their own helpers —
+  =NVME_CORE=, =JBD2=, =FS_MBCACHE=, =BUFFER_HEAD=, =CRC16=, =SG_POOL=,
+  =EXT4_USE_FOR_EXT2=, =FS_POSIX_ACL= — plus compiler-detection noise from the
+  build host's toolchain moving to gcc 16.2 (=CC_VERSION_TEXT=, =GCC_VERSION=,
+  =AS_/LD_VERSION=, the =RUSTC_*= probes; =CONFIG_RUST= itself stays unset). No
+  option we chose on purpose moved. The image can now mount the laptop's ext4 root:
+  preinit mounts it privately at =/mnt/host= (read-only view), bind-mounts only
+  =/home=, and drops to the user — see [[file:storage.org][storage.org]]. =bootx64.efi= is
+  3,105,792 bytes at #25. /Verified in QEMU+OVMF against a stand-in disk
+  (=make-test-disk.sh=, same UUID): =EXT4-fs (vda): mounted filesystem … r/w=,
+  writes land as uid 1000, and power-off remounts it read-only first (fs state
+  =clean= afterwards)./ Not yet booted on the laptop itself.
