@@ -99,6 +99,18 @@
          (string= (row "re-accepting draw-status-line"
                        (probe "(accept-source (source-of 'draw-status-line))" 30.0))
                   "DRAW-STATUS-LINE"))
+  ;; Accept must READ an edit in the definition's own package. It used to read in
+  ;; CL-USER, so re-accepting LOL.EXAMPLES::MAKE-COUNTER defined a new CL-USER twin
+  ;; and left the real one untouched. The pane passes name + kind, as here.
+  (check "Accept of a lol.examples definition lands in LOL.EXAMPLES, not CL-USER"
+         (string= (row "package of the accepted name"
+                       (probe "(package-name (symbol-package (accept-source (source-of 'lol.examples::make-counter :function) 'lol.examples::make-counter :function)))" 30.0))
+                  "\"LOL.EXAMPLES\""))
+  (check "and no CL-USER::MAKE-COUNTER was interned"
+         (string= (row "cl-user status of MAKE-COUNTER"
+                       (probe "(nth-value 1 (find-symbol \"MAKE-COUNTER\" :cl-user))"))
+                  (row "expected (before any Accept: inherited or absent)"
+                       (probe "(if (eq (find-symbol \"MAKE-COUNTER\" :cl-user) 'lol.examples::make-counter) (nth-value 1 (find-symbol \"MAKE-COUNTER\" :cl-user)) nil)"))))
   (check "the guest is still alive at the end"
          (eql (row "(+ 1 1) after all that" (probe-int "(+ 1 1)")) 2)))
 

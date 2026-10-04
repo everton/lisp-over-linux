@@ -28,6 +28,7 @@
   file          ; build-time provenance (the host path — for reference only)
   label         ; for methods: qualifiers + specializers, to tell them apart
   versions      ; previously-accepted source strings, most-recent first (Smalltalk Versions)
+  package       ; the package its text was READ in (a name), so Accept reads it there too
   born)         ; T when this definition did not exist at boot — Accepted into being at
                 ; runtime rather than edited. A new method has no prior version, so
                 ; VERSIONS alone cannot tell it from a build-time one, and without this
@@ -124,6 +125,7 @@
   (multiple-value-bind (name kind label) (defn-name-and-kind form)
     (when name
       (push (make-defn :name name :kind kind :file file :label label
+                       :package (package-name *package*)  ; bound by load-recording
                        :source (string-trim '(#\Newline #\Space #\Tab) text))
             (gethash name *registry*)))))
 
@@ -160,6 +162,17 @@
 
 ;;; ---- Accept: compile edited source into the live image + update the registry --
 
+(defun accept-package (name kind)
+  "The package to READ an edit of NAME in: the one its recorded source was read in
+   (load-recording follows each file's IN-PACKAGE). Without it an edit of
+   LOL.TEXTVIEW::TV-DRAW was read in CL-USER, defining a NEW CL-USER::TV-DRAW while
+   the real one kept running — Accept looked like it worked and changed nothing.
+   A definition with no record (typed fresh in the Workspace) reads in *PACKAGE*."
+  (let ((d (or (find kind (gethash name *registry*) :key #'defn-kind)
+               (first (gethash name *registry*)))))
+    (or (and d (defn-package d) (find-package (defn-package d)))
+        *package*)))
+
 (defun accept-source (text &optional name kind label)
   "Compile TEXT (an edited definition) into the RUNNING image and update the
    registry: eval the form (redefining it live — the Smalltalk 'accept'), and set
@@ -168,7 +181,8 @@
    authoritative when it names a definition; LABEL (a method's specializer label)
    keeps Accept on the right method when the form's own head isn't enough. Returns the
    name compiled. Signals on a read/compile error (the caller reports it)."
-  (let* ((form   (read-from-string text))
+  (let* ((form   (let ((*package* (accept-package name kind)))
+                   (read-from-string text)))
          (result (eval form)))                  ; compile/redefine in the live image
     (multiple-value-bind (fname fkind flabel) (defn-name-and-kind form)
       (let* ((the-name  (or fname name))
@@ -191,7 +205,8 @@
                   (push (defn-source existing) (defn-versions existing))
                   (setf (defn-source existing) trimmed))
                 (push (make-defn :name the-name :kind the-kind :label the-label
-                                 :source trimmed :born t)
+                                 :source trimmed :born t
+                                 :package (package-name (accept-package name kind)))
                       (gethash the-name *registry*)))))
         (or the-name result)))))
 
