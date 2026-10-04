@@ -280,7 +280,11 @@ image that looks like the laptop's root to preinit:
   uid/gid;
 - =/home/<user>= with things worth browsing: text, a =.lisp= file, PNG / baseline
   and progressive JPEG / GIF pictures, a =.tar.gz= and a =.gz=, a symlink to a
-  directory, a dangling symlink and dotfiles.
+  directory, a dangling symlink and dotfiles;
+- the =.lisp= files of the =./sbcl= tree (=src/=, =contrib/=, ~25 MB) *at the same
+  absolute path* the laptop has them, when that tree lives under =$HOME= — so a
+  builtin's source reads from the disk in the guest exactly as on the laptop
+  ([[file:code-browser.org][code-browser.org]], "Two kinds of subject").
 
 No root needed: =mke2fs -d DIR= populates the new filesystem from a directory and
 copies each file's owner from the source — us, uid 1000. =build.sh --run= and

@@ -268,9 +268,9 @@ plain =load= + =find-definition-sources-by-name= recovers a function's full sour
 straight from its file). So =source-of= layers, cleanest-first: (1) registry hit
 (our baked, editable code); (2) else, source-location pathname on disk → read on
 demand (third-party, or SBCL =src/= if shipped); (3) else reference-only
-(=show-reference=). The seam already exists — =show-reference='s =where-defined=
-computes that pathname today ("…not on disk here"); a disk just turns that branch
-into a read. (If one ever wanted third-party source *baked without a disk*, the
+(=show-reference=). *Step (2) is built for SBCL's own source* (tag #25, the disk):
+[[file:../initramfs/sbcl-source.lisp][sbcl-source.lisp]] reads it from the =./sbcl= tree on the mounted =/home= — see "Two
+kinds of subject" below. Third-party libraries would take the same road. (If one ever wanted third-party source *baked without a disk*, the
 move is to wrap =compile-file=/=load= / ASDF's =perform= ONCE, globally — never
 per library. The disk makes even that unnecessary.)
 
@@ -280,7 +280,7 @@ accessor generic functions). The registry must model =:derived= entries that
 point back at the parent form — you browse an accessor and it shows you the
 =defclass= it came from. Getting this right is most of the work in §2.
 
-** Two kinds of subject: your code vs. the builtins (SBCL source is NOT shipped)
+** Two kinds of subject: your code vs. the builtins (SBCL source read from the disk)
 
 Decided (with the user) and *implemented in [[file:../initramfs/registry.lisp][registry.lisp]]*. There are two
 distinct kinds of code, and the browser should tell the truth about the
@@ -293,11 +293,13 @@ difference rather than fake uniformity:
   - *Its source text is not in the image.* =function-lambda-expression= returns
     NIL — the core is compiled machine code, source not retained.
   - SBCL *knows* the location (=car= → =SYS:SRC;CODE;LIST.LISP=) but that file is
-    not on the guest (nor even this host). So there is nothing to read.
+    not *in the image*. Since tag #25 it is on the *disk*: the =./sbcl= tree the
+    image was built from lives under =/home=, which the guest mounts (below).
   - What we *always* have, and therefore show: lambda list
     (=sb-introspect:function-lambda-list=), docstring (=documentation=),
     *disassembly* (machine code is always there), the home package, and the
-    recorded source-location *name* (marked "not on disk here"). =who-calls=
+    recorded source location — and, when the tree is on the disk, the *source
+    text itself* (below). =who-calls=
     on a builtin returns nothing — expected; our xref only covers our code.
   - =show-source= falls back to =show-reference= for these, so a builtin is
     browsable, never a dead end (the "no dead ends" principle, made real).
@@ -320,11 +322,47 @@ difference rather than fake uniformity:
   but loudly: it needs =without-package-locks=, may not affect inlined sites, and
   can crash PID 1 — clearly distinct from Accept on your own code, which is safe.
 
-*Full SBCL-source browsing, if ever wanted, is a persistent-disk feature, not
-frozen weight.* Its src tree is megabytes of un-editable text; do not bake it into
-the heap. When the machine gets a disk (§5), carry =src/= on it and read source on
-demand via =definition-source-pathname= + form offset — exactly SLIME's =M-.=. Or
-bake a curated subset via =load-recording=. Default: neither; reference-only.
+*SBCL's source, read from the disk — built (tag #25, 2026-10-03).* This paragraph
+used to say "a persistent-disk feature, when the machine gets a disk". It has one
+now, and the plan held: nothing is baked into the heap (the src tree is 34 MB of
+un-editable text; its =.lisp= files alone 25 MB); the source is read *on demand*
+from the =./sbcl= tree the image was built from, which on the laptop lives under
+=/home= — exactly the folder the guest mounts ([[file:storage.org][storage.org]]). That is SLIME's =M-.=,
+done by [[file:../initramfs/sbcl-source.lisp][sbcl-source.lisp]]:
+
+1. *Logical → physical.* SBCL records =SYS:SRC;CODE;LIST.LISP=. The core's =SYS=
+   host was pointed at the build tree when =./sbcl= was built, and a =defvar= in
+   the module freezes that root (=*sbcl-source-root*=) into the image at our build;
+   it is settable, to read another checkout of the same version.
+2. *Find the form.* For functions and macros SBCL keeps the /character offset/
+   where the top-level form's text begins — verified to be just past the previous
+   form, so comments come first and are skipped. For classes, structures and
+   variables it keeps only the form's /index/ in the file.
+3. *Cut it out — textually.* The module never =READ=s SBCL's source: those files
+   need SBCL's internal packages and build features (=#+sb-xc-host=) to read. A
+   small scanner that knows strings, =;= and =#| |#= comments, =#\(= characters,
+   =|sym|= escapes and =#+feature= prefixes finds where the form ends.
+4. *Check it names the symbol*, else fall back: a line-initial =(def… NAME= (a
+   package prefix allowed — =(sb-xc:defmacro loop=), then the first top-level form
+   that mentions the name at all — which is how a condition's slot reader
+   (=cell-error-name=) lands on its =define-condition=.
+
+What it shows is the *top-level form*, honestly: =mapcar= is not a =defun= in SBCL
+but one line of a =macrolet= in =list.lisp= that stamps out all six mappers, and
+that is what you see. Measured against 2.6.8 (=poc/sbcl-source-test.lisp=, 23
+checks): *893 of the 935* external CL symbols that are defined resolve. The 42 that
+do not are 39 special operators and built-in types — SBCL records no location for
+them, and the view says so — and three names a =defstruct= generates
+(=random-state-p=, =synonym-stream-symbol=, =broadcast-stream-streams=), which never
+appear in the text. A diskless boot, or a tree outside =/home=, keeps the old
+reference-only view and names the reason ("not on this disk").
+
+The source is appended *below* =show-reference='s facts (kind, lambda list, doc,
+the experimental-redefine notes), read-only, in a =:reference= pane — so =M-.= on
+=mapcar= in the Workspace opens this (=./refresh-screenshot.sh --scene
+sbcl-source=; asserted in the guest by [[file:../check-files.lisp][check-files.lisp]]):
+
+[[file:../media/screenshots/sbcl-source-2026-10-03.png]]
 
 * 3. The Smalltalk → Lisp concept map
 

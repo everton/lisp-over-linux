@@ -13,6 +13,7 @@
 ;;;;   - libstbi.so loads in the guest and decodes the progressive JPEG;
 ;;;;   - the Spotter's path grammar completes "~/Pic" to Pictures/;
 ;;;;   - q on an opened image goes back, and the environment survives it;
+;;;;   - a builtin's source (car, mapcar) is read from the SBCL tree on the disk;
 ;;;;   - power-off asks lol-rootd to remount the disk read-only.
 ;;;;
 ;;;; LOL_SHOTS=DIR keeps a screendump of the file manager on Pictures/.
@@ -91,6 +92,18 @@
     (qmp-key "up") (sleep 1.5)
     (check "the environment still reads keys after q"
            (/= before (row "selection after up" (probe-int "(pane-sel (current-pane))")))))
+  ;; SBCL's own source, read from the ./sbcl tree on the (stand-in) /home: the image
+  ;; ships no SBCL source, only the location; make-test-disk.sh copies the .lisp
+  ;; files to the same absolute path the laptop has them at.
+  (format t "~&~%== SBCL's own source, from the disk ==~%")
+  (check "car's source is read from the disk (list.lisp line 30)"
+         (= 30 (row "line of (defun car" (probe-int "(multiple-value-bind (text path line) (sbcl-definition-source 'car) (declare (ignore path)) (if (and text (search \"(defun car\" text)) line -1))"))))
+  (check "the browser's view of MAPCAR shows its macrolet"
+         (string= "T" (row "mapcar view has define-list-map"
+                           (probe "(and (search \"(define-list-map mapcar\" (view-text (present (subj-defn 'mapcar)))) t)" 6.0))))
+  (probe "(progn (new-trail (subj-defn 'mapcar)) t)")
+  (qmp-key "down") (sleep 2)
+  (shot "sbcl-source")
   (format t "~&~%== power-off releases the disk ==~%")
   (probe "(progn (release-disk) t)" 6.0)
   (check "lol-rootd remounted /home read-only"

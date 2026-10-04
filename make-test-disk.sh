@@ -12,6 +12,8 @@
 #   - an /etc/passwd + /etc/group naming the build user with the host's uid/gid,
 #   - /home/<user> with a few things worth browsing: text, Lisp source, images,
 #     a symlink (and a broken one), dotfiles, nested folders.
+#   - the ./sbcl tree's .lisp sources at their real path, so a builtin's source
+#     (initramfs/sbcl-source.lisp) reads from the disk as on the laptop.
 #
 # No root needed: `mke2fs -d DIR` populates the new filesystem from a directory,
 # copying each file's owner from the source — which is us, uid 1000 — so the
@@ -55,6 +57,17 @@ if command -v convert >/dev/null; then
   convert -size 64x64 xc:orange "$H/Pictures/orange.gif"
 fi
 cp -L "$MICRO/media/browser.png" "$H/Pictures/browser.png" 2>/dev/null || true
+# SBCL's own sources, at the SAME absolute path as on the laptop: the image bakes
+# the ./sbcl tree's real path (initramfs/sbcl-source.lisp) and reads a builtin's
+# source from it on demand. Only the .lisp files of src/ and contrib/ (~25 MB),
+# and only when that tree lives under $HOME — anywhere else the real /home would
+# not have it either, and the guest says "not on this disk".
+SBCL_REAL="$(readlink -f "$MICRO/sbcl" || true)"
+case "$SBCL_REAL" in
+  "$HOME"/*)
+    ( cd "$SBCL_REAL" && find src contrib -name '*.lisp' -print0 |
+        cpio -0pdm --quiet "$STAGE$SBCL_REAL" ) ;;
+esac
 tar -C "$H" -czf "$H/Documents/backup.tar.gz" README.txt src
 gzip -c "$H/README.txt" > "$H/Documents/README.txt.gz"
 

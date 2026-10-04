@@ -212,20 +212,24 @@
           (t (mapcar #'defn-source defns)))))
 
 (defun where-defined (name kind)
-  "The source pathname SBCL records for NAME — a location it knows but that we do
-   NOT ship (the core is compiled; its src tree is not in the image). NIL if none."
+  "The source pathname SBCL records for NAME — a location it knows, whose file is
+   not in the image (the core is compiled). It is on the DISK when the SBCL tree is
+   under the mounted /home: sbcl-source.lisp reads it from there. NIL if none."
   (ignore-errors
     (let ((srcs (sb-introspect:find-definition-sources-by-name name kind)))
       (and srcs (sb-introspect:definition-source-pathname (first srcs))))))
 
 (defun show-reference (name)
   "The fallback for a symbol NOT in our registry — a CL/SBCL builtin, or anything
-   compiled into the core. There is no source TEXT to show (the core is machine
-   code), so print what the image CAN tell us: kind, lambda list, docstring, and
-   where SBCL says it lives. Reference-only — unlike your own code there is nothing
-   to edit-and-Accept, though the notes say how you *could* experiment. Keeps the
+   compiled into the core. The core is machine code, so print what the image CAN
+   tell us — kind, lambda list, docstring, where SBCL says it lives — and then, if
+   the SBCL tree it was built from is on this disk (the mounted /home, tag #25),
+   the definition's source text itself, read-only (sbcl-source.lisp). Reference-
+   only: unlike your own code there is nothing to edit-and-Accept, though the notes
+   say how you *could* experiment. Keeps the
    browser from dead-ending on a builtin (doc/code-browser.org: 'no dead ends')."
-  (let ((k (cond ((special-operator-p name)                                  :special-operator)
+  (let ((source nil)                 ; SBCL's own source text, when it is on the disk
+        (k (cond ((special-operator-p name)                                  :special-operator)
                  ((macro-function name)                                      :macro)
                  ((and (fboundp name)
                        (typep (fdefinition name) 'generic-function))         :generic-function)
@@ -236,13 +240,29 @@
     (if (null k)
         (format t "~&; ~s is not defined in this image.~%" name)
         (progn
-          (format t "~&; ~(~a~) ~s   [reference — compiled into the core, no source shipped]~%" k name)
+          (format t "~&; ~(~a~) ~s   [reference — SBCL's own, compiled into the core]~%" k name)
           (let ((ll (ignore-errors (sb-introspect:function-lambda-list name))))
             (when ll (format t ";   lambda list: ~a~%" ll)))
           (let ((doc (or (documentation name 'function) (documentation name 'variable))))
-            (when doc (format t ";   doc: ~a~%" doc)))
-          (let ((where (where-defined name (if (eq k :variable) :variable :function))))
-            (when where (format t ";   SBCL defines it at: ~a  (not on disk here)~%" where)))
+            (when doc                    ; every line commented, so the view stays one colour
+              (format t ";   doc: ~a~%"
+                      (with-output-to-string (o)
+                        (loop for c across doc
+                              do (write-char c o)
+                                 (when (char= c #\Newline) (write-string ";        " o)))))))
+          ;; its source TEXT, when the SBCL tree it was built from is on this disk
+          ;; (sbcl-source.lisp, loaded later — so reached through FBOUNDP)
+          (multiple-value-bind (text path-or-why line)
+              (and (fboundp 'sbcl-definition-source)
+                   (funcall 'sbcl-definition-source name
+                            (case k ((:macro :generic-function :function :variable) k))))
+            (if text
+                (setf source (format nil ";   source: ~a, line ~a  (read-only; below)~%~%~a~%"
+                                     path-or-why line text))
+                (let ((where (where-defined name (if (eq k :variable) :variable :function))))
+                  (when where
+                    (format t ";   SBCL defines it at: ~a  (~a)~%" where
+                            (or path-or-why "not on disk here"))))))
           (case k
             (:special-operator
              (format t ";   a special operator — the compiler owns it; genuinely not redefinable.~%"))
@@ -250,6 +270,9 @@
              (format t ";   disassemble: (disassemble #'~(~a~))~%" name)
              (format t ";   experimental redefine: (sb-ext:without-package-locks (defun ~(~a~) …));~%" name)
              (format t ";     but inlined call sites won't see it, and breaking it panics PID 1.~%")))))
+    ;; the source last: it can run to hundreds of lines, and the facts above are
+    ;; what a reader wants first
+    (when source (format t "~a" source))
     (finish-output)
     name))
 

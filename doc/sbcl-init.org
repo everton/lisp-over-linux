@@ -145,6 +145,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 
   | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
   | [[file:../initramfs/logcount-fix.lisp][=logcount-fix.lisp=]] | *first*: patches SBCL 2.6.8's =LOGCOUNT= routine for CPUs without POPCNT (QEMU's default qemu64), then self-tests with POPCNT switched off — without it, compiling arithmetic at runtime faults the guest ([[file:inspector-history.org][inspector-history.org]] §5.6) |
+  | [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] | SBCL's *own* source, read on demand from the =./sbcl= tree on the mounted =/home= (logical =SYS:= path → file → the form at the recorded offset, cut out by a textual scanner); =show-reference= appends it below a builtin's facts ([[file:code-browser.org][code-browser.org]], "Two kinds of subject") |
   | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector — incl. closures-as-records, =all-instances=, =retention-path=, =eval-in-context= ([[file:inspector-history.org][inspector-history.org]]) |
   | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless); the function/instances/retention/disassembly views |
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |

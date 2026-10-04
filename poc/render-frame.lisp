@@ -53,7 +53,8 @@
 (defparameter *root-dir* (merge-pathnames "../" *poc-dir*))
 
 (defparameter *stack*
-  '("initramfs/model.lisp"        ; CLOS/introspection model
+  '("initramfs/sbcl-source.lisp"  ; SBCL's own source, read from ./sbcl on demand
+    "initramfs/model.lisp"        ; CLOS/introspection model
     "initramfs/present.lisp"      ; the present / commands-for protocol
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
     "initramfs/stage.lisp"        ; the COLLIDE stage (§3b) — bodies, dispatch, enact

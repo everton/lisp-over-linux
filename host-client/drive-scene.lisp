@@ -184,7 +184,14 @@
     ;; the Spotter reading a PATH (doc/file-manager.org §9): "~/Pic" completes to the
     ;; Pictures folder of the stand-in home.
     ("spotter-path" "e" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5)
-                         (:type "~/Pic") (:wait 1.5)))))
+                         (:type "~/Pic") (:wait 1.5)))
+    ;; SBCL's OWN source, read from the ./sbcl tree on /home (sbcl-source.lisp): type
+    ;; (mapcar) in the Workspace, step back inside the symbol and M-. (Esc . — Meta
+    ;; as a prefix, which QMP delivers more reliably than a held Alt). MAPCAR is a
+    ;; builtin, so what opens is a reference view: the facts, then list.lisp's
+    ;; MACROLET that defines it, read off the disk.
+    ("sbcl-source" "e" ((:wait 1.0) (:type "(mapcar)") (:key "left")
+                        (:key "esc") (:key "dot") (:wait 2.0)))))
 
 ;;; ---- the net REPL: readiness, and quieting the kernel console ------------
 

@@ -64,6 +64,7 @@ POC_DIR="$MICRO/poc"
 LISP_SOURCES=(
   "$INITRAMFS_DIR/logcount-fix.lisp" # FIRST: repairs SBCL 2.6.8's no-POPCNT LOGCOUNT (qemu64 has
                                      #   no POPCNT; without this, compiling arithmetic crashes the guest)
+  "$INITRAMFS_DIR/sbcl-source.lisp" # SBCL's OWN source, read from the disk on demand (the ./sbcl tree on /home)
   "$INITRAMFS_DIR/model.lisp"       # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
   "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
