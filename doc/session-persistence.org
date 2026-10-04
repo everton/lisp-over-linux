@@ -1,0 +1,607 @@
+#+TITLE: Session persistence — keeping what a session changed
+#+STARTUP: showall
+
+*PLAN — nothing here is built* (except §1.2's Accept-package fix, done
+2026-10-03). A design to discuss: how a "Save and quit" could keep what you
+changed during a session, so that power-off stops being the moment your work
+evaporates. Written 2026-10-03 against kernel tag #25.
+
+Parent docs: [[file:storage.org][storage.org]] (the disk this needs, and who owns what on it) ·
+[[file:code-browser.org][code-browser.org]] Phase 6 and §5 (where "file-out" was deferred) ·
+[[file:processes.org][processes.org]] §5–§6 (fork, and the =sb-posix= rule).
+
+Every claim below is marked one of two ways. /Verified/ means it was checked
+against our code, =./sbcl=, or a throwaway =sbcl --non-interactive= run, and says
+where. /Estimate/ means it was not, and says so. The throwaway scripts lived in
+the session scratchpad and are not kept; each experiment is described well enough
+to rerun in a minute.
+
+* 0. The short version
+
+- *What a session makes* falls into two piles (§1). Some of it is *source-shaped*:
+  every =C-c C-c= produces a definition as text, and the registry already holds it.
+  The rest is *heap-only*: tabs, Workspace buffers, the clipboard, the stage's
+  bodies, an object you inspected. You can describe the first pile in a file. The
+  second pile is either *described* (a small printed file) or *frozen* (an image).
+- *Smalltalk does both*, and that is the right model: the image is a snapshot, and
+  the =.changes= file is a journal of every accepted method, so a crash loses
+  nothing that was accepted. §2 looks at each half here.
+- *Recommendation (§6): source first, image later and optional.* A change journal
+  written on every Accept, replayed at boot. A small "desk" file for tabs,
+  Workspaces and the clipboard. A "File out to source" command that writes changes
+  back into the repo's own =.lisp= files. Image snapshots via fork + =save-lisp-and-die=
+  /do/ work (verified, §2a), but they are a later, guarded extra, not the base.
+- *A bug turned up while checking this, and it has to be fixed first* (§1.2):
+  Accepting a definition that lives in a =lol.*= package defines a *new* symbol in
+  =CL-USER= and leaves the real one unchanged. Any persistence built on the current
+  =accept-source= would faithfully save the wrong thing.
+
+* 1. What a session actually creates
+
+** 1.1 The inventory
+
+| What                          | Where it lives now                                          | Shape          | Survives today?                                    |
+|-------------------------------+-------------------------------------------------------------+----------------+----------------------------------------------------|
+| Accepted definitions (=C-c C-c=) | the running code + =*registry*= records ([[file:../initramfs/registry.lisp::defun accept-source][=accept-source=]]) | *source*       | no                                                 |
+| Their history ("Versions")    | =defn-versions=, newest first; =defn-born= for new ones     | *source*       | no                                                 |
+| The change set (menu =c=)     | /derived/: [[file:../initramfs/registry.lisp::defun changed-definitions][=changed-definitions=]] scans the registry      | *source*       | no — but nothing extra to save                     |
+| Forms run with Do it / Print it, the REPL, the net REPL | nowhere — =eval= and forget (=workspace-do-it=, =repl.lisp=) | source, unrecorded | no                                         |
+| Edited files (=C-x C-s=)      | the disk, via =write-file-atomically=                       | file           | *yes* — already persistent                         |
+| A file buffer you did *not* save | the pane's text view                                    | text           | no, and *no warning at power-off* (§4)             |
+| Workspace buffers (one or more) | each Workspace pane's text view (=pane-tv=)               | text           | no                                                 |
+| Tabs and trails               | =*trails*=, =*active*= ([[file:../poc/shell.lisp::defvar *trails*][shell.lisp]])                          | heap; mostly describable | no — and not even across leaving to the console (§1.3) |
+| Clipboard history, PRIMARY, killed rectangle | =*clipboard*= ([[file:../poc/clipboard.lisp::defvar *clipboard*][clipboard.lisp]])           | strings        | no                                                 |
+| Spotter recents               | =*spotter-recents*= ([[file:../initramfs/present.lisp::defvar *spotter-recents*][present.lisp]]), capped at 8              | plists holding subjects | no                                        |
+| File-manager settings         | =*file-sort*=, =*file-sort-reverse*=, =*show-hidden*=       | symbols        | no                                                 |
+| The stage (COLLIDE bodies)    | =*the-collide-stage*= ([[file:../initramfs/stage.lisp::defvar *the-collide-stage*][stage.lisp]])                         | *heap only*    | no                                                 |
+| Anything you made or inspected: instances, closures, a =setf= on a closure's capture | the heap                     | *heap only*    | no                                                 |
+
+/Verified/ by reading every top-level =defvar= / =defparameter= in =poc/shell.lisp=,
+=initramfs/fb-browser.lisp=, =present.lisp=, =stage.lisp=, =file-views.lisp= and
+=clipboard.lisp= (=grep -n "^(defvar\|^(defparameter"=). The rest of those globals are
+per-frame caches (hit maps, rectangles), device state (=*fb-mouse*=, the touchpad's
+tap timers) or constants, and have nothing worth keeping.
+
+So there are three kinds of thing, and each one wants a different answer:
+
+1. *Source*: definitions. The registry already has the text, the name, the kind,
+   and for a method the specializer label. Writing these out is cheap. Replaying
+   them has subtle points (§2b).
+2. *Describable heap*: tabs, buffers, the clipboard, recents, settings. These are
+   not source, but a few lines of printed data rebuild each one. A tab, for
+   instance, is a list of /subjects/, and most subjects are small structs naming
+   something by name or path (=subj-defn NAME KIND=, =subj-dir PATH=, =subj-module
+   CATEGORY=).
+3. *Opaque heap*: the stage's bodies mid-flight, an instance you were inspecting
+   (=subj-object VALUE=, =subj-retention OBJECT=, =subj-disassembly FUNCTION=), a
+   closure whose captured counter you =setf='d. No file describes these honestly. They
+   survive only in an image (§2a), or they are accepted as lost.
+
+** 1.2 A bug that blocks everything source-shaped: Accept ignores the package
+
+=accept-source= reads the text with =read-from-string= in whatever =*package*= is
+current, and at runtime that is =CL-USER=. No caller binds it: =grep -rn
+'\*package\*' poc initramfs= finds bindings only in =registry.lisp='s recording
+pass, =worker.lisp=, =repl.lisp='s completer and =model.lisp='s =eval-in-context=.
+But =load-recording= files every definition under its *real* package, so the
+registry holds =lol.textview::tv-draw= with the text =(defun tv-draw …)=.
+
+/Verified/ with a three-line package =lol.demo= holding =(defun twice (x) (* 2 x))=,
+loaded through the real =registry.lisp= into =./sbcl=: Accepting its source with
+=2= changed to =3= returned =TWICE=. Then =lol.demo:twice 5= → *10*, unchanged, while
+a fresh =cl-user::twice 5= → 15. The edit went into a new definition in the wrong
+package, and the change set then lists that as "new this session".
+
+So today an edit to anything in =canvas=, =textview=, =widgets=, =fb=, =clipboard=,
+=image=, =inflate= or =examples= silently does nothing to the code it shows. Any
+journal built on that would replay the same mistake, faithfully. *The fix, Phase 0:*
+=load-recording= already knows the package of every form it reads, so it can store
+that package's name in a new =defn-package= slot. Then =accept-source= binds
+=*package*= to the defn's package (from the pane's subject, or from the form's own
+symbol when it names one), and the journal records the package name too. /Estimate:/
+an hour, plus one guest assertion in =check-compile.lisp=.
+
+*Fixed (2026-10-03), ahead of the rest of this plan* — it was a live bug in today's
+=C-c C-c=, not only a blocker. =register-source= stores =defn-package= (the package
+=load-recording= had bound), and =accept-source= reads inside =accept-package=: the
+package of the recorded definition of the pane's name and kind, else =*package*=
+for a definition typed fresh. Checked on the host with the =lol.demo= repro above
+(=lol.demo:twice 5= → 15, no =cl-user::twice=) and in the guest by
+[[file:../check-compile.lisp][check-compile.lisp]]: re-Accepting =lol.examples::make-counter= lands in
+=LOL.EXAMPLES= and interns nothing in =CL-USER=. The journal records the package name
+when it is built.
+
+** 1.3 Two smaller findings on the way
+
+- *Leaving to the console and coming back already loses the desk.*
+  [[file:../poc/shell.lisp::defun open-environment][=open-environment=]] calls =trail-root=, which /replaces/ =*trails*=. So
+  =SuperL-q= → console → =b= gives you a single fresh Workspace and nothing else. The
+  Workspace's text comes from the view's literal primer every time
+  (=present (subj-workspace)=). /Verified/ by reading; the heap still has the old
+  panes until the next GC, but nothing points at them. An image save inherits this
+  too: a resumed image runs =init-toplevel= → =run-browser-fb= → =open-environment=,
+  and that wipes whatever trails the image had saved. Restoring the desk, by any
+  route, needs =open-environment= to keep existing trails.
+- *Power-off does not ask about unsaved file buffers.* =file-pane-dirty-p= has three
+  callers: the title marker, =C-g='s warn-once, and =save-file-pane=. /Verified/:
+  =grep -rn file-pane-dirty-p poc initramfs=. [[file:../poc/shell.lisp::defun leave-menu][=leave-menu=]] goes straight to
+  =:power-off=. This is a gap you have *today*, separate from everything else here,
+  and Phase 3 closes it.
+
+* 2. The approaches
+
+** 2a. The Smalltalk way: save the image
+
+The idea: freeze the whole running heap with =save-lisp-and-die=, write it to the
+disk, and next time boot that file instead of the shipped =/sbin/lisp=. Everything
+comes back, the opaque heap included. Here is what stands in the way, obstacle by
+obstacle, with what was checked.
+
+*** It dies, and PID 1 must not
+
+=save-lisp-and-die= ends the process. Its own docstring says it "corrupts the current
+Lisp image enough that the current process needs to be killed afterwards. This can be
+worked around by forking another process that saves the core"
+([[file:../sbcl/src/code/save.lisp::defun save-lisp-and-die][save.lisp]]). For us, PID 1 exiting is a kernel panic, and
+=CONFIG_PANIC_TIMEOUT=0= (/verified/, =linux/.config=) means a panic hangs forever, so
+you would have to hold the power button. So the save has to happen in a *forked
+child*. =fork= gives the child a copy-on-write copy of the whole heap: the same
+pages, shared until someone writes to one. The child saves and dies. PID 1 waits for
+it and carries on.
+
+*** Fork without =sb-posix= — and the one way it goes wrong
+
+[[file:processes.org][processes.org]] §5 says hand-rolling =fork= "loses the post-fork fixups". *That is not
+quite right, and here is the finding.* The fixup =sb-posix:fork= calls in the child,
+=sb_posix_after_fork=, is defined in the SBCL *runtime*
+([[file:../sbcl/src/runtime/thread.c::void sb_posix_after_fork][thread.c]]), not in the contrib. Every other step of
+[[file:../sbcl/contrib/sb-posix/interface.lisp::(defun fork][=sb-posix:fork=]] is an =SB-IMPL= / =SB-THREAD= internal:
+
+1. under =sb-thread::*make-thread-lock*=: =sb-impl::finalizer-thread-stop=,
+   =sb-thread::%dispose-thread-structs=, and refuse if
+   =(sb-thread::avl-count sb-thread::*all-threads*)= is over 1;
+2. inside =without-interrupts=: call libc =fork=;
+3. in the child: call =sb_posix_after_fork= through =extern-alien=;
+4. in *both* processes: =sb-impl::finalizer-thread-start=.
+
+/Verified/ in =./sbcl= (2.6.8, which has =:sb-thread= and no =:sb-core-compression=;
+the =finalizer= thread runs from startup):
+
+| Variant                                              | Result                                                                                 |
+|------------------------------------------------------+----------------------------------------------------------------------------------------|
+| bare =fork()= via =alien-funcall=, child saves       | the child *hangs*: =deinit= tries to stop a finalizer thread the child does not have  |
+| stop the finalizer first, then bare =fork()=         | the child fails =AVER (THREAD-P THREAD)=, and the parent is fine                      |
+| steps 1–3, finalizer restarted *only in the parent*  | the same =AVER= in the child                                                          |
+| steps 1–4 exactly as above                           | *works*: the child saved a 39 MB executable in 0.81 s, and the parent carried on      |
+| =sb-posix:fork= (the contrib), for comparison        | works                                                                                 |
+| steps 1–4 with an extra thread running (a stand-in for the net REPL) | refused: "Cannot fork with multiple threads running." |
+| steps 1–4 with ~68 MB of live heap                   | works: a 96 MB executable in 1.10 s                                                   |
+
+So the hand-rolled recipe needs no contrib and loses no fixups. It does have to be
+copied *exactly*. Step 4 in the child looks pointless, but it is what lets =deinit='s
+=finalizer-thread-stop= find a real thread to stop. Two cautions remain. These are
+internals, and an SBCL bump may move them. And they are all plain function calls,
+not =declaim inline= over groveled structs, so the [[file:processes.org][processes.org]] §6 rule
+("must recompile in the guest") is *not* violated. That last point is an /estimate/:
+it rests on the shape of the code, and was not tested in the guest.
+
+*** One thread only
+
+=deinit= refuses to save with more than one user thread
+([[file:../sbcl/src/code/save.lisp::defun deinit][deinit]]), and the fork recipe refuses even earlier. We run exactly
+one extra thread, the net REPL (=*net-repl-thread*=, [[file:../initramfs/net.lisp][net.lisp]]). So a save goes:
+=stop-net-repl= → fork → (child saves) → parent =start-net-repl= again. A connected
+REPL session is dropped by this. The save cannot be started /from/ the net REPL either,
+because that is the thread being stopped. It has to come from the environment or the
+console.
+
+*** Foreign state: what dangles in a resumed image
+
+The child's =deinit= runs =*save-hooks*= and closes every Lisp *fd-stream*. Because
+it all happens in the child's copy, the parent's streams are untouched.
+
+/Verified/: a stream opened on =/dev/null= before the fork comes back in the resumed
+image as an object that says "was closed by SB-EXT:SAVE-LISP-AND-DIE" on use. That is
+a legible error, not a crash. Compiling also works after a resume (=(* x 2)= → 42).
+
+The dangerous cases are the ones that are *not* streams. A bare integer fd kept in
+a global survives the save as a number, and after a resume that number may name some
+unrelated file. Here is the full list:
+
+| Global                                   | Holds                                       | After a resume                                              | Needs                                     |
+|------------------------------------------+---------------------------------------------+-------------------------------------------------------------+-------------------------------------------|
+| =lol.fb::*fb*=                           | =(FD XRES YRES STRIDE)= for =/dev/fb0=      | *already handled*: an =*init-hooks*= entry clears it ([[file:../poc/fb.lisp::init-hooks][fb.lisp]]) | nothing                    |
+| =*fb-mouse*=, =*fb-kbd*=                 | evdev fds                                   | stale, but =run-browser-fb= reopens both on entry            | clear in a save-hook, for hygiene         |
+| =*net-repl-server*= / =-client= / =-thread= | sockets and a thread object              | stale, and a later =stop-net-repl= could =close= a reused fd | save-hook: =nil= them (the thread is already stopped) |
+| =*stbi-state*=                           | =T= once =libstbi.so= has loaded            | =T=, but the library is gone, so JPEG previews quietly report "not loaded" | save-hook: reset to =NIL=, so it reloads on demand |
+| =*battery-cache*=                        | the last sysfs read                         | stale for 5 s at most                                        | nothing                                   |
+| =run-program= process objects (workers)  | pids of children                            | pids that no longer exist                                    | only matters if a worker was running mid-save |
+
+/Verified/ for =libstbi.so=: it is loaded with =:dont-save t=
+([[file:../poc/image.lisp::defun stbi-available-p][=stbi-available-p=]]), and in a resumed test image
+=find-dynamic-foreign-symbol-address "lol_stbi_info"= was =NIL=. Without
+=:dont-save= SBCL would try to reopen it at startup by its saved path, which in the
+guest is =/usr/lib/lol/libstbi.so=. That path is in the initramfs, so either way
+works once the state is reset.
+
+/Not a problem, checked/: the framebuffer is written with =pwrite= on an fd, not
+through an =mmap=, so there is no dangling mapping. And =run-program= reaps only the
+pids it started (=waitpid= per known process in
+[[file:../sbcl/src/code/run-program.lisp][run-program.lisp]]), so it will not steal our =waitpid= on the saving child.
+
+=logcount-fix.lisp= is not affected. Its patch is part of the heap (it runs before
+the build's own save), and =deinit='s =restore-cpu-specific-routines= is the same
+path the shipped image already went through. /Estimate/, by that analogy;
+=check-compile.lisp= against a resumed image is the proof owed.
+
+*** How preinit would choose the image — and never brick the boot
+
+The shipped =/sbin/lisp= is an =:executable t= image: the 2.2 MB runtime with the
+core appended. /Verified/: such an executable *refuses* =--core=
+("fatal error … more than one core file specified"). So "same runtime, other core"
+is out unless we also ship a bare runtime. The saved image is therefore a whole
+executable, =~/.local/share/lol/image=, and preinit =execve='s it in place of
+=/sbin/lisp=. =/home= is mounted =nosuid,nodev= but *not* =noexec=
+([[file:storage.org][storage.org]] §4), so that works. Because preinit drops to the user
+/before/ the =execve=, the ambient capabilities carry over exactly as they do now.
+
+The danger is that the =execve= succeeds and the Lisp then dies. That is PID 1
+dying: a panic and a hang. There is no "fall back afterwards", because by then
+preinit is gone. So the safety has to come *before* the exec, in three layers:
+
+1. *Verify before promoting.* The saving child writes =image.new=. PID 1 then runs it
+   as an /ordinary child/: =run-program image.new ("verify")=, a new
+   =init-toplevel= role that loads, checks the registry and a compile, prints a token
+   and exits. A crash there costs nothing. Only on success is it renamed over =image=
+   (a rename is atomic on ext4), and the old one is kept as =image.prev=.
+2. *A boot-attempt marker* (the A/B-update trick). Before exec'ing the saved image,
+   preinit writes =~/.local/share/lol/booting=. The Lisp deletes it once the
+   environment has drawn a frame /and/ read a key. If preinit finds the marker still
+   there at boot, the last attempt died or hung, so it boots =/sbin/lisp= instead and
+   says so on =/dev/kmsg=.
+3. *An escape hatch on the command line*: =lol.image=shipped=, the same way
+   =lol.disk=none= works today (preinit's =read_config=). From GRUB that is one edit.
+
+*** A newer shipped image orphans the saved one
+
+This is the cost that matters most *in this project*, because =build.sh= runs many
+times a day. A saved image is a fork of the image that was shipped when it was
+saved. Rebuild, and the saved image still holds the /old/ code for every module.
+Boot it, and you have quietly discarded the rebuild. The image cannot be merged with
+the new build; only source can be (§2b).
+
+So every image needs a *build stamp*. =build.sh= would write it into the cpio as
+=/etc/lol-build= (e.g. the git revision plus the build time) and also bake it into
+the heap. preinit compares the saved image's sidecar =image.build= with
+=/etc/lol-build=, and on a mismatch it boots the shipped image. That leaves the
+journal (§2b) as the way to carry your changes forward. On this project's cadence the
+image path would be skipped on most boots. That is the strongest argument for
+not making it the base.
+
+*** Size, time, memory
+
+- *Size.* /Verified/ at tag #25: =initramfs/lisp-init= is 48,798,112 bytes.
+  =./sbcl= has no =:sb-core-compression=, so a saved image is the same order of size,
+  plus whatever the session allocated. Keeping =image= + =image.prev= is about
+  100 MB of =/home=. That is fine on the laptop. =test-disk.img= is 256 MB
+  (=make-test-disk.sh=, =SIZE=256M=), which is enough but tight once the fixtures
+  are on it. /Estimate/.
+- *Time.* /Verified/ on the host: 0.81 s at 15 MB of heap and 1.10 s at 68 MB,
+  writing to tmpfs. /Estimate/ for the guest: a few seconds to the NVMe, slower under
+  QEMU TCG.
+- *Memory.* The child's GC dirties its copy-on-write pages, so at worst a save
+  briefly needs a second heap's worth of RAM. Guests get =-m 2048=
+  (=build.sh=, =guest-harness.lisp=); the laptop has more. /Estimate/.
+
+*** Security: a user-writable executable run by PID 1
+
+Today =/sbin/lisp= comes from a root-owned =/boot= or the stick. A saved image is
+owned by the user, in =/home=, and preinit would exec it *with the five capabilities*
+(=CAP_SYS_BOOT=, =CAP_NET_ADMIN=, …; [[file:storage.org][storage.org]] §5). So anything that can
+write the user's home on the Debian side — the user's own processes, which is to say
+any program they run — can choose the code that runs as our PID 1 with those
+powers. The powers are modest, and that user already owns the files. But it is a
+real widening, and it applies equally to a replayed journal (§2b), which is also
+code read from =/home=. It is listed as an open question rather than decided here.
+
+*** Verdict on 2a
+
+It is feasible, and the hard part (fork + save without the contrib) is proven on the
+host. But it is the most machinery for the least durable result: every rebuild
+discards it, and it captures breakage as faithfully as work. It is the right tool for
+the *opaque* pile only.
+
+** 2b. The source way: file-out and a change journal
+
+There are two halves, and they answer different failures.
+
+*** A journal, appended on every Accept
+
+Squeak's =.changes= and Pharo's Epicea both log each accepted change at the moment it
+is accepted, rather than at quit, so a crash or a pulled plug loses nothing that was
+accepted. Here that means =accept-source=, after a successful =eval=, appends one
+record to =~/.local/share/lol/changes.lisp= and =fsync=s it:
+
+#+begin_example
+(:seq 12 :time 3968650123 :build "a2ed0be 2026-10-03T10:47"
+ :package "LOL.TEXTVIEW" :name "TV-DRAW" :kind :function :label nil
+ :source "(defun tv-draw (tv canvas) …)")
+#+end_example
+
+Design points, each one a choice to make on purpose:
+
+- *Names as strings, the source as a string.* The journal is read back with
+  =*read-eval* nil=, and with no symbol interned until replay decides to. A journal
+  that names a package which no longer exists then reads cleanly and fails one
+  entry, not the whole file.
+- *Append-only, one form per entry.* A power cut can tear at most the last record.
+  The reader stops at the first form it cannot read, and reports the stop.
+- *Order is the journal's order*, not the registry's. =changed-definitions= sorts by
+  name, which is fine for display but wrong for replay: =defclass= before the
+  =defmethod= that specializes on it, =defmacro= before its callers.
+- *Version history comes for free*: replaying three Accepts of the same function
+  rebuilds =defn-versions= exactly as the session had it.
+- *Only Accepts*, at first. Do it / Print it / the REPL evaluate without recording,
+  as Smalltalk's "do it" does. Epicea /does/ log evaluations; that is an open question.
+
+*** Replay at boot
+
+After the image is up and before =run-browser-fb=, =supervisor-main= reads the journal
+and feeds each entry to =accept-source=, each one inside its own =handler-case=. The
+rules:
+
+- *A failing entry never stops the boot*, let alone PID 1. It is recorded, and the
+  boot carries on. The result is a *replay report*, itself a subject: "14 replayed,
+  1 failed: =ship-hull= — undefined function =hull-of=", drilling to the source.
+- *A newer build than the journal's* (=:build= differs from the running image's
+  stamp): don't replay blindly. The definition may already be in the source, folded
+  in and rebuilt, or the code around it may have moved. Show those entries as a
+  /pending/ change set to Accept or drop one by one. Squeak's "recover lost changes"
+  is the same idea.
+- *Same text already present*: if the entry's source is =string== the registry's
+  current source for that defn, skip it. That is how a folded-and-rebuilt change
+  retires itself without asking.
+- *Structs are the sharp edge.* /Verified/ in =./sbcl=: redefining =(defstruct pt x)=
+  as =(defstruct pt x y)= signals "attempt to redefine the STRUCTURE-OBJECT class PT
+  incompatibly", with a =CONTINUE= restart, and afterwards an *old instance is broken
+  so badly that even printing the error about it fails* (=LAYOUT-INVALID=). By replay
+  time the image already holds instances of its own structs: =*clipboard*= is a
+  =clipboard= built at load. Replaying an edited =clipboard= struct would break every
+  copy and paste. So a =:struct= entry is never replayed automatically. It is listed
+  in the report as "needs a rebuild", and that is what fold-back (below) is for.
+  =defclass= is fine: CLOS updates old instances lazily, by design.
+- *A runaway entry*, such as a =defparameter= whose init form loops: wrap replay in
+  =sb-ext:with-timeout=, and honour =lol.replay=off= on the command line. /Estimate/:
+  =with-timeout= is timer-based, and that it works under our PID 1 is unverified.
+
+*** File-out to the repo's source: closing the loop
+
+Squeak's file-out produces a file for a /human/ to fold in. Here we can go further,
+because of a fact /verified/ in =build.sh=: =MICRO= is the absolute path of the
+checkout, so every =defn-file= is an absolute path like
+=/home/everton/lisp-over-linux/poc/textview.lisp=. On the laptop the guest's =/home=
+/is/ the host's, so *the checkout is at that same path inside the running image*.
+(=check-files.lisp= already reads SBCL's own sources off the disk this way.)
+
+So a "File out to source" command can, for each changed definition:
+
+1. read =defn-file=, and find the build-time text, which is the oldest entry in
+   =defn-versions=, so the registry kept it;
+2. if that text appears *exactly once*, replace it with the current source and save
+   with =write-file-atomically= (owned by the user, as every write is);
+3. otherwise (the file moved on, or two copies exist) leave the file alone and write
+   the change to =changes-unfolded.lisp= beside the journal, for a human to fold in;
+4. for a =born= definition, append it to the end of its module's file, or put it in
+   =unfolded= when the home file is unclear (an open question).
+
+Then, back in Debian, you run =git diff= and commit, and on the next build the journal
+entries retire themselves (the "same text" rule). The registry captured whitespace
+and comments verbatim (=load-recording='s span includes the comment above a form),
+so the replacement is exact and keeps the doc-comments. /Estimate/: about a session's
+work, and it has a failure mode worth naming. A build made from a *dirty* tree, then
+edited live, then filed out over a tree that has since changed. Rule 3 catches that,
+as long as the match is verbatim.
+
+On a QEMU boot there is no checkout under the test disk's =/home=, so the test needs
+a fixture copy of one module in =make-test-disk.sh= (§5).
+
+** 2c. The desk: tabs, Workspaces, clipboard, recents
+
+This pile is small, and it is data, not code. One printed plist,
+=~/.local/state/lol/desk.lisp=, read with =*read-eval* nil=:
+
+#+begin_example
+(:version 1 :build "a2ed0be …"
+ :trails ((:subject (:workspace) :text ";; my scratch …" :point (12 4))
+          (:subject (:dir "/home/everton/Pictures") :sel 3)
+          ((:subject (:modules)) (:subject (:module "poc/textview")) (:subject (:defn "TV-DRAW" "LOL.TEXTVIEW" :function))))
+ :active 0
+ :clipboard (:entries ("…" "…") :primary nil :rectangle nil)
+ :recents (…)
+ :settings (:file-sort :name :file-sort-reverse nil :show-hidden nil))
+#+end_example
+
+- *A subject is written as a reference, not as itself.* Each subject struct that can
+  be named gets a writer (=(:dir PATH)=, =(:defn NAME PACKAGE KIND)=, …) and a
+  *whitelisted* reader that calls the constructor. Raw objects (=subj-object=,
+  =subj-retention=, =subj-disassembly=, an inspected instance or package) have no
+  reference and are dropped, and the trail is cut at the first one. That is honest:
+  they belong to the opaque pile.
+- *Workspace text* is kept whole, because it is the closest thing here to Smalltalk's
+  workspace windows. It is also where a half-written idea lives.
+- *Unsaved file buffers* are /not/ silently stashed here. They are dealt with at the
+  leave prompt (§4). Keeping a secret second copy of a file you did not save is how
+  editors earn distrust. Emacs's auto-save files are an option to discuss, not a
+  default.
+- *Restoring* needs the =open-environment= change from §1.3: if a desk was read,
+  build =*trails*= from it instead of a fresh Workspace.
+- *Why =state= and not =share=:* the XDG Base Directory spec (0.8) separates
+  =$XDG_STATE_HOME= (=~/.local/state=: history, and state an application reuses on
+  restart, such as view layout and open files) from =$XDG_DATA_HOME=
+  (=~/.local/share=: data worth backing up). That is from memory of the spec and was
+  not re-checked here. The journal and file-outs are data; the desk is state. /Estimate/ that the split is worth having. A single
+  =~/.lol/= is the simpler alternative, and is an open question.
+
+** 2d. Hybrids
+
+| Combination                          | Keeps                                  | Survives a rebuild?                   | Crash-safe?                        | Cost      |
+|--------------------------------------+----------------------------------------+---------------------------------------+------------------------------------+-----------|
+| journal only                         | definitions                            | yes (replay / pending set)            | yes, per Accept                    | low       |
+| journal + desk                       | definitions, tabs, buffers, clipboard  | yes                                   | definitions yes, desk at last save | low–medium |
+| journal + desk + fold-back           | the above, and changes land in git     | best: they become the build           | as above                           | medium    |
+| image only                           | everything                             | *no* (discarded on stamp mismatch)    | only at the last save              | high      |
+| image + journal (Smalltalk's own pair) | everything; the journal covers the gap since the last image, and carries edits across rebuilds | partly | yes | highest |
+
+* 3. Where things live, and when there is no disk
+
+| Path                                   | What                                  | Written                        |
+|----------------------------------------+---------------------------------------+--------------------------------|
+| =~/.local/share/lol/changes.lisp=      | the journal                           | on every Accept, =fsync=       |
+| =~/.local/share/lol/changes-unfolded.lisp= | what file-out could not place       | on File out                    |
+| =~/.local/state/lol/desk.lisp=         | tabs, Workspaces, clipboard, recents  | Save and quit; autosave        |
+| =~/.local/share/lol/image=, =image.prev=, =image.build=, =booting= | the optional image (§2a)  | on Save image only             |
+
+- *Ownership is free.* PID 1 runs as the user ([[file:storage.org][storage.org]] §5), so every file
+  above is created as =1000:1000= with no =chown= anywhere. Debian sees them as the
+  user's own files.
+- *Diskless boots* (QEMU without =test-disk.img=, =lol.disk=none=, another machine):
+  /verified/ in [[file:../initramfs/preinit.c::int main][preinit's =main=]], =HOME= is then set to =/=, and we
+  run as root. So =~/.local/share/lol= would be =/.local/share/lol= on the
+  *initramfs*. It is writable and evaporates, which is exactly the silent failure to
+  avoid. Persistence must detect "no disk" explicitly: no =$LOL_ROOTD_PID=, or =/home=
+  not in =/proc/mounts= (=home-read-only-p= already parses that file). It then
+  switches itself off, and the leave menu says "no disk — nothing will be kept"
+  instead of offering to save.
+- *After =release-disk=* =/home= is read-only, so every save must happen /before/
+  =power-off= calls it. That is a natural order, but one to keep.
+
+* 4. The power-off path
+
+Today ([[file:../initramfs/process.lisp::defun power-off][=power-off=]]) runs: =sync= → =release-disk= (lol-rootd
+remounts read-only) → =reboot(RB_POWER_OFF)=. It is reached from [[file:../poc/shell.lisp::defun leave-menu][=leave-menu=]]
+(=SuperL-q=, or =q= on a list) with entries "Supervisor console" and "Shut down", and
+from the supervisor menu's =s=. =run-browser-fb= reads =*leave-action*= after
+restoring the console, and calls =power-off= on =:power-off=.
+
+What changes:
+
+- *The leave menu grows.* "Supervisor console" (still first: a reflexive Return
+  stays reversible) · "Save and shut down" · "Shut down without saving". On a
+  diskless boot the middle entry reads "Shut down (no disk — nothing is kept)".
+  The supervisor menu's =s= asks the same question in text.
+- *Unsaved files come first.* Before any of those entries act, list the dirty file
+  panes ("2 files have unsaved changes: save all / discard / cancel"). That is the
+  gap in §1.3, and it is needed whatever is decided about the rest.
+- *What "Save" writes* depends on the recommendation. The journal is already
+  current (it is written per Accept), so Save writes the desk. With images enabled,
+  it also runs the fork-save, *before* =release-disk=, and leaves graphics mode
+  first so the console can show "saving image… verified… 52 MB".
+- *Autosave* of the desk: on a timer folded into the existing =fbb-wait= deadline
+  (the stage and the tray already wake the loop that way), every few minutes and
+  only when something changed. /Estimate:/ 5 minutes. The journal needs no autosave.
+- *"Shut down without saving"* still leaves the journal in place: those Accepts
+  /happened/. To actually forget them, use an explicit "Discard this session's
+  changes" in the change-set view, which truncates the journal. That is Smalltalk's
+  "quit without saving", whose =.changes= file still holds everything.
+
+* 5. Testing it under QEMU (never the real disk)
+
+The existing pattern is =LOL_GUEST_DISK=test-disk.img=, which [[file:../host-client/guest-harness.lisp::defun boot-guest][=boot-guest=]]
+attaches with =snapshot=on=, so every write goes to a throwaway overlay. That is
+exactly wrong for persistence: a two-boot test needs the second boot to see the
+first boot's writes. Proposal:
+
+- *A persistent mode in the harness*: =LOL_GUEST_DISK_MODE=persist=, or a
+  =:disk-copy= argument, copies =test-disk.img= into the run's scratch dir
+  (=cp --sparse=always=) and attaches *that copy* writable, without =snapshot=on=. The
+  pristine image is never touched, and the copy is deleted with the scratch dir.
+  The real NVMe stays out of it, as [[file:storage.org][storage.org]] §8 requires.
+- *=check-persist.lisp=*, booting the same copy three times:
+  1. Boot 1: Accept =(defun zz-persist () 42)= and an edit to a =lol.*= function (the
+     §1.2 fix); type into the Workspace; copy something; then drive "Save and shut
+     down" over QMP (=SuperL-q=, then the entry's key). QEMU exits by itself, since
+     the harness passes =-no-reboot= and the guest powers off.
+  2. Between boots, on the host and without root: =debugfs -R "stat …"= on the copy
+     shows the journal and the desk owned by uid 1000, and
+     =dumpe2fs -h= says =clean= (=release-disk= ran after the saves).
+  3. Boot 2: =(zz-persist)= → 42, the =lol.*= edit is live, the Workspace text and
+     clipboard are back, and the change set lists both.
+  4. *Crash case*: in boot 2, Accept one more definition, then =kill -9= QEMU with
+     no power-off. Boot 3 must still have it, which is what proves the per-Accept
+     =fsync=.
+  5. *Damage case*: append a torn half-record to the journal (from the guest over the
+     net REPL in boot 2), and check that boot 3 reaches the net REPL with a replay
+     report naming the stop.
+- *The diskless case* goes into an existing check: with no disk, the leave menu
+  offers no save and nothing is written under =/.local=.
+- *File-out* needs something to fold into: =make-test-disk.sh= would put a fixture
+  checkout (one module, at the path =build.sh= recorded) under the test =/home=. The
+  check asserts the file changed in exactly one place.
+- *Image snapshots*, if built, get their own check: save, verify, reboot into the
+  saved image (the marker is cleared), then plant a deliberately broken =image= and
+  check that the next boot falls back to =/sbin/lisp= by way of the marker.
+
+* 6. Options and recommendation
+
+| Option | What                                              | Keeps                                    | Effort (estimate)   | Risk                                        |
+|--------+---------------------------------------------------+------------------------------------------+---------------------+---------------------------------------------|
+| A      | journal + replay                                  | definitions                              | ~1 session          | low; structs need care                      |
+| B      | A + desk                                          | + tabs, Workspaces, clipboard, recents   | ~2 sessions         | low                                         |
+| C      | B + file-out to source                            | + edits land in git                      | ~3 sessions         | low–medium (verbatim matching)              |
+| D      | image snapshots only                              | everything, until the next rebuild       | ~2–3 sessions       | high: preinit + PID 1 + boot safety         |
+| E      | C + D                                             | everything                               | ~5 sessions         | as D, but optional on top of a safe base    |
+
+*Recommendation: C, built in the order below, with D held as a separate experiment
+that only happens if the opaque pile turns out to matter in practice.* The reasons:
+
+- The project's own loop is *edit → rebuild → boot*, many times a day. Only source
+  survives that loop. File-out turns a live edit into a commit, which is the actual
+  goal: the docs-and-code repo is the deliverable, not the image.
+- The journal gives Smalltalk's real guarantee (crash-safe Accepts) with none of the
+  PID 1 risk. Nothing in A–C touches =preinit.c= or the kernel.
+- What C cannot keep — mid-flight stage bodies, an inspected instance — is the part
+  you can rebuild in seconds by re-running a Workspace form. Pay for D only once that
+  stops being true.
+
+** Phases
+
+| Phase | Work                                                                                              | Effort (estimate) | Test                                     |
+|-------+---------------------------------------------------------------------------------------------------+-------------------+------------------------------------------|
+| 0     | The prerequisites: =defn-package= + bind =*package*= in =accept-source= (§1.2; *done*); a build stamp in =build.sh= (=/etc/lol-build= + a heap variable); a =persistence-available-p= check (disk present, =/home= rw) | ~½ session | =check-compile.lisp= gains a =lol.*= Accept |
+| 1     | The journal (append + =fsync= on Accept), replay at boot with a per-entry guard, the replay-report subject, the struct rule, the stale-build "pending" set, =lol.replay=off= | ~1 session | =check-persist.lisp= boots 1–3, crash case |
+| 2     | The desk: subject references with a whitelisted reader, Workspace text, clipboard, recents, settings; =open-environment= restores; autosave | ~1 session | =check-persist.lisp= desk assertions |
+| 3     | The leave menu: save / don't save / console, an unsaved-files prompt first, the diskless wording, the supervisor's =s= | ~½ session | =check-clipboard.lisp='s leave-menu steps, extended |
+| 4     | File out to source: verbatim replace, =changes-unfolded.lisp=, retiring journal entries after a rebuild | ~1 session | a fixture module on =test-disk.img= |
+| 5 /(optional)/ | Image snapshots: hand-rolled fork (§2a recipe), save-hooks for the globals table, a =verify= role, atomic promote, preinit's marker + stamp check + =lol.image=shipped= | ~2–3 sessions | its own check, including the broken-image fallback |
+
+Docs owed alongside: this file becomes the status doc. [[file:storage.org][storage.org]] gets the new
+paths. [[file:code-browser.org][code-browser.org]] Phase 6 gets a "file-out: DONE" when Phase 4 lands.
+[[file:processes.org][processes.org]] §5 should be corrected on the fork-fixups point (§2a) if Phase 5
+is ever built (it is left untouched here because this is a plan).
+
+* 7. Open questions for the user
+
+1. *What does "save" mean to you?* Keeping /your edits/ (source: survives rebuilds,
+   lands in git), or keeping /the running world/ (image: everything, but discarded
+   on every rebuild)? The recommendation assumes the first.
+2. *Replay at boot: automatic or asked?* Proposed: automatic for the same build,
+   "pending — review" for an older build. Or always ask?
+3. *Should file-out write into =~/lisp-over-linux= directly* (you =git diff= from
+   Debian), or only produce a patch file next to it for you to apply?
+4. *Where does a definition born this session go* when filed out: the end of the file
+   its first-referenced symbol lives in, a per-session =new-definitions.lisp=, or
+   always "unfolded" for you to place?
+5. *Journal Do it / REPL evaluations too* (Epicea does), or only Accepts?
+6. *Persist the clipboard history?* It is the place a pasted password would live.
+   Options: keep it, keep only the last N entries, or never.
+7. *Workspace text*: always restored, or only Workspaces you named or explicitly kept?
+8. *Paths*: XDG (=~/.local/share/lol= + =~/.local/state/lol=) or one =~/.lol/=?
+9. *Image snapshots at all?* They mean preinit exec'ing a user-writable file with
+   five capabilities (§2a, Security), plus a boot-marker scheme in C. Worth it, or
+   is the opaque pile acceptable to lose?
+10. /Answered:/ the Accept-package bug (§1.2) was fixed as a standalone change on
+    2026-10-03.
+    It affects live editing today, persistence or not.
+11. *"Shut down without saving"*: should it also truncate the journal, or (as
+    proposed) leave Accepts in place, so that forgetting them is a separate,
+    explicit action?

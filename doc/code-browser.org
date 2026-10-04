@@ -1691,6 +1691,8 @@ so nobody reopens it in a year believing it was never considered.
 
 * 5. Persistence — and the kernel gap
 
+/Superseded in part: the kernel gap closed at tag #25 ([[file:storage.org][storage.org]]); the current plan is [[file:session-persistence.org][session-persistence.org]]./
+
 Checked the config: =CONFIG_VFAT_FS=, =CONFIG_EXT4_FS=, =CONFIG_BLK_DEV_SD=,
 =CONFIG_VIRTIO_BLK= and =CONFIG_USB_STORAGE= are *all off*. The initramfs is a
 tmpfs — RAM. *Right now, nothing you change survives a reboot.* A Smalltalk
@@ -2291,6 +2293,8 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   tmpfs, so it first needs a storage-target decision (the ESP that already holds the
   kernel + initramfs, or a separate virtio disk). The producer side is ready —
   =changed-definitions= gives the set, each defn's =:source= is the text to write.
+  /(2026-10-03: the storage target exists since tag #25 — the plan, with options and
+  open questions, is [[file:session-persistence.org][session-persistence.org]].)/
 - *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
   =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; =SuperL-m= — it was the browser's
   default root until 2026-10-02, when the environment started opening on the
