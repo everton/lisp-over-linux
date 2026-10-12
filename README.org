@@ -211,6 +211,9 @@ Third-party components you obtain/build separately keep their own licenses:
 | SBCL | public domain + BSD-style | the runtime your image embeds (you build it) |
 | GNU C Library (glibc) | *LGPL-2.1-or-later* | copied *verbatim into the initramfs* — the SBCL binary is dynamically linked, so =ld-linux-x86-64.so.2=, =libc.so.6= and =libm.so.6= are taken from your host and shipped (see =initramfs/initramfs.sbcl.list=) |
 | Cozette (font) | MIT | *committed here* as =poc/cozette.lolf= (our 6×15 blob, regenerated from the upstream BDF) with the upstream license beside it in =poc/cozette-LICENSE.txt=; it also ships inside the image |
+| Intel Wi-Fi firmware (=iwlwifi-*.ucode=) | Intel's binary-redistribution licence (=LICENCE.iwlwifi_firmware= in linux-firmware; Debian's copyright file calls it =binary-redist-Intel=) | copied by =build.sh= from *your host's* =/lib/firmware= (Debian's =firmware-iwlwifi=) into the initramfs only; *never committed here*; card-keyed, =LOL_WIFI_FIRMWARE=0= leaves it out ([[file:doc/networking.org][networking.org]] §7) |
+| =regulatory.db= (+ =.p7s=) | ISC (wireless-regdb) | likewise copied from your host's =/lib/firmware= (the upstream-signed =regulatory.db-upstream=), never committed |
+| OpenSSL 3, =wpa_supplicant= | Apache-2.0; BSD-3-Clause | *not shipped at all*: the image loads/runs the host's own copies from =/mnt/host= at runtime ([[file:doc/networking.org][networking.org]] §2e, §7) |
 
 *Important if you ever distribute a bootable image/USB.* Two obligations come
 along for the ride, and neither affects your own MIT code:
@@ -225,6 +228,10 @@ along for the ride, and neither affects your own MIT code:
   able to *relink* against a modified glibc, which here is satisfied by the fact
   that SBCL is dynamically linked and the =.so= files are ordinary replaceable
   files in the initramfs.
+- *Wi-Fi firmware.* If your image carries the Intel firmware (the default when the
+  build host has it), Intel's licence permits redistribution in binary form on its
+  own terms — read =LICENCE.iwlwifi_firmware= (Debian: =/usr/share/doc/firmware-iwlwifi/copyright=)
+  and pass it along, or build with =LOL_WIFI_FIRMWARE=0=.
 
 Everything else is aggregation: your MIT userland merely sits alongside these on
 the medium and is unaffected. (This is a plain-English summary of what the

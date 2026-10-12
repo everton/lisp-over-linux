@@ -26,7 +26,7 @@ the window list, separated by =" | "=:
 | # | Field             | Host source                                                   | Here                                  |
 |---+-------------------+---------------------------------------------------------------+---------------------------------------|
 | 1 | battery           | =~/.local/bin/battery-modeline= (parses =acpi -b=)             | *done* — =battery-string=             |
-| 2 | Wi-Fi SSID        | =iwgetid -r=, else =Not connected!=                            | roadmap — needs a Wi-Fi driver first  |
+| 2 | Wi-Fi SSID        | =iwgetid -r=, else =Not connected!=                            | *done* (2026-10-12) — =network-tray-item= |
 | 3 | date and time     | =%d= with =*time-modeline-string*= = ="%F %T"=                 | *done* — =clock-string=               |
 | 4 | tray icons        | =%T= — the stumptray module's placeholder                      | the shell's icons (clipboard first)   |
 
@@ -43,11 +43,24 @@ the battery reads exactly what the host's script prints:
 =+= is charging, =-= discharging, and =H:MM= is time to full or to empty. A status
 of =Unknown= is coloured as if discharging, as the host script does.
 
-*Roadmap* (fields the host has and we don't yet): the Wi-Fi SSID (blocked on the
-kernel — real-hardware Wi-Fi NICs are deliberately off, [[file:kernel-config.org][kernel-config.org]]
-"Deliberately OFF"); the wired link's state would be a natural stand-in until
-then. A second battery (some ThinkPads have two) is read as "the first one" today,
-as =acpi -b='s first line is on the host.
+*Field 2, the network* (since 2026-10-12; tag #26 turned Wi-Fi on):
+[[file:../initramfs/wifi.lisp::defun network-tray-item][=network-tray-item=]] in =wifi.lisp=, which =tray-items= calls by name (it loads
+later). It reads only =*wifi-state*= — refreshed every 5 s by the =netd= thread
+from the supplicant's =STATUS= and =SIGNAL_POLL= — because the tray repaints every
+second and must never wait on a socket:
+
+| State                                   | Text              | Tone                          |
+|-----------------------------------------+-------------------+-------------------------------|
+| Wi-Fi associated                        | =Home 72%=        | =:ok= ≥ 55 %, =:warn= ≥ 30 %, else =:low= |
+| a radio, not associated                 | =Not connected!=  | =:low= (red)                  |
+| no radio, a wired lease (QEMU's eth0)   | =eth0 10.0.2.15=  | =:ok=                         |
+| no radio, no lease                      | (no item)         |                               |
+
+The percentage is NetworkManager's rough mapping, =2 × (dBm + 100)= clamped to
+0–100. Details: [[file:networking.org][networking.org]] §7.3.
+
+*Roadmap:* a second battery (some ThinkPads have two) is read as "the first one"
+today, as =acpi -b='s first line is on the host.
 
 * 2. Battery: the power_supply class in sysfs
 

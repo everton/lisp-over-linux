@@ -120,9 +120,11 @@ rewrites the MAC and passes it along (this is §2's "MAC changes every hop").
 
 *In the code:*
 - DHCP told us our gateway is =10.0.2.2= and we stash it: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
-- We have *not yet* added the default route (the =SIOCADDRT= ioctl) — which is
-  exactly why off-subnet hosts aren't reachable yet. That's the missing piece for
-  ping; see the plan in [[file:../networking.org][networking.org]] §2c.
+- The default route is the =SIOCADDRT= ioctl with a =struct rtentry= whose
+  destination and mask are both =0.0.0.0= and whose gateway is that router:
+  [[file:../../initramfs/net.lisp::defun add-default-route][net.lisp → add-default-route]], installed from every lease by
+  [[file:../../initramfs/dhcp.lisp::defun apply-lease][dhcp.lisp → apply-lease]] (since 2026-10-12; [[file:../networking.org][networking.org]] §2c). Read the
+  table back with =(ipv4-routes)= — it is =/proc/net/route=, parsed.
 - Kernel routing decisions: [[file:../../linux/net/ipv4/fib_frontend.c][linux → net/ipv4/fib_frontend.c]]
 
 *Check yourself:* to send to =8.8.8.8=, whose *MAC* goes in the frame — Google's,
@@ -206,8 +208,9 @@ while an external =ping= may not?
 Now put it all together. When our REPL tries to ping =8.8.8.8=:
 
 1. *Is it on-link?* =8.8.8.8= is not in =10.0.2.0/24= (§3), so we need the
-   *default route* (§5). We haven't added it yet → the kernel returns
-   =ENETUNREACH= and nothing leaves the box. *(Prerequisite 1: add the route.)*
+   *default route* (§5). Without one the kernel returns =ENETUNREACH= and nothing
+   leaves the box. *(Prerequisite 1: add the route — done since 2026-10-12; a TCP
+   connection to the internet, e.g. =(http-get "http://example.com/")=, now works.)*
 2. *Build the frame:* with the route, the packet's IP dst is =8.8.8.8= but its MAC
    dst is the gateway =10.0.2.2='s MAC (§2, §5) — found via ARP (§4) — and off it
    goes to SLIRP.
