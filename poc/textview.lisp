@@ -40,6 +40,8 @@
   (rect-mode nil)                  ; Emacs C-x SPC: the region is a RECTANGLE (a column
                                    ; block between anchor and point), drawn as one
   (scroll 0)                       ; first visible line
+  (hscroll 0)                      ; first visible COLUMN — a long line at a large font
+                                   ; size runs past the pane; the view follows the caret
   (x 0) (y 0) (w 0) (h 0)          ; the rectangle we own, in pixels
   (pad 8)
   font
@@ -77,7 +79,7 @@
     (setf (tv-lines tv) (coerce (nreverse lines) 'simple-vector)
           (tv-point-line tv) 0 (tv-point-col tv) 0
           (tv-anchor-line tv) 0 (tv-anchor-col tv) 0
-          (tv-scroll tv) 0)))
+          (tv-scroll tv) 0 (tv-hscroll tv) 0)))
 
 (defun line-at (tv i) (aref (tv-lines tv) (min i (1- (length (tv-lines tv))))))
 
@@ -403,20 +405,36 @@
 ;;; Monospaced today. These two functions are the ONLY place that assumes it —
 ;;; proportional metrics replace their bodies and nothing else changes.
 
-(defparameter *gutter-w* 40
-  "Width in pixels of the line-number gutter to the LEFT of the text. It is part of
+(defun tv-gutter-w (tv)
+  "Width in pixels of the line-number gutter to the LEFT of the text: three digits,
+   a cell of air and 16 px (40 at 6x15 — it was the constant *GUTTER-W* until the
+   font became resizable; doc/fonts.org §5). It is part of
    a glyph's on-screen X, so both x-of-col and col-at-x count it — otherwise a click
    lands one gutter-width (≈7 columns) to the right of the pointer (tv-draw used to
-   add it only on the draw side, so hit-testing disagreed with what you saw).")
+   add it only on the draw side, so hit-testing disagreed with what you saw)."
+  (+ (* 4 (tv-cw tv)) 16))
 
 (defun x-of-col (tv col)
-  "The on-screen X of column COL — gutter included, so it is exactly what tv-draw
-   renders at and exactly what col-at-x inverts."
-  (+ (tv-x tv) (tv-pad tv) *gutter-w* (* col (tv-cw tv))))
+  "The on-screen X of column COL — gutter included, and the horizontal scroll taken
+   off, so it is exactly what tv-draw renders at and exactly what col-at-x inverts."
+  (+ (tv-x tv) (tv-pad tv) (tv-gutter-w tv) (* (- col (tv-hscroll tv)) (tv-cw tv))))
+
+(defun tv-text-cols (tv)
+  "How many columns of text fit between the gutter and the scrollbar."
+  (max 1 (floor (- (tv-w tv) (tv-pad tv) (tv-gutter-w tv) 8) (tv-cw tv))))
+
+(defun follow-caret-horizontally (tv)
+  "Scroll sideways so the caret's column is on screen, with a few columns of context —
+   what Emacs does for a line longer than the window when truncating. Lines that fit
+   need none of this, so HSCROLL stays 0 for them; it matters once the font is large
+   (doc/fonts.org §5)."
+  (let ((col (tv-point-col tv)) (n (tv-text-cols tv)) (hs (tv-hscroll tv)))
+    (cond ((< col hs) (setf (tv-hscroll tv) (max 0 (- col 8))))
+          ((>= col (+ hs n -1)) (setf (tv-hscroll tv) (max 0 (+ (- col n) 9)))))))
 
 (defun col-at-x (tv line px)
-  (let* ((rel (- px (tv-x tv) (tv-pad tv) *gutter-w*))
-         (col (round rel (tv-cw tv))))          ; ROUND, not floor: clicking the
+  (let* ((rel (- px (tv-x tv) (tv-pad tv) (tv-gutter-w tv)))
+         (col (+ (tv-hscroll tv) (round rel (tv-cw tv)))))   ; ROUND, not floor: clicking the
     (max 0 (min col (length (line-at tv line)))))) ; right half of a glyph should
                                                    ; put the caret after it
 
@@ -569,6 +587,12 @@
          (x0 (tv-x tv)) (y0 (tv-y tv)) (w (tv-w tv)) (h (tv-h tv))
          (pad (tv-pad tv))
          (first (tv-scroll tv))
+         ;; the visible columns are [HS, MAXCOL): text past them is CLIPPED, not drawn
+         ;; over the pane's frame, and the caret's column is kept inside them. With the
+         ;; old 6-px font a line rarely reached the edge; at a large size most do
+         ;; (doc/fonts.org §5).
+         (hs (progn (when (tv-focus tv) (follow-caret-horizontally tv)) (tv-hscroll tv)))
+         (maxcol (+ hs (tv-text-cols tv)))
          (last  (min (length (tv-lines tv)) (+ first (visible-lines tv))))
          (depth 0) (instr nil))
     (fill-rect canvas x0 y0 w h *bg*)
@@ -595,8 +619,8 @@
                           (b (if (tv-rect-mode tv)
                                  (max (tv-anchor-col tv) (tv-point-col tv))
                                  (if (= li sl1) sc1 (length line))))
-                          (xa (x-of-col tv a))
-                          (xb (x-of-col tv b)))
+                          (xa (x-of-col tv (max a hs)))
+                          (xb (x-of-col tv (min (max b hs) maxcol))))
                      ;; a selected newline shows as a sliver past end-of-line
                      (fill-rect canvas xa (- ly 2)
                                 (max 4 (- xb xa)) lh *sel*)))
@@ -615,8 +639,9 @@
                    (setf depth new-depth instr new-instr)
                    (dolist (r runs)
                      (destructuring-bind (s e . color) r
-                       (draw-string canvas font (subseq line s e)
-                                    (x-of-col tv s) ly color))))
+                       (when (and (< s maxcol) (> e hs))
+                         (draw-string canvas font (subseq line (max s hs) (min e maxcol))
+                                      (x-of-col tv (max s hs)) ly color)))))
                  ;; the caret
                  (when (and (tv-focus tv) (= li (tv-point-line tv)))
                    (fill-rect canvas

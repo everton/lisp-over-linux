@@ -858,9 +858,9 @@
       (let ((msg (or (web-tab-status tab)
                      (and (member *web-chrome-state* '(:failed)) *web-error*))))
         (when msg
-          (lol.canvas:fill-rect canvas x (+ py ph -20) w 20 *ui-hi*)
+          (lol.canvas:fill-rect canvas x (- (+ py ph) +bar-h+) w +bar-h+ *ui-hi*)  ; font-sized strip
           (lol.canvas:draw-string canvas *bfont* (clip-text msg (max 4 (floor (- w 12) cw)))
-                                  (+ x 6) (+ py ph -17) *ui-amber*))))))
+                                  (+ x 6) (+ (- (+ py ph) +bar-h+) (text-dy +bar-h+)) *ui-amber*))))))
 
 (defun web-placeholder (tab)
   "What an empty page area says while there is no frame yet."

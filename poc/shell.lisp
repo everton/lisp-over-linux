@@ -23,7 +23,9 @@
             lol.widgets:*ui-rule* lol.widgets:*ui-text* lol.widgets:*ui-dim*
             lol.widgets:*ui-accent* lol.widgets:*ui-sel* lol.widgets:*ui-amber*
             lol.widgets:concept-color lol.widgets:*concept-colors*
-            lol.widgets:+row-h+ lol.widgets:+bar-h+ lol.widgets:clip-text)))
+            lol.widgets:+row-h+ lol.widgets:+bar-h+ lol.widgets:clip-text
+            ;; text metrics, read from the CURRENT font at draw time (doc/fonts.org §5)
+            lol.widgets:char-w lol.widgets:line-h lol.widgets:text-dy)))
 
 (defvar *bfont* nil
   "The browser font (a lol.canvas:font), set at startup. SET-BROWSER-FONT keeps
@@ -282,6 +284,61 @@
 (defvar *minibuffer* nil
   "The open minibuffer (an MB — see \"the minibuffer\" below), or NIL. Declared up here
    because the status line, drawn earlier in this file, has to know.")
+
+;;; ---- the font: which file, and its size at run time (doc/fonts.org) -------------
+
+(defun open-browser-font (ttf-paths bitmap-path &key size)
+  "Load the browser font: the first TrueType file in TTF-PATHS that parses, at SIZE
+   pixels (default lol.canvas:*default-font-size*); failing all of them, the bitmap
+   .lolf at BITMAP-PATH — the fallback that always ships. A missing or broken TTF
+   (build.sh leaves an EMPTY file when the build host had none) is not an error,
+   only a reason to fall back; what was tried and why it failed goes to *ERROR-OUTPUT*
+   so a boot log says why the text looks old."
+  (or (loop for p in ttf-paths
+            when (and p (probe-file p))
+              do (handler-case
+                     (return (lol.canvas:load-ttf-font
+                              p :size (or size lol.canvas:*default-font-size*)))
+                   (error (e) (format *error-output* "~&font: ~a — ~a~%" p e))))
+      (let ((f (lol.canvas:load-font bitmap-path)))
+        (when size (lol.canvas:set-font-size f size))
+        f)))
+
+(defun set-font (path &key (size (and *bfont* (lol.canvas:font-size *bfont*))))
+  "Switch the whole environment to the TrueType file at PATH — e.g. any font under
+   /mnt/host/usr/share/fonts, the laptop's own collection — keeping the current size.
+   The font object is REPLACED, so the textviews that captured the old one are
+   repointed too. Returns the new font's description."
+  (let ((new (lol.canvas:load-ttf-font path :size (or size lol.canvas:*default-font-size*)))
+        (old *bfont*))
+    (set-browser-font new)
+    (dolist (trail *trails*)
+      (dolist (p trail)
+        (dolist (pane (list p (pane-side p) (pane-side-stash p)))
+          (when (and pane (pane-tv pane) (eq (lol.textview::tv-font (pane-tv pane)) old))
+            (setf (lol.textview::tv-font (pane-tv pane)) new)))))
+    (lol.canvas:font-description new)))
+
+(defun change-font-size (how)
+  "The SuperL-= / SuperL-- / SuperL-0 (and C-x C-+ / C-- / C-0) command. HOW is
+   :bigger, :smaller or :reset. Resizes the ONE shared font in place, so the next
+   frame relays out everything; says the new size in the status line; and remembers
+   it in ~/.config/lol/settings when there is a home to write to. Steps are 2 px
+   below 20 and 3 above — at 12 px one pixel is 8%, at 30 it is 3% and too small to see."
+  (let* ((f *bfont*)
+         (now (lol.canvas:font-size f))
+         (step (if (or (> now 20) (and (= now 20) (eq how :bigger))) 3 2))
+         (new (ecase how
+                (:bigger (lol.canvas:set-font-size f (+ now step)))
+                (:smaller (lol.canvas:set-font-size f (- now step)))
+                (:reset (lol.canvas:reset-font-size f)))))
+    (when (fboundp 'save-setting) (funcall 'save-setting :font-size new))
+    (setf *browser-status*
+          (format nil "font: ~a~@[ — at the ~(~a~) end~]"
+                  (lol.canvas:font-description f)
+                  (cond ((and (eq how :bigger) (= new now)) :largest)
+                        ((and (eq how :smaller) (= new now)) :smallest))))
+    new))
 (defvar *value-prompt* nil
   "A hook: (funcall *value-prompt* LABEL) -> the string the user typed, or NIL if they
    cancelled. Reading a line is a modal input loop, which only a BACKEND can run — so
@@ -593,9 +650,20 @@
                                ;; annotations: the value is what you came to read, so it
                                ;; gets its own column and full-strength text
                                :value-col (when (eq (view-kind (pane-view pane)) :inspector)
-                                            (min 300 (floor w 2))))
+                                            (min (* 50 (char-w)) (floor w 2))))
       (setf (pane-top pane) top)
       (if (eq into :side) (setf *side-rows* hits) (setf *list-rows* hits)))))
+
+;;; Layout heights that depend on the text — all derived from the current font, so a
+;;; font-size change relays them out on the next frame. The comments give the pixel
+;;; values they had as constants under the old 6x15 bitmap font.
+(defun status-h () "Height of the status line / minibuffer (22 at 6x15)." (+ (line-h) 7))
+(defun status-text-y (h) "Where the status line's text goes, in a frame H tall."
+  (+ (- h (status-h)) (text-dy (status-h)) 1))
+(defun pane-header-text-y (body-y)
+  "The y of a text drawn ON a pane's header band, given where its BODY starts (the band
+   is +BAR-H+ tall and ends 4 px above the body) — the line the panel's title sits on."
+  (+ (- body-y 4 +bar-h+) (text-dy +bar-h+)))
 
 (defun draw-hints (canvas x y w hints)
   "Draw HINTS — a list of (CHORD . MEANING) — along the status line, the CHORD in the
@@ -606,8 +674,8 @@
   (let ((pen x))
     (dolist (h hints)
       (destructuring-bind (chord . meaning) h
-        (let* ((cw (if chord (+ (lol.canvas:string-px *bfont* chord) 5) 0))
-               (mw (+ (lol.canvas:string-px *bfont* meaning) 12)))
+        (let* ((cw (if chord (+ (lol.canvas:string-px *bfont* chord) (char-w)) 0))   ; 5 px and 12 px
+               (mw (+ (lol.canvas:string-px *bfont* meaning) (* 2 (char-w)))))  ; at 6x15
           (when (> (+ pen cw mw) (- w 8)) (return))
           (when chord
             (lol.canvas:draw-string canvas *bfont* chord pen y *ui-accent*)
@@ -635,7 +703,7 @@
          (cols (getf m :cols))
          (counts (mapcar (lambda (cellrow) (mapcar #'length cellrow)) (getf m :cells))))
     (multiple-value-bind (hits bottom)
-        (lol.widgets:draw-grid canvas x y (- w 2) (- h 20) rows cols counts)
+        (lol.widgets:draw-grid canvas x y (- w 2) (- h (line-h) 5) rows cols counts)
       (setf *matrix-cells* hits)
       ;; the caption sits directly under the grid, where the design puts it — at the
       ;; foot of a mostly-empty pane it would be furniture nobody reads
@@ -650,7 +718,10 @@
 ;;; :class blue because it is an instance of a class, an impact flashes :method green
 ;;; because what you are being shown is a method, and a signal flashes :condition red.
 
-(defparameter +stage-transcript-h+ 92 "Height of the transcript strip under the stage.")
+(defun stage-transcript-h ()
+  "Height of the transcript strip under the stage: a heading and five lines (92 px
+   under the old 6x15 font, when it was the constant +STAGE-TRANSCRIPT-H+)."
+  (+ 7 (* 6 (line-h))))
 (defvar *stage-rect* nil "The viewport rect (x y w h) of the last stage drawn, for clicks.")
 
 (defun stage-sprite-points (b)
@@ -746,10 +817,11 @@
    disagreement in amber."
   (lol.canvas:fill-rect canvas x y w 1 *ui-rule*)
   (lol.canvas:draw-string canvas *bfont* "TRANSCRIPT" x (+ y 5) *ui-dim*)
-  (let* ((rows (max 1 (floor (- h 22) 14)))
+  (let* ((step (line-h))                 ; one text line; was 14 under the 6x15 font
+         (rows (max 1 (floor (- h step 7) step)))
          (tail (reverse (subseq (stage-transcript stage)
                                 0 (min rows (length (stage-transcript stage))))))
-         (ty (+ y 20))
+         (ty (+ y step 5))
          (maxc (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*)))))
     (dolist (e tail)
       (lol.canvas:draw-string canvas *bfont*
@@ -760,7 +832,7 @@
                                 (:absent (concept-color :condition))
                                 (:warn *ui-amber*)
                                 (t *ui-dim*)))
-      (incf ty 14))))
+      (incf ty step))))
 
 (defun draw-stage-body (canvas pane x y w h)
   "Render a :stage view: the viewport with its sprites, the heads-up line naming what
@@ -770,7 +842,7 @@
    pane is the authority on how much room there is — resize the window and the world
    gets bigger, which is the behaviour you would want anyway."
   (let* ((stage (view-data (pane-view pane)))
-         (vh (- h +stage-transcript-h+))
+         (vh (- h (stage-transcript-h)))
          (ox x) (oy y))
     (stage-resize stage (max 80 w) (max 80 vh))
     (setf *stage-rect* (list x y w vh))
@@ -782,11 +854,11 @@
     (let ((hud (stage-hud-line stage)))
       (lol.canvas:draw-string canvas *bfont*
                               (lol.widgets:clip-text hud (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*))))
-                              (+ x 4) (+ y vh -16)
+                              (+ x 4) (- (+ y vh) (line-h) 1)
                               (if (search "will signal" hud) (concept-color :condition) *ui-dim*)))
     (unless (stage-running stage)
       (lol.canvas:draw-string canvas *bfont* "PAUSED" (+ x 4) (+ y 4) *ui-amber*))
-    (draw-stage-transcript canvas stage x (+ y vh) w +stage-transcript-h+)))
+    (draw-stage-transcript canvas stage x (+ y vh) w (stage-transcript-h))))
 
 (defun stage-click (pane px py)
   "A click in the stage viewport selects the body under the pointer — and a selected
@@ -964,13 +1036,13 @@
     (note-drawn x0 0 tw (- +bar-h+ 1) items '(draw-tray tray-items) "the systray")
     (note-drawn (- pen 3) 0 16 (- +bar-h+ 1) (lol.clipboard:clip-current)
                 '(draw-clip-icon open-clipboard-manager) "the clipboard icon")
-    (draw-clip-icon canvas pen 3 (if (lol.clipboard:clip-current) *ui-accent* *ui-dim*))
+    (draw-clip-icon canvas pen (floor (- +bar-h+ 13) 2) (if (lol.clipboard:clip-current) *ui-accent* *ui-dim*))
     (setf *tray-clip-rect* (cons (- pen 3) (+ pen 13)))
     (incf pen 14)
     (dolist (it items)
-      (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) 3 *ui-rule*)
+      (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) (text-dy +bar-h+) *ui-rule*)
       (incf pen 16)
-      (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen 3
+      (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen (text-dy +bar-h+)
                                         (if (member (getf it :kind) '(:battery :wifi :wired :agent))   ; :agent — agent-ui.lisp
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
@@ -993,41 +1065,44 @@
           for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
           for title = (format nil "~a " (clip-text (trail-title trail) 16))
           for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
-          for tw = (+ lw (if closer 14 0))
-          while (< (+ x tw) (- w 26 (tray-width)))  ; room for the + button and the tray
+          for tw = (+ lw (if closer (+ (char-w) 8) 0))   ; the x box
+          while (< (+ x tw) (- w (+ (char-w) 20) (tray-width)))  ; room for the + button and the tray
           do (progn
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
                (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
                ;; number quiet, title bright (active accent, inactive plain text)
-               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) 3 *ui-dim*)))
-                 (lol.canvas:draw-string canvas *bfont* title pen 3
+               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) (text-dy +bar-h+) *ui-dim*)))
+                 (lol.canvas:draw-string canvas *bfont* title pen (text-dy +bar-h+)
                                          (if active *ui-accent* *ui-text*)))
                ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
                ;; §8.9): colour = authority, filled = :interacting, pulsing = working
                (multiple-value-bind (dot filled)
                    (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
                  (when dot
-                   (let ((dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
-                         (dy (- (floor +bar-h+ 2) 3)))
-                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) 8 8 (if active *ui-hi* *ui-panel*))
+                   ;; the dot covers the "·" cell, so it grows with the font: 6 px at 6x15
+                   (let* ((s (max 6 (- (char-w) 3)))
+                          (dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
+                          (dy (- (floor +bar-h+ 2) (floor s 2))))
+                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) (+ s 2) (+ s 2)
+                                           (if active *ui-hi* *ui-panel*))
                      (if filled
-                         (lol.canvas:fill-rect canvas dx dy 6 6 dot)
-                         (lol.canvas:draw-rect canvas dx dy 6 6 dot)))))
+                         (lol.canvas:fill-rect canvas dx dy s s dot)
+                         (lol.canvas:draw-rect canvas dx dy s s dot)))))
                (when closer
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
-                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3
+                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
                                            (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
-                   (push (cons i (cons cx (+ cx 14))) *tab-close-rects*)))
+                   (push (cons i (cons cx (+ cx (char-w) 8))) *tab-close-rects*)))
                (push (cons i (cons x (+ x tw))) *tab-rects*)
                (note-drawn x 0 tw +bar-h+ trail '(draw-tabs trail-title)
                            (format nil "tab ~d · ~a" (1+ i) (trail-title trail)))
                (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
     (let ((px (+ x 2)))
-      (lol.canvas:fill-rect canvas px 0 14 +bar-h+ *ui-panel*)
-      (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) 3 *ui-accent*)
-      (setf *tab-plus-rect* (cons px (+ px 14)))
-      (setf x (+ px 14)))
+      (lol.canvas:fill-rect canvas px 0 (+ (char-w) 8) +bar-h+ *ui-panel*)
+      (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) (text-dy +bar-h+) *ui-accent*)
+      (setf *tab-plus-rect* (cons px (+ px (char-w) 8)))
+      (setf x (+ px (char-w) 8)))
     ;; a hairline seam under the whole strip
     (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
     ;; the systray where the app's name used to sit
@@ -1136,7 +1211,7 @@
    'black'), with a caption of its true size and the scale it is shown at."
   (let* ((data (view-data (pane-view pane)))
          (iw (getf data :width)) (ih (getf data :height))
-         (cap-h 18) (bh (max 10 (- h cap-h))))
+         (cap-h (+ (line-h) 3)) (bh (max 10 (- h cap-h))))   ; 18 at 6x15
     (multiple-value-bind (nw nh) (image-fit iw ih (- w 8) (- bh 8))
       (let* ((px (let ((cache (getf data :scaled)))
                    (if (and cache (= (first cache) nw) (= (second cache) nh))
@@ -1197,11 +1272,11 @@
     (loop for p in ancestors for i from 0
           do (draw-crumb canvas y w p i) (incf y (+ +bar-h+ 3)))
     ;; the expanded current pane
-    (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 24)))
+    (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 (status-h) 2)))
       (setf *content-top* body-y)                 ; remember it for click hit-testing
-      (note-drawn 8 y (- w 16) (- h y 24) cur '(draw-pane-body lol.widgets:draw-panel)
+      (note-drawn 8 y (- w 16) (- h y (status-h) 2) cur '(draw-pane-body lol.widgets:draw-panel)
                   (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
-      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y 24)
+      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y (status-h) 2)
                               ;; when the pane is about to split, its title owns only
                               ;; the left half: the right one carries the preview's
                               ;; own title on the same line, and a long path in the
@@ -1234,7 +1309,7 @@
                        (if *editing-side*
                            "editing — C-c C-c define · SuperL-o stage"
                            "SuperL-o to edit"))
-               sx (- body-y 15) (if *editing-side* *ui-accent* *ui-dim*))
+               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
              (if *editing-side*
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) stage-w* 2 *ui-accent*))
@@ -1250,7 +1325,7 @@
              (lol.canvas:draw-string canvas *bfont*
                (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
                        (if *editing-side* "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
-               sx (- body-y 15) (if *editing-side* *ui-accent* *ui-dim*))
+               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
              ;; accent top-rule over whichever half has focus
              (if *editing-side*
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
@@ -1268,8 +1343,8 @@
                  (progn
                    (lol.canvas:draw-string canvas *bfont*
                                            (clip-text (view-title (pane-view preview))
-                                                      (max 8 (floor (- prev-w 40) (lol.canvas:font-cw *bfont*))))
-                                           prev-x (- body-y 15) *ui-dim*)
+                                                      (max 8 (floor (- prev-w (* 11 (char-w))) (char-w))))  ; leave the badge room
+                                           prev-x (pane-header-text-y body-y) *ui-dim*)
                    (draw-pane-body canvas preview prev-x body-y prev-w body-h :side))
                  (lol.canvas:draw-string canvas *bfont* "(no preview)"
                                          prev-x (+ body-y 4) *ui-dim*))))
@@ -1280,13 +1355,13 @@
 (defun draw-status-line (canvas w h cur)
   "The bottom line: the last message, or the keys that matter for the pane CUR."
   (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
-    (note-drawn 0 (- h 22) w 22 *browser-status* '(draw-status-line draw-hints)
+    (note-drawn 0 (- h (status-h)) w (status-h) *browser-status* '(draw-status-line draw-hints)
                 "the status line")
-    (lol.canvas:fill-rect canvas 0 (- h 22) w 22 *ui-hi*)
+    (lol.canvas:fill-rect canvas 0 (- h (status-h)) w (status-h) *ui-hi*)
     (when *minibuffer* (return-from draw-status-line (draw-minibuffer canvas w h)))
     (if *browser-status*
-        (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (- h 18) *ui-accent*)
-        (draw-hints canvas 10 (- h 18) w
+        (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
+        (draw-hints canvas 10 (status-text-y h) w
                     (append
                      (cond ((and *editing-side* (pane-side cur))
                             ;; name the half you go BACK to, and the verb the pane's
@@ -1443,16 +1518,17 @@
    *spotter-rect* / *spotter-hits* so a click routes to the row actually painted there."
   (draw-browser canvas w h)                          ; the browser, as backdrop …
   (let* ((rows   (spotter-rows results query))
-         (cw     (min 780 (- w 80)))
+         (cw     (min (* 130 (char-w)) (- w 80)))   ; 780 at 6x15
          (cx     (floor (- w cw) 2))
          (cy     (+ +bar-h+ 14))
          ;; the card grows with the results, up to what the screen can hold
          (nslots (+ (length rows) (length (remove-duplicates
                                            (map 'list #'lol.widgets:row-group rows)
                                            :test #'equal))))
-         (maxrows (max 3 (min nslots (floor (- h cy 96) +row-h+))))
+         (chrome  (+ (lol.widgets:card-head-h) +bar-h+ 8 (status-h) 2))  ; 76 at 6x15
+         (maxrows (max 3 (min nslots (floor (- h cy chrome 20) +row-h+))))
          (list-h  (* maxrows +row-h+))
-         (ch      (+ 24 20 8 list-h 24)))
+         (ch      (+ chrome list-h)))
     (setf *spotter-rect* (list cx cy (+ cx cw) (+ cy ch)))
     (let* ((body (lol.widgets:draw-card canvas cx cy cw ch
                                         :title "Spotter"
@@ -1476,7 +1552,7 @@
             (setf *spotter-hits* hits)))
       ;; the footer says what the keys do, because the palette is modal and nothing
       ;; else on screen can say it
-      (draw-hints canvas (+ cx 12) (+ cy ch -16) (- cw 16)
+      (draw-hints canvas (+ cx 12) (- (+ cy ch) (line-h) 1) (- cw 16)
                   (if (path-query-p query)
                       '(("tab" . "complete") ("up/dn" . "move") ("ret" . "open the folder in a new tab")
                         ("Esc" . "close"))
@@ -1595,7 +1671,7 @@
    text and a caret. A long text scrolls so the caret is always on screen."
   (let* ((mb *minibuffer*)
          (cw (lol.canvas:font-cw *bfont*))
-         (y (- h 22))
+         (y (- h (status-h)))
          (px (+ 10 (lol.canvas:string-px *bfont* (mb-prompt mb))))
          (hint-w (if (mb-hint mb) (+ 16 (lol.canvas:string-px *bfont* (mb-hint mb))) 0))
          (room (max 4 (floor (- w px 14 hint-w) cw)))
@@ -1603,15 +1679,15 @@
          (first (max 0 (- pt (1- room))))
          (shown (subseq text first (min (length text) (+ first room))))
          (shown (if (mb-secret mb) (make-string (length shown) :initial-element #\*) shown)))
-    (lol.canvas:fill-rect canvas 0 y w 22 *ui-hi*)
+    (lol.canvas:fill-rect canvas 0 y w (status-h) *ui-hi*)
     (lol.canvas:fill-rect canvas 0 y w 2 *ui-amber*)
-    (note-drawn 0 y w 22 mb '(draw-minibuffer) "the minibuffer")
-    (lol.canvas:draw-string canvas *bfont* (mb-prompt mb) 10 (+ y 4) *ui-amber*)
-    (lol.canvas:draw-string canvas *bfont* shown px (+ y 4) *ui-text*)
-    (lol.canvas:fill-rect canvas (+ px (* (- pt first) cw)) (+ y 3) 2 16 *ui-accent*)
+    (note-drawn 0 y w (status-h) mb '(draw-minibuffer) "the minibuffer")
+    (lol.canvas:draw-string canvas *bfont* (mb-prompt mb) 10 (status-text-y h) *ui-amber*)
+    (lol.canvas:draw-string canvas *bfont* shown px (status-text-y h) *ui-text*)
+    (lol.canvas:fill-rect canvas (+ px (* (- pt first) cw)) (1- (status-text-y h)) 2 (1+ (line-h)) *ui-accent*)
     (when (mb-hint mb)
       (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
-                              (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (+ y 4) *ui-dim*))))
+                              (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))))
 
 ;;; ---- a subject's own keys, and its own hints --------------------------------
 ;;; Two generic functions so a subject type can bring keys to its LIST pane without
@@ -1928,12 +2004,24 @@
          ;; sees it too, not just the M-. branch here.
          (state (if meta (logior state 8) state)))
     (setf *pending-meta* nil)
+    ;; the text-size repeat (below) lasts only while the keys are + - 0
+    (when (and (eq *pending-prefix* :text-scale) (not (member key '(#\+ #\= #\- #\_ #\0))))
+      (setf *pending-prefix* nil))
     (cond
       ;; A WEB PAGE (initramfs/web.lisp) takes every key but the SuperL layer: Esc,
       ;; C-g, C-c, Tab all mean what they mean in a browser there, and the page — not
       ;; the shell — is what you are typing into. WEB-KEY keeps a few browser chords.
       ((and (eq (view-kind (pane-view p)) :web) (not (lol.canvas:super-p state)))
        (funcall 'web-key p key state))
+      ;; --- text size, Emacs's way: C-x C-+ (or C-=) bigger, C-x C-- smaller, C-x C-0
+      ;;     the default. As in Emacs, once one has been typed a bare + - 0 repeats it
+      ;;     without the C-x (the :TEXT-SCALE prefix). C-- reaches us from the console
+      ;;     as C-_ (byte 31), hence #\_ too. SuperL-= / - / 0 below do the same. ---
+      ((and (member *pending-prefix* '(:c-x :text-scale))
+            (member key '(#\+ #\= #\- #\_ #\0)))
+       (setf *pending-prefix* :text-scale)
+       (change-font-size (case key ((#\+ #\=) :bigger) ((#\- #\_) :smaller) (t :reset)))
+       nil)
       ;; M-. — jump to the definition of the symbol at point, the keyboard twin of
       ;; Ctrl-click. Must precede the editable branch, or the "." would self-insert.
       ((and meta (eql key #\.) (pane-tv p)) (jump-at-point (pane-tv p)))
@@ -2007,6 +2095,10 @@
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
          ((member key '(#\a #\A))                                              ; the agent's conversation
           (when (fboundp 'agent-show) (funcall 'agent-show)) nil)
+         ;; text size (doc/fonts.org): = and + bigger, - smaller, 0 the default
+         ((member key '(#\= #\+)) (change-font-size :bigger) nil)
+         ((eql key #\-) (change-font-size :smaller) nil)
+         ((eql key #\0) (change-font-size :reset) nil)
          ((member key '(#\? #\/))                                              ; Super-? — every binding
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) (leave-menu))                             ; shut down / console
@@ -2033,6 +2125,10 @@
       ((and (pane-tv p) (or (and (lol.canvas:meta-p state) (member key '(#\w #\W)))
                             (and (lol.canvas:ctrl-p state) (eq key :insert))))
        (editor-copy (pane-tv p)) nil)                   ; copying is reading, so allowed
+      ;; C-x starts the text-size chord here too; any other key drops a pending one
+      ((and (pane-tv p) (lol.canvas:ctrl-p state) (member key '(#\x #\X)))
+       (setf *pending-prefix* :c-x) nil)
+      ((and (pane-tv p) (eq *pending-prefix* :c-x)) (setf *pending-prefix* nil) nil)
       ((pane-tv p)
        (case key
          (:up        (lol.textview:tv-key (pane-tv p) :up 0))
@@ -2051,12 +2147,14 @@
       ;; --- a subject's own keys on its list (the file manager's letters) ---
       ((and (null (pane-tv p))
             (not (lol.canvas:ctrl-p state)) (not meta)
-            (not (eq *pending-prefix* :c-c))
+            (not (member *pending-prefix* '(:c-c :c-x)))
             (ignore-errors (subject-key (pane-subject p) p key state)))
        nil)
       ;; --- list pane: plain-key navigation (nothing to edit) ---
       (t
        (cond
+         ;; a C-x chord on a list that was not C-x C-+ / C-- / C-0 (caught above): drop it
+         ((eq *pending-prefix* :c-x) (setf *pending-prefix* nil) nil)
          ((eql key #\q) (trail-pop) nil)               ; back, as above — never leave
          ((eq key :up)   (set-pane-sel p (1- (pane-sel p))))
          ((eq key :down) (set-pane-sel p (1+ (pane-sel p))))
@@ -2091,6 +2189,9 @@
           nil)
          ((and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
           (setf *pending-prefix* :c-c) nil)
+         ;; C-x on a list starts a chord too — only C-x C-+ / C-- / C-0 complete it here
+         ((and (lol.canvas:ctrl-p state) (member key '(#\x #\X)))
+          (setf *pending-prefix* :c-x) nil)
          ;; -> moves focus into the right-hand column (see FOCUS-SIDE). <- stays
          ;; "back", so the two arrows are not a pair here: -> goes deeper into the
          ;; frame you are looking at, <- leaves it.
@@ -2268,9 +2369,10 @@
       (2 (multiple-value-bind (start end)
              ;; the glyph UNDER the pointer (floor), not the caret gap nearest it
              (token-span (aref lines l)
-                         (floor (- x (lol.textview::tv-x tv) (lol.textview::tv-pad tv)
-                                   lol.textview::*gutter-w*)
-                                (lol.textview::tv-cw tv)))
+                         (+ (lol.textview::tv-hscroll tv)
+                            (floor (- x (lol.textview::tv-x tv) (lol.textview::tv-pad tv)
+                                      (lol.textview::tv-gutter-w tv))
+                                   (lol.textview::tv-cw tv))))
            (when start (lol.textview:tv-select-span tv l start l end))))
       (3 (if (< (1+ l) (length lines))
              (lol.textview:tv-select-span tv l 0 (1+ l) 0)
@@ -2650,14 +2752,14 @@
          (nslots (+ (length rows)
                     (length (remove-duplicates (map 'list #'lol.widgets:row-group rows)
                                                :test #'equal))))
-         (cw 320)
+         (cw (+ 20 (* 50 (char-w))))          ; 320 at 6x15
          (ch (min (- h 40) (+ 32 (* nslots +row-h+))))
          (cx (max 4 (min x (- w cw 8))))
          (cy (max (+ +bar-h+ 2) (min y (- h ch 8)))))
     (setf *menu-rect* (list cx cy (+ cx cw) (+ cy ch)))
-    (let ((body (lol.widgets:draw-card canvas cx cy cw ch)))
+    (progn (lol.widgets:draw-card canvas cx cy cw ch)        ; no title: the list starts at the top
       (multiple-value-bind (top hits)
-          (lol.widgets:draw-list canvas (+ cx 4) (- body 18) (- cw 8) (- ch 12) rows
+          (lol.widgets:draw-list canvas (+ cx 4) (+ cy 6) (- cw 8) (- ch 12) rows
                                  :sel sel :top 0 :follow-sel t)
         (declare (ignore top))
         (setf *menu-hits* hits)))))
@@ -2864,9 +2966,10 @@
          (hint "Up/Tab/middle: the thing around it   Down: back in   Left/Right: handle   1-9   Esc")
          (cw (min (- w 16) (+ 24 (max crumb-w (lol.canvas:string-px *bfont* what)
                                       (lol.canvas:string-px *bfont* hint)))))
-         (ch 62)
+         (step (+ (line-h) 3))                  ; one caption line: 18 at 6x15
+         (ch (+ 8 (* 3 step)))                  ; three of them: 62 at 6x15
          (x (max 8 (floor (- w cw) 2)))
-         (y (if (eq top :top) (+ +bar-h+ 6) (- h 22 ch 8))))
+         (y (if (eq top :top) (+ +bar-h+ 6) (- h (status-h) ch 8))))
     (lol.canvas:fill-rect canvas x y cw ch *ui-panel*)
     (lol.canvas:draw-rect canvas x y cw ch *ui-rule*)
     (let ((pen (+ x 12)))
@@ -2875,11 +2978,11 @@
                  (setf pen (lol.canvas:draw-string canvas *bfont* sep pen (+ y 8) *ui-rule*)))
                (when (= i depth)
                  (lol.canvas:fill-rect canvas (- pen 2) (+ y 6) (+ (lol.canvas:string-px *bfont* n) 4)
-                                       16 *ui-hi*))
+                                       (1+ (line-h)) *ui-hi*))
                (setf pen (lol.canvas:draw-string canvas *bfont* n pen (+ y 8)
                                                  (if (= i depth) *ui-accent* *ui-dim*)))))
-    (lol.canvas:draw-string canvas *bfont* what (+ x 12) (+ y 26) *ui-text*)
-    (lol.canvas:draw-string canvas *bfont* hint (+ x 12) (+ y 44) *ui-dim*)))
+    (lol.canvas:draw-string canvas *bfont* what (+ x 12) (+ y 8 step) *ui-text*)
+    (lol.canvas:draw-string canvas *bfont* hint (+ x 12) (+ y 8 step step) *ui-dim*)))
 
 (defun draw-halo (canvas w h layers depth entries sel cx cy)
   "The browser with layer DEPTH of LAYERS spotlit — bright and outlined in the accent
@@ -2907,8 +3010,11 @@
                (lol.canvas:draw-circle canvas hx hy 8 (concept-color (or (getf e :tone) :restart))
                                        :fill t)
                (when on (lol.canvas:draw-circle canvas hx hy 11 *ui-accent*))
-               (lol.canvas:fill-rect canvas (- lx 3) (- hy 8) (+ lw 6) 16 (if on *ui-hi* *ui-panel*))
-               (lol.canvas:draw-string canvas *bfont* label lx (- hy 6) (if on *ui-accent* *ui-text*))
+               ;; the label's box is the text's cell plus a pixel each side (16 at 6x15)
+               (lol.canvas:fill-rect canvas (- lx 3) (- hy (ceiling (1+ (line-h)) 2)) (+ lw 6)
+                                     (1+ (line-h)) (if on *ui-hi* *ui-panel*))
+               (lol.canvas:draw-string canvas *bfont* label lx (- hy (floor (line-h) 2) -1)
+                                       (if on *ui-accent* *ui-text*))
                (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) *halo-handles*)))
            (label-w (i e) (lol.canvas:string-px *bfont* (format nil "~d ~a" (1+ i) (getf e :label)))))
       (if (and rect (<= (fourth rect) 60))
@@ -2918,7 +3024,7 @@
           (destructuring-bind (x y rw rh) rect
             (declare (ignore rw))
             (let* ((total (loop for e in entries for i from 0 sum (+ (label-w i e) 34)))
-                   (hy (if (> (+ y rh 40) (- h 22 70)) (- y 16) (+ y rh 16)))
+                   (hy (if (> (+ y rh 40) (- h (status-h) 70)) (- y 16) (+ y rh 16)))
                    (pen (max 8 (min x (- w total 8)))))
               (loop for e in entries for i from 0
                     do (handle i e (+ pen 8) hy (+ pen 20))
@@ -2938,7 +3044,7 @@
   (let ((hit (find-if (lambda (h)
                         (destructuring-bind (i hx hy x0 x1) h
                           (declare (ignore i hx))
-                          (and (<= x0 x x1) (<= (- hy 10) y (+ hy 10)))))
+                          (and (<= x0 x x1) (<= (abs (- y hy)) (max 10 (ceiling (line-h) 2))))))
                       *halo-handles*)))
     (if hit (first hit) :outside)))
 
@@ -3240,11 +3346,12 @@
    entry (newest first, numbered by its place in the history), the current one
    marked. RESULTS is (INDEX . STRING) pairs from CLIP-FILTER."
   (draw-browser canvas w h)
-  (let* ((cw (min 760 (- w 80)))
+  (let* ((cw (min (+ 40 (* 120 (char-w))) (- w 80)))      ; 760 at 6x15
          (cx (floor (- w cw) 2))
          (cy (+ +bar-h+ 14))
-         (maxrows (max 3 (min (max 1 (length results)) (floor (- h cy 96) +row-h+))))
-         (ch (+ 24 20 8 (* maxrows +row-h+) 24))
+         (chrome (+ (lol.widgets:card-head-h) +bar-h+ 8 (status-h) 2))  ; as the Spotter's
+         (maxrows (max 3 (min (max 1 (length results)) (floor (- h cy chrome 20) +row-h+))))
+         (ch (+ chrome (* maxrows +row-h+)))
          (maxc (max 10 (floor (- cw 120) (lol.canvas:font-cw *bfont*))))
          (rows (map 'vector
                     (lambda (r)
@@ -3272,7 +3379,7 @@
                                      :sel sel :top 0 :follow-sel t)
             (declare (ignore top))
             (setf *clip-hits* hits)))
-      (draw-hints canvas (+ cx 12) (+ cy ch -16) (- cw 16)
+      (draw-hints canvas (+ cx 12) (- (+ cy ch) (line-h) 1) (- cw 16)
                   '(("up/dn" . "move") ("ret" . "make current + paste")
                     ("Del" . "forget it") ("type" . "filter") ("Esc" . "close"))))))
 

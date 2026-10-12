@@ -1760,9 +1760,9 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   compositing. All on =(unsigned-byte 32)= arrays with type declarations; a full
   1280x800 clear is ~1 M words and costs single-digit milliseconds in SBCL.
   Damage rectangles keep the steady state far cheaper than that.
-- *Fonts.* Decided (with the user): *bitmap-first; TTF is a separate future
-  effort, not now.* /How the current bitmap path works, end to end — a navigation
-  guide: [[file:fonts.org][fonts.org]]./ The key is that neither we, nor the browser, hand-authors
+- *Fonts.* First decided (with the user): *bitmap-first, TTF later*; the TTF backend
+  landed 2026-10-12 (below). /How it works, end to end — a navigation guide:
+  [[file:fonts.org][fonts.org]]./ The key is that neither we, nor the browser, hand-authors
   glyphs — a =font= is a *swappable backend* answering "give me the bitmap +
   advance for this glyph"; =draw-string= renders whatever font object it is handed.
   So font choice is data, not code, and adding TTF later is *additive* (a second
@@ -1778,24 +1778,22 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
     side-by-side comparison (also-rans: Spleen BSD-2, the X11 "fixed" family). Dim
     and colour are *free* (palette, not font); bold is a second variant or a
     double-strike; italic is a shear or just colour.
-  - /Owed — a runtime font SIZE (increase/decrease), a separate near-term session./
-    The blitter already scales (=draw-string :scale N= blits NxN blocks; poc/canvas.lisp)
-    and the text-editor panes are already font-relative (=tv-line-height= / =tv-cw= /
-    =x-of-col= derive from =font-ch= / =font-cw=), so ~40% is free. What remains is
-    plumbing a =*font-scale*= into the font metrics (=font-cell-w/h=) and making the
-    browser CHROME font-relative — ~8 hardcoded constants (=+bar-h+=, =+row-h+=,
-    matrix/debugger row sizes, textview =pad= + =*gutter-w*=) and ~34 =draw-string=
-    calls whose x/y offsets assume 6×15 — then a =C-+= / =C--= key that bumps the
-    scale and redraws. Full plan in memory =font-scaling-plan=. *Stopgap now:*
-    =QEMU_ZOOM=fit ./build.sh --interactive= scales the whole guest display to the
-    window (gtk =zoom-to-fit=on=; or Ctrl-+ / Ctrl-- in any gtk window) — magnifies
-    pixels, not an in-app font change.
-  - /Future, a SEPARATE effort:/ a TrueType/OpenType rasterizer with grayscale
-    antialiasing. This is what maximises font experimentation — *any* =.ttf=/=.otf=
-    at any size drops in, no conversion — which is why it is worth doing eventually;
-    but it is real work (glyf parsing, quadratic curves, a scanline filler, and
-    upgrading the blitter to per-pixel alpha) and is deliberately *out of scope for
-    the browser*. It slots in as a second =font= backend when its own time comes.
+    *Now the FALLBACK* (below): used when no TrueType file loads, and it still
+    resizes, by integer magnification.
+  - /DONE 2026-10-12 — runtime-resizable OUTLINE fonts, the second backend this
+    paragraph planned for./ A pure-Lisp TrueType reader and rasteriser
+    ([[file:../poc/ttf.lisp][poc/ttf.lisp]]: glyf / cmap 4+12 / hmtx, quadratic contours, font-rs signed-area
+    coverage, gamma 1.45) with per-pixel blending and a (size, codepoint) glyph
+    cache. The file is the build host's DejaVu Sans Mono (=LOL_FONT= overrides),
+    copied into the cpio, never committed. The size lives in the one shared =font=
+    object: =SuperL-= / - / 0= and =C-x C-= / C-- / C-0= change it, the status line
+    says so, =~/.config/lol/settings= remembers it; default 18 px (11×21 cells) for
+    the laptop's 14-inch 1080p panel. Every layout metric — =+row-h+=, =+bar-h+=, the
+    matrix cells, status line, cards, halo, debugger, gutter — is now a function of
+    the current font (the + names are symbol macros), so a size change plus a redraw
+    relays out everything. stb_truetype was the allowed escape hatch and proved
+    unnecessary (numbers in [[file:fonts.org][fonts.org]] §5). *Rule for all new code:* never
+    hard-code a cell size; ask =char-w= / =line-h= (or =+row-h+=) at draw time.
   - *Chrome vs. text:* render *all text — including symbolic glyphs like the drill
     arrows — through the font*, so swapping fonts restyles everything uniformly.
     Draw only genuinely *non-textual* structure (panel borders, scrollbar, caret
@@ -1914,11 +1912,12 @@ as ruled blocks with the group's name let into the rule. That is what turns
 lines into three legible groups, and it is how the condition view separates
 anatomy / signallers / handlers / restarts and the onion separates its four phases.
 
-*Rows are 20px* (=lol.widgets:+row-h+=). 17 — the 6x15 cell plus two — was legible
-and airless: forty rows of solid text with nothing for the eye to travel along. The
-text offset is *derived* from the row height and the font's own height rather than
-hard-coded, so retuning it is a one-line change and nothing drifts off its
-highlight.
+*Rows are the font's cell plus 5* (=lol.widgets:+row-h+=, now =(row-h)=: 20 px with
+the 6x15 bitmap, 26 at the default 18 px TrueType size). 17 — the 6x15 cell plus two
+— was legible and airless: forty rows of solid text with nothing for the eye to
+travel along. The text offset is *derived* from the row height and the font's own
+height rather than hard-coded, so nothing drifts off its highlight at any font size
+([[file:fonts.org][fonts.org]] §6).
 
 *Source panes* use the same concept colours where they can: purple for keywords and
 special forms, green for the name a =def= form introduces, teal for a form's head
@@ -1928,9 +1927,11 @@ comments are =#6B727D=, the UI's own dim grey. A comment is prose *about* the co
 and should recede to the level of a detail column rather than compete in a green of
 its own.
 
-*The >255 rule governs every glyph choice.* =draw-glyph= indexes the font by
-=(logand (char-code c) #xff)=, so any codepoint above 255 wraps to a different
-glyph — =…= (8230) blits as =&=. Latin-1 is fully present, so =× » « · ¾= are safe
+*The >255 rule governed every glyph choice* — and still does, for the bitmap
+fallback; the TrueType font maps all of its =cmap= and so has no such limit. The
+bitmap holds 256 glyphs indexed by codepoint; past 255 it once wrapped to a different
+glyph (=…= (8230) blitted as =&=) and now folds to an ASCII cousin or =?=
+(=glyph-index= in canvas.lisp). Latin-1 is fully present, so =× » « · ¾= are safe
 and are what the chrome uses; the mock-up's =⌕ ▶ ↳ ↩ ◂ ⊕ ▾ ▷ ⚡= are not, and each is
 rendered as colour, position or a Latin-1 substitute instead. Elisions are =".."=.
 [[file:fonts.org][fonts.org]] has the whole glyph path; [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] can add glyphs if one is ever
@@ -2451,7 +2452,9 @@ hindsight, the first content this feature will make live.
   loop: build every pixel of it in a desktop window with a two-second edit-rerun
   cycle, never in QEMU.
 - *Scope creep into a TrueType rasterizer.* It is a delightful trap. Bitmap fonts
-  first; the browser is the goal.
+  first; the browser is the goal. (Held until 2026-10-12, when the environment was
+  meant for daily use and the 6x15 font was its biggest complaint; then it was built,
+  in about 500 lines — [[file:fonts.org][fonts.org]].)
 - *The network REPL becomes a remote IDE.* It was already unauthenticated remote
   =eval= = remote root ([[file:networking.org][networking.org §6]]); a browser on top makes it far more
   useful and no less dangerous. The warning stands, louder.

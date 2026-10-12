@@ -393,7 +393,7 @@
      "initramfs/worker.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
      "initramfs/containers.lisp" "initramfs/runs.lisp" "initramfs/net-views.lisp")
     ("UI toolkit" "pixels and text: the canvas, fonts, widgets, the text editor, the TTY line editor"
-     "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
+     "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter"
      "poc/shell.lisp" "poc/file-manager.lisp")
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor"

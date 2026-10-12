@@ -68,7 +68,7 @@
     ("4 · pixels: a view becomes a frame"
      ("LOL.WIDGETS" "DRAW-LIST")          "rows, sections, selection, scrollbar; returns a hit map")
     ("4 · pixels: a view becomes a frame"
-     ("LOL.CANVAS" "DRAW-STRING")         "a bitmap font, one glyph at a time, into a pixel vector")
+     ("LOL.CANVAS" "DRAW-STRING")         "text: TrueType glyphs, cached per size, blended into the pixel vector")
     ("4 · pixels: a view becomes a frame"
      ("LOL.FB" "PRESENT-FB")              "the canvas IS the screen's format: one pwrite to /dev/fb0")
     ("5 · input: a key becomes a command"

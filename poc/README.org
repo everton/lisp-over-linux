@@ -23,7 +23,9 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 
 | file             | role                                                             |
 |------------------+------------------------------------------------------------------|
-| =canvas.lisp=    | the pixel buffer + =fill-rect= / =blit-rgba= / PSF font + =draw-string=. *Backend-blind.* |
+| =canvas.lisp=    | the pixel buffer + =fill-rect= / =blit-rgba= / the =font= (outline or bitmap, resizable at run time, glyph cache) + =draw-string=. *Backend-blind.* |
+| =ttf.lisp=       | =lol.ttf=: a TrueType reader (head/hhea/maxp/cmap 4+12/hmtx/loca/glyf, composites) and an anti-aliased rasteriser (font-rs signed-area coverage), pure Lisp. [[file:../doc/fonts.org][doc/fonts.org]]. |
+| =font-test.lisp= | its host test, against the host's DejaVu Sans Mono (or =$LOL_FONT=): tables, cmap, coverage, sizes, the cache, blending, the bitmap fallback, and timings. =sbcl --script poc/font-test.lisp=; exits non-zero on failure. |
 | =scene.lisp=     | what we draw: a mock code browser (tabs, 3 list panes, syntax-coloured source, the alien). *Backend-blind.* |
 | =x11.lisp=       | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, events. 309 lines — written up in full in [[file:../doc/x11.org][doc/x11.org]]. |
 | =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
@@ -40,7 +42,7 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =file-manager.lisp= | the file manager's hands: the letters a folder binds (r rename, d delete, / filter, …), its minibuffer prompts, the operations and =C-x C-s=. The data and the views live in [[file:../initramfs/files.lisp][initramfs/files.lisp]] and [[file:../initramfs/file-views.lisp][file-views.lisp]]; design: [[file:../doc/file-manager.org][doc/file-manager.org]]. |
 | =files-test.lisp= | host test for the file manager's data layer, in a fresh scratch directory (=$FILES_TEST_DIR=, else =/tmp=; never =$HOME=): create / rename / delete / links / copy / move / the atomic save / hidden / sort / bounded find / the Spotter's path grammar / the sniffers. =sbcl --script poc/files-test.lisp=; exits non-zero on failure. |
 | =build-poc.sh=   | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU. |
-| =cozette.lolf=   | the font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob. How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
+| =cozette.lolf=   | the FALLBACK font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob — used when no TrueType file loads (the default is the host's DejaVu Sans Mono, never committed). How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]]. |
 | =bdf2font.lisp=  | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint). |
 | =cozette-LICENSE.txt= | Cozette's MIT license (required to ship the font). |
 
@@ -128,7 +130,14 @@ matrix cell's onion:
   -k "click:180,92"         # click a dispatch-matrix cell -> its effective-method onion
   -k "s-2"                  # SuperL-2: switch to the Workspace tab
   -k "wheel:20"             # scroll the viewport (the selection stays where it was)
+  -k "s-= s-="              # SuperL-= twice: a bigger font, and the status line says so
 #+end_src
+
+*At another font size.* =--size N= sets the font's pixel size (10–40; default 18),
+=--font PATH= another TrueType file, or a =.lolf= for the bitmap fallback. Any change
+to layout should be looked at at three sizes — 12, 18 and 28 cover it — because a
+distance that does not follow the font only shows when the font moves
+([[file:../doc/fonts.org][doc/fonts.org]] §6).
 
 *The Spotter too.* =--spotter QUERY= draws the palette over whatever subject you
 named, filtered by QUERY — so the finder can be looked at without booting the guest
@@ -231,11 +240,18 @@ how the machine behaves.
   does this; the X11 runner reads Ctrl straight from the button event's modifier
   state.
 - Chrome markers are ASCII (=>= / =v= / =>=); the 6×15 blob is 256 codepoints, so
-  no ▸▾→ glyphs — draw chrome as shapes later (§6.2).
+  no ▸▾→ glyphs — draw chrome as shapes later (§6.2). (The TrueType font has them;
+  the markers stay ASCII so the fallback draws the same chrome.)
 
-* The font — Cozette (MIT)
+* The fonts — DejaVu Sans Mono (TrueType), Cozette (MIT) as the fallback
 
-The shipped font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
+The environment draws with a TrueType font rasterised by =ttf.lisp= — by default the
+host's =/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf=, or =$LOL_FONT= — at a
+size =SuperL-= / =SuperL--= / =SuperL-0= change at run time. =render-frame.lisp=
+takes =--size N= and =--font PATH=. Everything below is about the fallback; the
+whole story is [[file:../doc/fonts.org][doc/fonts.org]].
+
+The fallback font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
 chosen from a side-by-side comparison. It is baked into our own tiny =.lolf= blob
 (6x15, glyphs indexed by codepoint) by =bdf2font.lisp=, the way =alien.rgba= is
 pre-generated and committed. Note the kernel's built-in =font_8x16= is *GPL* and

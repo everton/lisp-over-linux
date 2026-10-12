@@ -428,6 +428,12 @@ the keys anyway:
 - The *Menu key* (=KEY_COMPOSE=, 127) and *Shift-F10* open the context menu at the
   caret or the selected row. The console sends no byte for the Menu key, so it too
   is read from evdev; Shift-F10 arrives as =ESC [ 34 ~= (the keymap calls it F20).
+- *Ctrl-= and Ctrl-0* (the text-size chord =C-x C-= / C-x C-0=, [[file:fonts.org][fonts.org]] §6) are
+  silent on the console too: the default keymap (=drivers/tty/vt/defkeymap.map=)
+  gives keycodes 11 and 13 no =control= column, so no byte arrives.
+  =note-modifier-key= reports them from evdev as =#\== / =#\+= / =#\0=, and the
+  browser's loop hands them to =browser-key= with the Ctrl bit. (=Ctrl--= needs no
+  help: =Control_underscore=, byte 31.)
 
 A right or middle press is *not* a click to the overlays (the Spotter, the
 debugger, the cheatsheet): =read-mouse= reports it in a third value, and only the

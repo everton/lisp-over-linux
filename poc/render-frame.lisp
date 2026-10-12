@@ -60,6 +60,7 @@
     "initramfs/tour.lisp"         ; the guided tour (subj-tour) — doc/tour.org
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
     "initramfs/stage.lisp"        ; the COLLIDE stage (§3b) — bodies, dispatch, enact
+    "poc/ttf.lisp"                ; lol.ttf — TrueType outlines + the rasteriser
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
     "poc/textview.lisp"           ; the editable, syntax-colouring text view
     "poc/widgets.lisp"            ; phase 3 toolkit: panel / list / scrollbar / grid
@@ -142,6 +143,9 @@ OPTIONS
               each may take C- M- S- s- prefixes
               (Ctrl / Meta / Shift / Super).  e.g. -k \"down down ret S-ret\"
   --spotter Q draw the Spotter palette, filtered by Q, over the chosen subject
+  --size N    the font's pixel size (default 18; 10..40), as SuperL-= sets it
+  --font PATH a TrueType file, or a .lolf for the bitmap fallback (default:
+              $LOL_FONT, else DejaVu Sans Mono, else poc/cozette.lolf)
   --halo X,Y[,D] open the middle-button halo at X,Y on layer D (0 = innermost) and
               list the layers under that point
   -h          this text
@@ -404,7 +408,7 @@ OPTIONS
 (defun main (argv)
   (let ((subject-spec nil)
         (out (merge-pathnames "out/frame.ppm" *poc-dir*))
-        (w 1280) (h 720) (script nil))
+        (w 1280) (h 720) (script nil) (size nil) (font-path nil))
     (setf *spotter-query* nil)
     (loop while argv
           for a = (pop argv)
@@ -412,6 +416,9 @@ OPTIONS
                ((string= a "-h") (write-string *usage*) (return-from main 0))
                ((string= a "-o") (setf out (pop argv)))
                ((string= a "-k") (setf script (pop argv)))
+               ;; --size N: the font's pixel size (SuperL-= in the guest); --font PATH
+               ((string= a "--size") (setf size (parse-integer (pop argv))))
+               ((string= a "--font") (setf font-path (pop argv)))
                ;; --spotter QUERY renders the Spotter palette over the chosen subject,
                ;; which is otherwise reachable only by booting the guest
                ((string= a "--spotter") (setf *spotter-query* (or (pop argv) "")))
@@ -423,7 +430,15 @@ OPTIONS
                ((null subject-spec) (setf subject-spec a))
                (t (error "unexpected argument ~s — see -h" a))))
     (unless subject-spec (write-string *usage*) (return-from main 1))
-    (set-browser-font (lol.canvas:load-font (merge-pathnames "cozette.lolf" *poc-dir*)))
+    ;; the font: --font PATH (a .ttf, or a .lolf for the bitmap fallback), else
+    ;; $LOL_FONT, else the host's DejaVu Sans Mono, else the committed bitmap — the
+    ;; same order build.sh uses to choose what the image ships
+    (set-browser-font
+     (if (and font-path (search ".lolf" font-path))
+         (let ((f (lol.canvas:load-font font-path))) (when size (lol.canvas:set-font-size f size)) f)
+         (open-browser-font (list font-path (sb-ext:posix-getenv "LOL_FONT")
+                                  "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+                            (merge-pathnames "cozette.lolf" *poc-dir*) :size size)))
     (let ((canvas (lol.canvas:make-canvas w h)))
       (open-environment (parse-subject subject-spec))
       (when script (replay-keys script canvas w h))

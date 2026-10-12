@@ -26,8 +26,10 @@
 #   QEMU_WAIT=<seconds>   (default 50) how long --run waits before the screenshot.
 #   QEMU_DISPLAY=<gtk|sdl> (default gtk) the window backend for --interactive.
 #   QEMU_ZOOM=fit         (gtk only) scale the guest display to the window — drag it
-#                         bigger to magnify the small font. (Any gtk window also
-#                         zooms live with Ctrl-+ / Ctrl-- ; Ctrl-0 resets.)
+#                         bigger to magnify everything. (The environment's own text
+#                         size is SuperL-= / SuperL-- / SuperL-0 — doc/fonts.org.)
+#   LOL_FONT=<file.ttf>   the TrueType font to ship (default: the host's DejaVu Sans
+#                         Mono); see step 2a' below.
 #
 # See doc/sbcl-init.org for the full explanation of every step.
 
@@ -71,6 +73,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
   "$INITRAMFS_DIR/stage.lisp"        # the COLLIDE stage (S3b): bodies, both-ways dispatch, eql enact
   "$INITRAMFS_DIR/worker.lisp"       # a second PROCESS that contributes a view (doc/processes.org S2)
+  "$POC_DIR/ttf.lisp"                # lol.ttf: TrueType parser + anti-aliased rasteriser (doc/fonts.org)
   "$POC_DIR/canvas.lisp"             # pixel buffer + font + draw-string + modifier predicates
   "$POC_DIR/textview.lisp"           # editable text view (uses canvas)
   "$POC_DIR/widgets.lisp"            # phase 3 toolkit: panel/list/scrollbar/grid/card (uses canvas)
@@ -85,6 +88,7 @@ LISP_SOURCES=(
   "$POC_DIR/image.lisp"              # lol.image: PNG/GIF/BMP/... -> canvas pixels (image previews; uses inflate)
   "$INITRAMFS_DIR/files.lisp"        # the file system as data: lstat/readdir/rename/... via sb-unix + libc
                                      #   (doc/file-manager.org; after sysinfo for *utc-offset*)
+  "$INITRAMFS_DIR/settings.lisp"     # ~/.config/lol/settings: the user's preferences, e.g. the font size (uses files)
   "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
@@ -146,7 +150,7 @@ if [ -n "$LOL_TEST_DISK" ] && [ -f "$LOL_TEST_DISK" ]; then
 fi
 
 say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ---- argument parsing (flags combine) --------------------------------------
 DO_KERNEL=0; DO_RUN=0; DO_INTERACTIVE=0; DO_INSTALL_HOST=0
@@ -233,6 +237,30 @@ SBCL_HOME="$SBCL/obj/sbcl-home" "$SBCL_RUNTIME" --core "$SBCL_CORE" \
 # every pure-Lisp format still decodes and JPEG says why it cannot.
 say "Building libstbi.so (stb_image shim)"
 "$POC_DIR/build-stbi.sh" "$POC_DIR/out"
+
+# ---- 2a'. the outline font: a monospace TrueType file from THIS host ---------
+# The environment draws text with a pure-Lisp TrueType rasteriser (poc/ttf.lisp,
+# doc/fonts.org), so it needs a .ttf — and the build host has plenty. Like firmware,
+# the font is someone else's work and is never committed: it is copied from the host
+# into the (gitignored) initramfs/mono.ttf and from there into the cpio at
+# /usr/share/lol/mono.ttf. LOL_FONT=/path/to/font.ttf chooses one; the default is
+# DejaVu Sans Mono (Bitstream Vera licence — README.org), else whatever fontconfig
+# calls "monospace". No TrueType file at all is not fatal: an EMPTY mono.ttf ships,
+# the image fails to parse it and falls back to the committed Cozette bitmap.
+FONT_OUT="$INITRAMFS_DIR/mono.ttf"
+if [ -z "${LOL_FONT:-}" ]; then
+  for cand in /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf \
+              "$(fc-match -f '%{file}' monospace 2>/dev/null || true)"; do
+    case "$cand" in *.ttf|*.TTF) [ -f "$cand" ] && { LOL_FONT="$cand"; break; } ;; esac
+  done
+fi
+if [ -n "${LOL_FONT:-}" ] && [ -f "$LOL_FONT" ]; then
+  cp "$LOL_FONT" "$FONT_OUT"
+  say "font: $LOL_FONT"
+else
+  : > "$FONT_OUT"
+  say "font: no TrueType file found (set LOL_FONT) — the image will use the Cozette bitmap"
+fi
 
 # ---- 2b. /etc/lol.conf: who preinit becomes, which disk it mounts ----------
 # The build host IS the laptop the image boots on, so take both from here: the
@@ -375,9 +403,9 @@ fi
 if [ "$DO_INTERACTIVE" -eq 1 ]; then
   DISPLAY_BACKEND="${QEMU_DISPLAY:-gtk}"
   # QEMU_ZOOM=fit lets the guest framebuffer SCALE to the window (gtk only): drag the
-  # window bigger and everything magnifies — the quick way to make the small 6x15
-  # font readable until the in-app font-scale lands (see doc/code-browser.org §6.2 /
-  # memory: font-scaling-plan). Any gtk window also zooms live with Ctrl-+ / Ctrl-- .
+  # window bigger and everything magnifies pixels. Rarely needed now: the environment's
+  # own font resizes with SuperL-= / SuperL-- / SuperL-0 (doc/fonts.org); QEMU's
+  # gtk window keeps Ctrl-+ / Ctrl-- for its own zoom.
   DISPLAY_OPT="$DISPLAY_BACKEND"
   if [ "${QEMU_ZOOM:-}" = "fit" ] || [ "${QEMU_ZOOM:-}" = "on" ]; then
     if [ "$DISPLAY_BACKEND" = "gtk" ]; then

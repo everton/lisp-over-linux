@@ -267,10 +267,12 @@ Every item here is real code in this repo, not generic GPU marketing.
   cannot modeset; the consequences are that we cannot change resolution, drive a
   second monitor, or rotate the panel. The browser simply reads =virtual_size=
   and adapts.
-- *Font scaling and any future TrueType path are pure CPU rasterisation.*
-  [[file:fonts.org][fonts.org]] §7's Path C (outline fonts) means rasterising glyphs in Lisp; a GPU
-  would normally cache glyphs in a texture atlas and composite them. Today every
-  glyph is stamped bit by bit by [[file:../poc/canvas.lisp::defun draw-string][=draw-string=]].
+- *Fonts are pure CPU rasterisation.* Our TrueType glyphs are rasterised in Lisp
+  ([[file:fonts.org][fonts.org]] §4), cached per size in ordinary memory, and blended into the canvas
+  pixel by pixel by [[file:../poc/canvas.lisp::defun draw-string][=draw-string=]]; a GPU would keep them in a texture atlas and
+  composite them. Measured, it does not matter here: a full 1920x1080 screen of text
+  draws in about 5 ms (fonts.org §5). (This is our renderer; §7 below is the
+  /kernel console's/ font, a different thing.)
 
 ** (b) What shipping a real driver would require
 

@@ -428,7 +428,8 @@
 (defun note-modifier-key (code val)
   "One EV_KEY record against the held-modifier state: Ctrl / Shift / Super / Alt in
    *CTRL-DOWN* / *SHIFT-DOWN* / *SUPER-DOWN* / *ALT-DOWN* (value 1 press, 2 repeat —
-   both 'down' — 0 release). Returns :MENU on a Menu-key press, else NIL. Shared by
+   both 'down' — 0 release). Returns :MENU on a Menu-key press, #\\= #\\+ #\\0 for Ctrl
+   with = or 0 (the console sends no byte for those), else NIL. Shared by
    READ-KEYBOARD-EVDEV and READ-MOUSE, so a device that is both (some wireless combo
    receivers) keeps its modifiers too. While the multi-device reader is draining a
    device these specials are THAT DEVICE's own (WITH-DEVICE-STATE)."
@@ -438,6 +439,13 @@
     ((or (= code 125) (= code 126)) (setf *super-down* (plusp val)) nil)  ; KEY_LEFTMETA / RIGHTMETA (Super)
     ((or (= code 56) (= code 100))  (setf *alt-down* (plusp val)) nil)    ; KEY_LEFTALT / RIGHTALT
     ((and (= code 127) (= val 1))   :menu)                                ; KEY_COMPOSE: the Menu key
+    ;; Ctrl with 0 or = : the console keymap (drivers/tty/vt/defkeymap.map) gives keycodes
+    ;; 11 and 13 no CONTROL column, so the tty sends NO byte for C-0 / C-= — found when
+    ;; check-font.lisp's C-x C-= did nothing and the next plain = completed the chord.
+    ;; Report them as characters for the text-size chord (doc/fonts.org). Ctrl-- needs
+    ;; no help: it has one (Control_underscore, byte 31).
+    ((and *ctrl-down* (plusp val) (member code '(11 13)))                  ; KEY_0 / KEY_EQUAL
+     (cond ((= code 11) #\0) (*shift-down* #\+) (t #\=)))
     (t nil)))
 
 (defun read-keyboard-evdev (fd)
@@ -455,7 +463,10 @@
    Returns (values MENU COUNT): MENU is :MENU when the Menu key (KEY_COMPOSE, the
    one beside Right Ctrl) was pressed — the console keymap sends no byte for it
    either, and it is the keyboard's way to the right-button menu; COUNT is how many
-   records were read."
+   records were read.
+
+   MENU is instead a CHARACTER — #\\= #\\+ or #\\0 — for Ctrl held with = or 0 (see
+   NOTE-MODIFIER-KEY): the text-size chord C-x C-= / C-x C-0 (doc/fonts.org)."
   (unless (integerp fd) (return-from read-keyboard-evdev (read-keyboards)))
   (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
     (loop with menu = nil and count = 0 do
@@ -465,8 +476,9 @@
         (let ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
               (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
               (val  (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8))))
-          (when (and (= type 1) (eq :menu (note-modifier-key code val)))   ; EV_KEY
-            (setf menu :menu)))))))
+          (when (= type 1)                               ; EV_KEY: :menu, a char, or NIL
+            (let ((r (note-modifier-key code val)))
+              (when r (setf menu r)))))))))
 
 (defun abs-to-screen (val lo hi res)
   "Map an absolute reading in LO..HI onto 0..RES-1."
@@ -1261,6 +1273,10 @@
                          nil)))
         when v collect v))
 
+(defparameter +guest-font+ "/usr/share/lol/mono.ttf"
+  "Where the image keeps its outline font: build.sh copies the build host's monospace
+   TrueType file there ($LOL_FONT, else DejaVu Sans Mono — doc/fonts.org §6).")
+
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
    it once at boot, and again from its menu ('b', 'p', 'c', 'l'). Blocks until you
@@ -1277,7 +1293,13 @@
    is SuperL-Space."
   (handler-case
       (progn
-        (unless *bfont* (set-browser-font (lol.canvas:load-font "/cozette.lolf")))
+        ;; the font: the TrueType file build.sh copied in, at the size the user last
+        ;; chose (~/.config/lol/settings); the bitmap blob if that file is missing or
+        ;; empty. Loaded ONCE — SuperL-= resizes this same object (doc/fonts.org).
+        (unless *bfont*
+          (set-browser-font
+           (open-browser-font (list +guest-font+) "/cozette.lolf"
+                              :size (let ((s (setting :font-size))) (and (integerp s) s)))))
         ;; installed by NAME, not by #', because run-browser-fb is compiled before
         ;; fb-prompt-value is defined further down this same file
         (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
@@ -1326,9 +1348,15 @@
                                      (fb-service-call :fd))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
                          ;; context menu where the caret (or selected row) is
-                         (when (and kev (eq :menu (read-keyboard-evdev *fb-kbd*)))
-                           (keyboard-context-menu)
-                           (setf dirty t))
+                         (let ((ev (and kev (read-keyboard-evdev *fb-kbd*))))
+                           (cond ((eq ev :menu)
+                                  (keyboard-context-menu)
+                                  (setf dirty t))
+                                 ;; a Ctrl chord the console sends no byte for
+                                 ((characterp ev)
+                                  (setf dirty t)
+                                  (when (eq :quit (browser-key ev (logior 4 (if *super-down* 64 0))))
+                                    (return)))))
                          (when kb
                            (setf dirty t)
                            (multiple-value-bind (key state) (fb-read-key 0)
@@ -1432,8 +1460,13 @@
 (defvar *dbg-frame-top* 0 "screen-y of the first backtrace row, for click hit-testing.")
 (defvar *dbg-frame-x0* 0 "left edge of the clickable backtrace column (set at draw).")
 (defvar *dbg-frame-x1* 0 "right edge of the clickable backtrace column (set at draw).")
-(defparameter +dbg-row+ 17)
-(defparameter +dbg-frame-row+ 15)
+;;; The debugger's row metrics follow the CURRENT font (doc/fonts.org §5). They were
+;;; constants (17 and 15 px, for the 6x15 font); kept under their old names as symbol
+;;; macros — like lol.widgets' +ROW-H+ — so every use below reads unchanged.
+(defun dbg-row-h () "A restart row: the cell plus 2." (+ (line-h) 2))
+(defun dbg-band-h () "The title band: the cell plus 9 (24 at 6x15)." (+ (line-h) 9))
+(define-symbol-macro +dbg-row+ (dbg-row-h))
+(define-symbol-macro +dbg-frame-row+ (line-h))
 
 (defun split-lines (string)
   "STRING split on newlines into a list of lines (no trailing empty from a final \\n)."
@@ -1473,13 +1506,13 @@
                                                      (if unavail *ui-dim* *ui-accent*))))
                     (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
                                             (if unavail *ui-dim* *ui-text*))))
-              (incf y 15)))))))
+              (incf y (line-h))))))))
 
 ;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
 (defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
 (defparameter *dbg-title-bg* !#5A1C1C "the alarm-red title band.")
 (defparameter *dbg-title-fg* !#FFD0C0 "text on the title band.")
-(defparameter +dbg-locals-h+ 132 "height of the bottom locals strip.")
+(define-symbol-macro +dbg-locals-h+ (+ 28 (* 7 (line-h))))   ; the locals strip: 132 at 6x15
 (defvar *dbg-restart-x0* 8 "left edge of the clickable restart rail (set at draw).")
 (defvar *dbg-restart-x1* 0 "right edge of the clickable restart rail (set at draw).")
 
@@ -1501,23 +1534,23 @@
    The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
    :backtrace) says which rail the arrows drive."
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-  (lol.canvas:fill-rect canvas 0 0 w 24 *dbg-title-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *dbg-title-bg*)
   (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
-                          10 5 *dbg-title-fg*)
-  (let ((y 36))
+                          10 (text-dy (dbg-band-h)) *dbg-title-fg*)
+  (let ((y (+ (dbg-band-h) 12)))
     ;; --- the header: what was signalled (the condition class is the headline) ---
     (lol.canvas:draw-string canvas *bfont* (format nil "~(~a~)" (type-of condition))
                             12 y *dbg-red* :scale 2)
-    (incf y 32)
+    (incf y (+ 2 (* 2 (line-h))))       ; the line above was drawn at :scale 2
     ;; the report is often multi-line (draw-string has no newline handling): split it.
     (dolist (line (split-lines (princ-to-string condition)))
       (lol.canvas:draw-string canvas *bfont* (dbg-fit line (- w 24)) 12 y *ui-text*)
-      (incf y 16))
+      (incf y (1+ (line-h))))
     (incf y 2)
     (lol.canvas:draw-string canvas *bfont*
       "no handler claimed it — caught here with the whole stack still standing."
       12 y *ui-dim*)
-    (incf y 26)
+    (incf y (+ (line-h) 11))
     ;; --- the triptych ---
     (let* ((split   (floor (* w 52) 100))
            (rail-x  28)                     ; amber restart rail, hard against the left
@@ -1533,7 +1566,7 @@
       (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
                                          (if (eq focus :backtrace) *ui-accent* *ui-dim*))))
         (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *ui-dim*))
-      (incf top 20)
+      (incf top (+ (line-h) 5))
       ;; a rule divides the two sides; a dim-amber restart rail (the unwind) faces a
       ;; mirrored SOLID teal signal rail (the stack stands) — §3's two forces, left and right.
       (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *ui-rule*)
@@ -1574,7 +1607,7 @@
         (lol.canvas:draw-string canvas *bfont*
           (dbg-fit (format nil "locals of frame ~d  ·  ~a" fsel (nth fsel backtrace)) (- w 24))
           12 (+ ly 7) *ui-accent*)
-        (draw-dbg-locals canvas 12 (+ ly 28) w h locals)))))
+        (draw-dbg-locals canvas 12 (+ ly (line-h) 13) w h locals)))))
 
 (defun dbg-restart-at (x y n)
   "The restart-row index at screen X,Y — only within the restart rail (its left
@@ -1616,14 +1649,14 @@
                            name)))
          (tv (lol.textview:make-textview :font *bfont* :focus nil)))
     (lol.textview:tv-set-text tv text)
-    (lol.textview:tv-geometry tv 12 32 (- w 24) (- h 44))
+    (lol.textview:tv-geometry tv 12 (+ (dbg-band-h) 8) (- w 24) (- h (dbg-band-h) 20))
     (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
       (when dirty
         (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-        (lol.canvas:fill-rect canvas 0 0 w 24 *ui-hi*)
+        (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *ui-hi*)
         (lol.canvas:draw-string canvas *bfont*
           (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
-          12 5 *ui-accent*)
+          12 (text-dy (dbg-band-h)) *ui-accent*)
         (lol.textview:tv-draw canvas tv)
         (show-frame canvas)
         (setf dirty nil))
@@ -1653,17 +1686,18 @@
   "A modal input line over the debugger for a restart that needs a value: read the Lisp
    expression the user types (Enter accepts, Esc cancels). Returns the typed STRING, or
    NIL if cancelled. Draws its bar over the current debugger frame (already on canvas)."
-  (let ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+  (let* ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
+         (band (+ 14 (* 2 (line-h)))))        ; two lines of text: 44 at 6x15
     (loop with dirty = t do
       (when dirty
-        (lol.canvas:fill-rect canvas 0 (- h 44) w 44 *ui-hi*)
-        (lol.canvas:fill-rect canvas 0 (- h 44) w 2 *ui-amber*)
+        (lol.canvas:fill-rect canvas 0 (- h band) w band *ui-hi*)
+        (lol.canvas:fill-rect canvas 0 (- h band) w 2 *ui-amber*)
         (lol.canvas:draw-string canvas *bfont*
           ;; "accepts", not "invokes": this line is shared now — a restart INVOKES with
           ;; the value, the inspector SETS a field to it (shell.lisp's set-field)
           (format nil "value for [~(~a~)] — an expression, Enter accepts, Esc cancels:" name)
-          12 (- h 38) *ui-amber*)
-        (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h 18) *ui-text*)
+          12 (+ (- h band) 6) *ui-amber*)
+        (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h (line-h) 3) *ui-text*)
         (show-frame canvas)
         (setf dirty nil))
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
@@ -1845,6 +1879,12 @@
      ("Super-w"            "close the current tab")
      ("Super-o"            "focus list <-> side pane")
      ("Super-Left"         "back in the trail"))
+    ("Text size  (doc/fonts.org)"
+     ("Super-= / Super-+"  "bigger text, everywhere")
+     ("Super--"            "smaller text")
+     ("Super-0"            "back to the default size")
+     ("C-x C-+ / C-- / C-0" "the same, Emacs-style;")
+     ("  then + - 0"       "  ... repeat without C-x"))
     ("Workspace & source"
      ("Tab"                "complete the symbol (else indent)")
      ("C-c C-c"            "Accept / define the form")
@@ -1929,50 +1969,90 @@
   "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET
    lays it out in columns.")
 
-(defun draw-cheatsheet (canvas w h)
-  "Render *cheatsheet* as a full-screen overlay: as many columns as the width
-   allows (three at 1280), the groups poured into them in order, each column
-   filled before the next starts. Group titles in amber, the keys in accent, the
-   descriptions in text."
-  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-  (lol.canvas:fill-rect canvas 0 0 w 22 *ui-hi*)
-  (lol.canvas:draw-string canvas *bfont*
-    "Keys  —  press any key or click to dismiss" 12 4 *ui-accent*)
-  (let* ((ncols (max 1 (min 4 (floor (- w 40) 410))))
-         (colw (floor (- w 40) ncols))
-         (keyw 150)
-         (maxc (max 8 (floor (- colw keyw 24) (lol.canvas:font-cw *bfont*))))
-         (rows (+ (* 2 (length *cheatsheet*))           ; title + gap per group
-                  (loop for g in *cheatsheet* sum (length (cdr g)))))
-         (per-col (ceiling rows ncols))
-         (c 0) (y 34) (used 0))
+(defvar *fb-xres-for-sheet* 1280 "The width CHEATSHEET-COLUMNS lays out for (set on draw).")
+
+(defun cheatsheet-col-w ()
+  "One cheatsheet column: a 21-character key, about 28 of description, and air — 334 px
+   at 6x15 (three columns at 1280), 584 at 18 px (two). A longer description is
+   clipped with '..' rather than costing a column."
+  (+ 34 (* 50 (char-w))))
+
+(defun cheatsheet-columns (h)
+  "*cheatsheet*'s groups poured into columns for a screen H tall -> a list of columns,
+   each a list of groups. A group is never split. When everything fits on one screen the
+   columns are BALANCED (each holds about the same number of lines); when it does not —
+   a large font on a small screen — each column is filled to the bottom and the overflow
+   goes onto further PAGES (see DRAW-CHEATSHEET)."
+  (let* ((lines (+ (* 2 (length *cheatsheet*))           ; title + gap per group
+                   (loop for g in *cheatsheet* sum (length (cdr g)))))
+         (fit (max 4 (floor (- h (* 2 (line-h)) 30) (line-h))))  ; lines one column holds
+         (ncols (max 1 (floor (- *fb-xres-for-sheet* 40) (cheatsheet-col-w))))
+         (per-col (min fit (max 4 (ceiling lines ncols))))
+         (cols '()) (col '()) (used 0))
     (dolist (g *cheatsheet*)
-      ;; start a new column when this group would overflow the share of this one
-      (when (and (plusp used) (< c (1- ncols))
-                 (> (+ used (length (cdr g)) 1) per-col))
-        (incf c) (setf y 34 used 0))
-      (let ((x (+ 20 (* c colw))))
-        (lol.canvas:draw-string canvas *bfont* (car g) x y *ui-amber*)
-        (incf y 18)
-        (dolist (row (cdr g))
-          (lol.canvas:draw-string canvas *bfont* (first row) (+ x 10) y *ui-accent*)
-          (lol.canvas:draw-string canvas *bfont* (clip-text (second row) maxc)
-                                  (+ x 10 keyw) y *ui-text*)
-          (incf y 15))
-        (incf y 9)
-        (incf used (+ 2 (length (cdr g))))))))
+      (let ((need (+ 2 (length (cdr g)))))
+        (when (and col (> (+ used need) per-col))
+          (push (nreverse col) cols) (setf col '() used 0))
+        (push g col) (incf used need)))
+    (when col (push (nreverse col) cols))
+    (nreverse cols)))
+
+(defun draw-cheatsheet (canvas w h &optional (page 0))
+  "Render *cheatsheet* as a full-screen overlay: as many columns as the width allows
+   (three at 1280 with the 6x15 font), the groups poured into them in order. Group
+   titles in amber, the keys in accent, the descriptions in text. Every distance is a
+   multiple of the current font's cell, so it scales with SuperL-= (doc/fonts.org);
+   what does not fit goes onto further pages. Returns the number of pages."
+  (setf *fb-xres-for-sheet* w)
+  (let* ((cols (cheatsheet-columns h))
+         (ncols (max 1 (floor (- w 40) (cheatsheet-col-w))))
+         (pages (max 1 (ceiling (length cols) ncols)))
+         (page (mod page pages))
+         (band (+ (line-h) 7))
+         (top (+ band 12))
+         (colw (floor (- w 40) ncols))
+         (keyw (+ 12 (* 21 (char-w))))                       ; 138 at 6x15
+         (maxc (max 8 (floor (- colw keyw 24) (char-w)))))
+    (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+    (lol.canvas:fill-rect canvas 0 0 w band *ui-hi*)
+    (lol.canvas:draw-string canvas *bfont*
+      (format nil "Keys  —  ~:[press any key or click to dismiss~;~:*page ~d of ~d: ~
+                   PageDown / Space next, PageUp back, any other key dismisses~]"
+              (and (> pages 1) (1+ page)) pages)
+      12 (text-dy band) *ui-accent*)
+    (loop for col in (subseq cols (* page ncols) (min (length cols) (* (1+ page) ncols)))
+          for c from 0
+          do (let ((x (+ 20 (* c colw))) (y top))
+               (dolist (g col)
+                 (lol.canvas:draw-string canvas *bfont* (car g) x y *ui-amber*)
+                 (incf y (+ (line-h) 3))
+                 (dolist (row (cdr g))
+                   (lol.canvas:draw-string canvas *bfont* (first row) (+ x 10) y *ui-accent*)
+                   (lol.canvas:draw-string canvas *bfont* (clip-text (second row) maxc)
+                                           (+ x 10 keyw) y *ui-text*)
+                   (incf y (line-h)))
+                 (incf y (- (line-h) 6)))))
+    pages))
 
 (defun run-cheatsheet-fb ()
   "Draw the cheatsheet over the browser's live canvas and block until any key or
-   click dismisses it. Reuses the *fb-* I/O the browser owns (like the debugger)."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+   click dismisses it — or, when it runs to several pages, PageDown / Space / Right
+   turn the page and PageUp / Left turn it back. Reuses the *fb-* I/O the browser owns
+   (like the debugger)."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (page 0) (pages 1))
     (when canvas
-      (draw-cheatsheet canvas w h)
+      (setf pages (draw-cheatsheet canvas w h page))
       (show-frame canvas)
       (loop
         (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
           (when kev (read-keyboard-evdev *fb-kbd*))
-          (when kb (fb-read-key 0) (return))            ; any key dismisses
+          (when kb
+            (let ((key (fb-read-key 0)))
+              (cond ((and (> pages 1) (member key '(:page-down :right #\Space)))
+                     (draw-cheatsheet canvas w h (incf page)) (show-frame canvas))
+                    ((and (> pages 1) (member key '(:page-up :left)))
+                     (draw-cheatsheet canvas w h (decf page)) (show-frame canvas))
+                    (t (return)))))                     ; any other key dismisses
           (when (and *fb-mouse* ms)
             (let ((ox *cursor-x*) (oy *cursor-y*))
               (when (read-mouse *fb-mouse* w h) (return))   ; a click dismisses
