@@ -49,3 +49,7 @@ poc/screen-fb.png
 initramfs/lol.conf
 # QEMU stand-in for the laptop's disk (make-test-disk.sh), never the real one:
 test-disk.img
+# --- Wi-Fi (doc/networking.org §7) ---
+# the firmware list fragment build.sh generates from the HOST's /lib/firmware
+# (the blobs themselves are never in the tree, only in the cpio):
+initramfs/firmware.list

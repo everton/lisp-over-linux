@@ -120,6 +120,7 @@ exactly as open-environment does in the guest):
   run:CMD                  a run pane: sh -c CMD on the host, run to its end
   tour                     the guided tour (initramfs/tour.lisp)
   changes                  the change set
+  network                  the network view: links, routes, DNS, Wi-Fi (this host's state)
   dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
   file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
                            (PATH: absolute, ~/..., or relative to the current
@@ -228,6 +229,16 @@ OPTIONS
              (subj-dir path)
              (subj-file path))))
       ((string= head "changes")   (subj-change-set))
+      ;; network — the network view (doc/networking.org). Its modules are loaded only
+      ;; when asked, with plain LOAD, so every other frame's module index is unchanged.
+      ;; It shows THIS host's interfaces and routes; Wi-Fi rows need a supplicant and
+      ;; show the no-radio / not-started states.
+      ((string= head "network")
+       (require :sb-bsd-sockets)
+       (handler-bind ((warning #'muffle-warning))
+         (dolist (m '("net" "dhcp" "dns" "sntp" "tls" "http" "wifi" "net-views"))
+           (load (merge-pathnames (format nil "initramfs/~a.lisp" m) *root-dir*))))
+       (funcall 'subj-network))
       ((null rest) (error "subject ~s needs an argument — see -h" spec))
       ((string= head "package")
        (or (find-package (string-upcase rest)) (error "no such package: ~a" rest)))

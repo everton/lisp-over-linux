@@ -1812,6 +1812,7 @@
      ("Super-h"            "the clipboard history")
      ("Super-f"            "the file manager (home)")
      ("Super-b"            "a web page (Chrome, doc/web-browser)")
+     ("Super-n"            "the network: links, DNS, Wi-Fi")
      ("Super-?"            "this cheatsheet")
      ("Super-q"            "leave: console or shut down"))
     ("Tabs  (Super)"
