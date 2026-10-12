@@ -187,3 +187,35 @@
   "Flip the network REPL on/off. Returns :started or :stopped."
   (if (net-repl-running-p) (progn (stop-net-repl) :stopped)
       (progn (start-net-repl) :started)))
+
+;;; ---- off by default: who may switch it on --------------------------------
+;;;
+;;; The network REPL is remote eval with no authentication — on the laptop, on
+;;; a café's Wi-Fi, that is a door anyone could walk through. So since tag #26 it
+;;; is OFF unless the boot ASKS for it, and only two things can ask:
+;;;
+;;;   1. QEMU, through fw_cfg. `-fw_cfg name=opt/lol/netrepl,string=1` puts a
+;;;      named blob in QEMU's firmware-config device; with CONFIG_FW_CFG_SYSFS the
+;;;      kernel shows it at /sys/firmware/qemu_fw_cfg/by_name/opt/lol/netrepl/raw.
+;;;      Real hardware has no fw_cfg device, so this switch cannot exist there —
+;;;      which is exactly what makes it a safe test hook. build.sh and every
+;;;      check-*.lisp pass it.
+;;;   2. The kernel cmdline: `lol.netrepl=1` (e.g. typed into the host's GRUB
+;;;      entry for a debugging session). Our built-in CONFIG_CMDLINE never has it.
+;;;
+;;; The supervisor menu's `t' still toggles it by hand — a deliberate act at the
+;;; console, not something the machine does on its own.
+
+(defparameter *fw-cfg-netrepl* "/sys/firmware/qemu_fw_cfg/by_name/opt/lol/netrepl/raw")
+
+(defun %slurp-small (path)
+  "The first line of PATH as a string, or NIL if it cannot be read."
+  (ignore-errors
+   (with-open-file (s path :external-format :latin-1) (read-line s nil nil))))
+
+(defun net-repl-wanted-p ()
+  "True when this boot asked for the network REPL (fw_cfg or kernel cmdline)."
+  (let ((fw (%slurp-small *fw-cfg-netrepl*))
+        (cmdline (%slurp-small "/proc/cmdline")))
+    (or (and fw (string= (string-trim '(#\Space #\Newline #\Nul) fw) "1"))
+        (and cmdline (search "lol.netrepl=1" cmdline) t))))

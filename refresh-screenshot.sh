@@ -155,6 +155,7 @@ qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 \
   -drive if=pflash,format=raw,file="$WORK/vars.fd" \
   -drive file=fat:rw:"$ISO_ROOT",format=raw,if=ide \
   -netdev user,id=net0,hostfwd=tcp::$REPL_PORT-:4005 \
+  -fw_cfg name=opt/lol/netrepl,string=1 \
   -device virtio-net-pci,netdev=net0 \
   "${DISK_ARGS[@]}" \
   -serial file:"$WORK/serial.log" -display none -no-reboot \

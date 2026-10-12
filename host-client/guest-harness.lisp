@@ -96,6 +96,16 @@
                   (and disk (plusp (length disk))
                        (list "-drive" (format nil "file=~a,format=raw,if=virtio,snapshot=on"
                                               (namestring (merge-pathnames disk *root*))))))
+                ;; LOL_GUEST_HOSTROOT=1 shares the build host's REAL / read-only over
+                ;; virtio-9p, and fw_cfg tells preinit to mount it at /mnt/host instead
+                ;; of looking for a disk — for tests that run the host's programs
+                ;; (containers, Chrome, wpa_supplicant). /home becomes the host's
+                ;; /home under a tmpfs overlay, so nothing a test writes reaches the
+                ;; host. preinit.c, MOUNT-STORAGE-9P; tag #26 (9P_FS).
+                (let ((hr (sb-posix:getenv "LOL_GUEST_HOSTROOT")))
+                  (and hr (string= hr "1")
+                       (list "-virtfs" "local,path=/,mount_tag=hostroot,security_model=none,readonly=on"
+                             "-fw_cfg" "name=opt/lol/disk,string=9p:hostroot")))
                 (list
                "-drive" (format nil "if=pflash,format=raw,readonly=on,file=~a" *ovmf-code*)
                "-drive" (format nil "if=pflash,format=raw,file=~a" (path "vars.fd"))
@@ -105,6 +115,9 @@
                "-drive" (format nil "file=fat:rw:~a,format=raw,if=ide"
                                 (namestring (merge-pathnames "iso_root/" *root*)))
                "-netdev" (format nil "user,id=net0,hostfwd=tcp::~d-:4005" *host-port*)
+               ;; switches the guest's net REPL on: off by default since tag #26, and
+               ;; only QEMU has fw_cfg (net.lisp, NET-REPL-WANTED-P)
+               "-fw_cfg" "name=opt/lol/netrepl,string=1"
                "-device" "virtio-net-pci,netdev=net0"
                "-serial" (format nil "file:~a" (path "serial.log"))
                "-display" "none" "-no-reboot"

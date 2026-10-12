@@ -90,13 +90,16 @@
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
   (configure-eth0)                ; DHCP (DISCOVER/REQUEST), static fallback; prints result
-  ;; Start the network REPL automatically (toggle it off from the menu with 't').
-  (if (ignore-errors (start-net-repl))
-      (progn
-        (format t "~&network REPL ENABLED on 0.0.0.0:4005 — connect from the HOST with~%")
-        (format t "  host-client/lol-repl-client  (toggle off with 't' in the menu)~%")
-        (format t "  INSECURE: remote eval = remote root — trusted wires only.~%"))
-      (format t "~&network REPL could not start.~%"))
+  ;; The network REPL starts only when the boot asked for it (QEMU's fw_cfg or
+  ;; lol.netrepl=1 on the cmdline) — never on the laptop by default. net.lisp,
+  ;; NET-REPL-WANTED-P. The menu's 't' can still switch it on by hand.
+  (cond ((not (net-repl-wanted-p))
+         (format t "~&network REPL off (not requested; 't' in the menu starts it).~%"))
+        ((ignore-errors (start-net-repl))
+         (format t "~&network REPL ENABLED on 0.0.0.0:4005 — connect from the HOST with~%")
+         (format t "  host-client/lol-repl-client  (toggle off with 't' in the menu)~%")
+         (format t "  INSECURE: remote eval = remote root — trusted wires only.~%"))
+        (t (format t "~&network REPL could not start.~%")))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
   ;; Boot straight INTO the environment: it is what the machine is for. The menu

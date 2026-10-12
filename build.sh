@@ -112,7 +112,10 @@ OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
 # and forwards host port 4005 -> guest 4005 so a future Lisp TCP REPL is reachable
 # from the host with `nc localhost 4005`. Needs kernel virtio-net (tag #21+).
 # See doc/networking.org §4. Shared by both the --interactive and --run QEMU lines.
+# The fw_cfg blob is what switches the REPL ON: since tag #26 the guest serves it
+# only when asked (net.lisp, NET-REPL-WANTED-P), and only QEMU has fw_cfg.
 QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
+          -fw_cfg name=opt/lol/netrepl,string=1 \
           -device virtio-net-pci,netdev=net0)
 
 # A stand-in for the laptop's disk, attached as virtio-blk when it exists:

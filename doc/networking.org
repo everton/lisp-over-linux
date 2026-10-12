@@ -11,7 +11,7 @@ from-scratch tutorial with deep code links: [[file:background/learn-networking.o
 baked into the image; =eth0= is configured at boot by *DHCP* (=dhcp.lisp=, a real
 DISCOVER/REQUEST handshake — static fallback if no server answers); and the
 network REPL (=net.lisp=) serves the *full line editor* over TCP on =:4005= —
-*ON by default* (toggle off from the supervisor menu with =t=), with a host-side
+*OFF by default since tag #26* — it starts only when the boot asks for it, through QEMU's =fw_cfg= (=-fw_cfg name=opt/lol/netrepl,string=1=, which =build.sh=, =refresh-screenshot.sh= and every =check-*.lisp= pass; real hardware has no =fw_cfg=, so the laptop never serves it) or =lol.netrepl=1= on the kernel cmdline; see [[file:../initramfs/net.lisp::defun net-repl-wanted-p][=net-repl-wanted-p=]]. The menu's =t= still toggles it by hand, with a host-side
 raw-forwarding client (=host-client/lol-repl-client.c=) so
 arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified
 against QEMU SLIRP: eth0 leases =10.0.2.15= (gw =10.0.2.2=, dns =10.0.2.3=), and
@@ -212,7 +212,7 @@ implemented* (=net.lisp=); (b) remains planning:
 A listening socket whose stream is bound to =*standard-input*= / =*standard-output*=
 turns the REPL into a network REPL. How it actually ships:
 
-- *ON at boot; a menu toggle.* [[file:../initramfs/net.lisp::defun start-net-repl][=start-net-repl=]] / [[file:../initramfs/net.lisp::defun stop-net-repl][=stop-net-repl=]] /
+- *OFF at boot unless asked (tag #26: QEMU's =fw_cfg= or =lol.netrepl=1=, see the STATUS line); a menu toggle.* [[file:../initramfs/net.lisp::defun start-net-repl][=start-net-repl=]] / [[file:../initramfs/net.lisp::defun stop-net-repl][=stop-net-repl=]] /
   [[file:../initramfs/net.lisp::defun toggle-net-repl][=toggle-net-repl=]] manage a background accept thread (the loop itself is
   [[file:../initramfs/net.lisp::defun %serve-net-repl][=%serve-net-repl=]]); =supervisor-main= starts it
   at boot, and the menu's =t= toggles it, showing =[RUNNING]= / =[stopped]=. (It is
