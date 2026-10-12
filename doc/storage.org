@@ -300,6 +300,25 @@ The same image backs the file manager's screenshots: [[file:../refresh-screensho
 attaches it, =snapshot=on=, for its disk scenes (=--scene files=, =files-archive=,
 =spotter-path=) and for no others ([[file:file-manager.org][file-manager.org]] shows them).
 
+** The host's real root, for tests that run its programs (tag #26)
+
+=test-disk.img= has a passwd and a =/home= but no Debian, so nothing that runs the
+host's programs (a container, Chrome, =wpa_supplicant=) can be tried against it.
+For those, =LOL_GUEST_HOSTROOT=1= makes the harness share the build host's *real*
+=/= with QEMU read-only
+(=-virtfs local,path=/,mount_tag=hostroot,security_model=none,readonly=on=) and pass
+=-fw_cfg name=opt/lol/disk,string=9p:hostroot=. preinit then mounts that share at
+=/mnt/host= instead of looking for a disk ([[file:../initramfs/preinit.c::static int mount_storage_9p][=mount_storage_9p=]]), and makes =/home=
+an *overlay*: the host's =/home= as the read-only lower layer, a tmpfs as the upper
+one that takes every write and vanishes at power-off. Everything after that is
+unchanged: the user comes from the real =/etc/passwd= and PID 1 drops to them.
+
+Two differences from the laptop to keep in mind. The root is 9p, not ext4, so
+overlay behaviour over a 9p lower layer may differ. And nothing a test does reaches
+the host's =/home=. /Verified 2026-10-12 at tag #26: uid 1000,
+=hostroot /mnt/host 9p ro=, =overlay /home=, =/mnt/host/usr/bin/google-chrome=
+visible./
+
 [[file:../check-files.lisp][=check-files.lisp=]] is the guest test for this doc: mounts, uid 1000, the
 capability mask, a folder made with the file manager owned by the user, JPEG
 through =libstbi.so=, the Spotter's =~/= completion, and =release-disk=:

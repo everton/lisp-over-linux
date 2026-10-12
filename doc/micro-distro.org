@@ -515,7 +515,7 @@ path is absent (=EFI_NOT_FOUND=) — see =efi_load_initrd()= in
     pick it from the firmware's own menu (F12 etc.) — with the same ESP-root
     constraint on the cpio. Worth it if the point is to see the firmware do it.
 
-Safety: up to tag #24 the image could not even see the host's disk. *Since tag
+Safety (true at tag #26): up to tag #24 the image could not even see the host's disk. *Since tag
 #25 it can, on purpose*: NVMe + ext4 are built in, and preinit mounts the
 laptop's root privately — the host's =/= read-only at =/mnt/host=, only =/home=
 writable — then runs the environment as the user, so it can write nowhere the
