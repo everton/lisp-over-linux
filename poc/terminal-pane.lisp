@@ -296,9 +296,12 @@
       (let ((n (pty-read proc buf)))
         (cond
           ((eq n :eof)
+           ;; EIO comes when the last slave fd closes, which is a moment BEFORE the
+           ;; process is a zombie we can wait for — give it up to 200 ms, so the pane
+           ;; can say "exited with code 0" rather than guess
+           (loop repeat 20 while (eq (pty-reap proc) :running) do (sleep 0.01))
            (pty-close proc)
            (setf *terminals* (remove subject *terminals*))
-           (pty-reap proc)
            (setf (term-session-message ss)
                  (case (pty-proc-status proc)
                    (:exited (format nil "exited with code ~d" (pty-proc-code proc)))
