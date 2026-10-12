@@ -116,6 +116,7 @@
 <p><a id=go href='two.html' style='font-size:28px'>go to page two</a></p>
 <p><a id=pop href='three.html' target=_blank>open page three in a new tab</a></p>
 <p><input id=q style='font-size:20px;width:300px'></p>
+<p><a id=dl href='data:text/plain,downloaded%20by%20the%20web%20pane' download='notes.txt'>download notes.txt</a> and a needle in the haystack</p>
 <p>Ünïcødé — ✓</p>
 <div style='height:3000px;background:linear-gradient(#fff,#88a)'>tall</div>
 </body>")
@@ -143,6 +144,8 @@
     (sb-ext:exit :code 0))
   (make-site)
   (setf *web-profile* (format nil "/tmp/lol-web-test-prof-~d" (sb-posix:getpid)))
+  ;; downloads go to $HOME/Downloads: a scratch HOME, so a test never writes the real one
+  (sb-posix:setenv "HOME" (format nil "/tmp/lol-web-test-home-~d" (sb-posix:getpid)) 1)
   (set-browser-font (lol.canvas:load-font (namestring (merge-pathnames "cozette.lolf" *poc-dir*))))
   (open-environment (subj-workspace))
   (format t "~&web pane, host Chrome (~a)~%" *web-chrome-binary*)
@@ -189,6 +192,20 @@
          (browser-key #\v 4)
          (check "C-v pastes lol.clipboard's newest entry"
                 (pump-until (lambda () (equal (js "document.getElementById('q').value") "pasted!"))))
+         ;; find in the page: C-f, typed text selects the match
+         (browser-key #\f 4)
+         (type-string "needle")
+         (check "C-f finds as you type (the match is selected)"
+                (pump-until (lambda () (equal (js "String(window.getSelection())") "needle"))))
+         (browser-key :return 0)
+         ;; A download lands in ~/Downloads. The link is a data: URL because a file://
+         ;; page's download attribute is IGNORED (a file URL is an opaque origin, so
+         ;; Chrome just navigates to the file) — tried first, and that is what it did.
+         (multiple-value-bind (x y) (element-center "dl") (browser-click x y))
+         (check "a download is saved in ~/Downloads"
+                (pump-until (lambda () (probe-file (format nil "~a/notes.txt" (web-downloads-dir))))))
+         (check "... and the status line says so"
+                (pump-until (lambda () (search "saved in ~/Downloads" (or *browser-status* "")))))
          ;; the wheel
          (setf *cursor-x* 600 *cursor-y* 500)
          (browser-scroll 9)
