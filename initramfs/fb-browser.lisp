@@ -69,26 +69,43 @@
     (logbitp 0 (sb-alien:deref fds 6))))
 
 (defun fbb-wait (kb-fd mouse-fd kev-fd &optional (timeout-ms -1))
-  "Block until KB-FD (console), MOUSE-FD, or KEV-FD (keyboard evdev) is readable, or
-   until TIMEOUT-MS elapses (-1, the default, waits forever).
-   Absent fds are passed NIL. Returns (values kb-ready mouse-ready kev-ready).
-   Three fixed pollfd slots; an absent slot stays zeroed (fd 0 / events 0), which
-   poll simply never reports ready — so the revents offsets never shift.
+  "Block until KB-FD (the console) is readable, or ANY open pointer, or ANY open
+   keyboard's evdev — or until TIMEOUT-MS elapses (-1, the default, waits forever).
+   Returns (values kb-ready pointer-ready keyboard-ready); the caller then reads with
+   (read-mouse *fb-mouse* …) / (read-keyboard-evdev *fb-kbd*), which drain exactly
+   the devices this call found ready.
+
+   MOUSE-FD and KEV-FD are IGNORED, and kept only so every loop's call reads as it
+   always did. They were the one pointer and the one keyboard this used to poll,
+   three fixed slots; now the device set is *INPUT-DEVICES*, which grows and shrinks
+   underneath (doc/input.org §4¾), and POLL-INPUT-ONCE does the actual poll.
+
+   HOUSEKEEPING NEVER RETURNS. A hotplug event or a device going away wakes the poll
+   but is nothing the caller asked about, so we handle it and wait again — for
+   whatever is left of TIMEOUT-MS, not a fresh one, so a frame deadline still lands
+   on time. Returning (nil nil nil) for it instead would read, to the main loop, as
+   'a deadline fired'.
 
    The timeout exists for the stage (§3b). Every other view in the browser is a
    function of state that only input changes, so sleeping until a key or a click is
    exactly right and costs nothing. A stage advances on its own, which means the loop
    needs a way to wake on a frame deadline instead. This is that way, and it is the
    only concession the input layer makes to a view that moves."
-  (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 24)))
-    (dotimes (i 24) (setf (sb-alien:deref fds i) 0))
-    (flet ((set-pfd (n fd)
-             (when fd (%put-pollfd fds n fd))))
-      (set-pfd 0 kb-fd) (set-pfd 1 mouse-fd) (set-pfd 2 kev-fd)
-      (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 3 timeout-ms)
-      (values (logbitp 0 (sb-alien:deref fds 6))
-              (and mouse-fd (logbitp 0 (sb-alien:deref fds 14)))
-              (and kev-fd   (logbitp 0 (sb-alien:deref fds 22)))))))
+  (declare (ignore mouse-fd kev-fd))
+  (let ((deadline (and (>= timeout-ms 0)
+                       (+ (get-internal-real-time)
+                          (round (* timeout-ms internal-time-units-per-second) 1000)))))
+    (loop
+      (let* ((left (if deadline
+                       (max 0 (round (* 1000 (- deadline (get-internal-real-time)))
+                                     internal-time-units-per-second))
+                       -1))
+             (rescan (input-rescan-timeout))
+             (tmo (cond ((= left -1) rescan) ((= rescan -1) left) (t (min left rescan)))))
+        (multiple-value-bind (kb ptr key) (poll-input-once kb-fd tmo)
+          (when (or kb ptr key) (return (values kb ptr key)))
+          (when (and deadline (>= (get-internal-real-time) deadline))
+            (return (values nil nil nil))))))))
 
 ;;; ---- keyboard: raw bytes -> shell keys ----------------------------------
 
@@ -174,10 +191,13 @@
 (defvar *alt-down* nil "Is an Alt key held? Tracked from the keyboard's evdev, for
   Alt-click — the middle button for a pointer that has none.")
 
-(defun scan-input-device (device-ok-p)
-  "The first device in /proc/bus/input/devices that DEVICE-OK-P accepts, as
-   (values \"/dev/input/eventN\" EV PROP) — EV is the 'B: EV=' capability mask and
-   PROP the 'B: PROP=' property mask, both hex in the file. NIL if none matches.
+(defun scan-input-devices ()
+  "EVERY device in /proc/bus/input/devices, as a list of plists:
+     (:node \"event17\" :name \"…\" :phys \"…\" :sysfs \"…\" :ev EV :prop PROP :rel REL :abs ABS)
+   EV is the 'B: EV=' capability mask and PROP the 'B: PROP=' property mask. REL and
+   ABS are the LOWEST word of the 'B: REL=' / 'B: ABS=' bitmaps — bit 0 of each is
+   REL_X / ABS_X, which is what says 'this device can point'. A device without a
+   'Handlers=eventN' has no node we could open and is left out.
 
    We read the EV mask rather than grepping Handlers for 'mouse'/'kbd': mousedev
    isn't loaded, so a plain PS/2 mouse shows only 'Handlers=eventN' with no 'mouseN'
@@ -189,36 +209,56 @@
    your hand* (INPUT_PROP_POINTER / INPUT_PROP_BUTTONPAD). Both print here, so
    neither costs an open(2).
 
-   The predicate runs at the end of a device's block, because PROP is printed
-   before EV and we want both in hand before deciding."
-  (ignore-errors
-    (with-open-file (s "/proc/bus/input/devices" :if-does-not-exist nil)
-      (when s
-        (let ((node nil) (ev nil) (prop 0))
-          (flet ((hex (line key)
-                   (let ((p (search key line)))
+   A bitmap prints as space-separated 64-bit words, MOST significant first, so the
+   lowest word — the one holding bit 0 — is the LAST token on the line, not the
+   first (doc/input.org §4, 'one parsing subtlety'). For EV and PROP there is only
+   ever one word, so first and last agree.
+
+   This used to be SCAN-INPUT-DEVICE, singular: it returned the first device a
+   predicate liked, and the caller opened that one alone. That is the bug the
+   multi-device section below exists to fix (doc/input.org §4¾)."
+  (let ((out '()))
+    (ignore-errors
+      (with-open-file (s "/proc/bus/input/devices" :if-does-not-exist nil)
+        (when s
+          (let ((b '()))
+            (labels ((after (line key)
+                       (let ((p (search key line)))
+                         (and p (string-trim " " (subseq line (+ p (length key)))))))
+                     (low-word (line key)     ; the LAST hex word of a bitmap line
+                       (let ((v (after line key)))
+                         (when v
+                           (let ((sp (position #\Space v :from-end t)))
+                             (ignore-errors
+                               (parse-integer v :start (if sp (1+ sp) 0) :radix 16))))))
+                     (finish ()                ; end of a device block
+                       (when (getf b :node)
+                         (push (list :node (getf b :node) :name (getf b :name)
+                                     :phys (getf b :phys) :sysfs (getf b :sysfs)
+                                     :ev (or (getf b :ev) 0) :prop (or (getf b :prop) 0)
+                                     :rel (or (getf b :rel) 0) :abs (or (getf b :abs) 0))
+                               out))
+                       (setf b '())))
+              (loop for line = (read-line s nil nil) do
+                (cond
+                  ((null line) (finish) (return))            ; EOF: flush the last block
+                  ((zerop (length line)) (finish))           ; blank: block boundary
+                  ((< (length line) 3))
+                  ((string= (subseq line 0 2) "N:")
+                   (setf (getf b :name) (string-trim "\"" (or (after line "Name=") ""))))
+                  ((string= (subseq line 0 2) "P:") (setf (getf b :phys) (after line "Phys=")))
+                  ((string= (subseq line 0 2) "S:") (setf (getf b :sysfs) (after line "Sysfs=")))
+                  ((string= (subseq line 0 2) "H:")
+                   (let ((p (search "event" line)))
                      (when p
-                       (let* ((start (+ p (length key)))
-                              (end (or (position #\Space line :start start)
-                                       (length line))))
-                         (ignore-errors
-                           (parse-integer line :start start :end end :radix 16))))))
-                 (finish ()                       ; end of a device block
-                   (when (and node ev (funcall device-ok-p ev prop))
-                     (return-from scan-input-device
-                       (values (format nil "/dev/input/~a" node) ev prop)))
-                   (setf node nil ev nil prop 0)))
-            (loop for line = (read-line s nil nil) do
-              (cond
-                ((null line) (finish) (return))               ; EOF: flush last block
-                ((zerop (length line)) (finish))              ; blank: block boundary
-                ((and (>= (length line) 2) (string= (subseq line 0 2) "H:"))
-                 (let ((p (search "event" line)))
-                   (when p
-                     (let ((end (or (position #\Space line :start p) (length line))))
-                       (setf node (subseq line p end))))))
-                ((search "PROP=" line) (setf prop (or (hex line "PROP=") 0)))
-                ((search "EV=" line)   (setf ev   (hex line "EV=")))))))))))
+                       (setf (getf b :node)
+                             (subseq line p (or (position #\Space line :start p)
+                                                (length line)))))))
+                  ((search "PROP=" line) (setf (getf b :prop) (low-word line "PROP=")))
+                  ((search "EV=" line)   (setf (getf b :ev)   (low-word line "EV=")))
+                  ((search "REL=" line)  (setf (getf b :rel)  (low-word line "REL=")))
+                  ((search "ABS=" line)  (setf (getf b :abs)  (low-word line "ABS="))))))))))
+    (nreverse out)))
 
 ;;; What kind of pointer we found, decided once at open time and consulted by
 ;;; READ-MOUSE on every packet. EV bit 2 = EV_REL, bit 3 = EV_ABS; PROP bit 0 =
@@ -303,47 +343,53 @@
    pad maps one-to-one onto the display, which is accurate but makes you cross the
    whole pad to cross the whole screen; 3/2 asks for about two thirds of a sweep.")
 
+(defvar *mouse-speed* 1
+  "Screen pixels per mouse count, for a RELATIVE pointer — a USB or PS/2 mouse, a
+   TrackPoint. 1 is what the console and X's flat profile do, and a 1000-dpi mouse
+   then crosses a 1920px screen in about 5cm. Any rational works (3/2, 2/3); the
+   fraction is carried like the pad's, so a slow hand still moves the cursor. There is
+   no acceleration curve: set it in the Workspace if your mouse feels slow.")
+(defvar *mouse-rx* 0 "Sub-pixel remainder of relative motion (with *MOUSE-SPEED* not 1).")
+(defvar *mouse-ry* 0)
+
 (defun pointer-pad-p (ev prop)
   "EV/PROP describe a touchpad: absolute, not relative, and a POINTER/BUTTONPAD."
   (and (logbitp 3 ev) (not (logbitp 2 ev))
        (or (logbitp 0 prop) (logbitp 2 prop))))
 
-(defun find-mouse-device ()
-  "The pointer, best candidate first, as (values PATH EV PROP):
+(defun input-device-kind (dev)
+  "What a scanned device (a plist from SCAN-INPUT-DEVICES) is to us, or NIL:
 
-   1. a *direct* absolute device — QEMU's '-device usb-tablet'. Nobody has one by
-      accident, its 0..32767 maps straight onto the screen, and it is the only
-      pointer a scripted click can aim, so it wins when present.
-   2. a *relative* mouse — the QEMU default PS/2 mouse, any USB mouse, or the
-      relative node a HID touchpad exposes while it is still in mouse mode.
-   3. a *touchpad* — correct, but its raw position needs interpreting
-      (see READ-MOUSE), so we only reach for it when there is nothing simpler.
+     :MOUSE    EV_REL and REL_X — any mouse, a TrackPoint, or the relative node a
+               HID touchpad exposes while it is still in mouse mode
+     :PAD      EV_ABS and ABS_X, no REL_X, and PROP says POINTER or BUTTONPAD — a
+               touchpad, whose positions are on the pad, not the screen (§4½)
+     :TABLET   EV_ABS and ABS_X otherwise — QEMU's usb-tablet; positions ARE screen
+     :KEYBOARD EV_KEY and EV_REP (autorepeat) — the EV_REP bit is what separates a
+               keyboard from the Power Button (also a 'kbd' handler, EV=3)
 
-   Ranking rather than taking the first match matters on real hardware: a laptop
-   has no mouse, so the touchpad is the only pointer there is, while in QEMU the
-   ranking changes nothing."
-  (dolist (want '(:tablet :mouse :pad))
-    (multiple-value-bind (path ev prop)
-        (scan-input-device
-         (lambda (ev prop)
-           (ecase want
-             (:tablet (and (logbitp 3 ev) (not (logbitp 2 ev))
-                           (not (pointer-pad-p ev prop))))
-             (:mouse  (logbitp 2 ev))
-             (:pad    (pointer-pad-p ev prop)))))
-      (when path (return (values path ev prop))))))
+   POINTING IS ASKED OF THE AXIS, NOT THE EVENT TYPE. 'Has EV_REL' was the old rule,
+   and a USB keyboard's 'Consumer Control' node passes it: it has EV_REL for a
+   horizontal-scroll usage (REL_HWHEEL) and EV_ABS for volume, and no X axis at all.
+   Asking for REL_X / ABS_X (bit 0 of the low word) keeps it out.
 
-(defun find-keyboard-device ()
-  "The real keyboard: EV_KEY (bit 1) and EV_REP (bit 20, autorepeat). The EV_REP
-   bit is what separates it from the Power Button (also a 'kbd' handler, EV=3)."
-  (scan-input-device (lambda (m prop) (declare (ignore prop))
-                       (and (logbitp 1 m) (logbitp 20 m)))))
+   A device that can point AND autorepeat is classified as a pointer; READ-MOUSE
+   also tracks the modifiers it reports, so nothing is lost but its Menu key."
+  (let ((ev (getf dev :ev)) (prop (getf dev :prop))
+        (rel (getf dev :rel)) (abs (getf dev :abs)))
+    (cond ((and (logbitp 2 ev) (logbitp 0 rel)) :mouse)
+          ((and (logbitp 3 ev) (logbitp 0 abs))
+           (if (or (logbitp 0 prop) (logbitp 2 prop)) :pad :tablet))
+          ((and (logbitp 1 ev) (logbitp 20 ev)) :keyboard)
+          (t nil))))
 
 (defun open-evdev (path)
-  "Open an evdev node non-blocking; NIL on failure or no PATH."
+  "Open an evdev node non-blocking: (values FD NIL), or (values NIL ERRNO) on
+   failure — ERRNO 13 (EACCES) is the interesting one, a node that devtmpfs just made
+   root's and lol-rootd has not yet handed to the user (doc/input.org §4¾)."
   (when path
     (let ((fd (%fbb-open path (logior +o-rdonly+ +o-nonblock+))))
-      (and (>= fd 0) fd))))
+      (if (>= fd 0) (values fd nil) (values nil (sb-alien:get-errno))))))
 
 (defun evdev-abs-range (fd axis)
   "The (values MIN MAX) an absolute AXIS actually reports, via EVIOCGABS.
@@ -370,54 +416,48 @@
           (let ((lo (s32 4)) (hi (s32 8)))
             (if (> hi lo) (values lo hi) (values 0 32767)))))))
 
-(defun open-mouse ()
-  "Open the pointer and remember how to read it: *pointer-abs-p* / *pointer-pad-p*
-   and, for an absolute device, the axis ranges READ-MOUSE scales against."
-  (multiple-value-bind (path ev prop) (find-mouse-device)
-    (let ((fd (open-evdev path)))
-      (when fd
-        (setf *pointer-abs-p* (and (logbitp 3 ev) (not (logbitp 2 ev)))
-              *pointer-pad-p* (pointer-pad-p ev prop)
-              *pad-x* nil *pad-y* nil *pad-fingers* 0
-              *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0
-              *tap-down-us* nil *tap-x* nil *tap-y* nil *tap-live* nil
-              *tap-peak-z* nil *button-down* nil)
-        (when *pointer-abs-p*
-          (multiple-value-setq (*abs-x-min* *abs-x-max*) (evdev-abs-range fd 0))
-          (multiple-value-setq (*abs-y-min* *abs-y-max*) (evdev-abs-range fd 1))))
-      fd)))
-
-(defun open-keyboard () (open-evdev (find-keyboard-device)))
+(defun note-modifier-key (code val)
+  "One EV_KEY record against the held-modifier state: Ctrl / Shift / Super / Alt in
+   *CTRL-DOWN* / *SHIFT-DOWN* / *SUPER-DOWN* / *ALT-DOWN* (value 1 press, 2 repeat —
+   both 'down' — 0 release). Returns :MENU on a Menu-key press, else NIL. Shared by
+   READ-KEYBOARD-EVDEV and READ-MOUSE, so a device that is both (some wireless combo
+   receivers) keeps its modifiers too. While the multi-device reader is draining a
+   device these specials are THAT DEVICE's own (WITH-DEVICE-STATE)."
+  (cond
+    ((or (= code 29) (= code 97))   (setf *ctrl-down* (plusp val)) nil)   ; KEY_LEFTCTRL / RIGHTCTRL
+    ((or (= code 42) (= code 54))   (setf *shift-down* (plusp val)) nil)  ; KEY_LEFTSHIFT / RIGHTSHIFT
+    ((or (= code 125) (= code 126)) (setf *super-down* (plusp val)) nil)  ; KEY_LEFTMETA / RIGHTMETA (Super)
+    ((or (= code 56) (= code 100))  (setf *alt-down* (plusp val)) nil)    ; KEY_LEFTALT / RIGHTALT
+    ((and (= code 127) (= val 1))   :menu)                                ; KEY_COMPOSE: the Menu key
+    (t nil)))
 
 (defun read-keyboard-evdev (fd)
-  "Drain the keyboard's evdev queue, tracking Ctrl / Shift / Super held state in
-   *ctrl-down* / *shift-down* / *super-down*. Text still arrives through the cooked
-   tty (fd 0); this fd exists only for the modifier state the tty can't report — a
-   bare modifier produces no byte there. Super is what makes the spatial layer (and
-   its SuperL-? cheatsheet) reachable on the bare console at all.
+  "Drain a keyboard's evdev queue, tracking Ctrl / Shift / Super / Alt held state
+   (NOTE-MODIFIER-KEY). Text still arrives through the cooked tty (fd 0); this fd
+   exists only for the modifier state the tty can't report — a bare modifier
+   produces no byte there. Super is what makes the spatial layer (and its SuperL-?
+   cheatsheet) reachable on the bare console at all.
 
-   Returns :MENU when the Menu key (KEY_COMPOSE, the one beside Right Ctrl) was
-   pressed: the console keymap sends no byte for it either, and it is the keyboard's
-   way to the right-button menu."
+   FD is one keyboard's fd — or anything else (the :KEYBOARDS that *FB-KBD* holds),
+   meaning every keyboard the last FBB-WAIT found readable (READ-KEYBOARDS). The
+   second form is what the browser's loops pass; the first is for replaying a file of
+   records by hand.
+
+   Returns (values MENU COUNT): MENU is :MENU when the Menu key (KEY_COMPOSE, the
+   one beside Right Ctrl) was pressed — the console keymap sends no byte for it
+   either, and it is the keyboard's way to the right-button menu; COUNT is how many
+   records were read."
+  (unless (integerp fd) (return-from read-keyboard-evdev (read-keyboards)))
   (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
-    (loop with menu = nil do
+    (loop with menu = nil and count = 0 do
       (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
-        (when (< n 24) (return menu))
+        (when (< n 24) (return (values menu count)))
+        (incf count)
         (let ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
               (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
               (val  (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8))))
-          (when (= type 1)                               ; EV_KEY  (1 press / 2 repeat -> down)
-            (cond
-              ((or (= code 29) (= code 97))              ; KEY_LEFTCTRL / KEY_RIGHTCTRL
-               (setf *ctrl-down* (plusp val)))
-              ((or (= code 42) (= code 54))              ; KEY_LEFTSHIFT / KEY_RIGHTSHIFT
-               (setf *shift-down* (plusp val)))
-              ((or (= code 125) (= code 126))            ; KEY_LEFTMETA / KEY_RIGHTMETA (Super)
-               (setf *super-down* (plusp val)))
-              ((or (= code 56) (= code 100))             ; KEY_LEFTALT / KEY_RIGHTALT
-               (setf *alt-down* (plusp val)))
-              ((and (= code 127) (= val 1))              ; KEY_COMPOSE: the Menu key
-               (setf menu :menu)))))))))
+          (when (and (= type 1) (eq :menu (note-modifier-key code val)))   ; EV_KEY
+            (setf menu :menu)))))))
 
 (defun abs-to-screen (val lo hi res)
   "Map an absolute reading in LO..HI onto 0..RES-1."
@@ -514,12 +554,19 @@
      the pad, which is not the screen; hand them to PAD-MOTION.
 
    Absolute axes are gathered across the packet and applied at SYN_REPORT rather
-   than record by record, so X and Y move together and one drag is one delta."
-  (let ((clicked nil) (wheel 0) (nx nil) (ny nil) (button nil))
+   than record by record, so X and Y move together and one drag is one delta.
+
+   FD is one pointer's fd — the form a replayed file of records uses, reading the
+   global state — or anything else (the :POINTERS that *FB-MOUSE* holds), meaning
+   every pointer the last FBB-WAIT found readable, each read against its OWN state
+   (READ-POINTERS, doc/input.org §4¾). A fourth value counts the records read."
+  (unless (integerp fd) (return-from read-mouse (read-pointers xres yres)))
+  (let ((clicked nil) (wheel 0) (nx nil) (ny nil) (button nil) (count 0))
     (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
       (loop
         (let ((n (%fbb-read fd (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)) 24)))
           (when (< n 24) (return))              ; nothing more (nonblocking)
+          (incf count)
           (let* ((type (logior (sb-alien:deref e 16) (ash (sb-alien:deref e 17) 8)))
                  (code (logior (sb-alien:deref e 18) (ash (sb-alien:deref e 19) 8)))
                  (v    (logior (sb-alien:deref e 20) (ash (sb-alien:deref e 21) 8)
@@ -539,9 +586,14 @@
                  (24 (when *tap-down-us*
                        (setf *tap-peak-z* (max val (or *tap-peak-z* 0)))))))
               ((= type 2)                       ; EV_REL
+               ;; deltas, times *MOUSE-SPEED*, the fraction carried like the pad's
                (case code
-                 (0 (setf *cursor-x* (max 0 (min (1- xres) (+ *cursor-x* val)))))
-                 (1 (setf *cursor-y* (max 0 (min (1- yres) (+ *cursor-y* val)))))
+                 (0 (multiple-value-bind (whole rest) (truncate (+ *mouse-rx* (* val *mouse-speed*)))
+                      (setf *mouse-rx* rest
+                            *cursor-x* (max 0 (min (1- xres) (+ *cursor-x* whole))))))
+                 (1 (multiple-value-bind (whole rest) (truncate (+ *mouse-ry* (* val *mouse-speed*)))
+                      (setf *mouse-ry* rest
+                            *cursor-y* (max 0 (min (1- yres) (+ *cursor-y* whole))))))
                  (8 (incf wheel val))))          ; REL_WHEEL: +1 up / -1 down
               ((= type 1)                       ; EV_KEY — a button is just a key
                (case code
@@ -599,11 +651,13 @@
                     ;; button for — either way this contact stopped being a tap
                     (#x145 (when (plusp val) (setf *pad-fingers* 1)))      ; one finger
                     (#x14d (when (plusp val) (setf *pad-fingers* 2 *tap-live* nil)))   ; two
-                    (#x14e (when (plusp val) (setf *pad-fingers* 3 *tap-live* nil))))))) ; three
+                    (#x14e (when (plusp val) (setf *pad-fingers* 3 *tap-live* nil))))) ; three
+                 ;; any other key: a modifier, if this pointer is also a keyboard
+                 (t (note-modifier-key code val))))
               ((and (= type 0) (= code 0) *pointer-pad-p*)   ; EV_SYN/SYN_REPORT
                (incf wheel (pad-motion nx ny xres yres))
                (setf nx nil ny nil)))))))
-    (values clicked wheel button)))
+    (values clicked wheel button count)))
 
 (defparameter *cursor-bits*
   #("K"
@@ -652,7 +706,322 @@
 ;; *debugger-hook*, mid-loop) can draw to the same screen and read the same input
 ;; without threading them through every call.
 (defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
-(defvar *fb-mouse* nil)  (defvar *fb-kbd* nil)
+(defvar *fb-mouse* nil
+  ":POINTERS while at least one pointer is open, else NIL. It was a single fd until
+   the environment learned to read every device at once (doc/input.org §4¾); the
+   loops still say (read-mouse *fb-mouse* w h), and READ-MOUSE reads a non-fd as
+   'every pointer that is ready'. Its truth still means 'there is a pointer to draw'.")
+(defvar *fb-kbd* nil
+  ":KEYBOARDS while at least one keyboard's evdev is open, else NIL — as *FB-MOUSE*.")
+
+;;; ---- every input device at once, and the ones that come later (§4¾) ------
+;;;
+;;; THE BUG THIS REPLACES. The environment used to open ONE pointer and ONE
+;;; keyboard: FIND-MOUSE-DEVICE ranked the candidates (tablet > mouse > touchpad)
+;;; and returned the best, FIND-KEYBOARD-DEVICE returned the first keyboard, and
+;;; both ran once, when the environment started. On the laptop with an external
+;;; mouse and keyboard that loses three ways at once:
+;;;
+;;;   - the external mouse and the touchpad are BOTH candidates and only one wins —
+;;;     whichever ranks higher, or comes first in /proc/bus/input/devices; the other
+;;;     is never read at all;
+;;;   - the first keyboard is the laptop's own (i8042 probes before USB), so the
+;;;     external keyboard's Ctrl / Super / Alt are never seen — typing still works,
+;;;     because TEXT comes from the console, which merges every keyboard, but
+;;;     Ctrl-click and every SuperL- binding on it are dead;
+;;;   - a device plugged in after the environment started is never opened.
+;;;
+;;; THE FIX. Every keyboard and every pointer is open at once, each an INPUT-DEV with
+;;; its own state; FBB-WAIT polls all of them; a watch on /dev/input (inotify, tag
+;;; #26) re-scans when a node appears or changes owner; a device that disappears
+;;; reports POLLHUP and is closed and forgotten.
+;;;
+;;; PER-DEVICE STATE, WITHOUT REWRITING THE DECODER. READ-MOUSE and PAD-MOTION keep
+;;; their state in special variables (*pad-x*, *tap-live*, *button-down*, ...), which
+;;; was right for one device and is wrong for two: a touchpad's remembered finger
+;;; position must not be differenced against a mouse's packet. Rather than thread a
+;;; struct through every line of the decoder, WITH-DEVICE-STATE rebinds those
+;;; specials (PROGV) to the device's own saved values for the length of one drain and
+;;; saves them back after. The decoder does not know there is more than one device,
+;;; which is also why a file of replayed records still goes through it unchanged.
+;;;
+;;; WHAT IS SHARED, AND WHY. There is ONE cursor (*cursor-x/y*): every pointer moves
+;;; the same arrow, as in X. Held buttons and modifiers are each device's own, and
+;;; the globals the browser reads are their OR: Ctrl held on the external keyboard
+;;; makes a click on the touchpad a Ctrl-click; a press held on the pad while the
+;;; mouse moves is a drag. That is not a choice we had freely — the console's own
+;;; keyboard handler keeps ONE shift_state for all keyboards (drivers/tty/vt/
+;;; keyboard.c), so Ctrl on one keyboard and 'a' on another already reach the tty as
+;;; C-a, and anything else here would disagree with the text we receive. What
+;;; per-device state buys is RELEASE: a device that goes away takes its held keys
+;;; with it, so unplugging a keyboard with Ctrl down cannot leave Ctrl stuck.
+
+(defparameter +input-dev-vars+
+  '(*pointer-abs-p* *pointer-pad-p* *abs-x-min* *abs-x-max* *abs-y-min* *abs-y-max*
+    *pad-x* *pad-y* *pad-fingers* *pad-rx* *pad-ry* *pad-scroll*
+    *tap-down-us* *tap-x* *tap-y* *tap-live* *tap-peak-z*
+    *button-down* *mouse-rx* *mouse-ry*
+    *ctrl-down* *shift-down* *super-down* *alt-down*)
+  "The special variables that are really ONE DEVICE's state. WITH-DEVICE-STATE binds
+   them to a device's saved values while that device is read. The tuning knobs
+   (*pad-speed*, *tap-min-pressure*, *mouse-speed*) and *last-touch* are NOT here:
+   they are settings and a diagnostic, the same for every device.")
+
+(defstruct (input-dev (:constructor %make-input-dev))
+  "One open evdev node: what it is, its fd, and its own copy of +INPUT-DEV-VARS+."
+  node            ; "event17"
+  sysfs           ; the kernel's unique path for it — "eventN" alone can be reused
+  name            ; "PixArt Microsoft USB Optical Mouse"
+  phys            ; where it hangs: "usb-0000:00:14.0-8.3/input0", "isa0060/serio1/input0"
+  kind            ; :mouse :pad :tablet :keyboard (INPUT-DEVICE-KIND)
+  fd
+  state           ; values of +INPUT-DEV-VARS+, in that order
+  ready           ; did the last poll say it has records waiting?
+  (records 0)     ; input_event records read from it — the diagnostic view shows these
+  (clicks 0))     ; left clicks it produced (a press, or a tap on a pad)
+
+(defvar *input-devices* '() "Every input device the environment has open (INPUT-DEV).")
+(defvar *input-watch-fd* nil "The inotify fd watching /dev/input, or NIL (then we rescan on a timer).")
+(defvar *input-rescan-due* nil "Internal-real-time of the next scheduled rescan, or NIL.")
+(defvar *input-open-failures* '()
+  "Devices we wanted and could not open, as (NODE NAME ERRNO) — shown in the
+   diagnostic view, because 'my mouse does nothing' and 'my mouse is not mine
+   (EACCES)' look identical from the chair.")
+(defvar *input-log* '() "Recent hotplug events, newest first: (SECONDS-SINCE-BOOT TEXT).")
+(defvar *input-wakeups* 0
+  "Times FBB-WAIT's poll(2) returned. check-input.lisp samples it twice across an idle
+   stretch to prove a dropped device does not leave the loop spinning.")
+
+(defun pointer-kind-p (kind) (member kind '(:mouse :pad :tablet)))
+
+(defun input-log (fmt &rest args)
+  (push (list (round (get-internal-real-time) internal-time-units-per-second)
+              (apply #'format nil fmt args))
+        *input-log*)
+  (when (> (length *input-log*) 20) (setf *input-log* (subseq *input-log* 0 20))))
+
+(defmacro with-device-state ((dev) &body body)
+  "Run BODY with +INPUT-DEV-VARS+ bound to DEV's own values, and save them back."
+  (let ((d (gensym "DEV")))
+    `(let ((,d ,dev))
+       (progv +input-dev-vars+ (input-dev-state ,d)
+         (unwind-protect (progn ,@body)
+           (setf (input-dev-state ,d) (mapcar #'symbol-value +input-dev-vars+)))))))
+
+(defun device-var (dev symbol)
+  "DEV's saved value of SYMBOL, one of +INPUT-DEV-VARS+."
+  (nth (position symbol +input-dev-vars+) (input-dev-state dev)))
+
+(defun fresh-device-state (fd kind)
+  "The starting values of +INPUT-DEV-VARS+ for a device of KIND open on FD: nothing
+   held, no finger remembered, and — for an absolute device — the axis ranges the
+   device itself reports (EVDEV-ABS-RANGE), which is what OPEN-MOUSE used to do."
+  (progv +input-dev-vars+ (make-list (length +input-dev-vars+))
+    (setf *pointer-abs-p* (and (member kind '(:pad :tablet)) t)
+          *pointer-pad-p* (eq kind :pad)
+          *abs-x-min* 0 *abs-x-max* 32767 *abs-y-min* 0 *abs-y-max* 32767
+          *pad-fingers* 0 *pad-rx* 0 *pad-ry* 0 *pad-scroll* 0
+          *mouse-rx* 0 *mouse-ry* 0)
+    (when *pointer-abs-p*
+      (multiple-value-setq (*abs-x-min* *abs-x-max*) (evdev-abs-range fd 0))
+      (multiple-value-setq (*abs-y-min* *abs-y-max*) (evdev-abs-range fd 1)))
+    (mapcar #'symbol-value +input-dev-vars+)))
+
+(defun sync-input-globals ()
+  "Recompute what the browser reads from what the devices hold: each held modifier
+   and *BUTTON-DOWN* is the OR over every open device (see the section header), and
+   *FB-MOUSE* / *FB-KBD* say whether any pointer / keyboard is open at all."
+  (flet ((any (sym) (and (some (lambda (d) (device-var d sym)) *input-devices*) t)))
+    (setf *ctrl-down*   (any '*ctrl-down*)
+          *shift-down*  (any '*shift-down*)
+          *super-down*  (any '*super-down*)
+          *alt-down*    (any '*alt-down*)
+          *button-down* (any '*button-down*)
+          *fb-mouse* (and (some (lambda (d) (pointer-kind-p (input-dev-kind d))) *input-devices*)
+                          :pointers)
+          *fb-kbd*   (and (some (lambda (d) (eq :keyboard (input-dev-kind d))) *input-devices*)
+                          :keyboards))))
+
+(defun drop-input-dev (dev why)
+  "Close DEV and forget it — it was unplugged (POLLHUP) or vanished from the list.
+   Its held buttons and modifiers go with it (SYNC-INPUT-GLOBALS)."
+  (ignore-errors (%fbb-close (input-dev-fd dev)))
+  (setf *input-devices* (remove dev *input-devices*))
+  (input-log "~(~a~) ~a: ~a (~a)" (input-dev-kind dev) why (input-dev-name dev) (input-dev-node dev))
+  (sync-input-globals))
+
+(defun rescan-input-devices ()
+  "Make the open set match /proc/bus/input/devices: open every keyboard and pointer
+   not yet open, close any open one the kernel no longer lists. Cheap — one small
+   proc file — so it runs on every hotplug event and costs nothing to repeat.
+   Returns the list of open devices."
+  (let ((seen (scan-input-devices)))
+    ;; gone from the list: closed first, so a reused eventN cannot shadow a new device
+    (dolist (d *input-devices*)
+      (unless (find-if (lambda (b) (and (equal (getf b :node) (input-dev-node d))
+                                        (equal (getf b :sysfs) (input-dev-sysfs d))))
+                       seen)
+        (drop-input-dev d "removed")))
+    (setf *input-open-failures* '())
+    (dolist (b seen)
+      (let ((kind (input-device-kind b)))
+        (when (and kind
+                   (not (find-if (lambda (d) (and (equal (getf b :node) (input-dev-node d))
+                                                  (equal (getf b :sysfs) (input-dev-sysfs d))))
+                                 *input-devices*)))
+          (multiple-value-bind (fd errno)
+              (open-evdev (format nil "/dev/input/~a" (getf b :node)))
+            (if fd
+                (let ((dev (%make-input-dev :node (getf b :node) :sysfs (getf b :sysfs)
+                                            :name (getf b :name) :phys (getf b :phys)
+                                            :kind kind :fd fd)))
+                  (setf (input-dev-state dev) (fresh-device-state fd kind))
+                  (setf *input-devices* (append *input-devices* (list dev)))
+                  (input-log "~(~a~) added: ~a (~a)" kind (getf b :name) (getf b :node)))
+                (push (list (getf b :node) (getf b :name) errno) *input-open-failures*))))))
+    (sync-input-globals)
+    *input-devices*))
+
+;;; inotify(7): the kernel tells us when /dev/input changes. Three events matter —
+;;; IN_CREATE (devtmpfs made a node: a device arrived), IN_DELETE (one went), and
+;;; IN_ATTRIB (lol-rootd chowned a node to the user, so one we could not open a
+;;; moment ago now opens: as the user, CREATE alone finds a root-owned 0600 node).
+(sb-alien:define-alien-routine ("inotify_init1" %inotify-init1) sb-alien:int (flags sb-alien:int))
+(sb-alien:define-alien-routine ("inotify_add_watch" %inotify-add-watch) sb-alien:int
+  (fd sb-alien:int) (path sb-alien:c-string) (mask sb-alien:unsigned-int))
+
+(defconstant +in-attrib+ #x4)    ; linux/include/uapi/linux/inotify.h
+(defconstant +in-create+ #x100)
+(defconstant +in-delete+ #x200)
+(defconstant +in-nonblock+ #x800) ; = O_NONBLOCK
+(defparameter +input-rescan-retry-ms+ 400
+  "After a hotplug event, scan again this much later: the node, its /proc line and
+   its owner change in quick succession, and one of them may not have landed yet.")
+(defparameter +input-rescan-poll-ms+ 2000
+  "Without inotify, how often to rescan — the fallback, so hotplug still works.")
+
+(defun ms->itu (ms) (round (* ms internal-time-units-per-second) 1000))
+
+(defun open-input-devices ()
+  "Open every input device and start watching /dev/input for more."
+  (unless *input-watch-fd*
+    (let ((fd (%inotify-init1 +in-nonblock+)))
+      (when (>= fd 0)
+        (if (>= (%inotify-add-watch fd "/dev/input" (logior +in-create+ +in-delete+ +in-attrib+)) 0)
+            (setf *input-watch-fd* fd)
+            (%fbb-close fd)))))
+  (setf *input-rescan-due* (and (null *input-watch-fd*)
+                                (+ (get-internal-real-time) (ms->itu +input-rescan-poll-ms+))))
+  (rescan-input-devices))
+
+(defun close-input-devices ()
+  (dolist (d *input-devices*) (ignore-errors (%fbb-close (input-dev-fd d))))
+  (setf *input-devices* '())
+  (when *input-watch-fd* (ignore-errors (%fbb-close *input-watch-fd*)) (setf *input-watch-fd* nil))
+  (sync-input-globals))
+
+(defun drain-input-watch ()
+  "Read and discard every pending inotify event. We never look inside: any change to
+   /dev/input means 'rescan', and the rescan is the source of truth."
+  (sb-alien:with-alien ((buf (sb-alien:array sb-alien:unsigned-char 4096)))
+    (loop while (plusp (%fbb-read *input-watch-fd*
+                                  (sb-alien:cast buf (sb-alien:* sb-alien:unsigned-char)) 4096)))))
+
+(defun input-rescan-timeout ()
+  "Ms until a scheduled rescan is due (0 if overdue), or -1 when none is."
+  (if *input-rescan-due*
+      (max 0 (round (* 1000 (- *input-rescan-due* (get-internal-real-time)))
+                    internal-time-units-per-second))
+      -1))
+
+(defun maybe-rescan-input ()
+  "Run the scheduled rescan if it is due, and schedule the next one when there is no
+   inotify to tell us."
+  (when (and *input-rescan-due* (>= (get-internal-real-time) *input-rescan-due*))
+    (setf *input-rescan-due* (and (null *input-watch-fd*)
+                                  (+ (get-internal-real-time) (ms->itu +input-rescan-poll-ms+))))
+    (rescan-input-devices)))
+
+(defconstant +pollerr+  #x8)    ; struct pollfd revents: an error on the fd
+(defconstant +pollhup+  #x10)   ; ... the other end hung up — evdev's "device is gone"
+(defconstant +pollnval+ #x20)   ; ... not an open fd at all
+
+(defparameter +max-poll-slots+ 40)
+
+(defun poll-input-once (kb-fd timeout-ms)
+  "ONE poll(2) over the console tty (KB-FD), the /dev/input watch and every open
+   device, then the housekeeping it implies. Returns (values KB POINTER KEYBOARD
+   HOUSEKEEPING): which of the three the caller cares about have records, and
+   whether something else happened (a hotplug, a device gone) that it does not.
+
+   The layout is the one FBB-WAIT always had, just longer: slot 0 the tty, slot 1 the
+   watch, then one slot per device; an unused slot holds fd -1, which poll ignores.
+
+   A device that was unplugged does not just go quiet. evdev_poll answers EPOLLHUP |
+   EPOLLERR for it (drivers/input/evdev.c) — on EVERY call, at once — and read(2)
+   says ENODEV. Ignore that and the loop spins at 100% CPU on a corpse; so HUP / ERR /
+   NVAL closes the fd and forgets the device, here, before anyone tries to read it."
+  (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 320)))   ; 40 slots
+    (let* ((devs (subseq *input-devices* 0 (min (length *input-devices*) (- +max-poll-slots+ 2))))
+           (n (+ 2 (length devs))))
+      (dotimes (i (* n 8)) (setf (sb-alien:deref fds i) 0))
+      (flet ((put-slot (i fd) (if fd (%put-pollfd fds i fd) (%put-pollfd fds i -1)))
+             (revents (i) (sb-alien:deref fds (+ (* i 8) 6))))
+        (put-slot 0 kb-fd)
+        (put-slot 1 *input-watch-fd*)
+        (loop for d in devs for i from 2 do (put-slot i (input-dev-fd d)))
+        (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) n timeout-ms)
+        (incf *input-wakeups*)
+        (let ((kb (and kb-fd (logbitp 0 (revents 0)))) (ptr nil) (key nil) (house nil))
+          (when (and *input-watch-fd* (plusp (revents 1)))
+            (drain-input-watch)
+            (rescan-input-devices)
+            ;; and once more shortly: the /proc line or the chown may still be in flight
+            (setf *input-rescan-due* (+ (get-internal-real-time) (ms->itu +input-rescan-retry-ms+))
+                  house t))
+          (loop for d in devs for i from 2
+                for r = (revents i)
+                do (cond ((plusp (logand r (logior +pollerr+ +pollhup+ +pollnval+)))
+                          (when (member d *input-devices*) (drop-input-dev d "unplugged"))
+                          (setf house t))
+                         ((logbitp 0 r)
+                          (setf (input-dev-ready d) t)
+                          (if (eq :keyboard (input-dev-kind d)) (setf key t) (setf ptr t)))))
+          (when (/= -1 (input-rescan-timeout))
+            (when (zerop (input-rescan-timeout)) (setf house t))
+            (maybe-rescan-input))
+          (values kb ptr key house))))))
+
+(defun read-pointers (xres yres)
+  "Drain every pointer the last poll found ready, each against its own state, and
+   combine what they said: (values CLICKED WHEEL BUTTON RECORDS) as READ-MOUSE returns
+   for one. Two devices pressing in the same wake is not reachable by hand; the
+   first one's button wins."
+  (let ((clicked nil) (wheel 0) (button nil) (records 0))
+    (dolist (d *input-devices*)
+      (when (and (input-dev-ready d) (pointer-kind-p (input-dev-kind d)))
+        (setf (input-dev-ready d) nil)
+        (multiple-value-bind (c w b n)
+            (with-device-state (d) (read-mouse (input-dev-fd d) xres yres))
+          (incf (input-dev-records d) n) (incf records n)
+          (when c (setf clicked t) (incf (input-dev-clicks d)))
+          (incf wheel w)
+          (when (and b (null button)) (setf button b)))))
+    (sync-input-globals)
+    (values clicked wheel button records)))
+
+(defun read-keyboards ()
+  "Drain every keyboard the last poll found ready (their modifiers), then recompute
+   the shared modifier state. Returns :MENU if any of them pressed the Menu key."
+  (let ((menu nil))
+    (dolist (d *input-devices*)
+      (when (and (input-dev-ready d) (eq :keyboard (input-dev-kind d)))
+        (setf (input-dev-ready d) nil)
+        (multiple-value-bind (m n) (with-device-state (d) (read-keyboard-evdev (input-dev-fd d)))
+          (incf (input-dev-records d) n)
+          (when m (setf menu m)))))
+    (sync-input-globals)
+    menu))
 
 ;;; ---- the pointer is not part of the frame ---------------------------------
 ;;; The canvas holds the browser and NEVER the pointer. The pointer is composited on
@@ -865,13 +1234,12 @@
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
         (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
-          (let ((canvas (lol.canvas:make-canvas xres yres))
-                (mouse  (open-mouse))
-                (kbd    (open-keyboard)))
+          (let ((canvas (lol.canvas:make-canvas xres yres)))
+            ;; every keyboard and pointer, plus a watch for the ones still to come;
+            ;; sets *FB-MOUSE* / *FB-KBD* and clears every held modifier (§4¾)
+            (open-input-devices)
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
-                  *ctrl-down* nil *shift-down* nil *super-down* nil
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
-                  *fb-mouse* mouse *fb-kbd* kbd
                   *cursor-hidden* nil *pointer-active-at* (get-internal-real-time))
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
@@ -889,12 +1257,13 @@
                        ;; without being asked, so it — and only it — makes the loop
                        ;; wake on a deadline rather than sleeping until input.
                        (multiple-value-bind (kb ms kev)
-                           (fbb-wait 0 mouse kbd (earliest-timeout (live-stage-timeout)
-                                                                   (cursor-idle-timeout)
-                                                                   (tray-timeout)))
+                           (fbb-wait 0 *fb-mouse* *fb-kbd*
+                                     (earliest-timeout (live-stage-timeout)
+                                                       (cursor-idle-timeout)
+                                                       (tray-timeout)))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
                          ;; context menu where the caret (or selected row) is
-                         (when (and kev (eq :menu (read-keyboard-evdev kbd)))
+                         (when (and kev (eq :menu (read-keyboard-evdev *fb-kbd*)))
                            (keyboard-context-menu)
                            (setf dirty t))
                          (when kb
@@ -916,11 +1285,12 @@
                                (when (or (eq key :eof)
                                          (eq :quit (browser-key key state)))
                                  (return)))))
-                         (when (and mouse ms)
+                         (when ms
                            (let ((ox *cursor-x*) (oy *cursor-y*)
                                  (was-down *button-down*)
                                  (was-hidden (pointer-activity)))
-                             (multiple-value-bind (clicked wheel button) (read-mouse mouse xres yres)
+                             (multiple-value-bind (clicked wheel button)
+                                 (read-mouse *fb-mouse* xres yres)   ; every ready pointer
                                ;; wheel first: a notch scrolls the current pane a few
                                ;; lines (up = toward the start), point untouched.
                                (unless (zerop wheel)
@@ -963,8 +1333,7 @@
                            ;; the clock: cheap, so simply on every timeout — a
                            ;; stage frame or a hide repaints an unchanged tray
                            (unless dirty (tick-tray canvas xres)))))))
-              (when mouse (%fbb-close mouse))
-              (when kbd (%fbb-close kbd))))))
+              (close-input-devices)))))
     (serious-condition (c)
       (format t "~&code browser: ~a~%" c) (finish-output)))
   ;; SuperL-q chose to power off: only now, with the text console back, so the
@@ -1707,3 +2076,93 @@
                             ((spotter-outside-p* *cursor-x* *cursor-y*) (return)))) ; click-away dismisses
                     (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
                       (move-cursor canvas ox oy)))))))))))
+
+;;; ---- what the environment sees: the input devices as a subject (§4¾) -------
+;;; "My mouse does nothing" has four different answers — the kernel has no driver
+;;; for it, it is not a pointer by our rules, it is not ours to open, or it is open
+;;; and fine and the trouble is elsewhere — and from the chair they all look the
+;;; same. This view tells them apart. SuperL-Space, "input devices"; or
+;;; (show-input-view) at a REPL. (Not SHOW-INPUT-DEVICES: that is the supervisor's
+;;; boot-time list of what the kernel sees, a different question.)
+
+(defstruct (subj-input-devices (:constructor subj-input-devices ())))
+
+(defun input-errno-name (errno)
+  (case errno (2 "ENOENT, no such node") (13 "EACCES, not yours yet")
+              (19 "ENODEV, gone") (t (format nil "errno ~a" errno))))
+
+(defun input-dev-held (dev)
+  "The modifiers and button DEV is holding right now, as a short string, or NIL."
+  (let ((held (loop for (sym name) in '((*ctrl-down* "Ctrl") (*shift-down* "Shift")
+                                        (*super-down* "Super") (*alt-down* "Alt")
+                                        (*button-down* "button"))
+                    when (device-var dev sym) collect name)))
+    (and held (format nil "~{~a~^+~}" held))))
+
+(defmethod present ((s subj-input-devices))
+  (let* ((open *input-devices*)
+         (seen (scan-input-devices))
+         (unused (remove-if (lambda (b)
+                              (or (find (getf b :node) open :key #'input-dev-node :test #'equal)
+                                  (find (getf b :node) *input-open-failures* :key #'first
+                                                                             :test #'equal)))
+                            seen)))
+    (make-view
+     :title "input devices - what the environment reads"
+     :kind :list :subject s
+     :items
+     (append
+      (if open
+          (mapcar (lambda (d)
+                    (make-item
+                     :label (format nil "~8a ~9a ~a" (input-dev-node d)
+                                    (string-downcase (input-dev-kind d)) (input-dev-name d))
+                     :detail (format nil "~d records~:[~*~; · ~d clicks~]~@[ · holding ~a~] · ~a"
+                                     (input-dev-records d)
+                                     (pointer-kind-p (input-dev-kind d)) (input-dev-clicks d)
+                                     (input-dev-held d) (input-dev-phys d))
+                     :kind (if (eq (input-dev-kind d) :keyboard) :class :variable)
+                     :group "open - every one of these is read"
+                     :subject d))
+                  open)
+          (list (make-item :label "(nothing open - is the environment running?)"
+                           :group "open - every one of these is read")))
+      (mapcar (lambda (f)
+                (make-item :label (format nil "~8a ~a" (first f) (second f))
+                           :detail (format nil "wanted, could not open: ~a"
+                                           (input-errno-name (third f)))
+                           :kind :condition
+                           :group "could not open"))
+              *input-open-failures*)
+      (mapcar (lambda (b)
+                (make-item :label (format nil "~8a ~a" (getf b :node) (getf b :name))
+                           :detail (format nil "not a keyboard or pointer: EV=~x REL=~x ABS=~x"
+                                           (getf b :ev) (getf b :rel) (getf b :abs))
+                           :group "seen, not read"))
+              unused)
+      (list (make-item :label (if *input-watch-fd*
+                                  "hotplug: inotify on /dev/input"
+                                  (format nil "hotplug: rescanning every ~ds (no inotify)"
+                                          (round +input-rescan-poll-ms+ 1000)))
+                       :detail (format nil "held now: ~:[~;Ctrl ~]~:[~;Shift ~]~:[~;Super ~]~:[~;Alt ~]~:[~;button~]"
+                                       *ctrl-down* *shift-down* *super-down* *alt-down* *button-down*)
+                       :group "how"))
+      (mapcar (lambda (e)
+                (make-item :label (second e)
+                           :detail (format nil "~ds after boot" (first e))
+                           :group "recent changes"))
+              *input-log*)))))
+
+(defmethod commands-for ((s subj-input-devices))
+  (list (make-command :label "Refresh" :target s :disposition :replace)))
+
+(defun show-input-view ()
+  "REPL entry point: the input devices view, printed."
+  (show-view (subj-input-devices)))
+
+(defun input-devices-spotter-candidates ()
+  (list (list :label "input devices"
+              :detail "surface · keyboards, mice, touchpads the environment reads"
+              :group "surfaces" :subject (subj-input-devices))))
+
+(pushnew 'input-devices-spotter-candidates *spotter-sources*)

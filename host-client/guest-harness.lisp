@@ -41,7 +41,7 @@
 (defpackage :lol.guest
   (:use :cl)
   (:export #:*root* #:*work* #:path
-           #:boot-guest #:kill-guest
+           #:boot-guest #:kill-guest #:*extra-qemu-args*
            #:qmp #:qmp-connect #:qmp-key #:qmp-events #:key-event
            #:qmp-hold #:qmp-wheel #:qmp-type
            #:repl-drain #:repl-connect #:strip-ansi #:between-markers
@@ -71,6 +71,11 @@
 ;;; ---- QEMU ----------------------------------------------------------------
 
 (defvar *qemu* nil)
+
+(defvar *extra-qemu-args* '()
+  "More QEMU arguments for this run, appended to BOOT-GUEST's — how a check asks for
+   hardware the default guest lacks (check-input.lisp: a USB controller, a second
+   mouse, a tablet, a second keyboard).")
 
 (defun boot-guest (&optional (name "guest"))
   "Boot iso_root headless with a QMP control socket and the net REPL forwarded.
@@ -121,7 +126,8 @@
                "-device" "virtio-net-pci,netdev=net0"
                "-serial" (format nil "file:~a" (path "serial.log"))
                "-display" "none" "-no-reboot"
-               "-qmp" (format nil "unix:~a,server,nowait" (path "qmp.sock")))))
+               "-qmp" (format nil "unix:~a,server,nowait" (path "qmp.sock")))
+                *extra-qemu-args*))
          :search t :wait nil
          :error (path "qemu.err") :if-error-exists :supersede)))
 
