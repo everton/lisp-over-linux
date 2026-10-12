@@ -1260,7 +1260,9 @@
                            (fbb-wait 0 *fb-mouse* *fb-kbd*
                                      (earliest-timeout (live-stage-timeout)
                                                        (cursor-idle-timeout)
-                                                       (tray-timeout)))
+                                                       (tray-timeout)
+                                                       ;; a live run pane (runs.lisp)
+                                                       (runs-timeout)))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
                          ;; context menu where the caret (or selected row) is
                          (when (and kev (eq :menu (read-keyboard-evdev *fb-kbd*)))
@@ -1323,6 +1325,9 @@
                                (when (and (not dirty)
                                           (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
                                  (move-cursor canvas ox oy)))))
+                         ;; a run's reader thread may have collected output: copy it
+                         ;; into its pane (cheap when nothing changed — a compare)
+                         (when (tick-runs) (setf dirty t))
                          ;; Nothing was ready: a deadline fired. Which one? A running
                          ;; stage advances the world; an idle pointer hides.
                          (unless (or kb ms kev)

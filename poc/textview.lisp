@@ -46,7 +46,9 @@
   (focus nil)
   (syntax :lisp)                   ; :lisp colours with LEX-LINE; :plain draws every line
                                    ; in the text colour (a README is not Lisp, and lexing
-                                   ; it as Lisp lights every apostrophe and semicolon)
+                                   ; it as Lisp lights every apostrophe and semicolon);
+                                   ; a function (line-index line) -> runs supplies the
+                                   ; colours itself (a run pane's ANSI SGR)
   ;; undo — see "Undo, the Emacs way" below
   (undo-list '())                  ; states before each change, newest first
   (undo-pending nil)               ; during a run of undos: the states still to visit
@@ -603,9 +605,13 @@
                               (+ x0 pad) ly *gutter*)
                  ;; the text, run by coloured run
                  (multiple-value-bind (runs new-depth new-instr)
-                     (if (eq (tv-syntax tv) :lisp)
-                         (lex-line line depth instr)
-                         (values (list (list* 0 (length line) *c-text*)) 0 nil))
+                     (cond ((eq (tv-syntax tv) :lisp) (lex-line line depth instr))
+                           ;; a FUNCTION of (line-index line) -> runs: colour that
+                           ;; comes from elsewhere — a run pane's ANSI colours
+                           ;; (initramfs/runs.lisp), which no lexer could recover
+                           ((functionp (tv-syntax tv))
+                            (values (funcall (tv-syntax tv) li line) 0 nil))
+                           (t (values (list (list* 0 (length line) *c-text*)) 0 nil)))
                    (setf depth new-depth instr new-instr)
                    (dolist (r runs)
                      (destructuring-bind (s e . color) r
