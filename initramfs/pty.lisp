@@ -108,6 +108,16 @@
    exit code or signal number)."
   pid master slave-name argv (status :running) code)
 
+(defvar *pty-children* (make-hash-table)
+  "pid -> PTY-PROC for every program we spawned and have not yet waited for. PID 1
+   inherits orphans and the web pane reaps any child SBCL does not know
+   (web.lisp, WEB-REAP-ORPHANS); it asks PTY-CHILD-P first, or it would take the
+   exit status a terminal pane is about to show.")
+
+(defun pty-child-p (pid)
+  "Is PID a program on one of our pseudo-terminals, not yet waited for?"
+  (and (gethash pid *pty-children*) t))
+
 (defmacro with-foreign-bytes ((sap size) &body body)
   "Run BODY with SAP pointing at SIZE zeroed bytes of foreign memory, freed after."
   (let ((a (gensym "ALIEN")))
@@ -211,8 +221,10 @@
                               (let ((rc (%posix-spawn pidbuf (first argv) fa attr argv-sap env-sap)))
                                 (unless (zerop rc)
                                   (error "cannot run ~a: ~a" (first argv) (sb-int:strerror rc)))
-                                (%make-pty-proc :pid (sb-sys:signed-sap-ref-32 pidbuf 0)
-                                                :master master :slave-name slave :argv argv)))
+                                (let ((proc (%make-pty-proc :pid (sb-sys:signed-sap-ref-32 pidbuf 0)
+                                                            :master master :slave-name slave :argv argv)))
+                                  (setf (gethash (pty-proc-pid proc) *pty-children*) proc)
+                                  proc)))
                          (funcall free-env)
                          (funcall free-argv))))
                 (%fa-destroy fa)
@@ -252,17 +264,25 @@
 
 (defun pty-reap (proc)
   "Ask, without waiting, whether the program has ended; record how. Returns its
-   STATUS. The child is OURS (posix_spawn made it), so nobody else will reap it —
-   SBCL's own SIGCHLD handler only waits for RUN-PROGRAM's children, by pid."
+   STATUS. The child is OURS (posix_spawn made it), so nobody else should reap it —
+   SBCL's own SIGCHLD handler only waits for RUN-PROGRAM's children, by pid, and the
+   web pane's orphan reaper asks PTY-CHILD-P. A waitpid that finds no such child
+   (ECHILD: someone reaped it anyway) is recorded as an unknown end, not left running."
   (when (eq (pty-proc-status proc) :running)
     (with-foreign-bytes (st 4)
-      (when (= (%waitpid (pty-proc-pid proc) st +wnohang+) (pty-proc-pid proc))
-        (let ((s (sb-sys:sap-ref-32 st 0)))
-          ;; the classic wait-status layout: low 7 bits = the signal (0 = exited
-          ;; normally), next byte = the exit code
-          (if (zerop (logand s #x7F))
-              (setf (pty-proc-status proc) :exited (pty-proc-code proc) (ldb (byte 8 8) s))
-              (setf (pty-proc-status proc) :signaled (pty-proc-code proc) (logand s #x7F)))))))
+      (let ((r (%waitpid (pty-proc-pid proc) st +wnohang+)))
+        (cond
+          ((= r (pty-proc-pid proc))
+           (let ((s (sb-sys:sap-ref-32 st 0)))
+             ;; the classic wait-status layout: low 7 bits = the signal (0 = exited
+             ;; normally), next byte = the exit code
+             (if (zerop (logand s #x7F))
+                 (setf (pty-proc-status proc) :exited (pty-proc-code proc) (ldb (byte 8 8) s))
+                 (setf (pty-proc-status proc) :signaled (pty-proc-code proc) (logand s #x7F)))))
+          ((and (minusp r) (= (pty-errno) 10))          ; ECHILD: reaped elsewhere
+           (setf (pty-proc-status proc) :unknown))))))
+  (unless (eq (pty-proc-status proc) :running)
+    (remhash (pty-proc-pid proc) *pty-children*))
   (pty-proc-status proc))
 
 (defvar *pty-orphans* '()

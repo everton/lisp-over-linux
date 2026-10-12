@@ -311,6 +311,7 @@
                  (case (pty-proc-status proc)
                    (:exited (format nil "exited with code ~d" (pty-proc-code proc)))
                    (:signaled (format nil "killed by signal ~d" (pty-proc-code proc)))
+                   (:unknown "ended (its exit status was reaped elsewhere)")
                    (t "the terminal hung up")))
            (return-from service-one :ended))
           ((zerop n) (return))

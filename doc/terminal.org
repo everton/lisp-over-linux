@@ -384,7 +384,12 @@ syscall per terminal):
   HUP and ERR count as ready; the read sees EOF; the program is reaped with
   =waitpid=. (EIO arrives a moment /before/ the child is a zombie, so we wait up to
   200 ms for the exit status — the first guest run said "the terminal hung up" for
-  a clean =exit=.)
+  a clean =exit=.) After the web pane merged it said so again, for another reason:
+  PID 1 inherits orphans, and =web-reap-orphans= ([[file:../initramfs/web.lisp][web.lisp]]) reaps every child SBCL
+  does not know — which included ours, taking the exit status first. pty.lisp keeps
+  its live children in =*pty-children*= and the reaper now asks =pty-child-p=; an
+  =ECHILD= from our own =waitpid= is recorded as an unknown end rather than left
+  "running" forever.
 - *A budget.* One pass takes at most 512 KB from a terminal, so =cat= of a huge
   file cannot keep the loop parsing while =^C= waits.
 - *Rows, not frames.* The engine marks the rows it changed. When the current pane
