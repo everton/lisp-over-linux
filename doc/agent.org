@@ -1,7 +1,14 @@
 #+TITLE: The Agent — an LLM client native to the Lisp machine
 #+STARTUP: showall
 
-Status: *PLAN ONLY — nothing implemented.* Parent docs:
+Status: *BUILT — the agent track, A0–A2 (2026-10-12).* The client, the tool surface,
+the three doorways (REPL, environment, debugger) and the gate are in the image and
+tested end to end against a mock Messages API in the guest (=check-agent.lisp=,
+22/22, also with the host root mounted). HTTPS is the networking track's =http-request= (TLS through the host's
+libssl), not the broker of §4 and not §9's TLS-from-scratch. *No real API call has
+been made yet* — there was no key on the build host. *§14 is what shipped and where
+it departs from the plan below*; the plan is kept as written, because the reasons
+in it are still the reasons. Parent docs:
 [[file:networking.org][networking.org]] (the TCP layer this stands on) ·
 [[file:code-browser.org][code-browser.org]] (the environment it plugs into) ·
 [[file:sbcl-init.org][sbcl-init.org]] (the Lisp userland) ·
@@ -222,18 +229,18 @@ big /protocol/ on the list: after TLS, this machine can talk to anything.
 | Layer               | Status                | Rough size | Notes                                       |
 |---------------------+-----------------------+------------+---------------------------------------------|
 | TCP sockets         | *DONE*                | —          | =sb-bsd-sockets=, baked in by =build.sh=    |
-| HTTP/1.1 client     | to write              | ~200 lines | request build, chunked + =content-length=   |
-| JSON reader/printer | to write              | ~300 lines | §5                                          |
-| SSE framing         | to write              | ~80 lines  | =event:= / =data:= lines, blank-line frames |
-| Messages protocol   | to write              | ~250 lines | request shaping, block types, tool loop     |
-| Tool surface        | *mostly done*         | ~200 lines | schemas + dispatch over existing functions  |
-| Conversation model  | to write              | ~250 lines | CLOS objects + =present= methods (§6)       |
-| REPL doorway        | to write              | ~80 lines  | §8.2 — the =?= prefix, works over the net REPL |
-| "Ask it" verb       | to write              | ~60 lines  | §8.1 — =C-c C-a= + one =commands-for= entry |
-| Conversation surface| to write              | ~400 lines | §8.3 — a Workspace variant + streaming (§8.7) |
-| Approval            | *free*                | ~30 lines  | §8.4 — =restart-case=; the rail already exists |
-| Modes + indicators  | to write              | ~120 lines | §8.9 — two special variables, three indicators |
-| Debugger doorway    | to write              | ~150 lines | §8.8 — a restart + an accept-and-retry      |
+| HTTP/1.1 client     | *DONE* (network track)| —          | =http.lisp=; the agent calls it (§14.1)       |
+| JSON reader/printer | *DONE*                | 341 lines  | §5 — [[file:../initramfs/json.lisp][json.lisp]]                    |
+| SSE framing         | *DONE*                | ~90 lines  | in [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]                    |
+| Messages protocol   | *DONE*                | in agent.lisp | streaming, retries, cancel, usage (§14)  |
+| Tool surface        | *DONE*                | in agent.lisp | 9 read tools + 4 gated writes (§14)      |
+| Conversation model  | *DONE*                | in agent.lisp | CLOS objects (§6); =present= in agent-ui |
+| REPL doorway        | *DONE*                | —          | §8.2 — =?prose=, bare =?=, =(ask …)=          |
+| "Ask it" verb       | *DONE*                | —          | §8.1 — =C-c C-a= (and =C-c ?=, §14)          |
+| Conversation surface| *DONE*                | 720 lines (agent-ui) | §8.3 — a Workspace pane, streamed  |
+| Approval            | *DONE*                | ~60 lines  | §8.4 — a condition; the chooser card (§14)   |
+| Modes + indicators  | *partly*              | —          | §8.9 — both dials; tray + tab dot; no glyph/prompt |
+| Debugger doorway    | *DONE* (read-only)    | ~100 lines | §8.8 — the ASK restart + a viewer (§14)      |
 | TLS 1.3 client      | *Phase 3 sub-project* | ~1500 lines| §9 — the only genuinely hard part           |
 
 Everything above the TLS row is the agent track (A0–A2, §12) and needs *no
@@ -857,9 +864,9 @@ image that exercises them.
 
 | Phase | Ships                                                                  | Kernel work |
 |-------+------------------------------------------------------------------------+-------------|
-| A0    | =json.lisp=, =http.lisp=, SSE, Messages protocol, =(ask "…")= in the REPL | none      |
-| A1    | tool surface + gating; conversation objects + =present=; browser tab; Spotter "ask" | none |
-| A2    | the debugger doorway (§8.8): ASK restart, propose → accept → retry       | none        |
+| A0    | =json.lisp=, =http.lisp=, SSE, Messages protocol, =(ask "…")= in the REPL — *DONE* | none |
+| A1    | tool surface + gating; conversation objects + =present=; browser tab; Spotter "ask" — *DONE* | none |
+| A2    | the debugger doorway (§8.8): ASK restart, propose → accept → retry — *DONE*, read-only | none |
 
 *They meet:*
 
@@ -891,6 +898,216 @@ is the /this could not have been the CLI/ one.
   the schema honest but the gating carry all the weight. An alternative is to
   drop it and force the agent through the typed tools — slower, but every action
   is then a named, reviewable thing rather than an arbitrary form.
+
+* 14. What was built (2026-10-12) — and where it departs from the plan
+
+The agent track, A0 to A2, in four files loaded after the shell (=LISP_SOURCES=, see
+[[file:sbcl-init.org][sbcl-init.org]]):
+
+| File | Lines | What it is |
+|------+-------+------------|
+| [[file:../initramfs/json.lisp][json.lisp]] | 341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
+| [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?) |
+| [[file:../initramfs/agent.lisp][agent.lisp]] | 1304 | settings, the conversation object, the tools, the gate, the streamed Messages client, the turn loop, the system prompt, the REPL doorway |
+| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 720 | =present= on conversations / tool calls / the agent, Ask it, the frame tick, the approval chooser, the indicators, the debugger doorway |
+
+Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (54 checks, the whole
+client against the mock on loopback, with =HOME= pointed at a scratch directory), and
+the guest check [[file:../check-agent.lisp][check-agent.lisp]] (22 assertions). The mock is
+[[file:../host-client/mock-anthropic.lisp][host-client/mock-anthropic.lisp]]: a host-side stand-in for the Messages API that
+streams the way the real one does (chunked, in 7-byte pieces, thinking signatures,
+tool input as =input_json_delta= fragments cut inside strings) and *refuses with a 400*
+what the real API would refuse — a thinking block echoed back altered, a =tool_use=
+without its =tool_result=, an API key sent to a host that is not
+=api.anthropic.com=. The guest reaches it at =10.0.2.2=, which §0.4 says the real
+agent must never depend on — which is exactly why it is a test fixture and not a
+transport.
+
+** 14.1 The transport: no broker, and why
+
+§0 decided "Option B on a finished network layer, staged through a broker". The
+network layer did get finished (the networking track, in parallel: route, a Lisp DNS
+resolver, SNTP, and =http-request= with TLS through the *host's* libssl loaded from
+=/mnt/host= at runtime), so the broker stage was skipped: the agent calls
+=http-request= — =(transport)= in =agent.lisp=, which a test can redirect through
+=*agent-transport*=. While the two tracks ran in parallel, =agent-wire.lisp= carried
+a plain-http stand-in with the same signature (=agent-plain-http=); it was deleted
+when the networking track merged, and every test now goes through the real client —
+the host test loads =net=, =dhcp=, =dns=, =sntp=, =tls= and =http= as
+=poc/http-test.lisp= does, and the guest check asserts the transport *is*
+=HTTP-REQUEST=. A transport failure (=http-error=, =dns-error=, a dead socket, a
+timeout) is retried like a 5xx; a =tls-error= is not — a certificate that does not
+verify will not verify on the next attempt either.
+
+The mock is plain http, so neither run exercises TLS; that, and the endpoint itself,
+wait for the first real call, which is still owed (no key on the build host).
+
+TLS from scratch (§9) is therefore *not* on the critical path any more. It stays the
+didactic sub-project it always was.
+
+** 14.2 The protocol, as sent
+
+- *Model* =claude-opus-5-5= by default (§6's sketch said =claude-opus-5=; the default
+  moved with the model line). Everything about a request is a special variable, and
+  =~/.config/lol/agent.lisp= may set them: =:model :max-tokens :effort
+  :thinking-display :endpoint :fallbacks :wrap :max-rounds :initiative :authority=.
+  The file is one plist, *READ, never LOADed, with =*read-eval*= off* — a settings file
+  must not be able to run code, and =#.= would. Unknown keys and ill-typed values are
+  reported and skipped.
+- *Thinking* =adaptive=, =display: "summarized"=: Opus 5.5 always thinks, and a
+  summary is worth one dim =;; (thinking: …)= line. Its blocks go back *unchanged*,
+  signature included (§6's warning; the mock checks it).
+- *Prompt caching*: the system prompt is a stable definition in the registry
+  (=*agent-system-prompt*= — browsable and Accept-able, as §13 leaned), and carries a
+  cache breakpoint; so does the last tool; and the request carries the top-level
+  automatic one, which caches the history. The body is serialised field by field in a
+  fixed order (§5) — =poc/agent-test.lisp= checks two serialisations are byte-equal.
+- *Tools* stream their input eagerly (=eager_input_streaming=), so a long
+  =lisp-accept= source arrives as it is written — which means the API no longer
+  validates it, so the client checks every input against its schema
+  (=check-tool-input=) and answers unparseable JSON with an =INVALID_JSON= error
+  result instead of running anything.
+- *Refusals*: =fallbacks: "default"= with the =server-side-fallback-2026-07-01= beta
+  header, for the models that have server-side fallback (not Haiku). A =refusal= or a
+  =max_tokens= stop with tool calls in it never runs those tools; the next question
+  first answers them with "not run" results, because an unanswered =tool_use= makes
+  the next request invalid.
+- *Retries*: 408/409/429/5xx/529, the =overloaded_error= / =api_error= /
+  =rate_limit_error= *events* that can arrive mid-stream, and dropped connections —
+  exponential backoff or the server's =retry-after=, five attempts, *each one a
+  visible note in the transcript*. A partial reply is never kept.
+- *Cancellation*: =C-g= sets a flag the stream checks between chunks *and* interrupts
+  the turn's thread with a =throw=, because a turn can be blocked in a read with no
+  chunk coming. The conversation goes on afterwards (tested).
+- *Cost*: every response's =usage= (input, cache read, cache write, output) priced per
+  model (=+agent-prices+=, the 2026-10-06 first-party rates; a cache write at 1.25×
+  input), per turn, per conversation and per session.
+- *The key*: =~/.config/lol/anthropic-api-key=, read at runtime (never in the saved
+  heap, §11), kept in one special variable, never printed, and sent *only* when the
+  endpoint is =https://api.anthropic.com= — not over http, not to any other host
+  (tested both ways). A diskless boot has no =/home=; the agent then says it has no
+  key and where it would look, and the environment starts as usual.
+
+** 14.3 The tool surface
+
+| Tool | Behind it | Opens (C-c C-o) |
+|------+-----------+-----------------|
+| =lisp-apropos= | =spotter-candidates= + =spotter-filter= | — |
+| =lisp-source= | =definitions-of=, else =show-reference= (SBCL's source from disk) | the definition |
+| =lisp-senders= | =senders= / =referrers= / =binders= / =setters= / =macro-users= | the senders view |
+| =lisp-describe-class= | =class-info= + =methods-on-class= | the class |
+| =lisp-describe-gf= | =gf-info= | the generic |
+| =lisp-describe= | CL =describe= | the symbol |
+| =lisp-modules= | =categorize :file= | the module index / a module |
+| =file-read= / =file-list= | =files.lisp=; *under =$HOME= only*, symlinks resolved first | the file / folder |
+| =lisp-eval= (write) | =eval=, read with =*read-eval*= off | the value |
+| =lisp-accept= (write) | =accept-source= — the very function =C-c C-c= calls | the definition |
+| =file-write= (write) | =write-file-atomically= (temp file + rename) | the file |
+| =container-run= (write) | =run-in-container= — offered only when it is =fboundp= | — |
+
+Not built from §2.2: =lisp-specializers=, =lisp-applicable=, =lisp-inspect=,
+=lisp-backtrace= (the debugger doorway seeds the backtrace instead), and §8.5's
+=browse=. =lisp-eval= exists (§13 asked); the gate carries the weight, as §13 warned.
+
+Name lookup never interns: a model's typo must not litter the image with symbols, so
+names go through =find-symbol=, never =read=.
+
+** 14.4 The doorways, and the departures
+
+- *REPL* (§8.2): =?prose= asks, a bare =?= opens prose mode until a blank line (prompt
+  =?>=), =(ask "…")= / =(ask :new "…")= return the conversation. Writes ask right
+  there: the same three restarts, numbered. Works over the network REPL (tested).
+  *Not built*: the prompt's agent mark — the line editor colours the whole prompt with
+  one SGR, so a mark in another colour needs a change to =refresh-line=.
+- *Ask it* (§8.1) is =C-c C-a= in every editor pane and on lists — *except* on a
+  function's inspector, where =C-c C-a= was already /Apply it/ (Workspace primer,
+  shell hints, cheatsheet); it keeps that meaning there, and =C-c ?= is Ask
+  everywhere. With prose selected the prose is the question; with a form, or nothing,
+  the minibuffer asks for a question (Enter alone asks "what is this"). Every subject
+  also gains an /Ask the agent about this/ command (one =:around= method on
+  =commands-for=), so it is in the right-button menu and the halo.
+- *A conversation is a Workspace* (§8.3) — literally a =:workspace= view — with one
+  rendering decision the plan did not foresee: *the model's prose is written as =;;=
+  comments* and only its =```lisp= blocks as raw code. The Workspace verbs find "the
+  form before point" by reading the buffer from the top, and prose with a stray comma
+  or an unbalanced quote would make every form below it unreachable. As comments, the
+  whole conversation reads as a Lisp file, and =C-x C-e= / =C-c C-c= work on a
+  proposal exactly where it landed. The next question is whatever you type after the
+  last =;; --- your turn= line; asking takes it out of the buffer and the turn writes it
+  back as =;; ?= lines. While a turn streams, that pane is read-only (motion still
+  works; edits above it are never overwritten afterwards).
+- *Threads* (§8.7 preferred one): =http-request='s contract is a blocking call with a
+  callback, so a turn runs on a thread of its own; but *tools run on the environment's
+  thread* — the turn posts a job and waits, and the frame tick runs it — so the image's
+  UI state is still touched by one thread, and an approval has a screen to ask on. The
+  conversation object, under its mutex, with a revision counter the tick polls, is the
+  only thing the two threads share. Redraws are budgeted at ~15 Hz while a turn runs
+  and stop entirely when none does.
+- *Approval* (§8.4) is the =TOOL-APPROVAL-REQUEST= condition with =ALLOW=, =DENY=
+  (optionally with a reason) and =EDIT= restarts — real restarts, offered *in the
+  chooser card the right-button menu uses*, not the debugger's rail: the rail belongs
+  to a modal debugger standing on a stack, and the chooser is the environment's
+  existing "choose from what is offered" move. Keys 1–4; Esc denies, because the
+  turn's thread is waiting on the answer. It is only asked *while you are looking at
+  the conversation* — elsewhere the status line says the agent waits, the tab's dot
+  turns amber, and =SuperL-a= takes you there (§8.5's "never steal focus"). A write's
+  full input (the form, the source, the file body) is in the transcript above the
+  card, so you see what you approve. Nobody handling the condition (a script) means
+  declined.
+- *Modes* (§8.9): both dials exist as special variables, bindable with =LET=;
+  =:read-only= removes the write tools from the request; =:off= makes asking inert.
+  =:interacting= exists and shows (a filled dot) but *nothing yet acts
+  unasked* — the dial is in place for when something does. Indicators built: the
+  tray's =agent ask $0.01= (colour = authority: teal read-only, amber ask, red allow,
+  dim off; =...= while working, =?= while waiting) and a dot over the =·= of a
+  conversation's tab (hollow / filled, pulsing while it works). Not built: the 16×16
+  alien glyph. The agent is also a subject — Spotter "agent" — whose rows are settable
+  with =C-c C-c= and whose commands set the dials.
+- *How do you know that* (§8.6): every tool call is a =;; #N name argument -> summary=
+  line; =C-c C-o= on it opens the subject that call was about, the same view you would
+  have reached by hand.
+- *The debugger* (§8.8): =ASK - explain this, and propose a fix= is a real restart,
+  established around the rail by =run-debugger-fb= and listed *last*, so Enter still
+  means the condition's own first restart. Choosing it starts a conversation seeded
+  with the report, the restarts, the backtrace, and the source and locals of the
+  innermost frame we have source for, and shows it streaming in a viewer over the
+  standing stack; =C-c C-c= there accepts the form before the caret; Esc returns to
+  the rail, where retrying is the condition's own restart (§8.8's caveat). Departure:
+  *this conversation is read-only and its tools run on its own thread* — the debugger
+  is modal and runs no frame tick to hand them to, and it is the highest-stakes place
+  to let a model write; the one write here is your =C-c C-c=.
+
+** 14.5 Two collisions, found before the merge
+
+=CL-USER= is shared by every module, so names are a merge risk. Two were real:
+=web-cdp.lisp= (the browser track) defines its own =JOBJ= / =JGET= / =WRITE-JSON= in
+=CL-USER=, and =http.lisp= defines =PARSE-URL= and =HEADER-VALUE=. Had =agent.lisp=
+done =(use-package :lol.json)=, loading =web-cdp.lisp= afterwards would have
+*silently redefined* =LOL.JSON:JOBJ=; so the agent writes =lol.json:jget= in full, and
+its two URL/header helpers are =agent-parse-url= / =agent-header-value=.
+
+** 14.6 Ruled out (so nobody repeats the search)
+
+- *"The conversation hangs after a cancel"* — was the mock, not the client. The mock
+  served one connection at a time, so the cancelled slow reply held it; and it chose
+  its reply from /every/ text block of the last user message, and a question asked
+  after a cancel is folded into the unanswered one, which still said "slow". Fixed in
+  the mock (a thread per connection, steer by the last block). The client was fine.
+- *"A non-ASCII probe kills the net REPL"* — the harness's REPL stream is Latin-1 on
+  the host and the guest reads UTF-8, so a literal é ended the session with a broken
+  pipe. A property of the test channel, not of the agent; the check spells it
+  =(code-char 233)=.
+- *A stale last frame* was real and is fixed: the turn's final =touch= can land just
+  after the tick that saw the conversation go idle, and the loop then slept until a
+  key. The poll deadline now also wakes for a revision not yet drawn.
+
+** 14.7 Still owed
+
+- *The first real call*: put a key in =~/.config/lol/anthropic-api-key= (=0600=) on
+  the laptop and ask. Nothing in the image has spoken to =api.anthropic.com= yet.
+- §8.5's =browse= tool, the =lisp-inspect= / =lisp-applicable= / =lisp-backtrace=
+  tools, the REPL prompt mark, the alien glyph, anything for =:interacting= to do.
+- Persistence (§12 phase 4): a conversation still dies at power-off.
 
 * Appendix — measurements taken for this doc
 

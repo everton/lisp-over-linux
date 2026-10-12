@@ -932,11 +932,13 @@
 (defvar *tray-clip-rect* nil "The clipboard icon's x-range (x0 . x1), for clicks.")
 
 (defun tray-tone-color (tone)
-  "A battery tone as a colour — the host script's green / yellow / red."
+  "A tray tone as a colour — the battery's green / yellow / red (the host script's),
+   and the agent's authority: teal read-only, amber ask, red allow, dim off."
   (case tone
     ((:ok :charging) (concept-color :method))     ; green
     (:warn *ui-amber*)
     (:low (concept-color :condition))             ; red
+    (:safe *ui-accent*)                           ; the agent read-only (doc/agent.org §8.9)
     (t *ui-dim*)))
 
 (defun draw-clip-icon (canvas x y color)
@@ -969,7 +971,7 @@
       (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) 3 *ui-rule*)
       (incf pen 16)
       (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen 3
-                                        (if (member (getf it :kind) '(:battery :wifi :wired))
+                                        (if (member (getf it :kind) '(:battery :wifi :wired :agent))   ; :agent — agent-ui.lisp
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
     (setf *tray-rect* (list x0 0 tw (- +bar-h+ 1)))
@@ -1000,6 +1002,17 @@
                (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) 3 *ui-dim*)))
                  (lol.canvas:draw-string canvas *bfont* title pen 3
                                          (if active *ui-accent* *ui-text*)))
+               ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
+               ;; §8.9): colour = authority, filled = :interacting, pulsing = working
+               (multiple-value-bind (dot filled)
+                   (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
+                 (when dot
+                   (let ((dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
+                         (dy (- (floor +bar-h+ 2) 3)))
+                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) 8 8 (if active *ui-hi* *ui-panel*))
+                     (if filled
+                         (lol.canvas:fill-rect canvas dx dy 6 6 dot)
+                         (lol.canvas:draw-rect canvas dx dy 6 6 dot)))))
                (when closer
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
                    (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx 3
@@ -1285,10 +1298,14 @@
                                   (cons "SuperL-o"
                                         (if (eq (view-kind (pane-view cur)) :stage)
                                             "back to stage" "back to list"))))
+                           ;; a conversation with the agent (initramfs/agent-ui.lisp)
+                           ((and (fboundp 'pane-conversation) (funcall 'pane-conversation cur))
+                            '(("C-c C-a" . "ask") ("C-c C-o" . "open #N call")
+                              ("C-x C-e" . "Do it") ("C-c C-c" . "define") ("C-g" . "stop")))
                            ((workspace-pane-p cur)
                             '(("C-x C-e" . "Do it") ("C-c C-p" . "Print")
                               ("C-c C-i" . "Inspect") ("C-c C-d" . "Debug")
-                              ("C-c C-c" . "define")))
+                              ("C-c C-c" . "define") ("C-c C-a" . "Ask")))
                            ((lisp-file-pane-p cur)
                             '(("C-x C-s" . "save") ("C-x C-e" . "Do it") ("C-c C-c" . "define")
                               ("C-_" . "undo") ("C-g" . "close")))
@@ -1819,6 +1836,11 @@
   (let ((tv (pane-tv p)))
     (cond
       ((null tv) (edit-pane-command p key state))
+      ;; a conversation being answered is read-only until the turn ends (agent-ui.lisp);
+      ;; moving about is still fine
+      ((and (fboundp 'agent-pane-busy-p) (funcall 'agent-pane-busy-p p)
+            (not (member key '(:up :down :left :right :page-up :page-down :home :end))))
+       (setf *browser-status* "the agent is writing here — C-g stops it") nil)
       ((undo-key-p key state) (editor-undo tv) nil)
       (t (let ((before (lol.textview:tv-undo-checkpoint tv)))
            (prog1 (edit-pane-command p key state)
@@ -1878,6 +1900,12 @@
                  (workspace-pane-p p))
             (workspace-inspect-it p))
            ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
+           ;; C-c C-a — Ask it: the agent's verb (doc/agent.org §8.1, initramfs/agent-ui.lisp)
+           ((and (eq prefix :c-c) (or (and c (eql key #\a)) (eql key #\?)) (fboundp 'agent-ask-at-pane))
+            (funcall 'agent-ask-at-pane p))
+           ;; C-c C-o — in a conversation, open what the ;; #N tool call was about (§8.6)
+           ((and (eq prefix :c-c) c (eql key #\o) (fboundp 'agent-open-at-point))
+            (funcall 'agent-open-at-point p))
            ((and (eq prefix :c-x) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
             (workspace-do-it p)))
          nil))
@@ -1927,6 +1955,8 @@
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
        (cond
+         ;; a conversation that is answering: C-g stops the turn (doc/agent.org §8.7)
+         ((and (fboundp 'agent-cancel-at-pane) (funcall 'agent-cancel-at-pane p)))
          ;; focus is in the right column: hand it back to the list and STOP. Popping
          ;; the trail as well would throw away the split you are standing in, when
          ;; all you asked for was to stop editing.
@@ -1975,6 +2005,8 @@
          ((member key '(#\l #\L))                                              ; the CL-USER package
           (new-trail (find-package :cl-user)) nil)
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
+         ((member key '(#\a #\A))                                              ; the agent's conversation
+          (when (fboundp 'agent-show) (funcall 'agent-show)) nil)
          ((member key '(#\? #\/))                                              ; Super-? — every binding
           (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
          ((member key '(#\q #\Q)) (leave-menu))                             ; shut down / console
@@ -2047,8 +2079,15 @@
               ((member key '(#\c #\C)) (set-field p))
               ;; C-c C-e — Evaluate in context: the Smalltalk code pane, on any subject.
               ((member key '(#\e #\E)) (eval-in-context-pane p))
-              ;; C-c C-a — Apply it: only meaningful when the subject IS a function.
-              ((member key '(#\a #\A)) (apply-function-pane p))))
+              ;; C-c C-a — Apply it when the subject IS a function (that binding came
+              ;; first); on any other subject it is Ask it, the agent's verb.
+              ((member key '(#\a #\A))
+               (if (or (functionp (pane-subject p)) (not (fboundp 'agent-ask-at-pane)))
+                   (apply-function-pane p)
+                   (funcall 'agent-ask-at-pane p)))))
+          ;; C-c ? — Ask it on any list, a function's view included
+          (when (and (eql key #\?) (fboundp 'agent-ask-at-pane))
+            (funcall 'agent-ask-at-pane p))
           nil)
          ((and (lol.canvas:ctrl-p state) (member key '(#\c #\C)))
           (setf *pending-prefix* :c-c) nil)

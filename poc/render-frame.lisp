@@ -31,6 +31,7 @@
 
 (require :sb-introspect)
 (require :sb-posix)
+(require :sb-bsd-sockets)       ; the agent's transport (agent-wire.lisp)
 
 ;;; ---- load the real stack -------------------------------------------------
 ;;; The order matters and mirrors build.sh's LISP_SOURCES. registry.lisp goes first
@@ -74,6 +75,10 @@
     "poc/file-manager.lisp"       ; the file manager's keys and prompts
     "initramfs/runs.lisp"         ; run panes: a command's output, streamed (needs shell)
     "initramfs/containers.lisp"   ; containers as subjects (no lol-ct on the host: says so)
+    "initramfs/json.lisp"         ; lol.json — the agent's wire format
+    "initramfs/agent-wire.lisp"   ; SSE + the plain-http transport
+    "initramfs/agent.lisp"        ; the agent: conversations, tools
+    "initramfs/agent-ui.lisp"     ; a conversation as a Workspace pane, the tray item
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).
@@ -193,6 +198,33 @@ OPTIONS
                 ((null (rest hits)) (first hits))
                 (t (error "~a names a class in several packages: ~{~s~^, ~}" name hits)))))))
 
+(defun demo-conversation ()
+  "A finished conversation built by hand — no network — so the agent's pane can be
+   looked at headless: a question, thinking, a tool call, a reply with live code."
+  (let* ((c (make-conversation :title "why does draw-alien flip?"))
+         (call (make-instance 'tool-call :id "toolu_demo" :number 0 :name "lisp-source"
+                                         :input (lol.json:jobj "name" "draw-alien"))))
+    (setf (call-status call) :done (call-summary call) "1 definition"
+          (call-subject call) (subj-defn 'draw-alien) (call-result call) "(source)")
+    (vector-push-extend call (conversation-calls c))
+    (flet ((blk (&rest kv) (make-instance 'content-block :json (apply #'lol.json:jobj kv))))
+      (vector-push-extend (make-turn :question "why does draw-alien flip the rows?" :start 0 :done t
+                                     :usage (list :input 2140 :output 312 :cache-read 1800
+                                                  :cache-write 0 :cost 0.0141d0))
+                          (conversation-turns c))
+      (append-message c "user" (list (blk "type" "text" "text" "why does draw-alien flip the rows?")))
+      (append-message c "assistant"
+                      (list (blk "type" "thinking" "thinking" "Look at the blit loop first." "signature" "s")
+                            (let ((b (blk "type" "tool_use" "id" "toolu_demo" "name" "lisp-source"
+                                          "input" (lol.json:jobj "name" "draw-alien"))))
+                              (setf (block-call b) call) b)))
+      (append-message c "user" (list (blk "type" "tool_result" "tool_use_id" "toolu_demo" "content" "(source)")))
+      (append-message c "assistant"
+                      (list (blk "type" "text" "text"
+                                 (format nil "It does not flip them: alien.rgba is stored top-to-bottom, the same order /dev/fb0 scans, so each row is copied to y + row as it comes. If you wanted it upside down, this would do it:~%~%```lisp~%(defun alien-row-y (y0 row) (- (+ y0 149) row))~%```~%~%C-c C-c on that form compiles it into the image."))))
+      (setf (conversation-cost c) 0.0141d0))
+    c))
+
 (defun parse-subject (spec)
   "The SUBJECT command-line word -> a subject object for OPEN-ENVIRONMENT."
   (let* ((colon (position #\: spec))
@@ -229,6 +261,8 @@ OPTIONS
              (subj-dir path)
              (subj-file path))))
       ((string= head "changes")   (subj-change-set))
+      ((string= head "agent")     (subj-agent))
+      ((string= head "conversation") (demo-conversation))
       ;; network — the network view (doc/networking.org). Its modules are loaded only
       ;; when asked, with plain LOAD, so every other frame's module index is unchanged.
       ;; It shows THIS host's interfaces and routes; Wi-Fi rows need a supplicant and

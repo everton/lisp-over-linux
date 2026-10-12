@@ -90,6 +90,10 @@ LISP_SOURCES=(
   "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
   "$INITRAMFS_DIR/runs.lisp"         # run a program, stream its output into a live pane (uses shell + ansi)
   "$INITRAMFS_DIR/containers.lisp"   # the host's Debian as a container: lol-ct's Lisp side (doc/containers.org)
+  "$INITRAMFS_DIR/json.lisp"         # lol.json: JSON in/out, objects as a class (doc/agent.org S5)
+  "$INITRAMFS_DIR/agent-wire.lisp"   # SSE framing + a plain-http transport (until/besides http.lisp)
+  "$INITRAMFS_DIR/agent.lisp"        # the agent: conversation, Messages client, tools, approval, (ask ...)
+  "$INITRAMFS_DIR/agent-ui.lisp"     # the agent in the environment: conversation panes, C-c C-a, tick
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)

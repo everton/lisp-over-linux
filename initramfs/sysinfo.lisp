@@ -267,5 +267,8 @@
                   ;; loads later, so it is called by name, and only reads cached state
                   (and (fboundp 'network-tray-item)
                        (ignore-errors (funcall 'network-tray-item)))
+                  ;; the agent's authority and the session's cost (initramfs/agent-ui.lisp,
+                  ;; loaded later — doc/agent.org §8.9: a meter that is always on screen)
+                  (and (fboundp 'agent-tray-item) (ignore-errors (funcall 'agent-tray-item)))
                   (let ((c (ignore-errors (clock-string))))
                     (and c (list :kind :clock :text c)))))))
