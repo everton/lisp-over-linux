@@ -677,8 +677,11 @@
    C-c C-c accepts the form before it, C-g stops the turn, Esc returns to the rail."
   (let* ((canvas (symbol-value '*fb-canvas*)) (w (symbol-value '*fb-xres*)) (h (symbol-value '*fb-yres*))
          (tv (lol.textview:make-textview :font *bfont* :focus t))
-         (seen -1) (prefix nil) (note nil))
-    (lol.textview:tv-geometry tv 12 32 (- w 24) (- h 56))
+         (seen -1) (prefix nil) (note nil)
+         ;; the title band and the note line follow the current font (doc/fonts.org §6):
+         ;; 24 and 20 px under the old 6x15 font
+         (band (+ (line-h) 9)))
+    (lol.textview:tv-geometry tv 12 (+ band 8) (- w 24) (- h band 8 (line-h) 9))
     (loop
       (let ((rev (conversation-revision conv)))
         (when (/= rev seen)
@@ -686,13 +689,13 @@
           (let ((lines (coerce (conversation-lines conv) 'simple-vector)))
             (lol.textview:tv-replace tv lines (1- (length lines)) 0))))
       (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-      (lol.canvas:fill-rect canvas 0 0 w 24 *ui-hi*)
+      (lol.canvas:fill-rect canvas 0 0 w band *ui-hi*)
       (lol.canvas:draw-string canvas *bfont*
         (format nil "ASK — ~a   ·   C-c C-c accept the form before the caret · C-g stop · Esc back to the restarts"
                 (if (conversation-busy-p conv) "answering..." "done"))
-        12 5 *ui-accent*)
+        12 (text-dy band) *ui-accent*)
       (lol.textview:tv-draw canvas tv)
-      (when note (lol.canvas:draw-string canvas *bfont* note 12 (- h 20) *ui-amber*))
+      (when note (lol.canvas:draw-string canvas *bfont* note 12 (- h (line-h) 5) *ui-amber*))
       (funcall 'show-frame canvas)
       (multiple-value-bind (kb ms kev)
           (funcall 'fbb-wait 0 (symbol-value '*fb-mouse*) (symbol-value '*fb-kbd*)

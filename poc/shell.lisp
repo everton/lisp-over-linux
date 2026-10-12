@@ -1079,12 +1079,15 @@
                (multiple-value-bind (dot filled)
                    (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
                  (when dot
-                   (let ((dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
-                         (dy (- (floor +bar-h+ 2) 3)))
-                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) 8 8 (if active *ui-hi* *ui-panel*))
+                   ;; the dot covers the "·" cell, so it grows with the font: 6 px at 6x15
+                   (let* ((s (max 6 (- (char-w) 3)))
+                          (dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
+                          (dy (- (floor +bar-h+ 2) (floor s 2))))
+                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) (+ s 2) (+ s 2)
+                                           (if active *ui-hi* *ui-panel*))
                      (if filled
-                         (lol.canvas:fill-rect canvas dx dy 6 6 dot)
-                         (lol.canvas:draw-rect canvas dx dy 6 6 dot)))))
+                         (lol.canvas:fill-rect canvas dx dy s s dot)
+                         (lol.canvas:draw-rect canvas dx dy s s dot)))))
                (when closer
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
                    (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
