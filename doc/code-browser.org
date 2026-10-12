@@ -1532,7 +1532,8 @@ list where the design puts it.
 | =SuperL-Space=                    | the Spotter                           |
 | =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])     |
 | =SuperL-b=                        | a web page, Chrome headless ([[file:web-browser.org][web-browser.org]]); on a web pane =SuperL-←/→= are the page's back / forward |
-| =SuperL-↵= / =SuperL-click=       | open the selection in a NEW trail      |
+| =SuperL-↵=                        | a terminal: a shell in a new trail ([[file:terminal.org][terminal.org]]) |
+| =SuperL-⇧-↵= / =SuperL-click=     | open the selection in a NEW trail (was =SuperL-↵= until the terminal took it) |
 | =↵=                              | drill in place (same trail)            |
 | =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
 | =↑= / =↓=                        | move the selection within a panel      |
@@ -2377,6 +2378,15 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   menu uses; the debugger's rail gains an =ASK= restart. Its state is the only
   permanent chrome added since the tray: the tray's =agent ask $0.01= and a dot on the
   conversation's tab. Verified in the guest by =check-agent.lisp= against a mock API.
+- *Not a phase: the terminal* (2026-10-12). [DONE — [[file:terminal.org][terminal.org]]] A shell is a
+  SUBJECT too: =subj-terminal= ([[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]]) opens in a trail like
+  anything else, its view kind =:terminal= drawn by =draw-terminal-body=. It takes
+  every key except the =SuperL= layer, so tabs, the Spotter and leaving still work
+  over vim. =SuperL-↵= opens one (a login shell in the default container), which
+  moved "open the selection in a new trail" to =SuperL-⇧-↵=; the Spotter offers
+  "terminal". It is the first view that changes on its own *without* a timer: the
+  loop polls the terminals' pty masters beside the input devices and repaints only
+  the rows a program changed.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

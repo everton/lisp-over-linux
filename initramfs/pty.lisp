@@ -25,8 +25,10 @@
 ;;;; leader opens becomes its controlling terminal). SBCL's RUN-PROGRAM :PTY does not
 ;;;; do the first step (it calls setpgrp, not setsid) and switches ECHO off, so it is
 ;;;; not usable here. We use posix_spawn(3) instead: glibc's POSIX_SPAWN_SETSID does
-;;;; the setsid, and a file action opens the slave on fd 0 AFTER it — glibc runs the
-;;;; two in exactly that order (sysdeps/unix/sysv/linux/spawni.c). No fork in Lisp,
+;;;; the setsid, and a file action opens the slave on fd 0 AFTER it. That glibc runs
+;;;; the two in that order is checked by its EFFECT, not its source (no glibc tree on
+;;;; this machine): poc/pty-test.lisp sees `tty' name the slave and ^C arrive as
+;;;; SIGINT, which only a controlling terminal does. No fork in Lisp,
 ;;;; no C helper: posix_spawn is vfork+exec done in libc, in a child that runs no
 ;;;; Lisp at all, which is why it is safe to call from a garbage-collected image.
 ;;;;

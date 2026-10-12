@@ -46,11 +46,12 @@ CATS=(
 # dns/sntp/http are RFC wire formats and tls.lisp is an FFI binding to OpenSSL's
 # API — conformance; wifi.lisp and net-views.lisp are "ours" (which supplicant
 # requests, when, what to keep — a design, though it speaks wpa_supplicant's
-# control protocol).
+# control protocol). poc/terminal.lisp (the VT engine) is conformance too — its
+# floor is xterm's behaviour, not our design; pty.lisp and terminal-pane.lisp are ours.
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp host-client/mock-anthropic.lisp"
-  "conformance|poc/ttf.lisp initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
+  "conformance|poc/ttf.lisp initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp poc/terminal.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
   "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )

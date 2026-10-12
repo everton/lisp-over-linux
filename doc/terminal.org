@@ -1,0 +1,452 @@
+#+TITLE: The terminal — a pseudo-terminal, a parser, and a grid of cells
+#+STARTUP: showall
+
+*BUILT 2026-10-12* (kernel tag #26, no kernel change needed). =SuperL-↵= opens a
+shell in a pane: a login =bash= inside the default container
+([[file:containers.org][containers.org]]) when the host's root is mounted, and something lesser when it is
+not (§9). vim, less, htop, readline and psql run in it; the guest check below proves
+the shell, =less='s alternate screen, the scrollback and a resize.
+
+[[file:containers.org][containers.org]] §5.2 called this "the real work": =bash=, =rails console=, =psql=
+and =vim= expect a *terminal*, and under =KD_GRAPHICS= the browser owns the pixels,
+so the kernel's text console cannot be that terminal any more. This doc is the
+whole terminal, from the kernel's side to the pixels, for a reader who has used
+terminals all their life without needing to know what one is.
+
+| file | layer |
+|------+-------|
+| [[file:../poc/terminal.lisp][poc/terminal.lisp]] | =lol.terminal=, the *VT engine*: UTF-8 bytes in, a grid of cells out; and the reverse, keys / mouse / paste encoded as bytes. Pure data, no FFI. |
+| [[file:../initramfs/pty.lisp][initramfs/pty.lisp]] | *pseudo-terminals*: open =/dev/ptmx=, run a program on the slave as a session leader (=posix_spawn=), read, write, resize, reap. |
+| [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run. |
+| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 95 checks, incl. recordings of less, vi and bash. |
+| [[file:../poc/pty-test.lisp][poc/pty-test.lisp]] | host test of the ptys: 13 checks on real programs (bash, htop). |
+| [[file:../check-terminal.lisp][check-terminal.lisp]] | the guest check over QMP: 16 checks. |
+
+* 1. What a terminal is
+
+A terminal emulator is two translators, one each way, with the program on the far
+side of a kernel device:
+
+#+begin_example
+   program ──bytes──▶ [ parser ─▶ grid of cells ] ──pixels──▶ the screen
+   program ◀──bytes── [ key encoder             ] ◀──keys──── the keyboard
+#+end_example
+
+The program never learns that there is a screen. It writes =ESC [ 2 J= and trusts
+that whatever is on the other end will clear itself; it reads =ESC [ A= and decides
+that someone pressed the up arrow. Everything in this doc is about honouring those
+two contracts.
+
+That is why the engine ([[file:../poc/terminal.lisp][poc/terminal.lisp]]) knows no pixels, no file descriptors and
+no fonts. =term-feed= takes octets and changes a grid; =encode-key= takes a key and
+returns a string. Both are pure functions of data, so the whole engine is tested on
+the build host with a stock SBCL — against what real programs really send (§11).
+
+* 2. The pseudo-terminal
+
+A program decides whether it is interactive by asking whether its output is a
+*terminal* (=isatty(3)=, which is the =TCGETS= ioctl succeeding). Behind a pipe,
+=ls= prints one name per line, =git= turns colour off, and =python= buffers its
+output in 4 KB blocks. A real terminal used to be a serial line with a VT100 at
+the end of it; a *pseudo*-terminal is the kernel's way to let one process BE that
+VT100 for another:
+
+#+begin_example
+   terminal pane ── master fd ══════ kernel tty layer ══════ slave /dev/pts/N ── bash
+   (pty.lisp)                       line discipline:          (fds 0, 1, 2)
+                                    echo, ^C -> SIGINT,
+                                    ^Z -> SIGTSTP, the size
+#+end_example
+
+- Opening =/dev/ptmx= returns the *master* end and makes a new *slave*,
+  =/dev/pts/N= (=ptsname= says which). =unlockpt= allows it to be opened.
+  =/dev/pts= exists because preinit mounts *devpts* there (tag #26).
+- Bytes written to the master arrive at the slave as if typed; bytes the program
+  writes to the slave come out of the master for us to parse.
+- Between the two sits the *line discipline* — the very code that serves a real
+  serial line. That is why =^C= interrupts a program in our pane without a line of
+  ours: the kernel sees byte 3 arrive on the slave's input and signals the
+  foreground job. It also does the echo and the line editing of =cat=, a password
+  prompt, anything in "cooked" mode.
+- A *termios* ioctl on the master acts on the slave: the kernel redirects it
+  (=tty_mode_ioctl= sets =real_tty = tty->link= for a pty master,
+  =./linux/drivers/tty/tty_ioctl.c=). We use that once, to set =IUTF8= so the line
+  discipline's Backspace erases a whole UTF-8 character rather than one byte of it
+  (=pty-enable-utf8=).
+
+* 3. Sessions, and the controlling terminal
+
+A terminal does not just carry bytes; it carries *jobs*. The kernel groups
+processes into *sessions* (one per login, roughly) and those into *process groups*
+(one per pipeline). A session may have one *controlling terminal*, and exactly one
+of its process groups is that terminal's *foreground* group: the one =^C= signals,
+the one allowed to read the keyboard. A shell's job control (=&=, =fg=, =^Z=) is
+nothing but moving process groups in and out of the foreground.
+
+So a shell needs, before it starts: to *lead a new session*, and to have the slave
+as that session's *controlling terminal*. The recipe is two steps in the child,
+before =exec=:
+
+1. =setsid()= — start a new session, with no terminal yet.
+2. =open()= the slave without =O_NOCTTY= — the first terminal a session leader
+   opens becomes its controlling terminal (=tty_open_proc_set_tty= in
+   =./linux/drivers/tty/tty_jobctrl.c=, checked).
+
+*Why not =sb-ext:run-program :pty t=.* It is right there and opens =/dev/ptmx=
+correctly. But its child (=spawn= in =./sbcl/src/runtime/run-program.c=, checked)
+calls =setpgrp()=, not =setsid()=: a new process *group* in the *old* session,
+which already has a terminal (or none), so the slave never becomes a controlling
+terminal. And =set_pty= turns =ECHO= off on the slave. bash then says "no job
+control in this shell", =^C= reaches nothing, and =cat= does not echo. That is
+harmless for =runs.lisp= (the containers track's run panes: output only, stdin
+=/dev/null=, one reader thread each — [[file:containers.org][containers.org]] §7), and fatal for a
+shell. So the terminal does not reuse that layer; the two share nothing but
+=/dev/ptmx=.
+
+*What we use: =posix_spawn=.* glibc's =posix_spawn= is fork-and-exec done inside
+libc (a =vfork=-style child that runs no Lisp at all, so a garbage-collected,
+signal-handling image can call it safely), driven by two small tables:
+
+- *attributes*: =POSIX_SPAWN_SETSID= (step 1), plus an empty signal mask and every
+  signal at its default — SBCL blocks and handles signals of its own, and a child
+  that inherited them would ignore =^C=;
+- *file actions*, run in order after the setsid: open the slave on fd 0 (step 2),
+  =dup2= it to 1 and 2, =closefrom(3)= so the child inherits none of our
+  descriptors (the framebuffer, the evdev devices, other terminals' masters), and
+  =chdir= to the starting folder.
+
+That glibc does the setsid /before/ the file actions is checked by its effect,
+not its source (there is no glibc tree on this machine): [[file:../poc/pty-test.lisp][poc/pty-test.lisp]] sees =tty=
+print the slave's name and =^C= kill =cat= with SIGINT, neither of which happens
+without a controlling terminal. All of it goes through =extern-alien= with basic
+types, as [[file:../initramfs/files.lisp][files.lisp]] does — no =sb-posix= ([[file:processes.org][processes.org]] §6), so every
+definition in =pty.lisp= recompiles in the guest. Struct sizes (80, 336 and 128
+bytes for the file actions, the attributes and a =sigset_t=) were printed by a
+throwaway C program on the build host, glibc 2.43.
+
+* 4. Why escape sequences, and which ones
+
+A VT100 had one wire for everything, so a command to the terminal had to travel
+inside the text: an *escape sequence*, starting with the byte ESC (27) and shaped
+so it could never be mistaken for printable text. Fifty years later every terminal
+emulator still speaks it, because every program still writes it.
+
+Programs do not hard-code the sequences. They read =$TERM= and look the terminal's
+capabilities up in *terminfo*. We set =TERM=xterm-256color= — the entry every
+host has — and implement the part of xterm that entry *promises*. Checked with
+=infocmp -x xterm-256color= on the build host, the promises that shaped the code:
+
+| capability | sequence | what it obliged us to do |
+|------------+----------+--------------------------|
+| =bce= | — | erasing paints the *current* background, not the default |
+| =smcup= / =rmcup= | =ESC[?1049h ESC[22;0;0t= | the alternate screen (§6), and to *ignore* the title-stack =CSI t= |
+| =smkx= / =rmkx= | =ESC[?1h ESC== | application cursor keys: arrows send =ESC O A= (§7) |
+| =kcuu1=, =kf5=, =kDC5=… | =ESC O A=, =ESC[15~=, =ESC[3;5~= | the key encoding (§7) |
+| =kmous=, =XM= | =ESC[<=, =ESC[?1006;1000h= | SGR mouse reports (§8) |
+| =BE= / =PS= / =PE= | =ESC[?2004h=, =ESC[200~= | bracketed paste (§8) |
+| =acsc=, =smacs= | =ESC(0= | DEC line-drawing characters (§6) |
+| =setaf= / =setab= | =ESC[38;5;Nm= | 256 colours |
+
+Anything outside the subset is still *parsed* — so it can never leak onto the
+screen as garbage — and then ignored.
+
+* 5. The parser: Williams' state machine
+
+Paul Williams' description of the DEC terminals' parser
+(https://vt100.net/emu/dec_ansi_parser) is the model every serious emulator uses,
+and =parse-code= follows it. Each byte (here: each *code point*, §5.2) moves a
+small machine between a handful of states:
+
+#+begin_example
+ ground ──ESC──▶ escape ──[──▶ csi-entry ──0-9 ;──▶ csi-param ──@..~──▶ ground
+   ▲                │            └─ ? > = < (private marker) ─┘    (dispatch CSI)
+   │                ├──]──▶ osc-string ──BEL or ESC \──▶ ground  (title, colours)
+   │                ├──P──▶ dcs-string ──ESC \──▶ ground         (ignored)
+   │                ├──X ^ _──▶ sos/pm/apc string                (ignored)
+   │                ├──space..──▶ escape-intermediate ──final──▶ ground  (ESC ( 0)
+   │                └──final──▶ ground                           (ESC 7, ESC M, ESC c)
+   │
+   └── from ANYWHERE: CAN or SUB abort the sequence; ESC starts a new one;
+       C0 controls (CR, LF, BS, TAB, BEL) execute even mid-sequence
+#+end_example
+
+Two of its rules matter more than they look:
+
+- *Every byte belongs to exactly one state.* So a terminal never prints half a
+  sequence, and a sequence it does not understand is swallowed whole.
+- *The "anywhere" transitions.* A program killed halfway through writing a sequence
+  leaves the parser mid-CSI; the next ESC, CAN or SUB pulls it back. And a VT100
+  really did execute a CR that arrived in the middle of =ESC [ 1 2=, so programs
+  may (and do) rely on it.
+
+** 5.1 Parameters
+
+=ESC [ 1 ; 3 1 m= has parameters 1 and 31. A missing or zero parameter means "the
+default", which for movement is 1 (=param=) and for erasing is 0 (=param0=).
+Modern programs also send *sub-parameters* with colons — =ESC [ 38:2::255:128:0 m=
+for a truecolor foreground, where the empty slot is a colour-space id — so each
+parameter is kept as a *group* of colon parts, and =sgr-color= reads both
+spellings (the colon one in a single group, the older =38;2;R;G;B= across five).
+
+** 5.2 UTF-8 first
+
+The input is UTF-8; =term-feed= decodes it *before* the state machine, which then
+runs over code points — what xterm does in UTF-8 mode. A character split across two
+=read(2)= calls is completed by the next one (the decoder's state lives in the
+=term=), and a broken sequence becomes U+FFFD with the offending byte read again,
+since it may be a perfectly good ESC.
+
+* 6. The grid
+
+*A cell is not an object.* A 1280x800 screen in our 6x15 font is 208x48 = ~10,000
+cells, and a busy program rewrites most of them many times a second. So a *line*
+(=tline=) is two parallel arrays — the characters, and one fixnum per cell packing
+everything else: 8 bits of flags (bold, faint, italic, underline, blink, inverse,
+invisible, strike), then a 25-bit foreground and a 25-bit background. A colour is
+0 for "the theme's default", 1..256 for a palette index, or a 24-bit RGB with bit
+24 set. 58 bits fit a 62-bit fixnum, so the array is a specialised
+=(simple-array fixnum)= and nothing is boxed.
+
+The rules that are easy to get wrong, each with its test in [[file:../poc/terminal-test.lisp][terminal-test.lisp]]:
+
+- *Pending wrap.* Writing into the last column leaves the cursor ON it with a flag
+  set; only the /next/ printable character wraps. DEC's rule, and the reason a
+  program can fill the bottom-right cell without the screen scrolling.
+- *Wrapped lines remember it* (=tline-wrapped=), so selecting a long command line
+  copies it back as one line.
+- *Scroll regions* (=DECSTBM=): a line feed at the region's bottom scrolls only the
+  region. vim's and less's status lines stay put this way.
+- *The scrollback* is a ring of 5,000 lines (the pane's choice) fed only by lines
+  leaving the top of the *primary* screen with the region at the top. A full-screen
+  program redrawing, or a region scrolling mid-screen, is not history. Someone
+  reading the history keeps their place while output arrives.
+- *The alternate screen* (=1049=, and the older =47= / =1047=): a blank second page.
+  vim and less draw there, and when they leave, the shell's screen — and its cursor,
+  saved by =1049= — comes back exactly as it was.
+- *bce*: erasing paints the current background (§4).
+- *Wide characters* (CJK, most emoji) take two cells — the right one holds a
+  placeholder — and combining marks take none. The program decides where the cursor
+  goes by glibc's =wcwidth=, so the terminal must agree or everything after the
+  character is off by one; =char-cells= is a compact version of that table.
+- *DEC line drawing* (=ESC ( 0=): "q" prints a horizontal line, "l" a corner.
+  ncurses uses it whenever the locale is not UTF-8 — exactly a fresh container's
+  case — so it is mapped to the Unicode box characters.
+- *Resizing* keeps the cursor's line: a shorter primary screen pushes its top lines
+  into the scrollback, a taller one pulls them back (xterm's behaviour). Lines are
+  truncated or padded, not reflowed.
+
+* 7. Answers the program waits for
+
+Some sequences are *questions*, and a program that asks may block until we answer
+(=term-take-output= hands the answers to the pane, which writes them back):
+
+| asks | answer |
+|------+--------|
+| =ESC[6n= where is the cursor? | =ESC[row;colR= (readline and vim use it) |
+| =ESC[5n= are you OK? | =ESC[0n= |
+| =ESC[c= what are you? (DA1) | =ESC[?62;22c= — a VT220 with colour |
+| =ESC[>c= which version? (DA2) | =ESC[>1;10;0c= — modest on purpose, so nobody assumes a recent xterm's features |
+| =ESC[?2004$p= is mode 2004 set? (DECRQM) | =ESC[?2004;1$y=; 0 for modes we do not know |
+| =ESC]11;?= your background colour? | the pane's own, so vim picks =background=dark= |
+| =ESC[18t= your size? | =ESC[8;rows;colst= |
+
+* 8. Keys become bytes
+
+The browser hands every pane a key the same way: a character or a keyword
+(=:up=, =:f5=, =:page-down=…) plus a modifier STATE in the X11 convention (Shift 1,
+Ctrl 4, Meta 8, Super 64). =encode-key= turns that back into what xterm would have
+sent — the bytes the terminfo entry above promised the program:
+
+| key | sends | note |
+|-----+-------+------|
+| a letter with Ctrl | its code AND #x1F | the keyboard's oldest arithmetic: =C-a= is 1, =C-[= is ESC |
+| a key with Meta | ESC, then the key | =M-x= is =ESC x= |
+| =↑= | =ESC[A=, or =ESC O A= in application mode | =DECCKM=, which =smkx= switches on |
+| =C-↑=, =S-End= | =ESC[1;5A=, =ESC[1;2F= | xterm's modifier parameter: 1 + Shift 1 + Alt 2 + Ctrl 4 |
+| Backspace | DEL (127) | =kbs=^?=; Ctrl-Backspace sends BS (8) |
+| =S-Tab= | =ESC[Z= | =kcbt= |
+| F1-F4 / F5-F12 | =ESC O P=… / =ESC[15~=… | |
+| Return | CR | the line discipline turns it into LF for the program (=ICRNL=) |
+
+*Who gets which keys.* A terminal pane takes /every/ key except the =SuperL= layer,
+which stays the environment's on every pane: tabs, the Spotter, closing, leaving.
+So =C-g=, =Esc=, =C-c= and =q= are the program's, as in any terminal — the shell's
+routing gives a terminal pane first refusal (=browser-key=, [[file:../poc/shell.lisp][poc/shell.lisp]]). The
+exceptions inside the terminal are the PC clipboard keys (=S-Insert= paste,
+=C-Insert= copy — Emacs's =C-y= / =M-w= belong to the program here) and
+=S-PageUp= / =S-PageDown= for the history.
+
+*Two console facts, found the hard way.* On the bare framebuffer the keys come from
+the Linux console's keymap ([[file:input.org][input.org]]), and it is not xterm:
+
+- F1-F5 arrive as =ESC [ [ A= … =ESC [ [ E= (the console's own =func_buf=,
+  =./linux/drivers/tty/vt/defkeymap.c_shipped=); =fb-read-csi= now decodes those and
+  F6-F12. Shift-F1 arrives as F11, because that is what the keymap says.
+- *Shift-PageUp never reaches the tty.* The default keymap binds it to the
+  console's own scrollback: =shift_map[104]= is =0xf20b=, Scroll_Backward, and
+  =shift_map[109]= Scroll_Forward (checked). No byte is sent. So it is caught
+  where the Menu key already was: on the keyboard's *evdev* (=note-modifier-key=,
+  [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), which sees every key whatever the keymap does. A side effect
+  for every pane: Shift-PageUp/Down now reach the editors too.
+- The console does not tell the keypad's keys from the main ones, so =DECKPAM=
+  (application keypad) is recorded and has no effect.
+
+* 9. What runs: =open-terminal= and =SuperL-↵=
+
+=(open-terminal argv &key title cwd env)= opens a pane running ARGV in a new tab
+and returns its subject (=ENV= adds =NAME=value= strings to a base environment:
+=TERM=xterm-256color=, =COLORTERM=truecolor=, =HOME=, =USER=, =LOGNAME=,
+=LANG=C.UTF-8=). =SuperL-↵= and the Spotter's "terminal" row choose ARGV
+themselves, best first (=default-terminal-command=):
+
+1. *A login shell in the default container*, when =containers.lisp= is loaded and
+   =containers-available-p= (=lol-ct= shipped, a host root with a =/usr=):
+   =(container-command-line '("bash" "-l") :cwd (container-cwd))=. The real distro,
+   with its own =/usr=, =/etc=, terminfo and libraries; =lol-ct= builds the
+   environment afresh and clears the ambient capabilities PID 1 holds. The intended
+   answer. A container's =s= key opens the same thing through =open-terminal=.
+2. *The host's bash through the host's loader*: =/mnt/host/…/ld-linux-x86-64.so.2
+   --library-path /mnt/host/usr/lib/x86_64-linux-gnu:… /mnt/host/usr/bin/bash=,
+   with =PATH= under =/mnt/host= and =LD_LIBRARY_PATH= at its libraries. It runs,
+   but *our* root is not the host's: a program bash execs is loaded by /our/
+   =/lib64/ld-linux-x86-64.so.2= (the build host's own copy, shipped in the
+   initramfs) with the host's libraries — which works only while the image's glibc
+   and the disk's are the same version, true right after a build. Nothing that
+   hard-codes =/etc= or =/usr= finds it (no passwd entry: the prompt says "I have no
+   name!"). And this shell /inherits PID 1's five ambient capabilities/
+   ([[file:storage.org][storage.org]]) — a power-off is one command away. A stopgap, honestly labelled.
+   (The loader is looked up at its real path: on a merged-=/usr= Debian =/lib64/…=
+   is a symlink, and an absolute one would resolve in /our/ root.)
+3. *A Lisp REPL*: this same image re-executed as =/sbin/lisp repl= (a new role in
+   [[file:../initramfs/supervisor.lisp::defun init-toplevel][=init-toplevel=]]) — the line editor's REPL ([[file:line-editing.org][line-editing.org]]) on a real
+   terminal, in its own heap, so nothing typed there can hurt the environment.
+   It is not the /live/ image; the Workspace is that.
+
+*A finding on the way.* The login shell in the container first printed =bash:
+/dev/fd/63: No such file or directory=. bash's process substitution =<(cmd)= hands
+its child a =/dev/fd/N= path, and =/dev/fd= is a symlink udev makes — devtmpfs has
+none of them, and =lol-ct= binds our =/dev=. preinit now makes =/dev/fd=,
+=/dev/stdin=, =/dev/stdout= and =/dev/stderr= ([[file:../initramfs/preinit.c::int main(void)][=main=]]); the guest check asserts it.
+
+* 10. The pane
+
+=subj-terminal= is a subject like any other ([[file:code-browser.org][code-browser.org]] §4½): it opens in a
+trail, shows as a tab, closes with =SuperL-w=. Its one oddity: creating one starts
+nothing, *presenting* it does — so the Spotter can offer a fresh "terminal" row at
+no cost — and =present-preview= never starts a program. Its view kind is
+=:terminal=, drawn by =draw-terminal-body=.
+
+- *Size from the font, at draw time.* =terminal-fit= divides the pane by the
+  /current/ font's cell (=font-cw= / =font-ch=); when the cell count changes — the
+  window, a breadcrumb above, or a font change — the engine is resized and the
+  program told with =TIOCSWINSZ=. We never send SIGWINCH: the kernel sends it to
+  the terminal's foreground group when the size changes (=tiocswinsz= in
+  =./linux/drivers/tty/tty_io.c=). The ioctl is the whole protocol.
+- *Glyphs.* Text is drawn in runs of one colour with the browser's own
+  =draw-string=. Bold brightens the first eight colours (xterm's =boldColors=),
+  faint fades, inverse swaps. The font is Latin-1 ([[file:fonts.org][fonts.org]]), so box drawing
+  (U+2500-257F) and blocks (U+2580-259F) — what tmux, mc, =tree=, htop's meters
+  and ncurses' DEC graphics use — are drawn as lines and rectangles from each
+  character's /arms/; anything else past Latin-1 shows the font's =?=.
+- *The cursor*: a block in the accent colour, an outline when the pane is not
+  focused, a bar or underline if the program asked (=DECSCUSR=).
+- *The mouse.* Press and drag selects — on release the text goes to PRIMARY and the
+  clipboard history, as everywhere in the browser ([[file:clipboard.org][clipboard.org]]); middle-click
+  pastes PRIMARY. A program that asked for the mouse (vim's =mouse=a=, htop) gets
+  the clicks instead, as SGR reports when it asked for mode 1006; Shift held takes
+  them back for selecting, as in xterm. The wheel scrolls the history on the primary
+  screen; on the alternate screen it is reported to a program that takes the mouse,
+  and otherwise sent as arrow keys — xterm's /alternateScroll/, so the wheel
+  scrolls less and man.
+- *Paste* is bracketed when the program asked (=2004=): =ESC[200~ … ESC[201~=, so a
+  shell does not run each pasted line as it arrives. Newlines become CR (what
+  Return sends), and any ESC inside is dropped, or a crafted clipboard could close
+  the bracket early.
+- *An ended program* keeps its last screen with its fate underneath ("exited with
+  code 0", "killed by signal 9"); =Return= or =q= closes the pane, =r= runs it again.
+
+* 11. The loop: output is input too
+
+The browser's loop sleeps in =poll(2)= until something happens ([[file:input.org][input.org]]). A
+terminal is the first view that changes /without/ a key and /without/ a timer, so
+the terminals are a *service* of the loop (=*fb-services*= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]],
+the hook the web pane added first — [[file:web-browser.org][web-browser.org]]): its =:fd= is
+=terminal-fds=, the live masters (a service may give a LIST of fds;
+=fb-service-fds= flattens them), which wake the poll beside the input devices, and
+its =:run= is =terminal-service-run=, which drains every live terminal
+(=terminal-service=, non-blocking reads, so a turn with nothing to read costs a
+syscall per terminal):
+
+- *Hang-up is readiness too.* When the program and everything it started have
+  closed the slave, =read= on the master fails with =EIO= (=n_tty_wait_for_input=,
+  =TTY_OTHER_CLOSED=) and =poll= reports POLLHUP whether we ask or not — a slot
+  that ignored it would make every later poll return at once, and the loop spin. So
+  HUP and ERR count as ready; the read sees EOF; the program is reaped with
+  =waitpid=. (EIO arrives a moment /before/ the child is a zombie, so we wait up to
+  200 ms for the exit status — the first guest run said "the terminal hung up" for
+  a clean =exit=.)
+- *A budget.* One pass takes at most 512 KB from a terminal, so =cat= of a huge
+  file cannot keep the loop parsing while =^C= waits.
+- *Rows, not frames.* The engine marks the rows it changed. When the current pane
+  is a terminal and nothing else moved, =terminal-paint-dirty= repaints just those
+  rows into the canvas and =show-terminal-rows= sends just their rectangles to
+  =/dev/fb0= — one row for an echoed key, not a 1280x800 frame. A key typed /into/
+  a terminal does not redraw the frame either (=terminal-key-was-cheap-p=): its echo
+  comes back as output. The guest check counts =draw-browser= while typing 8 keys:
+  0-1 full frames.
+- *Closing.* Closing the tab (or popping the pane) is noticed by a sweep after every
+  input event (=terminal-sweep=): a terminal no longer in any trail is hung up —
+  closing the master makes the kernel send SIGHUP to the session (=pty_close= calls
+  =tty_vhangup= on the slave), which is what closing an xterm window does.
+
+* 12. Testing
+
+| what | how | result |
+|------+-----+--------|
+| the engine | =sbcl --script poc/terminal-test.lisp= | 95/95 |
+| ptys on real programs | =sbcl --script poc/pty-test.lisp= | 13/13 (bash, htop) |
+| a frame, headless | =sbcl --script poc/render-frame.lisp terminal:htop= | htop drawn in the pane |
+| the guest | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 16/16 |
+
+*Testing against real programs.* The recordings in =poc/terminal-data/= were made on
+the build host with =script(1)= at 80x24 and =TERM=xterm-256color=, the input fed on
+stdin after a delay — for example:
+
+#+begin_src sh
+(sleep 1; printf 'q') | script -q -E never -c "stty rows 24 cols 80; less numbers.txt" less.ts
+#+end_src
+
+then stripped of =script='s header and trailer lines. A test feeds a recording up
+to a marker (say, the bytes less sends as it quits) and asserts the grid there —
+the first and last lines of the page, the prompt in inverse video — and again after
+the rest. htop is not recorded (its output is the host's process list, command
+lines included); =pty-test.lisp= runs it live instead.
+
+*=render-frame.lisp terminal:CMD=* runs CMD through =/bin/sh -c= on a real pty of
+the build host, gives it 1.5 s (and 0.3 s after each scripted key), and renders the
+pane — the quick way to look at what a program's output becomes.
+
+*=check-terminal.lisp=* (with =LOL_GUEST_HOSTROOT=1=, the build host's root over
+9p) presses =SuperL-↵= over QMP, checks the login shell wrote to the grid and that
+=SuperL-w= hangs it up, then opens a dotfile-free shell for the typing checks —
+because a login shell runs the user's dotfiles, and the build host's =.profile=
+stops to ask for an ssh key's passphrase, which a test cannot answer. Then: =echo
+hi=, the frame count, =seq 1 200= into the scrollback, Shift-PageUp from the evdev,
+=less /proc/cpuinfo= on the alternate screen and back, a breadcrumb above the pane
+taking a row (the same path a font change takes) with =stty size= agreeing, and
+=exit= reported and closed.
+
+* 13. What it does not do (yet)
+
+- *The X11 host backend* ([[file:../poc/run-browser.lisp][poc/run-browser.lisp]]) does not poll the ptys, so a terminal
+  there opens but does not update. =render-frame= is the host's way to look.
+- No *reflow* on resize (xterm's newer behaviour); no *italics* (no italic font);
+  bold is colour, not a heavier glyph.
+- Characters past Latin-1 other than boxes and blocks show =?= until the font has
+  them ([[file:fonts.org][fonts.org]]); wide characters still take their two cells, so alignment
+  holds.
+- Not implemented: OSC 52 (a program setting the clipboard), left/right margins
+  (=DECLRMM=, mode 69), sixel, the title stack, focus events (1004 is recorded and
+  not sent), synchronized output (2026 reports "unknown"), application keypad (§8).
+- The fallback shell (§9, 2.) keeps PID 1's capabilities. The container path does
+  not.

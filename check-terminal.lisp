@@ -74,7 +74,7 @@
            (wait-until (term-form "(plusp (length (lol.terminal:term-row-text ~a 0)))")))
     (row "its first line" (probe (term-form "(lol.terminal:term-row-text ~a 0)")))
     (check "/dev/fd exists (bash's <(...) needs it; preinit makes it)"
-           (string= "/dev/fd" (row "readlink /dev/fd" (probe "(and (sb-unix:unix-readlink \"/dev/fd\") \"/dev/fd\")"))))
+           (string= "\"/proc/self/fd\"" (row "readlink /dev/fd" (probe "(sb-unix:unix-readlink \"/dev/fd\")"))))
     ;; A LOGIN shell runs the user's dotfiles, and those may stop to ask something (an
     ;; ssh-agent passphrase, on the build host). So the typing checks below use a
     ;; shell started the same way but without dotfiles; this one is closed with
