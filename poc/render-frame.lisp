@@ -56,6 +56,7 @@
   '("initramfs/sbcl-source.lisp"  ; SBCL's own source, read from ./sbcl on demand
     "initramfs/model.lisp"        ; CLOS/introspection model
     "initramfs/present.lisp"      ; the present / commands-for protocol
+    "initramfs/tour.lisp"         ; the guided tour (subj-tour) — doc/tour.org
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
     "initramfs/stage.lisp"        ; the COLLIDE stage (§3b) — bodies, dispatch, enact
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
@@ -117,6 +118,7 @@ exactly as open-environment does in the guest):
   workspace                the Workspace scratch buffer
   containers               the containers view (on the host: unavailable, and it says so)
   run:CMD                  a run pane: sh -c CMD on the host, run to its end
+  tour                     the guided tour (initramfs/tour.lisp)
   changes                  the change set
   dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
   file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
@@ -215,6 +217,7 @@ OPTIONS
        (let ((run (start-run (list "sh" "-c" rest) :title rest)))
          (loop while (run-live-p run) do (sleep 0.05))
          run))
+      ((string= head "tour")      (subj-tour))        ; initramfs/tour.lisp
       ;; dir:PATH / file:PATH — the file manager (doc/file-manager.org). The path is
       ;; resolved like a prompt's: ~ is $HOME, a relative path is relative to where
       ;; the harness was started.

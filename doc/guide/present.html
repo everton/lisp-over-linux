@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>present and the shell</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html" aria-current="page">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>present and the shell</h1>
+<p class="lede">The environment has two halves. The <em>protocol</em> (<code>present.lisp</code>) turns any subject into
+a description: pure data, no pixels, no state. The <em>shell</em> (<code>poc/shell.lisp</code>) is the one stateful
+layer. It keeps the open trails, routes keys and draws. The full design is in
+<a href="../code-browser.org">code-browser.org</a> §4½.</p>
+
+<h2>The vocabulary</h2>
+<table>
+  <tr><th>Thing</th><th>What it is</th><th>Defined at</th></tr>
+  <tr><td><strong>subject</strong></td><td>Anything you can look at: a package, a class, a function, a symbol, or a small
+    "handle" struct such as <code>subj-defn</code> (a definition's source), <code>subj-xref</code> (senders),
+    <code>subj-dir</code> (a folder) or <code>subj-tour</code>. A handle exists when one object has several readings. A
+    symbol <em>inspected</em> shows its cells, while <code>(subj-defn sym)</code> shows its source.</td>
+    <td><a class="ref" data-ref="initramfs/present.lisp#subj-defn" href="../../initramfs/present.lisp"><code>subj-defn</code><span class="loc">initramfs/present.lisp:68</span></a></td></tr>
+  <tr><td><strong>view</strong></td><td>What <code>(present subject)</code> returns: a title, a <code>kind</code>
+    (<code>:list :source :reference :workspace :file :matrix :image :stage …</code>), a list of items, and optional
+    <code>text</code> / <code>data</code>.</td><td><a class="ref" data-ref="initramfs/present.lisp#view" href="../../initramfs/present.lisp"><code>view</code><span class="loc">initramfs/present.lisp:41</span></a></td></tr>
+  <tr><td><strong>item</strong></td><td>One row of a view: label, detail, a <code>kind</code> (for the colour stripe), a
+    <code>group</code> (section heading), and optionally a <code>subject</code>. A row with a subject can be drilled.</td>
+    <td><a class="ref" data-ref="initramfs/present.lisp#item" href="../../initramfs/present.lisp"><code>item</code><span class="loc">initramfs/present.lisp:20</span></a></td></tr>
+  <tr><td><strong>command</strong></td><td>What a subject affords, as data: a label, then either a target to open or
+    an action thunk, the <em>surfaces</em> it appears on (<code>:menu :halo :palette :key</code>), and a key.</td>
+    <td><a class="ref" data-ref="initramfs/present.lisp#command" href="../../initramfs/present.lisp"><code>command</code><span class="loc">initramfs/present.lisp:54</span></a></td></tr>
+  <tr><td><strong>pane</strong></td><td>The shell's wrapper round one presented view: the subject, the view, the
+    selection, the scroll position, and a <code>textview</code> if the view has text.</td>
+    <td><a class="ref" data-ref="poc/shell.lisp#pane" href="../../poc/shell.lisp"><code>pane</code><span class="loc">poc/shell.lisp:45</span></a></td></tr>
+  <tr><td><strong>trail</strong></td><td>A list of panes, root first. The deepest pane is expanded and its ancestors are
+    the breadcrumb bars above it. Several trails are the tabs.</td>
+    <td><a class="ref" data-ref="poc/shell.lisp#*trails*" href="../../poc/shell.lisp"><code>*trails*</code><span class="loc">poc/shell.lisp:42</span></a></td></tr>
+</table>
+
+<h2>Subject → view → pane → trail</h2>
+<figure>
+<svg viewBox="0 0 960 330" role="img" aria-label="A subject goes through present to become a view; open-pane wraps the view in a pane, giving text views an editable textview; trail-push appends the pane to the active trail. Drilling an item calls trail-push with the item's subject. Back pops the trail. Several trails are the tab strip.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <text x="20" y="20" class="lbl">PROTOCOL — pure, headless (initramfs/present.lisp)</text>
+  <text x="520" y="20" class="lbl">SHELL — the only state (poc/shell.lisp)</text>
+  <line x1="490" y1="10" x2="490" y2="320" class="life"/>
+  <rect class="box" x="20" y="40" width="180" height="56" rx="6"/><text x="30" y="62" class="title">subject</text><text x="30" y="80" class="mono">(subj-defn 'draw-alien)</text>
+  <rect class="box hot" x="240" y="40" width="215" height="110" rx="6"/><text x="250" y="62" class="title">view</text>
+  <text x="250" y="82" class="mono">:title "function draw-alien"</text><text x="250" y="98" class="mono">:kind  :source</text><text x="250" y="114" class="mono">:text  "(defun draw-alien …"</text><text x="250" y="130" class="mono">:items (item item …)</text>
+  <path class="edge hot" d="M200,68 H238" marker-end="url(#ar)"/><text x="196" y="112" class="lbl">(present s)</text>
+  <rect class="box" x="520" y="40" width="190" height="110" rx="6"/><text x="530" y="62" class="title">pane</text>
+  <text x="530" y="82" class="mono">subject view</text><text x="530" y="98" class="mono">sel top follow</text><text x="530" y="114" class="mono">tv: a lol.textview</text><text x="530" y="130" class="mono">side (⇧↵ split)</text>
+  <path class="edge" d="M455,95 H518" marker-end="url(#ar)"/><text x="456" y="88" class="lbl">open-pane</text>
+  <rect class="box" x="750" y="40" width="190" height="110" rx="6"/><text x="760" y="62" class="title">*trails* / *active*</text>
+  <text x="760" y="82" class="mono">trail 0: (pane pane pane)</text><text x="760" y="98" class="mono">trail 1: (pane)</text><text x="760" y="114" class="dim">a trail = one tab;</text><text x="760" y="130" class="dim">last pane = expanded</text>
+  <path class="edge" d="M710,95 H748" marker-end="url(#ar)"/><text x="712" y="88" class="lbl">trail-push</text>
+  <!-- drill loop -->
+  <rect class="box" x="220" y="200" width="230" height="58" rx="6"/><text x="230" y="222" class="title">item with a :subject</text><text x="230" y="240" class="mono">(make-item :subject s2)</text>
+  <path class="edge" d="M335,150 V198" marker-end="url(#ar)"/><text x="341" y="180" class="lbl">one of the items</text>
+  <rect class="box" x="520" y="200" width="190" height="58" rx="6"/><text x="530" y="222" class="title">Enter on the row</text><text x="530" y="240" class="mono">browser-key :return</text>
+  <path class="edge" d="M450,229 H518" marker-end="url(#ar)"/><text x="456" y="222" class="lbl">selected</text>
+  <path class="edge hot" d="M710,229 H845 V152" marker-end="url(#ar)"/><text x="716" y="222" class="lbl">(trail-push s2) → present s2 …</text>
+  <path class="edge dash" d="M790,152 V290 H95 V98" marker-end="url(#ar)"/><text x="300" y="306" class="lbl">C-g / q / Backspace: trail-pop — the parent pane was kept, nothing is re-presented</text>
+</svg>
+<figcaption>The whole navigation model. Drilling creates a pane by presenting the item's subject. Going back
+throws the deepest pane away and shows the one beneath, which was never discarded.</figcaption>
+</figure>
+<ul>
+  <li><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:63</span></a> calls <code>present</code>, or
+    <code>present-preview</code> for the right-hand preview column. It gives <code>:source</code>,
+    <code>:reference</code>, <code>:workspace</code> and <code>:file</code> views a textview, focused (editable) for
+    everything except <code>:reference</code>.</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:160</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:165</span></a>,
+    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:171</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
+    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:222</span></a> (the first tabs).</li>
+  <li>The <strong>nav split</strong>: when a list pane's selected item has a subject, the right half shows
+    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1037</span></a>).
+    This is how the tour previews each stop's source.</li>
+</ul>
+
+<h2>Every <code>present</code> method</h2>
+<p>A subject type is one <code>defmethod</code>. This is the complete list today. Each row's view kind decides how the
+shell draws it.</p>
+<table>
+  <tr><th>Subject</th><th>Shows</th><th>Method</th></tr>
+  <tr><td><code>package</code></td><td>every recorded definition in it</td><td><a class="ref" data-ref="initramfs/present.lisp#present@package" href="../../initramfs/present.lisp"><code>(present package)</code><span class="loc">initramfs/present.lisp:387</span></a></td></tr>
+  <tr><td><code>subj-modules</code> / <code>subj-module</code></td><td>the module index; one file's definitions</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-modules" href="../../initramfs/present.lisp"><code>(present subj-modules)</code><span class="loc">initramfs/present.lisp:401</span></a></td></tr>
+  <tr><td><code>subj-defn</code></td><td>captured source (<code>:source</code>, editable), or a builtin's reference</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-defn" href="../../initramfs/present.lisp"><code>(present subj-defn)</code><span class="loc">initramfs/present.lisp:429</span></a></td></tr>
+  <tr><td><code>subj-xref</code></td><td>senders of a function</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-xref" href="../../initramfs/present.lisp"><code>(present subj-xref)</code><span class="loc">initramfs/present.lisp:460</span></a></td></tr>
+  <tr><td><code>class</code></td><td>the class DAG and slots</td><td><a class="ref" data-ref="initramfs/present.lisp#present@class" href="../../initramfs/present.lisp"><code>(present class)</code><span class="loc">initramfs/present.lisp:473</span></a></td></tr>
+  <tr><td><code>generic-function</code></td><td>methods, coverage, combination</td><td><a class="ref" data-ref="initramfs/present.lisp#present@generic-function" href="../../initramfs/present.lisp"><code>(present generic-function)</code><span class="loc">initramfs/present.lisp:807</span></a></td></tr>
+  <tr><td><code>subj-matrix</code> / <code>subj-onion</code> / <code>subj-method</code></td><td>the dispatch matrix, the effective-method onion, one method</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-matrix" href="../../initramfs/present.lisp"><code>(present subj-matrix)</code><span class="loc">initramfs/present.lisp:690</span></a></td></tr>
+  <tr><td><code>subj-condition</code></td><td>a condition type's signallers, handlers and restarts</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-condition" href="../../initramfs/present.lisp"><code>(present subj-condition)</code><span class="loc">initramfs/present.lisp:533</span></a></td></tr>
+  <tr><td><code>subj-workspace</code> / <code>subj-change-set</code></td><td>the Workspace primer; what you Accepted</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:842</span></a></td></tr>
+  <tr><td><code>function</code></td><td>a closure's captures as fields; source, senders and disassembly as doors</td><td><a class="ref" data-ref="initramfs/present.lisp#present@function" href="../../initramfs/present.lisp"><code>(present function)</code><span class="loc">initramfs/present.lisp:923</span></a></td></tr>
+  <tr><td><code>subj-instances</code> / <code>-retention</code> / <code>-disassembly</code></td><td>inspector powers (<a href="../inspector-history.org">inspector-history.org</a>)</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-instances" href="../../initramfs/present.lisp"><code>(present subj-instances)</code><span class="loc">initramfs/present.lisp:991</span></a></td></tr>
+  <tr><td><code>t</code> / <code>subj-object</code></td><td>the inspector, so nothing is a dead end</td><td><a class="ref" data-ref="initramfs/present.lisp#present@t" href="../../initramfs/present.lisp"><code>(present t)</code><span class="loc">initramfs/present.lisp:1072</span></a></td></tr>
+  <tr><td><code>subj-dir</code> / <code>subj-file</code> / <code>subj-find</code> / <code>subj-file-info</code></td><td>the file manager</td><td><a class="ref" data-ref="initramfs/file-views.lisp#present@subj-file" href="../../initramfs/file-views.lisp"><code>(present subj-file)</code><span class="loc">initramfs/file-views.lisp:729</span></a></td></tr>
+  <tr><td><code>subj-worker</code></td><td>a view computed in a <em>second process</em></td><td><a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:179</span></a></td></tr>
+  <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a></td></tr>
+  <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:133</span></a></td></tr>
+  <tr><td><code>subj-containers</code> / <code>subj-container</code></td><td>the host Debian as containers (<code>lol-ct</code>); merged as this guide was finished</td><td><a class="ref" data-ref="initramfs/containers.lisp#present@subj-containers" href="../../initramfs/containers.lisp"><code>(present subj-containers)</code><span class="loc">initramfs/containers.lisp:281</span></a></td></tr>
+  <tr><td><code>run</code> / <code>subj-runs</code></td><td>a program's output streamed into a read-only pane</td><td><a class="ref" data-ref="initramfs/runs.lisp#present@run" href="../../initramfs/runs.lisp"><code>(present run)</code><span class="loc">initramfs/runs.lisp:246</span></a></td></tr>
+</table>
+<p><strong>To add a subject:</strong> one <code>defstruct</code>, one <code>present</code> method, and optionally
+<code>commands-for</code> and <code>present-preview</code>. To make it findable, push a function onto
+<a class="ref" data-ref="initramfs/present.lisp#*spotter-sources*" href="../../initramfs/present.lisp"><code>*spotter-sources*</code><span class="loc">initramfs/present.lisp:275</span></a>, as <code>tour.lisp</code> and
+<code>file-views.lisp</code> do. The shell needs no change. Exercise 6 on the <a href="exercises.html">Exercises</a>
+page walks through it.</p>
+
+<h2>Commands: content declares, the shell disposes</h2>
+<p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:344</span></a> returns data. It never opens anything itself.
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:2439</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:2481</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2418</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:2891</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:2895</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:2880</span></a>. That function calls whatever <code>*chooser*</code> the
+backend installed: <code>run-chooser-fb</code> on the framebuffer, and none on the X11 host runner.</p>
+
+<h2>A keypress, end to end</h2>
+<p>What happens between pressing <kbd>Enter</kbd> on a list row and the new pane appearing on screen. Every name
+here is a real function. The solid arrows are calls and the dashed ones are returns.</p>
+<figure>
+<svg viewBox="0 0 960 520" role="img" aria-label="Sequence: the kernel makes fd 0 readable; run-browser-fb's poll returns; fb-read-key turns the byte into :return; browser-key routes it to trail-push with the selected item's subject; open-pane calls present, which returns a view; the loop marks the frame dirty and calls draw-browser, which draws with the widgets and textview into the canvas; show-frame calls lol.fb:present-fb, which pwrites the canvas to /dev/fb0.">
+  <defs>
+    <marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <!-- heads -->
+  <g>
+    <rect class="box k-kernel" x="10" y="10" width="100" height="40" rx="5"/><text x="20" y="27" class="title">Linux</text><text x="20" y="42" class="dim">tty, evdev, fb0</text>
+    <rect class="box k-runtime" x="125" y="10" width="110" height="40" rx="5"/><text x="133" y="27" class="title">run-browser-fb</text><text x="133" y="42" class="dim">the loop</text>
+    <rect class="box k-runtime" x="250" y="10" width="100" height="40" rx="5"/><text x="258" y="27" class="title">fb-read-key</text><text x="258" y="42" class="dim">bytes → key</text>
+    <rect class="box k-shell" x="365" y="10" width="105" height="40" rx="5"/><text x="373" y="27" class="title">browser-key</text><text x="373" y="42" class="dim">routing</text>
+    <rect class="box k-shell" x="485" y="10" width="125" height="40" rx="5"/><text x="493" y="27" class="title">trail-push</text><text x="493" y="42" class="dim">→ open-pane</text>
+    <rect class="box k-present" x="625" y="10" width="95" height="40" rx="5"/><text x="633" y="27" class="title">present</text><text x="633" y="42" class="dim">the protocol</text>
+    <rect class="box k-shell" x="735" y="10" width="105" height="40" rx="5"/><text x="743" y="27" class="title">draw-browser</text><text x="743" y="42" class="dim">widgets, textview</text>
+    <rect class="box k-ui" x="855" y="10" width="95" height="40" rx="5"/><text x="863" y="27" class="title">canvas / fb</text><text x="863" y="42" class="dim">pixels out</text>
+  </g>
+  <g>
+    <line class="life" x1="60" y1="50" x2="60" y2="510"/><line class="life" x1="180" y1="50" x2="180" y2="510"/>
+    <line class="life" x1="300" y1="50" x2="300" y2="510"/><line class="life" x1="417" y1="50" x2="417" y2="510"/>
+    <line class="life" x1="547" y1="50" x2="547" y2="510"/><line class="life" x1="672" y1="50" x2="672" y2="510"/>
+    <line class="life" x1="787" y1="50" x2="787" y2="510"/><line class="life" x1="902" y1="50" x2="902" y2="510"/>
+  </g>
+  <rect class="act" x="175" y="70" width="10" height="420"/>
+  <!-- 1 -->
+  <path class="edge" d="M60,80 H173" marker-end="url(#sa)"/><text x="66" y="74" class="lbl">1 fd 0 readable</text>
+  <text x="190" y="96" class="lbl">poll(2) returns (fbb-wait)</text>
+  <!-- 2 -->
+  <path class="edge" d="M185,118 H298" marker-end="url(#sa)"/><text x="191" y="112" class="lbl">2 read byte 13</text>
+  <path class="edge dash" d="M300,140 H187" marker-end="url(#sa)"/><text x="196" y="154" class="lbl">:return, state 0</text>
+  <!-- 3 -->
+  <text x="190" y="176" class="lbl">3 OR in Ctrl/Shift/Super from evdev</text>
+  <path class="edge" d="M185,190 H415" marker-end="url(#sa)"/><text x="230" y="186" class="lbl">(browser-key key state)</text>
+  <!-- 4 -->
+  <path class="edge" d="M419,222 H545" marker-end="url(#sa)"/><text x="425" y="216" class="lbl">4 list branch:</text><text x="425" y="240" class="lbl">(item-subject it)</text>
+  <!-- 5 -->
+  <path class="edge hot" d="M549,262 H670" marker-end="url(#sa)"/><text x="555" y="256" class="lbl">5 (present s)</text>
+  <path class="edge dash" d="M672,286 H551" marker-end="url(#sa)"/><text x="580" y="300" class="lbl">a VIEW</text>
+  <text x="555" y="318" class="lbl">pane appended</text>
+  <path class="edge dash" d="M547,330 H187" marker-end="url(#sa)"/><text x="300" y="324" class="lbl">6 returns; the loop sets dirty</text>
+  <!-- 7 -->
+  <path class="edge" d="M185,362 H785" marker-end="url(#sa)"/><text x="420" y="356" class="lbl">7 (draw-browser canvas w h)</text>
+  <path class="edge" d="M789,392 H900" marker-end="url(#sa)"/><text x="794" y="386" class="lbl">draw-list, tv-draw</text><text x="794" y="408" class="lbl">→ fill-rect, draw-string</text>
+  <!-- 8 -->
+  <path class="edge hot" d="M185,436 H900" marker-end="url(#sa)"/><text x="420" y="430" class="lbl">8 show-frame → lol.fb:present-fb canvas</text>
+  <path class="edge hot" d="M902,466 H62" marker-end="url(#sa)"/><text x="420" y="460" class="lbl">pwrite(fd of /dev/fb0, pixels) — then the pointer on top</text>
+  <text x="190" y="500" class="lbl">9 back to poll(2) — sleeps until the next key, click or deadline</text>
+</svg>
+<figcaption>One keypress. The loop draws only when something changed (the <code>dirty</code> flag). A bare mouse
+move does not redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcaption>
+</figure>
+<ol class="stops">
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#fbb-wait" href="../../initramfs/fb-browser.lisp"><code>fbb-wait</code><span class="loc">initramfs/fb-browser.lisp:71</span></a></span>
+    One <code>poll(2)</code> (<code>poll-input-once</code>) over the console tty (fd 0, cooked bytes), an inotify watch on
+    <code>/dev/input</code>, and every open keyboard and pointer evdev node. A keyboard's evdev node is read only for the
+    modifier state, which the tty cannot report. Hotplug is handled inside the wait and never returned.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#fb-read-key" href="../../initramfs/fb-browser.lisp"><code>fb-read-key</code><span class="loc">initramfs/fb-browser.lisp:148</span></a></span>
+    Turns raw bytes into a key and a state mask: control bytes become a letter with the Ctrl bit, <code>ESC [</code>
+    sequences become arrows, <code>ESC x</code> becomes Meta-x. The mask uses X11's bit layout so both backends share
+    <code>browser-key</code>: Shift bit 0, Ctrl 2, Meta 3, Super 6 (<a class="ref" data-ref="poc/canvas.lisp#shift-p" href="../../poc/canvas.lisp"><code>shift-p</code><span class="loc">poc/canvas.lisp:47</span></a>).</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#read-keyboards" href="../../initramfs/fb-browser.lisp"><code>read-keyboards</code><span class="loc">initramfs/fb-browser.lisp:1014</span></a></span>
+    Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
+    <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
+    This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:1876</span></a></span>
+    One <code>cond</code>, in priority order: minibuffer, <kbd>M-.</kbd>/<kbd>M-,</kbd>, Esc as Meta, <kbd>C-g</kbd>,
+    the Super layer, the side pane, the stage, editable panes, read-only text, the subject's own keys, and last the
+    list keys, where <kbd>Enter</kbd> calls <code>trail-push</code>.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:63</span></a></span>
+    Presents the subject. A :source view's text goes into a new <code>lol.textview</code>.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-browser" href="../../poc/shell.lisp"><code>draw-browser</code><span class="loc">poc/shell.lisp:1169</span></a></span>
+    Clears the canvas, then draws the tabs, the breadcrumb bars, the expanded pane (or the split) and the status line.
+    It records what it drew where (<code>*drawn*</code>, used by the halo) and the hit maps used for clicks.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#show-frame" href="../../initramfs/fb-browser.lisp"><code>show-frame</code><span class="loc">initramfs/fb-browser.lisp:1072</span></a></span>
+    <code>lol.fb:present-fb</code> then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
+</ol>
+
+<div class="pager"><a href="modules.html">← The module map</a><a href="pixels.html">Pixels and input →</a></div>
+</main>
+</div>
+</body>
+</html>

@@ -143,6 +143,13 @@
    lines and comments between them, so a doc-comment written above a DEFUN is
    captured WITH it — exactly where it belongs (doc/code-browser.org §2)."
   (load path)                                    ; execute first: packages now exist
+  (record-source path))
+
+(defun record-source (path)
+  "The capture half of LOAD-RECORDING: read PATH's top-level forms WITHOUT
+   evaluating them and file each definition's verbatim text in *REGISTRY*. Split out
+   so this file can record ITSELF (bottom of the file) — it is loaded with a plain
+   LOAD, because LOAD-RECORDING does not exist until it has been loaded."
   (let ((text (ignore-errors (read-file-into-string path))))
     (when text
       (ignore-errors
@@ -349,3 +356,14 @@
 (defun specializers-of (class-name)
   "Methods that specialize on CLASS-NAME (the class side of dispatch)."
   (mapcar #'car (sb-introspect:who-specializes-directly (find-class class-name))))
+
+;;; ---- the registry records itself -------------------------------------------
+;;; Every other module enters the registry through LOAD-RECORDING; this one cannot,
+;;; since it is what defines LOAD-RECORDING. Until 2026-10-12 that made the registry
+;;; the one module the browser could not show as our own code: drilling ACCEPT-SOURCE
+;;; fell through to SHOW-REFERENCE and called it "SBCL's own, compiled into the core"
+;;; (found while writing the guided tour, initramfs/tour.lisp). Capturing our own
+;;; text now, after everything above is defined, closes that gap without loading the
+;;; file twice. *LOAD-TRUENAME* is NIL when this text is evaluated some other way
+;;; (pasted into a REPL), and then there is simply nothing to record.
+(when *load-truename* (record-source *load-truename*))

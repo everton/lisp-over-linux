@@ -28,6 +28,7 @@ CATS=(
   "C header|*.h"
   "Org docs|*.org"
   "Markdown|*.md"
+  "HTML/CSS/JS|*.html *.css *.js"
   "Kernel config|config-*"
   "Manifests/misc|*.list *.gitignore LICENSE"
 )
@@ -44,7 +45,7 @@ ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp"
   "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp host-client/png.lisp host-client/qmp.lisp"
-  "tooling|*.sh host-client/* poc/render-frame.lisp"
+  "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )
 ORIGIN_ORDER=(ours conformance tests tooling vendored)
@@ -118,6 +119,7 @@ for l in "Org docs" "Markdown"; do
   prose_lines=$((prose_lines + ${CAT_LINES[$l]:-0}))
 done
 printf '  %-16s %7d %9d   <- prose subtotal\n' "" "$prose_files" "$prose_lines"
+emit "HTML/CSS/JS"     # design mock-ups (media/) and the guide (doc/guide/)
 emit "Kernel config"
 emit "Manifests/misc"
 [ "$OTHER_FILES" -gt 0 ] && printf '  %-16s %7d %9d\n' "Other" "$OTHER_FILES" "$OTHER_LINES"
@@ -125,9 +127,9 @@ emit "Manifests/misc"
 printf '\n  binary assets  : %d files, %d KiB (png/rgba, not line-counted)\n' \
   "$BIN_FILES" "$((BIN_BYTES / 1024))"
 
-total_files=$((code_files + prose_files + ${CAT_FILES["Kernel config"]:-0} \
+total_files=$((code_files + prose_files + ${CAT_FILES["HTML/CSS/JS"]:-0} + ${CAT_FILES["Kernel config"]:-0} \
   + ${CAT_FILES["Manifests/misc"]:-0} + OTHER_FILES))
-total_lines=$((code_lines + prose_lines + ${CAT_LINES["Kernel config"]:-0} \
+total_lines=$((code_lines + prose_lines + ${CAT_LINES["HTML/CSS/JS"]:-0} + ${CAT_LINES["Kernel config"]:-0} \
   + ${CAT_LINES["Manifests/misc"]:-0} + OTHER_LINES))
 printf '  text total     : %d files, %d lines\n\n' "$total_files" "$total_lines"
 

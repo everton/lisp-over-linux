@@ -1,0 +1,135 @@
+/* guide.css — the shared look of doc/guide/*.html.
+   Offline by design: system font stacks, no web fonts, no CDN. Light and dark
+   follow the OS (prefers-color-scheme); the toggle in the header pins one. */
+
+:root {
+  --bg: #fbfaf7; --panel: #f2f0ea; --fg: #1f2328; --dim: #5d6670; --rule: #d8d4ca;
+  --accent: #0f766e; --accent-bg: #d6efeb; --amber: #b45309; --red: #b42318;
+  --code-bg: #eeebe3; --link: #0b5fa5;
+  --box: #ffffff; --line: #59626d;
+  /* one hue per layer of the module map, used in every diagram */
+  --l-kernel: #c2410c; --l-data: #7c3aed; --l-model: #0369a1; --l-present: #0f766e;
+  --l-ui: #a16207; --l-shell: #be185d; --l-runtime: #b42318; --l-tools: #57534e;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a; --panel: #1b1e24; --fg: #d6d3c8; --dim: #8a929d; --rule: #2e343d;
+    --accent: #7fdbca; --accent-bg: #1f3a36; --amber: #ff9f43; --red: #ff6b6b;
+    --code-bg: #20242b; --link: #82aaff;
+    --box: #1f232a; --line: #9aa3ad;
+    --l-kernel: #fb923c; --l-data: #c4a7ff; --l-model: #7cc4fa; --l-present: #7fdbca;
+    --l-ui: #f2c94c; --l-shell: #f78fb3; --l-runtime: #ff8a80; --l-tools: #b8b2aa;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --panel: #1b1e24; --fg: #d6d3c8; --dim: #8a929d; --rule: #2e343d;
+  --accent: #7fdbca; --accent-bg: #1f3a36; --amber: #ff9f43; --red: #ff6b6b;
+  --code-bg: #20242b; --link: #82aaff;
+  --box: #1f232a; --line: #9aa3ad;
+  --l-kernel: #fb923c; --l-data: #c4a7ff; --l-model: #7cc4fa; --l-present: #7fdbca;
+  --l-ui: #f2c94c; --l-shell: #f78fb3; --l-runtime: #ff8a80; --l-tools: #b8b2aa;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--fg);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+a { color: var(--link); }
+code, pre, kbd, .mono { font-family: ui-monospace, "Cascadia Mono", "JetBrains Mono", Menlo, Consolas, monospace; }
+code { background: var(--code-bg); padding: 0 .3em; border-radius: 3px; font-size: .92em; }
+pre { background: var(--code-bg); padding: .8em 1em; border-radius: 6px; overflow-x: auto; font-size: .88em; line-height: 1.45; }
+pre code { background: none; padding: 0; }
+kbd { border: 1px solid var(--rule); border-bottom-width: 2px; border-radius: 4px; padding: 0 .35em; font-size: .85em; background: var(--panel); }
+
+/* ---- layout: a sidebar of pages, a readable column of text ---- */
+.wrap { display: grid; grid-template-columns: 15rem minmax(0, 1fr); min-height: 100vh; }
+nav.side { border-right: 1px solid var(--rule); background: var(--panel); padding: 1.2rem 1rem; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+nav.side .brand { font-weight: 700; margin-bottom: .2rem; }
+nav.side .brand a { color: var(--fg); text-decoration: none; }
+nav.side .sub { color: var(--dim); font-size: .82rem; margin-bottom: 1rem; }
+nav.side ol { list-style: none; padding: 0; margin: 0; counter-reset: p; }
+nav.side li { counter-increment: p; }
+nav.side li a { display: block; padding: .28rem .5rem; border-radius: 5px; color: var(--fg); text-decoration: none; font-size: .93rem; }
+nav.side li a::before { content: counter(p) ". "; color: var(--dim); }
+nav.side li a:hover { background: var(--accent-bg); }
+nav.side li a[aria-current="page"] { background: var(--accent-bg); font-weight: 600; border-left: 3px solid var(--accent); }
+nav.side .theme { margin-top: 1.2rem; font-size: .82rem; color: var(--dim); }
+nav.side .theme button { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--rule); border-radius: 4px; padding: .1rem .5rem; cursor: pointer; }
+main { padding: 2rem clamp(1rem, 4vw, 3rem) 4rem; max-width: 62rem; }
+h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 .4rem; }
+h2 { font-size: 1.35rem; margin-top: 2.4rem; padding-top: .6rem; border-top: 1px solid var(--rule); }
+h3 { font-size: 1.08rem; margin-top: 1.6rem; }
+.lede { color: var(--dim); font-size: 1.05rem; margin-top: 0; }
+.note { border-left: 3px solid var(--amber); background: var(--panel); padding: .6rem .9rem; border-radius: 0 6px 6px 0; margin: 1rem 0; }
+.ruled-out { border-left: 3px solid var(--red); background: var(--panel); padding: .6rem .9rem; border-radius: 0 6px 6px 0; margin: 1rem 0; }
+.ruled-out::before { content: "Ruled out / corrected: "; font-weight: 600; color: var(--red); }
+table { border-collapse: collapse; width: 100%; font-size: .92rem; margin: 1rem 0; display: block; overflow-x: auto; }
+th, td { text-align: left; vertical-align: top; padding: .4rem .6rem; border-bottom: 1px solid var(--rule); }
+th { background: var(--panel); font-weight: 600; }
+.pager { display: flex; justify-content: space-between; gap: 1rem; margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule); }
+
+/* ---- source references: name + file:line, filled in by regen.lisp ---- */
+a.ref { text-decoration: none; white-space: nowrap; }
+a.ref code { color: var(--fg); }
+a.ref .loc { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .78em; color: var(--dim); margin-left: .35em; }
+a.ref:hover .loc { color: var(--link); text-decoration: underline; }
+
+/* ---- numbered walks (reading paths) ---- */
+ol.stops { counter-reset: s; list-style: none; padding-left: 0; }
+ol.stops > li { counter-increment: s; position: relative; padding: .2rem 0 .8rem 2.6rem; border-left: 2px solid var(--rule); margin-left: .9rem; }
+ol.stops > li::before { content: counter(s); position: absolute; left: -.95rem; top: .1rem; width: 1.8rem; height: 1.8rem; border-radius: 50%; background: var(--accent); color: var(--bg); font-weight: 700; display: grid; place-items: center; font-size: .9rem; }
+ol.stops > li:last-child { border-left-color: transparent; }
+ol.stops .where { display: block; font-size: .9rem; margin-bottom: .15rem; }
+
+/* ---- cards (index, exercises) ---- */
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .8rem; margin: 1rem 0; }
+.card { border: 1px solid var(--rule); border-radius: 8px; padding: .8rem 1rem; background: var(--panel); }
+.card h3 { margin: 0 0 .3rem; font-size: 1rem; }
+.card p { margin: 0; font-size: .92rem; color: var(--dim); }
+.card a.go { text-decoration: none; color: var(--fg); }
+details.exercise { border: 1px solid var(--rule); border-radius: 8px; padding: .6rem 1rem; margin: .8rem 0; background: var(--panel); }
+details.exercise summary { cursor: pointer; font-weight: 600; }
+.expect { border-left: 3px solid var(--accent); padding-left: .8rem; margin: .6rem 0; }
+.expect::before { content: "You should see: "; font-weight: 600; color: var(--accent); }
+dl.glossary dt { font-weight: 700; margin-top: 1.1rem; }
+dl.glossary dd { margin-left: 0; padding-left: 1rem; border-left: 2px solid var(--rule); }
+
+/* ---- diagrams: inline SVG themed by the tokens above ---- */
+figure { margin: 1.5rem 0; }
+figure svg { width: 100%; height: auto; display: block; color: var(--line); background: var(--panel); border-radius: 8px; border: 1px solid var(--rule); }
+figcaption { font-size: .88rem; color: var(--dim); margin-top: .5rem; }
+svg text { fill: var(--fg); font: 12px system-ui, -apple-system, "Segoe UI", sans-serif; }
+svg text.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 11px; }
+svg text.dim { fill: var(--dim); font-size: 11px; }
+svg text.title { font-weight: 700; font-size: 13px; }
+svg text.lbl { fill: var(--dim); font-size: 10.5px; }
+svg .box { fill: var(--box); stroke: var(--line); stroke-width: 1.2; }
+svg .box.hot { stroke: var(--accent); stroke-width: 2; }
+svg .zone { fill: none; stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 5 4; }
+svg .edge { fill: none; stroke: var(--line); stroke-width: 1.3; }
+svg .edge.hot { stroke: var(--accent); stroke-width: 2; }
+svg .edge.dash { stroke-dasharray: 5 4; }
+svg .life { stroke: var(--rule); stroke-width: 1.2; stroke-dasharray: 3 4; }
+svg .act { fill: var(--accent-bg); stroke: var(--accent); }
+svg a text { fill: var(--link); }
+svg a:hover .box { stroke: var(--accent); stroke-width: 2; }
+svg .k-kernel { stroke: var(--l-kernel); } svg .f-kernel { fill: var(--l-kernel); }
+svg .k-data { stroke: var(--l-data); }     svg .f-data { fill: var(--l-data); }
+svg .k-model { stroke: var(--l-model); }   svg .f-model { fill: var(--l-model); }
+svg .k-present { stroke: var(--l-present); } svg .f-present { fill: var(--l-present); }
+svg .k-ui { stroke: var(--l-ui); }         svg .f-ui { fill: var(--l-ui); }
+svg .k-shell { stroke: var(--l-shell); }   svg .f-shell { fill: var(--l-shell); }
+svg .k-runtime { stroke: var(--l-runtime); } svg .f-runtime { fill: var(--l-runtime); }
+svg .k-tools { stroke: var(--l-tools); }   svg .f-tools { fill: var(--l-tools); }
+
+@media (max-width: 760px) {
+  .wrap { grid-template-columns: 1fr; }
+  nav.side { position: static; height: auto; border-right: none; border-bottom: 1px solid var(--rule); }
+  nav.side ol { display: flex; flex-wrap: wrap; gap: .2rem; }
+  main { padding: 1.2rem 16px 3rem; }
+}

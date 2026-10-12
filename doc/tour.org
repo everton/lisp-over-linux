@@ -1,0 +1,77 @@
+#+TITLE: A guided tour of the code — index of the HTML guide and the in-image tour
+#+STARTUP: showall
+
+This is the org-mode entry point to two teaching resources that cover the same ground:
+
+- *The HTML guide*, [[file:guide/index.html][doc/guide/index.html]]. It works offline from =file://= and has light and
+  dark themes. It contains diagrams of the boot, the build, the module graph, the =present= protocol and a keypress,
+  the rendering and input pipelines, live editing, privilege and networking. It also has six guided reading paths, a
+  glossary and exercises. Open it with =xdg-open doc/guide/index.html=, or =M-x eww-open-file= for a text-only look.
+- *The in-image tour*, =subj-tour= in [[file:../initramfs/tour.lisp][initramfs/tour.lisp]]. In the running environment:
+  =SuperL-Space=, type =tour=, =Enter=. Each row is one of the image's own live definitions, in reading order. The
+  right-hand column previews its source as you move down. =Enter= opens it (editable, and Acceptable), and =C-g= comes back.
+
+* How the guide stays true
+
+Every =file:line= in the HTML is generated. [[file:guide/regen.lisp][doc/guide/regen.lisp]] does three jobs:
+
+1. It indexes every top-level definition in the Lisp sources.
+2. It rewrites each =<a class="ref" data-ref="FILE#NAME">= in the pages from that index, and exits non-zero on any
+   reference that no longer resolves.
+3. It re-derives the module dependency graph into =guide/deps-data.js= from which names each file mentions, and
+   stamps the sidebar into every page.
+
+Run it after changing code the guide talks about, as you run =./check-links.sh= after changing docs:
+
+#+begin_src sh
+  sbcl --script doc/guide/regen.lisp    # "refs: N checked, 0 unresolved; 0 errors in all"
+#+end_src
+
+The in-image tour has its own guard. Its stops name symbols as strings and resolve when shown, so a rename
+degrades a stop to a polite "not in this image" row instead of failing the build. [[file:../check-tour.lisp][check-tour.lisp]] boots
+the image and asserts that every stop resolves and presents.
+
+What writing the guide turned up (each is recorded where it belongs):
+- =registry.lisp= was the one module missing from its own registry, so =accept-source= opened as "SBCL's own"
+  reference. It now records itself (=record-source=, the last form in [[file:../initramfs/registry.lisp::when *load-truename* (record-source][registry.lisp]]).
+- Comments and two docs said the debugger is entered through =*debugger-hook*=. Nothing sets that variable: both
+  entry points use =handler-bind= ([[file:../poc/shell.lisp::defun workspace-debug-it][workspace-debug-it]], [[file:../initramfs/fb-browser.lisp::defun tick-live-stage][tick-live-stage]]).
+- [[file:sbcl-init.org][sbcl-init.org]] said =shell.lisp= expands =with-raw-mode=. It does not. =fb-browser.lisp= and =repl.lisp= do.
+
+* The guide's pages
+
+| Page                                            | What it answers                                                   |
+|-------------------------------------------------+-------------------------------------------------------------------|
+| [[file:guide/index.html][index.html]]           | The big picture: firmware → kernel → preinit → the image → the environment |
+| [[file:guide/build.html][build.html]]           | =build.sh=, =LISP_SOURCES= order, =load-recording=, the frozen heap, the cpio |
+| [[file:guide/modules.html][modules.html]]       | Every module by layer, with derived "uses / used by" edges (interactive) |
+| [[file:guide/present.html][present.html]]       | subject → view → pane → trail; every =present= method; a keypress end to end |
+| [[file:guide/pixels.html][pixels.html]]         | canvas → widgets/textview → fb / X11 / PPM; evdev → poll → shell |
+| [[file:guide/live.html][live.html]]             | Accept, the Workspace verbs, the change set, the debugger, the inspector |
+| [[file:guide/system.html][system.html]]         | =/mnt/host= and =/home=, the five capabilities, =lol-rootd=, DHCP, the net REPL, workers |
+| [[file:guide/verify.html][verify.html]]         | Host tests, =render-frame=, =check-links=, =regen=, the guest harness |
+| [[file:guide/paths.html][paths.html]]           | Six reading paths: =M-.=, =C-x C-e=, =C-c C-c=, a preview, the Spotter, the halo |
+| [[file:guide/glossary.html][glossary.html]]     | Terms, each linked to where the code uses it |
+| [[file:guide/exercises.html][exercises.html]]   | Things to try, with what you should see |
+| [[file:guide/in-progress.html][in-progress.html]] | Subsystems being built, and how to add their sections |
+
+* The in-image tour's stops
+
+The same walk as =*tour-stops*= in [[file:../initramfs/tour.lisp::defparameter *tour-stops*][tour.lisp]]. Keep the two in step.
+
+1. *Boot*: [[file:../initramfs/preinit.c::int main(void)][preinit.c main]], [[file:../initramfs/supervisor.lisp::defun init-toplevel][init-toplevel]], [[file:../initramfs/supervisor.lisp::defun supervisor-main][supervisor-main]], [[file:../initramfs/fb-browser.lisp::defun run-browser-fb][run-browser-fb]].
+2. *Build*: [[file:../build.sh::LISP_SOURCES=(][build.sh LISP_SOURCES]], [[file:../initramfs/registry.lisp::defun load-recording][load-recording]], [[file:../initramfs/registry.lisp::defvar *registry*][*registry*]].
+3. *present*: [[file:../initramfs/present.lisp::defgeneric present][present]], [[file:../initramfs/present.lisp::defgeneric commands-for][commands-for]], [[file:../poc/shell.lisp::defun open-pane][open-pane]], [[file:../poc/shell.lisp::defun trail-push][trail-push]].
+4. *Pixels*: [[file:../poc/shell.lisp::defun draw-browser][draw-browser]], [[file:../poc/widgets.lisp::defun draw-list][lol.widgets:draw-list]], [[file:../poc/canvas.lisp::defun draw-string][lol.canvas:draw-string]], [[file:../poc/fb.lisp::defun present-fb][lol.fb:present-fb]].
+5. *Input*: [[file:../initramfs/fb-browser.lisp::defun fbb-wait][fbb-wait]], [[file:../initramfs/fb-browser.lisp::defun fb-read-key][fb-read-key]], [[file:../initramfs/fb-browser.lisp::defun read-mouse][read-mouse]], [[file:../poc/shell.lisp::defun browser-key][browser-key]].
+6. *Live*: [[file:../poc/shell.lisp::defun jump-at-point][jump-at-point]], [[file:../poc/shell.lisp::defun workspace-do-it][workspace-do-it]], [[file:../initramfs/registry.lisp::defun accept-source][accept-source]], [[file:../initramfs/registry.lisp::defun changed-definitions][changed-definitions]], [[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][run-debugger-fb]].
+7. *The model*: [[file:../initramfs/model.lisp::defun dispatch-matrix][dispatch-matrix]], [[file:../initramfs/model.lisp::defun retention-path][retention-path]].
+8. *The machine*: [[file:../initramfs/dhcp.lisp::defun configure-eth0][configure-eth0]], [[file:../initramfs/process.lisp::defun power-off][power-off]], and =*tour-stops*= itself.
+
+* Regenerating, and extending
+
+- Derived data: =doc/guide/deps-data.js= (module graph) and every =file:line= in =doc/guide/*.html=. Both come from
+  =sbcl --script doc/guide/regen.lisp=. Do not edit them by hand.
+- Hand-written: the pages' prose and diagrams (inline SVG), =guide.css= and =guide.js= (the theme button), and the
+  layer of each module (=+layers+= in =regen.lisp=).
+- Adding a subsystem: see [[file:guide/in-progress.html][in-progress.html]], "How to add a section".

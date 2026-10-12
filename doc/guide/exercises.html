@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exercises</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html" aria-current="page">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Exercises</h1>
+<p class="lede">Small things to do, each with what you should see. They go from reading, to changing the running
+system, to extending it. Exercises marked <em>host</em> need only SBCL. The others need the environment, on the
+laptop or under QEMU (<code>./build.sh --interactive</code>). The expectations were checked on 2026-10-12. Where one
+was checked on the host rather than in the guest, the exercise says so.</p>
+
+<h2>Reading</h2>
+<details class="exercise" open><summary>1 · Take the tour</summary>
+  <p>Press <kbd>SuperL</kbd>-<kbd>Space</kbd>, type <code>tour</code> and press <kbd>Enter</kbd>. Move with <kbd>↓</kbd>.
+    Press <kbd>Enter</kbd> on stop 06, read it, then <kbd>C-g</kbd>.</p>
+  <p class="expect">29 numbered rows in 8 chapters, starting at "1 · boot". As you move, the right column shows each stop's
+    source. Stop 06 opens <code>load-recording</code> as an editable <em>definition</em> (title "definition load-recording").
+    The <code>preinit.c</code> and <code>build.sh</code> rows open the real files on the laptop, where the repository is under
+    <code>/home</code>. Under QEMU they say "not on this disk".</p>
+</details>
+<details class="exercise"><summary>2 · Jump around with M-. and M-, </summary>
+  <p>In stop 06's source, put the caret on <code>record-source</code> and press <kbd>M-.</kbd> (or <kbd>Esc</kbd> then <kbd>.</kbd>).
+    Then put it on <code>read-file-into-string</code> and press <kbd>M-,</kbd>.</p>
+  <p class="expect">A new breadcrumb level holding <code>record-source</code>'s source. Then a list titled
+    <code>senders of read-file-into-string</code>, whose rows drill to the callers. <kbd>C-g</kbd> pops each level. On a CL
+    symbol such as <code>mapcar</code>, <kbd>M-.</kbd> gives a <em>reference</em> view: lambda list, docstring and, if the SBCL
+    tree is on the disk, SBCL's own <code>list.lisp</code> source.</p>
+</details>
+<details class="exercise"><summary>3 · Render a frame on the host <em>(host)</em></summary>
+  <pre><code>sbcl --script poc/render-frame.lisp tour -s 1280x800 -o /tmp/t.ppm
+sbcl --script host-client/ppm2png.lisp /tmp/t.ppm /tmp/t.png</code></pre>
+  <p class="expect">The tour list with stop 01's preview on the right. About 20 rows say "… is not in this image",
+    because render-frame does not load <code>fb-browser.lisp</code>, the shell's input half, or the network. That is
+    expected (<a href="verify.html">How to verify things</a>). Add <code>-k "down down down down down ret"</code> to see
+    stop 06 opened.</p>
+</details>
+<details class="exercise"><summary>4 · The protocol without pixels <em>(host)</em></summary>
+  <pre><code>sbcl --non-interactive --eval '(require :sb-introspect)' \
+  --eval '(load "initramfs/registry.lisp")' \
+  --eval '(mapc (function load-recording) (list "initramfs/model.lisp" "initramfs/present.lisp" "initramfs/tour.lisp" "initramfs/examples.lisp"))' \
+  --eval '(show-view (subj-xref :senders (quote source-of)))'</code></pre>
+  <p class="expect">A text rendering of the same view the browser would draw: <code>== senders of source-of [list]</code>, a row
+    <code>(fast-method present (subj-defn))</code>, and the commands line. <code>present</code> is pure data, so a REPL is enough
+    to explore it.</p>
+</details>
+
+<h2>Changing the running system</h2>
+<details class="exercise"><summary>5 · Define a function live, and watch the change set</summary>
+  <p>In the Workspace, change the primer's <code>greet</code> to return <code>(list :hi who)</code>, put the caret after it and press
+    <kbd>C-c C-c</kbd>. Put the caret after <code>(greet "lisp")</code> and press <kbd>C-x C-e</kbd>. Then
+    <kbd>SuperL</kbd>-<kbd>Space</kbd> "change set". Go back, edit <code>greet</code> again, and press <kbd>C-c C-c</kbd> again.</p>
+  <p class="expect">Status line: <code>Accepted: greet</code>, then <code>(GREET "lisp") =&gt; (:HI "lisp")</code>. The change set
+    lists <code>greet</code> as "new this session". After the second Accept it says "new this session · 1 revision". On the host,
+    <code>changed-definitions</code> went from <code>((GREET 0 T))</code> to <code>((GREET 1 T))</code>.</p>
+</details>
+<details class="exercise"><summary>6 · Edit the environment itself</summary>
+  <p><kbd>SuperL</kbd>-<kbd>Space</kbd>, type <code>+wheel-lines+</code>, press <kbd>Enter</kbd>. Change <code>3</code> to <code>10</code> and
+    press <kbd>C-c C-c</kbd>. Scroll a long source pane with the mouse wheel.</p>
+  <p class="expect">Each wheel notch now moves 10 lines instead of 3. No rebuild and no restart were needed:
+    <code>defparameter</code> re-evaluated sets the variable, and the main loop reads it on every notch. The change set
+    lists <code>+wheel-lines+</code> with "1 prior version". A reboot reverts it, since nothing is written to disk yet
+    (<a href="../session-persistence.org">session-persistence.org</a>).</p>
+</details>
+<details class="exercise"><summary>7 · Pick a restart in the debugger</summary>
+  <p>In the Workspace, put the caret after <code>(lol.examples:launch)</code> and press <kbd>C-c C-d</kbd>.</p>
+  <p class="expect">The debugger, with an <code>OFF-COURSE</code> condition and a restart list that starts with STEER's own:
+    <code>correct-course</code>, <code>hold-heading</code>, <code>use-heading</code>, <code>scrub</code>, then "Return to the workspace"
+    and the outer ones (checked on the host with <code>compute-restarts</code>). <kbd>Tab</kbd> moves to the backtrace, where
+    <kbd>↑</kbd>/<kbd>↓</kbd> show each frame's locals. Choosing <code>use-heading</code> (<kbd>2</kbd>, <kbd>Enter</kbd>) asks you
+    for a value, and the launch <em>continues</em>, because the stack was never unwound.</p>
+</details>
+<details class="exercise"><summary>8 · Who drew this?</summary>
+  <p>Middle-click (or Alt-click) on a row of any list.</p>
+  <p class="expect">The halo: handles around the point and a caption naming the innermost thing under it. Its entries
+    include "Code: draw-list-body", which opens the function that painted the row. <kbd>Up</kbd>, <kbd>Tab</kbd> or another middle click
+    walks outward through the layers (row, pane, screen) and <kbd>Down</kbd> walks back in. On the host: <code>render-frame.lisp modules --halo 300,200</code> prints the layers.</p>
+</details>
+
+<h2>Extending it</h2>
+<details class="exercise"><summary>9 · Add a subject of your own</summary>
+  <p>Type these into the Workspace and press <kbd>C-c C-c</kbd> after each, then put the caret after <code>(subj-hello)</code>
+    and press <kbd>C-c C-i</kbd>:</p>
+  <pre><code>(defstruct (subj-hello (:constructor subj-hello ())))
+
+(defmethod present ((s subj-hello))
+  (make-view :title "hello, subjects"
+             :items (list (make-item :label "the tour" :subject (subj-tour))
+                          (make-item :label "a class"
+                                     :subject (find-class 'standard-object)))))
+
+(subj-hello)</code></pre>
+  <p class="expect">A list pane titled "hello, subjects" with two rows. The right column previews the tour, and
+    <kbd>Enter</kbd> on "a class" shows <code>standard-object</code>'s class DAG. The shell did not change: one method was
+    enough. The change set now lists <code>present</code> and <code>subj-hello</code>, both "new this session" (checked on the host).
+    To make it findable, push a function onto <code>*spotter-sources*</code> as <code>tour.lisp</code> does at its end.</p>
+</details>
+<details class="exercise"><summary>10 · Break a guide reference on purpose <em>(host)</em></summary>
+  <p>In a scratch copy, rename <code>jump-at-point</code> in <code>poc/shell.lisp</code> and run
+    <code>sbcl --script doc/guide/regen.lisp</code>. Then undo the rename.</p>
+  <p class="expect"><code>UNRESOLVED paths.html: poc/shell.lisp#jump-at-point</code> (and the other pages that cite it), and exit
+    status 1. This is how the guide stays true. <code>check-tour.lisp</code> does the same job for the in-image tour.</p>
+</details>
+<details class="exercise"><summary>11 · Ask the booted guest a question <em>(host + QEMU)</em></summary>
+  <pre><code>./build.sh &amp;&amp; LOL_PORT=4018 sbcl --script check-tour.lisp</code></pre>
+  <p class="expect">QEMU boots headless, and five rows print: 29 stops, 0 unresolved, 0 failing views, Spotter 1,
+    <code>:source</code> 1. Then <code>===== ALL PASS =====</code>. Read <code>check-tour.lisp</code>: each assertion is a Lisp form
+    the guest evaluates about itself.</p>
+</details>
+
+<div class="pager"><a href="glossary.html">← Glossary</a><a href="in-progress.html">Subsystems in progress →</a></div>
+</main>
+</div>
+</body>
+</html>

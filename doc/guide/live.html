@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Live editing and the debugger</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html" aria-current="page">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Live editing, the debugger</h1>
+<p class="lede">The Smalltalk part. You change a definition and the running image changes. The old text is kept,
+the change is listed, and an error opens a debugger while the stack that raised it is still there.
+Design: <a href="../code-browser.org">code-browser.org</a> §3, §3a, §6.</p>
+
+<h2>Accept: <kbd>C-c C-c</kbd></h2>
+<figure>
+<svg viewBox="0 0 960 300" role="img" aria-label="C-c C-c in an editable pane: edit-pane-command calls accept-pane; for a source pane accept-target supplies the name, kind and method label, and the whole buffer is the text; in the Workspace the form before point is the text and the form alone names the definition. accept-source reads the text in the definition's own package, evals it, which redefines it in the running image, then pushes the old source onto the DEFN's versions or creates a DEFN marked born. changed-definitions lists every DEFN with versions or born: the change set.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <rect class="box k-shell" x="20" y="30" width="170" height="56" rx="6"/><text x="30" y="52" class="title">C-c C-c</text><text x="30" y="70" class="mono">edit-pane-command</text>
+  <rect class="box k-shell" x="230" y="30" width="200" height="56" rx="6"/><text x="240" y="52" class="title">accept-pane</text><text x="240" y="70" class="dim">which text? which name?</text>
+  <path class="edge" d="M190,58 H228" marker-end="url(#ar)"/>
+  <rect class="box" x="230" y="120" width="200" height="66" rx="6"/><text x="240" y="140" class="title">source pane</text><text x="240" y="158" class="dim">whole buffer; name, kind and</text><text x="240" y="172" class="dim">label from accept-target</text>
+  <rect class="box" x="230" y="200" width="200" height="66" rx="6"/><text x="240" y="220" class="title">Workspace / .lisp file</text><text x="240" y="238" class="dim">the form before point;</text><text x="240" y="252" class="dim">the form names itself</text>
+  <path class="edge" d="M300,86 V118" marker-end="url(#ar)"/><path class="edge" d="M240,86 C200,140 200,220 228,232" marker-end="url(#ar)"/>
+  <rect class="box hot k-model" x="480" y="30" width="230" height="156" rx="6"/><text x="490" y="52" class="title">accept-source (registry.lisp)</text>
+  <text x="490" y="74" class="mono">1 read in accept-package</text><text x="490" y="90" class="dim">  the package it was recorded in</text>
+  <text x="490" y="112" class="mono">2 (eval form)</text><text x="490" y="128" class="dim">  compiles + redefines, live</text>
+  <text x="490" y="150" class="mono">3 old source → versions</text><text x="490" y="166" class="dim">  or a new DEFN, born t</text>
+  <path class="edge" d="M430,153 H478" marker-end="url(#ar)"/><path class="edge" d="M430,233 C460,233 460,170 478,170" marker-end="url(#ar)"/>
+  <rect class="box k-model" x="760" y="30" width="180" height="70" rx="6"/><text x="770" y="52" class="title">*registry*</text><text x="770" y="70" class="dim">DEFN: source, versions,</text><text x="770" y="84" class="dim">born</text>
+  <path class="edge" d="M710,64 H758" marker-end="url(#ar)"/>
+  <rect class="box k-present" x="760" y="130" width="180" height="70" rx="6"/><text x="770" y="152" class="title">the change set</text><text x="770" y="170" class="mono">changed-definitions</text><text x="770" y="186" class="dim">SuperL-Space "change set"</text>
+  <path class="edge" d="M850,100 V128" marker-end="url(#ar)"/>
+  <rect class="box k-runtime" x="480" y="216" width="230" height="56" rx="6"/><text x="490" y="238" class="title">the running image</text><text x="490" y="256" class="dim">next call uses the new code</text>
+  <path class="edge hot" d="M595,186 V214" marker-end="url(#ar)"/>
+</svg>
+<figcaption>Accept is <code>eval</code> plus bookkeeping. The bookkeeping is what turns "I typed into a REPL" into
+a reviewable list of changes with history.</figcaption>
+</figure>
+<ul>
+  <li><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:1749</span></a>,
+    <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:795</span></a>,
+    <a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>,
+    <a class="ref" data-ref="initramfs/registry.lisp#accept-package" href="../../initramfs/registry.lisp"><code>accept-package</code><span class="loc">initramfs/registry.lisp:172</span></a>,
+    <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:329</span></a>.</li>
+  <li>Why the package matters: an edit of <code>lol.textview::tv-draw</code> read in <code>CL-USER</code> would define a
+    <em>new</em> <code>cl-user::tv-draw</code> and leave the real one running. Accept would appear to work and change nothing.
+    The <code>package</code> slot of each DEFN prevents this.</li>
+  <li>Why the method label matters: a generic function's methods share one name. Accept finds the right DEFN by the
+    printed specializer list, the same string <a class="ref" data-ref="initramfs/registry.lisp#method-label" href="../../initramfs/registry.lisp"><code>method-label</code><span class="loc">initramfs/registry.lisp:77</span></a> produced
+    at build time.</li>
+  <li>Not yet: writing changes back to files on disk ("file-out"). The plan is in
+    <a href="../session-persistence.org">session-persistence.org</a>. Today a reboot loses every Accept.</li>
+</ul>
+
+<h2>The Workspace verbs</h2>
+<table>
+  <tr><th>Keys</th><th>Verb</th><th>Function</th><th>What it does</th></tr>
+  <tr><td><kbd>C-x C-e</kbd></td><td>Do it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-do-it" href="../../poc/shell.lisp"><code>workspace-do-it</code><span class="loc">poc/shell.lisp:457</span></a></td><td>evaluates the form before point; value in the status line</td></tr>
+  <tr><td><kbd>C-c C-p</kbd></td><td>Print it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-print-it" href="../../poc/shell.lisp"><code>workspace-print-it</code><span class="loc">poc/shell.lisp:472</span></a></td><td>inserts output and value into the buffer, under the form</td></tr>
+  <tr><td><kbd>C-c C-i</kbd></td><td>Inspect it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-inspect-it" href="../../poc/shell.lisp"><code>workspace-inspect-it</code><span class="loc">poc/shell.lisp:488</span></a></td><td><code>trail-push</code> of the value, so the inspector opens</td></tr>
+  <tr><td><kbd>C-c C-d</kbd></td><td>Debug it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:500</span></a></td><td>evaluates with the debugger armed</td></tr>
+  <tr><td><kbd>C-c C-c</kbd></td><td>Accept</td><td><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:1749</span></a></td><td>defines it, as above</td></tr>
+</table>
+<p>"The form before point" is found by reading forms from the start of the buffer to the caret and keeping the last
+complete one (<a class="ref" data-ref="poc/shell.lisp#form-before-point" href="../../poc/shell.lisp"><code>form-before-point</code><span class="loc">poc/shell.lisp:379</span></a>). Evaluation captures
+<code>*standard-output*</code> and catches every error (<a class="ref" data-ref="poc/shell.lisp#ws-eval" href="../../poc/shell.lisp"><code>ws-eval</code><span class="loc">poc/shell.lisp:431</span></a>), so a bad form
+cannot take PID 1 down.</p>
+
+<h2>The debugger</h2>
+<figure>
+<svg viewBox="0 0 960 250" role="img" aria-label="Debug it establishes an abort restart, then a handler-bind for serious-condition, then evaluates the form. When the form signals, the handler runs before any unwinding, so it calls run-debugger-fb with the erroring frames still on the stack. The debugger draws restarts and the backtrace with frame locals; choosing a restart calls invoke-restart-interactively, a non-local exit that unwinds to wherever that restart was established.">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <text x="20" y="20" class="lbl">THE STACK, growing downward</text>
+  <rect class="box" x="20" y="30" width="300" height="34" rx="4"/><text x="30" y="52" class="mono">run-browser-fb … browser-key</text>
+  <rect class="box" x="20" y="68" width="300" height="34" rx="4"/><text x="30" y="90" class="mono">workspace-debug-it: restart-case (abort)</text>
+  <rect class="box" x="20" y="106" width="300" height="34" rx="4"/><text x="30" y="128" class="mono">  handler-bind (serious-condition …)</text>
+  <rect class="box" x="20" y="144" width="300" height="34" rx="4"/><text x="30" y="166" class="mono">    (eval form) … your code</text>
+  <rect class="box hot" x="20" y="182" width="300" height="34" rx="4"/><text x="30" y="204" class="mono">      (error …) → signal</text>
+  <rect class="box k-runtime hot" x="400" y="140" width="250" height="80" rx="6"/><text x="410" y="162" class="title">run-debugger-fb</text>
+  <text x="410" y="180" class="dim">called BY the handler: the frames</text><text x="410" y="194" class="dim">above are still there. Draws restarts,</text><text x="410" y="208" class="dim">backtrace, the selected frame's locals.</text>
+  <path class="edge hot" d="M320,199 C360,199 360,180 398,180" marker-end="url(#ar2)"/><text x="330" y="236" class="lbl">handler runs before unwinding</text>
+  <rect class="box" x="700" y="40" width="240" height="70" rx="6"/><text x="710" y="62" class="title">pick a restart</text><text x="710" y="80" class="mono">invoke-restart-interactively</text><text x="710" y="96" class="dim">a non-local exit</text>
+  <path class="edge" d="M650,170 C690,170 690,100 698,92" marker-end="url(#ar2)"/>
+  <path class="edge dash" d="M700,75 C500,75 420,85 322,85" marker-end="url(#ar2)"/><text x="420" y="70" class="lbl">unwinds to where the restart was made</text>
+</svg>
+<figcaption><code>handler-bind</code> runs its handler <em>at the point of the signal</em>, unlike
+<code>handler-case</code>, which unwinds first. This is the whole trick, and it is why the restarts listed are live.</figcaption>
+</figure>
+<ul>
+  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:1668</span></a>: a modal loop over the same canvas and the
+    same three fds, published in <code>*fb-canvas*</code> and friends.</li>
+  <li>Data from the model: <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:715</span></a> (<code>compute-restarts</code>),
+    <a class="ref" data-ref="initramfs/model.lisp#backtrace-frame-objects" href="../../initramfs/model.lisp"><code>backtrace-frame-objects</code><span class="loc">initramfs/model.lisp:725</span></a> (walks <code>sb-di</code> frames),
+    <a class="ref" data-ref="initramfs/model.lisp#frame-locals" href="../../initramfs/model.lisp"><code>frame-locals</code><span class="loc">initramfs/model.lisp:793</span></a>.</li>
+  <li>The stage arms the same handler around every simulation tick
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#tick-live-stage" href="../../initramfs/fb-browser.lisp"><code>tick-live-stage</code><span class="loc">initramfs/fb-browser.lisp:1164</span></a>), so a collision with no method opens the
+    debugger with the stage's own restarts (<code>define-method</code> drops a method template into the Workspace).</li>
+</ul>
+<div class="ruled-out">Several comments and two docs said the debugger is entered through <code>*debugger-hook*</code>.
+Nothing in the image sets <code>*debugger-hook*</code> or <code>sb-ext:*invoke-debugger-hook*</code> (checked by grep on
+2026-10-12). Both entry points use <code>handler-bind</code>. The comments were corrected. An error that no armed
+handler catches reaches the <code>handler-case</code> around <code>run-browser-fb</code>, which prints it and returns to the
+supervisor menu.</div>
+
+<h2>The inspector's powers</h2>
+<p>The <code>(present (x t))</code> fallback is the inspector (<a class="ref" data-ref="initramfs/present.lisp#inspector-view" href="../../initramfs/present.lisp"><code>inspector-view</code><span class="loc">initramfs/present.lisp:1053</span></a>).
+Its rows come from <a class="ref" data-ref="initramfs/model.lisp#inspect-places" href="../../initramfs/model.lisp"><code>inspect-places</code><span class="loc">initramfs/model.lisp:498</span></a>. A row that is a real place carries
+a setter in <code>item-edit</code>, and <kbd>C-c C-c</kbd> on it writes a value
+(<a class="ref" data-ref="poc/shell.lisp#set-field" href="../../poc/shell.lisp"><code>set-field</code><span class="loc">poc/shell.lisp:1642</span></a>). <kbd>C-c C-e</kbd> evaluates with <code>self</code> and the slots
+bound (<a class="ref" data-ref="initramfs/model.lisp#eval-in-context" href="../../initramfs/model.lisp"><code>eval-in-context</code><span class="loc">initramfs/model.lisp:589</span></a>). "Why is this alive?" asks the GC
+(<a class="ref" data-ref="initramfs/model.lisp#retention-path" href="../../initramfs/model.lisp"><code>retention-path</code><span class="loc">initramfs/model.lisp:653</span></a>). The history and cost of each power is in
+<a href="../inspector-history.org">inspector-history.org</a>.</p>
+
+<div class="pager"><a href="pixels.html">← Pixels and input</a><a href="system.html">Storage, privilege, network →</a></div>
+</main>
+</div>
+</body>
+</html>

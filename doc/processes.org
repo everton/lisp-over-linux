@@ -51,8 +51,8 @@ console. That is =with-graphics-console= in [[file:../poc/fb.lisp][poc/fb.lisp]]
 [[file:framebuffer.org][framebuffer.org]] explains the console side of it.
 
 The same instinct shows up *inside* the image. =*fb-canvas*= is published as a
-special in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] precisely so the debugger — entered mid-loop from
-=*debugger-hook*=, with the stack still standing — draws into *the same canvas*
+special in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] precisely so the debugger — entered mid-loop from a
+=handler-bind= handler (not =*debugger-hook*=, which nothing sets), with the stack still standing — draws into *the same canvas*
 rather than becoming a second writer.
 
 So the rule, stated once:
