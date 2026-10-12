@@ -5,8 +5,7 @@
 ;;;; the bottom (doc/agent.org §3):
 ;;;;
 ;;;;   transport   HTTP-REQUEST (initramfs/http.lisp, the networking track: https via
-;;;;               the host's libssl) when the image has it, else AGENT-PLAIN-HTTP
-;;;;               (agent-wire.lisp: plain http, for a mock server or a TLS broker)
+;;;;               the host's libssl, loaded at runtime from /mnt/host)
 ;;;;   wire        JSON (json.lisp, package LOL.JSON) and SSE (agent-wire.lisp)
 ;;;;   protocol    the Messages API, streamed: request shaping, the SSE events
 ;;;;               assembled back into content blocks, retries, cancellation, usage
@@ -81,8 +80,8 @@
 (defvar *agent-system-prompt*)   ; the text is defined at the end of this file
 
 (defvar *agent-transport* nil
-  "A function designator with HTTP-REQUEST's signature, or NIL for 'HTTP-REQUEST when
-   the image has it, else AGENT-PLAIN-HTTP'.")
+  "A function designator with HTTP-REQUEST's signature, or NIL for HTTP-REQUEST
+   itself (initramfs/http.lisp). A test can put a fake here.")
 
 (defparameter +fallback-models+ '("claude-opus-5-5" "claude-opus-5" "claude-fable-5-1" "claude-sonnet-5-5")
   "Models the server-side `fallbacks: \"default\"` form is offered for. Claude Haiku
@@ -875,7 +874,10 @@
 
 (defun transport ()
   (or *agent-transport*
-      (if (fboundp 'http-request) 'http-request 'agent-plain-http)))
+      (if (fboundp 'http-request)
+          'http-request
+          (error 'agent-api-error :kind "no_transport"
+                                  :message "no HTTP client in this image (initramfs/http.lisp)"))))
 
 (defun messages-json (conv)
   (coerce (loop for m across (conversation-messages conv)
@@ -1017,7 +1019,7 @@
                                   :kind (lol.json:jget* err "error" "type")
                                   :message (or (lol.json:jget* err "error" "message")
                                                (and text (lol.widgets:clip-text text 200)) "")
-                                  :retry-after (let ((ra (agent-header-value resp-headers "retry-after")))
+                                  :retry-after (let ((ra (header-value resp-headers "retry-after")))
                                                  (and ra (ignore-errors (parse-integer ra :junk-allowed t)))))))
       (sse-finish parser)
       (unless (live-reply-stop-reason reply)
@@ -1050,9 +1052,12 @@
                      (note conv (format nil "~a — retrying in ~ds (~d/~d)" c wait attempt *agent-retries*))
                      (interruptible-sleep conv wait))
                    (error c)))
-             ((or sb-bsd-sockets:socket-error sb-int:simple-stream-error sb-sys:io-timeout
-                  simple-error stream-error) (c)
-               (if (< attempt *agent-retries*)
+             ;; the transport's own failures: HTTP-ERROR, DNS-ERROR, a socket or a stream
+             ;; dying, a timeout. All worth another try — except TLS-ERROR (tls.lisp): a
+             ;; certificate that does not verify will not verify in two seconds either.
+             (error (c)
+               (if (and (< attempt *agent-retries*)
+                        (not (and (find-class 'tls-error nil) (typep c 'tls-error))))
                    (let ((wait (min 32 (expt 2 attempt))))
                      (note conv (format nil "connection: ~a — retrying in ~ds (~d/~d)" c wait attempt *agent-retries*))
                      (interruptible-sleep conv wait))

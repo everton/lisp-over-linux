@@ -3,7 +3,8 @@
 ;;;;
 ;;;;   sbcl --script poc/agent-test.lisp        ; MOCK_PORT=18014 by default
 ;;;;
-;;;; The mock (host-client/mock-anthropic.lisp) streams replies the way the real API
+;;;; The transport is the image's own HTTP-REQUEST (initramfs/http.lisp), as in the
+;;;; guest. The mock (host-client/mock-anthropic.lisp) streams replies the way the real API
 ;;;; does — chunked, in small pieces, thinking signatures, tool input fragments — and
 ;;;; refuses (400) the requests the real API would refuse. So each check below is
 ;;;; either a thing the client must show (the reply, the cost, a retry note) or a thing
@@ -29,7 +30,11 @@
                  "poc/widgets.lisp" "initramfs/ansi.lisp" "initramfs/sysinfo.lisp" "poc/inflate.lisp"
                  "initramfs/files.lisp" "initramfs/file-views.lisp" "initramfs/framebuffer.lisp"
                  "initramfs/json.lisp" "initramfs/agent-wire.lisp" "initramfs/agent.lisp"))
-      (funcall 'load-recording (merge-pathnames m *root*)))))
+      (funcall 'load-recording (merge-pathnames m *root*)))
+    ;; the transport: the networking track's HTTP-REQUEST, loaded as poc/http-test.lisp
+    ;; loads it (plain http to 127.0.0.1 needs neither DNS nor TLS, but they come along)
+    (dolist (f '("net" "dhcp" "dns" "sntp" "tls" "http"))
+      (load (merge-pathnames (format nil "initramfs/~a.lisp" f) *root*)))))
 
 (defvar *mock-library-only* t)
 (load (merge-pathnames "host-client/mock-anthropic.lisp" *root*))
@@ -79,6 +84,8 @@ line2") ("b" "no-space"))))
 (setf *agent-endpoint* (format nil "http://127.0.0.1:~d" *port*)
       *agent-settings-loaded* t           ; this test sets them itself
       *agent-retries* 4)
+
+(ok "the transport is the image's own HTTP-REQUEST" (transport) 'http-request)
 
 (defun texts (conv)
   "Every assistant text block, joined."

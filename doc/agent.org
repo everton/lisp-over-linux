@@ -4,7 +4,7 @@
 Status: *BUILT — the agent track, A0–A2 (2026-10-12).* The client, the tool surface,
 the three doorways (REPL, environment, debugger) and the gate are in the image and
 tested end to end against a mock Messages API in the guest (=check-agent.lisp=,
-21/21). HTTPS is the networking track's =http-request= (TLS through the host's
+22/22, also with the host root mounted). HTTPS is the networking track's =http-request= (TLS through the host's
 libssl), not the broker of §4 and not §9's TLS-from-scratch. *No real API call has
 been made yet* — there was no key on the build host. *§14 is what shipped and where
 it departs from the plan below*; the plan is kept as written, because the reasons
@@ -229,7 +229,7 @@ big /protocol/ on the list: after TLS, this machine can talk to anything.
 | Layer               | Status                | Rough size | Notes                                       |
 |---------------------+-----------------------+------------+---------------------------------------------|
 | TCP sockets         | *DONE*                | —          | =sb-bsd-sockets=, baked in by =build.sh=    |
-| HTTP/1.1 client     | *DONE* (network track)| —          | =http.lisp=; ours is a plain-http stand-in (§14) |
+| HTTP/1.1 client     | *DONE* (network track)| —          | =http.lisp=; the agent calls it (§14.1)       |
 | JSON reader/printer | *DONE*                | 341 lines  | §5 — [[file:../initramfs/json.lisp][json.lisp]]                    |
 | SSE framing         | *DONE*                | ~90 lines  | in [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]                    |
 | Messages protocol   | *DONE*                | in agent.lisp | streaming, retries, cancel, usage (§14)  |
@@ -907,13 +907,13 @@ The agent track, A0 to A2, in four files loaded after the shell (=LISP_SOURCES=,
 | File | Lines | What it is |
 |------+-------+------------|
 | [[file:../initramfs/json.lisp][json.lisp]] | 341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
-| [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 269 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and =agent-plain-http=: http:// only, the same signature as =http-request= |
-| [[file:../initramfs/agent.lisp][agent.lisp]] | 1299 | settings, the conversation object, the tools, the gate, the streamed Messages client, the turn loop, the system prompt, the REPL doorway |
+| [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?) |
+| [[file:../initramfs/agent.lisp][agent.lisp]] | 1304 | settings, the conversation object, the tools, the gate, the streamed Messages client, the turn loop, the system prompt, the REPL doorway |
 | [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 720 | =present= on conversations / tool calls / the agent, Ask it, the frame tick, the approval chooser, the indicators, the debugger doorway |
 
-Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (53 checks, the whole
+Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (54 checks, the whole
 client against the mock on loopback, with =HOME= pointed at a scratch directory), and
-the guest check [[file:../check-agent.lisp][check-agent.lisp]] (21 assertions). The mock is
+the guest check [[file:../check-agent.lisp][check-agent.lisp]] (22 assertions). The mock is
 [[file:../host-client/mock-anthropic.lisp][host-client/mock-anthropic.lisp]]: a host-side stand-in for the Messages API that
 streams the way the real one does (chunked, in 7-byte pieces, thinking signatures,
 tool input as =input_json_delta= fragments cut inside strings) and *refuses with a 400*
@@ -929,17 +929,18 @@ transport.
 network layer did get finished (the networking track, in parallel: route, a Lisp DNS
 resolver, SNTP, and =http-request= with TLS through the *host's* libssl loaded from
 =/mnt/host= at runtime), so the broker stage was skipped: the agent calls
-=http-request= whenever the image has it, and the stand-in =agent-plain-http=
-otherwise. The stand-in stays useful: it is the transport to a mock, or to a
-TLS-terminating broker if one is ever wanted. Choosing is one line — =(transport)= in
-=agent.lisp=, overridable through =*agent-transport*=.
+=http-request= — =(transport)= in =agent.lisp=, which a test can redirect through
+=*agent-transport*=. While the two tracks ran in parallel, =agent-wire.lisp= carried
+a plain-http stand-in with the same signature (=agent-plain-http=); it was deleted
+when the networking track merged, and every test now goes through the real client —
+the host test loads =net=, =dhcp=, =dns=, =sntp=, =tls= and =http= as
+=poc/http-test.lisp= does, and the guest check asserts the transport *is*
+=HTTP-REQUEST=. A transport failure (=http-error=, =dns-error=, a dead socket, a
+timeout) is retried like a 5xx; a =tls-error= is not — a certificate that does not
+verify will not verify on the next attempt either.
 
-Checked rather than assumed: the client was run on the host over the networking
-branch's =http-request= (commit =fe710d6=) against the mock — a plain answer, a gated
-tool round trip, an error event mid-stream and a 529 with =retry-after= all came
-through with the mock refusing nothing. That run needed three files the branch's
-=http.lisp= depends on (=net.lisp=, =dhcp.lisp=, =dns.lisp=); it is not a substitute
-for the first call to the real endpoint, which is still owed.
+The mock is plain http, so neither run exercises TLS; that, and the endpoint itself,
+wait for the first real call, which is still owed (no key on the build host).
 
 TLS from scratch (§9) is therefore *not* on the critical path any more. It stays the
 didactic sub-project it always was.

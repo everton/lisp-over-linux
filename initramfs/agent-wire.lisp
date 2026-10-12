@@ -1,33 +1,20 @@
-;;;; agent-wire.lisp — the agent's wire: Server-Sent Events, and a plain-HTTP fallback.
+;;;; agent-wire.lisp — the agent's wire: Server-Sent Events.
 ;;;;
 ;;;; doc/agent.org §3 stacks an LLM client as transport → wire format → protocol →
-;;;; tools. This file is the bottom two that are not JSON:
+;;;; tools. The transport is the networking track's HTTP-REQUEST (initramfs/http.lisp:
+;;;; https through the host's libssl, chunked bodies, an ON-CHUNK callback that hands
+;;;; the body over as it arrives). The wire format is JSON (json.lisp) and this:
 ;;;;
-;;;;   1. SSE FRAMING. A streamed Messages-API reply is not one JSON document but a
-;;;;      text/event-stream: lines of "event: NAME" and "data: JSON", each event ended
-;;;;      by a blank line (the WHATWG "server-sent events" format, the same one a
-;;;;      browser's EventSource reads). SSE-FEED takes the body's bytes AS THEY ARRIVE
-;;;;      — in arbitrary pieces, a line or a multi-byte character cut anywhere — and
-;;;;      calls back once per complete event. Pure; host-tested.
+;;;;   SSE FRAMING. A streamed Messages-API reply is not one JSON document but a
+;;;;   text/event-stream: lines of "event: NAME" and "data: JSON", each event ended by
+;;;;   a blank line (the WHATWG "server-sent events" format, the one a browser's
+;;;;   EventSource reads). SSE-FEED takes the body's bytes AS THEY ARRIVE — in
+;;;;   arbitrary pieces, a line or a multi-byte character cut anywhere — and calls back
+;;;;   once per complete event. Pure; host-tested (poc/agent-test.lisp).
 ;;;;
-;;;;   2. A PLAIN-HTTP TRANSPORT (AGENT-PLAIN-HTTP), with exactly the signature the
-;;;;      networking track's HTTP-REQUEST promises (initramfs/http.lisp, owned there):
-;;;;
-;;;;        (fn url &key method headers body want on-chunk timeout)
-;;;;          => (values status headers body)
-;;;;
-;;;;      It speaks http:// only — no TLS, no redirects, one request per connection
-;;;;      (Connection: close) — which is all that a loopback mock server, or the
-;;;;      TLS-terminating broker of doc/agent.org §4, ever needs. When HTTP-REQUEST
-;;;;      exists in the image (https://, DNS, the host's libssl), the client uses it
-;;;;      instead; this one is the stand-in that let the agent be written and tested
-;;;;      before that landed, and stays as the transport to a broker.
-;;;;
-;;;; Why read with SOCKET-RECEIVE rather than a Lisp stream: a stream's READ-SEQUENCE
-;;;; waits until its buffer is FULL, and an SSE stream trickles — the first token
-;;;; would sit in a half-full 4 KB buffer until 4 KB of tokens had piled up behind
-;;;; it. SOCKET-RECEIVE returns whatever has arrived, which is the whole point of
-;;;; streaming.
+;;;; Until HTTP-REQUEST landed, this file also carried a plain-http stand-in with the
+;;;; same signature, so the agent could be written and tested in parallel; it was
+;;;; removed once the real client was in the image (doc/agent.org §14.1).
 ;;;;
 ;;;; All original code, under this project's MIT licence.
 
@@ -102,7 +89,7 @@
   (sse-line parser (make-array 0 :element-type '(unsigned-byte 8))))
 
 ;;; ===========================================================================
-;;; 2. URLs, and headers whatever their shape
+;;; 2. The one URL question the client asks: is this the real API, over TLS?
 ;;; ===========================================================================
 
 (defun agent-parse-url (url)
@@ -120,150 +107,3 @@
                    (parse-integer authority :start (1+ colon))
                    (if (string= scheme "https") 443 80))))
     (values scheme host port path)))
-
-(defun agent-header-value (headers name)
-  "NAME's value in HEADERS, case-insensitively, whatever shape HEADERS has: an alist
-   of (name . value), a plist, or a hash table. The networking track's HTTP-REQUEST
-   and ours need not agree on the shape for the client to read either."
-  (cond
-    ((hash-table-p headers)
-     (loop for k being the hash-keys of headers using (hash-value v)
-           when (string-equal (string k) name) return v))
-    ((and (consp headers) (consp (first headers)))
-     (cdr (assoc name headers :test (lambda (a b) (string-equal a (string b))))))
-    ((consp headers)
-     (loop for (k v) on headers by #'cddr when (string-equal name (string k)) return v))
-    (t nil)))
-
-;;; ===========================================================================
-;;; 3. The plain-HTTP transport
-;;; ===========================================================================
-
-(defun dotted-quad (host)
-  "HOST as a 4-octet vector when it is a dotted-quad literal, else NIL."
-  (let ((parts (ignore-errors
-                 (loop with start = 0
-                       for dot = (position #\. host :start start)
-                       collect (parse-integer host :start start :end dot)
-                       while dot do (setf start (1+ dot))))))
-    (and (= (length parts) 4) (every (lambda (p) (<= 0 p 255)) parts)
-         (coerce parts '(vector (unsigned-byte 8))))))
-
-(defun resolve-address (host)
-  "HOST's IPv4 address: a literal as is; a name through the networking track's
-   RESOLVE-HOST when the image has it (doc/networking.org: a DNS client in Lisp, no
-   glibc NSS), else the host SBCL's resolver (for the host tests)."
-  (or (dotted-quad host)
-      (and (fboundp 'resolve-host) (funcall 'resolve-host host))
-      (sb-bsd-sockets:host-ent-address (sb-bsd-sockets:get-host-by-name host))))
-
-(defstruct (byte-reader (:constructor make-byte-reader (socket timeout)))
-  "A tiny buffered reader over a socket that returns what has ARRIVED (see header)."
-  socket timeout
-  (buf (make-array 16384 :element-type '(unsigned-byte 8)))
-  (pos 0) (end 0) (eof nil))
-
-(defun br-fill (r)
-  "Wait (at most TIMEOUT seconds) for bytes and read what is there. NIL at EOF."
-  (when (byte-reader-eof r) (return-from br-fill nil))
-  (let ((fd (sb-bsd-sockets:socket-file-descriptor (byte-reader-socket r))))
-    (unless (sb-sys:wait-until-fd-usable fd :input (byte-reader-timeout r))
-      (error "HTTP: no data for ~a s" (byte-reader-timeout r))))
-  (multiple-value-bind (buf n)
-      (sb-bsd-sockets:socket-receive (byte-reader-socket r) (byte-reader-buf r) nil)
-    (declare (ignore buf))
-    (if (or (null n) (zerop n))
-        (progn (setf (byte-reader-eof r) t) nil)
-        (progn (setf (byte-reader-pos r) 0 (byte-reader-end r) n) t))))
-
-(defun br-byte (r)
-  (when (>= (byte-reader-pos r) (byte-reader-end r))
-    (unless (br-fill r) (return-from br-byte nil)))
-  (prog1 (aref (byte-reader-buf r) (byte-reader-pos r)) (incf (byte-reader-pos r))))
-
-(defun br-line (r)
-  "One CRLF-ended header/chunk-size line, as a Latin-1 string (header lines are
-   ASCII by RFC 9112), or NIL at EOF."
-  (let ((out (make-string-output-stream)) (any nil))
-    (loop for b = (br-byte r)
-          do (cond ((null b) (return (and any (get-output-stream-string out))))
-                   ((= b 10) (return (string-right-trim '(#\Return) (get-output-stream-string out))))
-                   (t (setf any t) (write-char (code-char b) out))))))
-
-(defun br-take (r n on-piece)
-  "Pass the next N body bytes to ON-PIECE, as pieces of whatever has arrived; NIL N
-   means 'until EOF'. The pieces are fresh vectors (the callee may keep them)."
-  (loop
-    (when (and n (<= n 0)) (return))
-    (when (>= (byte-reader-pos r) (byte-reader-end r))
-      (unless (br-fill r)
-        (when n (error "HTTP: connection closed ~d bytes early" n))
-        (return)))
-    (let* ((avail (- (byte-reader-end r) (byte-reader-pos r)))
-           (k (if n (min n avail) avail)))
-      (funcall on-piece (subseq (byte-reader-buf r) (byte-reader-pos r) (+ (byte-reader-pos r) k)))
-      (incf (byte-reader-pos r) k)
-      (when n (decf n k)))))
-
-(defun agent-plain-http (url &key (method :get) headers body (want :string) on-chunk (timeout 120))
-  "An HTTP/1.1 request over plain TCP — the stand-in for HTTP-REQUEST (see header).
-   HEADERS is an alist of (name . value) strings. BODY is a string (sent as UTF-8) or
-   octets. With ON-CHUNK, the response body is handed over piece by piece as it
-   arrives (de-chunked) and the third value is NIL; otherwise it is returned whole, as
-   a string or (WANT :octets) a byte vector. Response headers come back as an alist
-   with lower-cased names."
-  (multiple-value-bind (scheme host port path) (agent-parse-url url)
-    (unless (string= scheme "http")
-      (error "~a: this transport speaks plain http:// only — https needs HTTP-REQUEST ~
-              (initramfs/http.lisp, the networking track) or a TLS broker (doc/agent.org §4)"
-             url))
-    (let* ((octets (cond ((null body) (make-array 0 :element-type '(unsigned-byte 8)))
-                         ((stringp body) (sb-ext:string-to-octets body :external-format :utf-8))
-                         (t body)))
-           (head (with-output-to-string (s)
-                   (format s "~a ~a HTTP/1.1~c~c" (string-upcase (string method)) path #\Return #\Newline)
-                   (format s "Host: ~a:~d~c~c" host port #\Return #\Newline)
-                   (dolist (h headers)
-                     (format s "~a: ~a~c~c" (car h) (cdr h) #\Return #\Newline))
-                   (when (or body (member method '(:post :put)))
-                     (format s "Content-Length: ~d~c~c" (length octets) #\Return #\Newline))
-                   (format s "Connection: close~c~c~c~c" #\Return #\Newline #\Return #\Newline)))
-           (socket (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
-      (unwind-protect
-           (progn
-             (sb-bsd-sockets:socket-connect socket (resolve-address host) port)
-             (let ((all (concatenate '(vector (unsigned-byte 8))
-                                     (sb-ext:string-to-octets head :external-format :latin-1)
-                                     octets)))
-               (sb-bsd-sockets:socket-send socket all nil))
-             (let* ((r (make-byte-reader socket timeout))
-                    (status-line (or (br-line r) (error "HTTP: empty response from ~a" url)))
-                    (status (parse-integer status-line :start (1+ (position #\Space status-line))
-                                                       :junk-allowed t))
-                    (resp-headers
-                      (loop for line = (br-line r)
-                            while (and line (plusp (length line)))
-                            collect (let ((c (position #\: line)))
-                                      (cons (string-downcase (subseq line 0 c))
-                                            (string-trim " " (subseq line (1+ c)))))))
-                    (pieces '())
-                    (sink (or on-chunk (lambda (p) (push p pieces)))))
-               (cond
-                 ((search "chunked" (or (agent-header-value resp-headers "transfer-encoding") ""))
-                  ;; chunked transfer: "<hex size>[;ext]" CRLF <bytes> CRLF ... "0" CRLF CRLF
-                  (loop for size-line = (br-line r)
-                        for size = (and size-line
-                                        (parse-integer size-line :radix 16 :junk-allowed t))
-                        while (and size (plusp size))
-                        do (br-take r size sink)
-                           (br-line r)))                    ; the CRLF after the data
-                 ((agent-header-value resp-headers "content-length")
-                  (br-take r (parse-integer (agent-header-value resp-headers "content-length")) sink))
-                 (t (br-take r nil sink)))
-               (values status resp-headers
-                       (unless on-chunk
-                         (let ((all (apply #'concatenate '(vector (unsigned-byte 8)) (reverse pieces))))
-                           (if (eq want :octets)
-                               all
-                               (sb-ext:octets-to-string all :external-format :utf-8)))))))
-        (ignore-errors (sb-bsd-sockets:socket-close socket))))))

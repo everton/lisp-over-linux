@@ -146,6 +146,8 @@
          (string= (row "status after abort" (probe "*browser-status*")) "\"aborted\""))
 
   (format t "~&~%== 6. what the guest sent ==~%")
+  (check "the guest spoke through the image's own HTTP-REQUEST"
+         (string= (row "transport" (probe "(transport)")) "HTTP-REQUEST"))
   (check "the mock refused nothing" (null (row "mock problems" lol.mock:*problems*)))
   (check "no API key was ever sent to the mock"
          (row "requests without x-api-key"
