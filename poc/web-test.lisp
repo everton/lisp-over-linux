@@ -26,7 +26,7 @@
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
     (dolist (m '("initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/examples.lisp" "initramfs/stage.lisp"
-                 "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp"
+                 "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp"
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
                  "initramfs/sysinfo.lisp" "poc/inflate.lisp" "poc/image.lisp"
                  "initramfs/files.lisp" "initramfs/file-views.lisp"

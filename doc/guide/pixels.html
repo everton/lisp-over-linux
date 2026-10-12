@@ -50,14 +50,14 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
   <rect class="box k-ui" x="260" y="128" width="210" height="72" rx="6"/><text x="270" y="150" class="title">lol.textview</text><text x="270" y="168" class="mono">tv-draw: gutter, lexer</text><text x="270" y="184" class="mono">colours, caret, selection</text>
   <path class="edge" d="M220,76 H258" marker-end="url(#ar)"/><path class="edge" d="M220,164 H258" marker-end="url(#ar)"/>
   <rect class="box hot" x="520" y="40" width="200" height="160" rx="6"/><text x="530" y="62" class="title">lol.canvas</text>
-  <text x="530" y="84" class="mono">(simple-array (ub 32))</text><text x="530" y="100" class="mono">one word = #x00RRGGBB</text><text x="530" y="122" class="mono">fill-rect draw-rect</text><text x="530" y="138" class="mono">draw-line draw-circle</text><text x="530" y="154" class="mono">draw-string (bitmap font)</text><text x="530" y="176" class="dim">little-endian = B,G,R,0 =</text><text x="530" y="190" class="dim">exactly the framebuffer's BGRX</text>
+  <text x="530" y="84" class="mono">(simple-array (ub 32))</text><text x="530" y="100" class="mono">one word = #x00RRGGBB</text><text x="530" y="122" class="mono">fill-rect draw-rect</text><text x="530" y="138" class="mono">draw-line draw-circle</text><text x="530" y="154" class="mono">draw-string (blends glyphs)</text><text x="530" y="176" class="dim">little-endian = B,G,R,0 =</text><text x="530" y="190" class="dim">exactly the framebuffer's BGRX</text>
   <path class="edge" d="M470,76 H518" marker-end="url(#ar)"/><path class="edge" d="M470,164 H518" marker-end="url(#ar)"/>
   <rect class="box k-kernel" x="760" y="40" width="190" height="58" rx="6"/><text x="770" y="60" class="title">lol.fb:present-fb</text><text x="770" y="78" class="mono">pwrite → /dev/fb0</text><text x="770" y="92" class="dim">guest; ~0.2-2 ms a frame</text>
   <rect class="box k-tools" x="760" y="112" width="190" height="58" rx="6" stroke-dasharray="4 3"/><text x="770" y="132" class="title">lol.x11:present</text><text x="770" y="150" class="mono">PutImage, in bands</text><text x="770" y="164" class="dim">host window, no Xlib</text>
   <rect class="box k-tools" x="760" y="184" width="190" height="58" rx="6" stroke-dasharray="4 3"/><text x="770" y="204" class="title">render-frame.lisp</text><text x="770" y="222" class="mono">→ PPM file</text><text x="770" y="236" class="dim">headless, ~1-3 s</text>
   <path class="edge hot" d="M720,90 H758" marker-end="url(#ar)"/><path class="edge" d="M720,140 H758" marker-end="url(#ar)"/><path class="edge" d="M720,180 L758,210" marker-end="url(#ar)"/>
   <!-- font -->
-  <rect class="box" x="520" y="240" width="200" height="60" rx="6"/><text x="530" y="260" class="title">the font</text><text x="530" y="278" class="mono">/cozette.lolf: 6x15</text><text x="530" y="292" class="dim">256 glyphs, 1 byte per row</text>
+  <rect class="box" x="520" y="240" width="200" height="60" rx="6"/><text x="530" y="260" class="title">the font</text><text x="530" y="278" class="mono">mono.ttf, any size</text><text x="530" y="292" class="dim">fallback: cozette.lolf 6x15</text>
   <path class="edge" d="M620,240 V202" marker-end="url(#ar)"/><text x="626" y="226" class="lbl">load-font, once</text>
   <rect class="box" x="260" y="240" width="210" height="60" rx="6"/><text x="270" y="260" class="title">poc/bdf2font.lisp</text><text x="270" y="278" class="dim">BDF → .lolf (host, at</text><text x="270" y="292" class="dim">development time)</text>
   <path class="edge dash" d="M470,270 H518" marker-end="url(#ar)"/>
@@ -68,17 +68,17 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 <code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:59</span></a>,
-    <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:249</span></a>: for each character, for each glyph row, set the pixels
-    whose bits are on. That is the whole text renderer. <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:205</span></a> reads
-    the <code>.lolf</code> blob (magic <code>LF</code>, width, height, then 256 glyphs).</li>
-  <li><a class="ref" data-ref="poc/widgets.lisp#draw-list" href="../../poc/widgets.lisp"><code>draw-list</code><span class="loc">poc/widgets.lisp:297</span></a> returns <code>(values top hits)</code>. <em>hits</em> is
+  <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:64</span></a>,
+    <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:373</span></a>: for each character, paint the pixels the glyph
+    covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:327</span></a> reads
+    the fallback <code>.lolf</code> blob (magic <code>LF</code>, width, height, then 256 glyphs).</li>
+  <li><a class="ref" data-ref="poc/widgets.lisp#draw-list" href="../../poc/widgets.lisp"><code>draw-list</code><span class="loc">poc/widgets.lisp:324</span></a> returns <code>(values top hits)</code>. <em>hits</em> is
     an alist of the screen y of each painted row and its index. A click is resolved against that map
-    (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:333</span></a>). The map is needed because section headers make "row N
+    (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:360</span></a>). The map is needed because section headers make "row N
     on screen" differ from "item N".</li>
-  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:566</span></a> colours Lisp with a small line lexer
-    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:494</span></a>). The editing keys are in
-    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:636</span></a>. The buffer is a vector of line strings that is
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:584</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:512</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:661</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
     (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
@@ -86,8 +86,8 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
   <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:242</span></a> is the host twin: the X11 wire protocol over a Unix socket,
     written in Lisp. It is deliberately <em>not</em> in the image.</li>
-  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1074</span></a> composites
-    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1094</span></a> repairs only the old and new
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1086</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1106</span></a> repairs only the old and new
     rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
 </ul>
 
@@ -130,20 +130,20 @@ touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry 
     <code>/proc/bus/input/devices</code>, and <a class="ref" data-ref="initramfs/fb-browser.lisp#input-device-kind" href="../../initramfs/fb-browser.lisp"><code>input-device-kind</code><span class="loc">initramfs/fb-browser.lisp:369</span></a> classifies
     each one by its bitmasks: <code>:mouse</code> (REL_X), <code>:pad</code> or <code>:tablet</code> (ABS_X, with PROP deciding),
     <code>:keyboard</code> (EV_KEY + EV_REP, which rules out the power button).</li>
-  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:915</span></a> opens everything and starts
-    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:863</span></a>
-    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:961</span></a>
+  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:927</span></a> opens everything and starts
+    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:875</span></a>
+    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:973</span></a>
     drops a device that reports <code>POLLHUP</code> (unplugged) before anyone reads it.</li>
-  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:813</span></a> rebinds the decoder's
+  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:825</span></a> rebinds the decoder's
     special variables to one device's saved values (<code>progv</code>) for one drain. <code>read-mouse</code> does not know there
     is more than one device.</li>
   <li><code>*fb-mouse*</code> / <code>*fb-kbd*</code> are now the markers <code>:pointers</code> / <code>:keyboards</code>, not fds.
-    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1012</span></a>),
+    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1024</span></a>),
     so the older loops (debugger, Spotter) did not change.</li>
   <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:403</span></a>). A touchpad's motion is integrated as relative
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:487</span></a>), and a tap is a click.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2245</span></a> decides what was under the pointer from the hit maps of the
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:499</span></a>), and a tap is a click.</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2344</span></a> decides what was under the pointer from the hit maps of the
     <em>last drawn frame</em>: tabs, crumbs, list rows, text, matrix cells.</li>
 </ul>
 
