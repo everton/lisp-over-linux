@@ -211,7 +211,7 @@ unrelated file. Here is the full list:
 | Global                                   | Holds                                       | After a resume                                              | Needs                                     |
 |------------------------------------------+---------------------------------------------+-------------------------------------------------------------+-------------------------------------------|
 | =lol.fb::*fb*=                           | =(FD XRES YRES STRIDE)= for =/dev/fb0=      | *already handled*: an =*init-hooks*= entry clears it ([[file:../poc/fb.lisp::init-hooks][fb.lisp]]) | nothing                    |
-| =*fb-mouse*=, =*fb-kbd*=                 | evdev fds                                   | stale, but =run-browser-fb= reopens both on entry            | clear in a save-hook, for hygiene         |
+| =*input-devices*=, =*input-watch-fd*=    | evdev fds (every device) + an inotify fd    | stale, but =run-browser-fb= reopens them all on entry ([[file:input.org][input.org]] §4¾) | clear in a save-hook, for hygiene         |
 | =*net-repl-server*= / =-client= / =-thread= | sockets and a thread object              | stale, and a later =stop-net-repl= could =close= a reused fd | save-hook: =nil= them (the thread is already stopped) |
 | =*stbi-state*=                           | =T= once =libstbi.so= has loaded            | =T=, but the library is gone, so JPEG previews quietly report "not loaded" | save-hook: reset to =NIL=, so it reloads on demand |
 | =*battery-cache*=                        | the last sysfs read                         | stale for 5 s at most                                        | nothing                                   |

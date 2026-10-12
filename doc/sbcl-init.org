@@ -168,7 +168,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
-  | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option) |
+  | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾) |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
   | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
   | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
