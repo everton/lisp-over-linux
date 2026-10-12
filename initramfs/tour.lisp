@@ -48,7 +48,7 @@
     ("1 · boot: firmware to the environment"
      ("CL-USER" "SUPERVISOR-MAIN")        "PID 1 in Lisp: diagnostics, DHCP, then straight into the environment")
     ("1 · boot: firmware to the environment"
-     ("CL-USER" "RUN-BROWSER-FB")         "the environment's loop: draw, poll three fds, dispatch")
+     ("CL-USER" "RUN-BROWSER-FB")         "the environment's loop: draw, wait in poll(2), dispatch")
     ("2 · build: how the source got into the image"
      (:file "build.sh")                   "LISP_SOURCES (load order), save-lisp-and-die, the cpio")
     ("2 · build: how the source got into the image"
@@ -72,7 +72,7 @@
     ("4 · pixels: a view becomes a frame"
      ("LOL.FB" "PRESENT-FB")              "the canvas IS the screen's format: one pwrite to /dev/fb0")
     ("5 · input: a key becomes a command"
-     ("CL-USER" "FBB-WAIT")               "poll(2) over the tty, the mouse's evdev and the keyboard's")
+     ("CL-USER" "FBB-WAIT")               "poll(2) over the tty and every keyboard and pointer, hotplug included")
     ("5 · input: a key becomes a command"
      ("CL-USER" "FB-READ-KEY")            "raw tty bytes -> a key and a modifier mask")
     ("5 · input: a key becomes a command"
@@ -108,8 +108,9 @@
   (if (eq (first what) :file)
       (let ((path (and *tour-root* (concatenate 'string *tour-root* (second what)))))
         (cond ((null path) (values nil "repository path unknown"))
-              ((and (probe-file path) (fboundp 'subj-file)) (funcall 'subj-file path))
-              (t (values nil (format nil "not on this disk: ~a" path)))))
+              ((not (probe-file path)) (values nil (format nil "not on this disk: ~a" path)))
+              ((fboundp 'subj-file) (funcall 'subj-file path))
+              (t (values nil "the file manager (file-views.lisp) is not loaded"))))
       (destructuring-bind (pkg name &optional kind) what
         (let* ((p (find-package pkg))
                (sym (and p (find-symbol name p))))
