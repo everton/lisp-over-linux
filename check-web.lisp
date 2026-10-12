@@ -200,14 +200,21 @@
   (row "Chrome PSS, all its processes (MB)" (chrome-pss-mb))
   (row "MemAvailable with one page (MB)" (mem-available-mb))
 
-  (format t "~&~%== the public web ==~%")
-  (if (string= (probe "(and (probe-file \"/etc/resolv.conf\") t)") "T")
-      (progn
-        (probe "(web-navigate (web-visible-tab) \"https://example.com/\")")
-        (check "a public HTTPS page loads (example.com)"
-               (wait-until 60 (lambda () (search "Example Domain" (title)))))
-        (shot "web-example"))
-      (row "public HTTPS" "SKIPPED: no /etc/resolv.conf in the guest (DNS is track 3's)"))
+  (format t "~&~%== the public web, and the sandbox ==~%")
+  ;; No precondition on OUR /etc/resolv.conf: lol-ct gives the container one (ours,
+  ;; else the host's), and Chrome resolves inside the container.
+  (probe "(web-navigate (web-visible-tab) \"https://example.com/\")")
+  (check "a public HTTPS page loads (example.com)"
+         (wait-until 60 (lambda () (search "Example Domain" (title)))))
+  (shot "web-example")
+  ;; chrome://sandbox is Chrome's own report on its renderers' confinement
+  (probe "(web-navigate (web-visible-tab) \"chrome://sandbox\")")
+  (wait-until 20 (lambda () (search "Sandbox" (title))))
+  (sleep 2)
+  (let ((text (row "chrome://sandbox says"
+                   (js "document.body.innerText.split('\\n').filter(l=>/sandbox|Namespace|Seccomp|Layer/i.test(l)).join(' | ')"))))
+    (check "Chrome's own sandbox is on inside the container (chrome://sandbox)"
+           (search "adequately sandboxed" text)))
 
   (format t "~&~%== shutting Chrome down ==~%")
   (probe "(web-shutdown)" 30)
