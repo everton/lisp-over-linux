@@ -844,6 +844,7 @@
    :title "workspace" :kind :workspace :subject s
    :text ";; Workspace -- a Lisp scratch buffer. Put point after a form, then a verb.
 ;; SuperL-Space finds anything (the Spotter); SuperL-? lists every key.
+;; New here? SuperL-Space, then tour: this system's own code, stop by stop.
 
 ;; C-x C-e  Do it: the value shows in the status line.
 (+ 1 2)

@@ -67,6 +67,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/sbcl-source.lisp" # SBCL's OWN source, read from the disk on demand (the ./sbcl tree on /home)
   "$INITRAMFS_DIR/model.lisp"       # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)
+  "$INITRAMFS_DIR/tour.lisp"         # the guided tour (subj-tour): stops = live definitions (doc/tour.org)
   "$INITRAMFS_DIR/examples.lisp"     # didactic CLOS specimens (COLLIDE: a real 2-axis dispatch matrix)
   "$INITRAMFS_DIR/stage.lisp"        # the COLLIDE stage (S3b): bodies, both-ways dispatch, eql enact
   "$INITRAMFS_DIR/worker.lisp"       # a second PROCESS that contributes a view (doc/processes.org S2)
