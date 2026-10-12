@@ -50,7 +50,7 @@ CATS=(
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp host-client/mock-anthropic.lisp"
-  "conformance|initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
+  "conformance|poc/ttf.lisp initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
   "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )

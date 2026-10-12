@@ -26,8 +26,10 @@
 #   QEMU_WAIT=<seconds>   (default 50) how long --run waits before the screenshot.
 #   QEMU_DISPLAY=<gtk|sdl> (default gtk) the window backend for --interactive.
 #   QEMU_ZOOM=fit         (gtk only) scale the guest display to the window — drag it
-#                         bigger to magnify the small font. (Any gtk window also
-#                         zooms live with Ctrl-+ / Ctrl-- ; Ctrl-0 resets.)
+#                         bigger to magnify everything. (The environment's own text
+#                         size is SuperL-= / SuperL-- / SuperL-0 — doc/fonts.org.)
+#   LOL_FONT=<file.ttf>   the TrueType font to ship (default: the host's DejaVu Sans
+#                         Mono); see step 2a' below.
 #
 # See doc/sbcl-init.org for the full explanation of every step.
 
@@ -148,7 +150,7 @@ if [ -n "$LOL_TEST_DISK" ] && [ -f "$LOL_TEST_DISK" ]; then
 fi
 
 say()   { printf '\n\033[1;34m==> %s\033[0m\n' "$*"; }
-usage() { sed -n '3,30p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '3,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ---- argument parsing (flags combine) --------------------------------------
 DO_KERNEL=0; DO_RUN=0; DO_INTERACTIVE=0; DO_INSTALL_HOST=0
@@ -401,9 +403,9 @@ fi
 if [ "$DO_INTERACTIVE" -eq 1 ]; then
   DISPLAY_BACKEND="${QEMU_DISPLAY:-gtk}"
   # QEMU_ZOOM=fit lets the guest framebuffer SCALE to the window (gtk only): drag the
-  # window bigger and everything magnifies — the quick way to make the small 6x15
-  # font readable until the in-app font-scale lands (see doc/code-browser.org §6.2 /
-  # memory: font-scaling-plan). Any gtk window also zooms live with Ctrl-+ / Ctrl-- .
+  # window bigger and everything magnifies pixels. Rarely needed now: the environment's
+  # own font resizes with SuperL-= / SuperL-- / SuperL-0 (doc/fonts.org); QEMU's
+  # gtk window keeps Ctrl-+ / Ctrl-- for its own zoom.
   DISPLAY_OPT="$DISPLAY_BACKEND"
   if [ "${QEMU_ZOOM:-}" = "fit" ] || [ "${QEMU_ZOOM:-}" = "on" ]; then
     if [ "$DISPLAY_BACKEND" = "gtk" ]; then

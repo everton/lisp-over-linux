@@ -1,265 +1,409 @@
-#+TITLE: Bitmap fonts — from a .psf file to letters on the panel
+#+TITLE: Fonts — from an outline in a .ttf to letters on the panel, at any size
 #+STARTUP: showall
 
 Companion to [[file:framebuffer.org][framebuffer.org]] (which explains *pixels → panel*); this file explains
 *glyphs → pixels* — how a character becomes light on the screen in our pure-Lisp
-renderer. Code lives in the code-browser prototype: [[file:../poc/canvas.lisp][poc/canvas.lisp]] (the font +
-the blitter) and [[file:../poc/textview.lisp][poc/textview.lisp]] (how text is laid out). Design decisions:
-[[file:code-browser.org][code-browser.org §6.2]].
+renderer, and how its size can change while the environment runs. Code:
 
-This is an *orientation guide*: read it top to bottom once and you will know where
-every piece is and how to change it — including how to make the font bigger.
+- [[file:../poc/ttf.lisp][poc/ttf.lisp]] — =lol.ttf=: reading a TrueType file and rasterising its outlines;
+- [[file:../poc/canvas.lisp][poc/canvas.lisp]] — the =font= object, its glyph cache, =draw-string=, and the
+  bitmap fallback;
+- [[file:../poc/widgets.lisp][poc/widgets.lisp]], [[file:../poc/textview.lisp][poc/textview.lisp]], [[file:../poc/shell.lisp][poc/shell.lisp]] — layout, which asks the
+  font for every distance;
+- [[file:../initramfs/settings.lisp][initramfs/settings.lisp]] — where the chosen size is remembered.
 
-* The one-sentence essence
+Design history: [[file:code-browser.org][code-browser.org §6.2]]. Read this top to bottom once and you will
+know what a font file contains, how a curve becomes grey pixels, and why pressing
+=SuperL-== makes every row, bar and hit box in the environment grow together.
 
-A bitmap font is *a lookup table from a character code to a tiny grid of on/off
-pixels*. "Drawing text" is: look up each character's grid, and copy its lit pixels
-into the framebuffer. There is no magic, no shaping, no math — just bits you stamp.
+* 0. The one-paragraph essence
 
-(Contrast a *vector* font — TrueType — where a glyph is outlines you must rasterise.
-We are deliberately NOT doing that yet; see §7 and [[file:code-browser.org][code-browser.org §6.2]].)
+A *bitmap* font stores each character as a little grid of on/off pixels, drawn once
+by a person at one size. An *outline* font stores each character as *curves* in an
+abstract grid, and the computer draws the pixels itself, at whatever size is asked
+for. We now ship an outline font (DejaVu Sans Mono, copied from the build host),
+rasterised by about 500 lines of Lisp; the old bitmap font (Cozette 6×15) stays as
+the fallback. The size lives in *one font object* everyone shares; changing it and
+redrawing re-lays out the whole screen, because nothing that positions text holds a
+number of its own any more — it asks the font.
 
-* 1. What a bitmap glyph physically is
+* 1. Two kinds of font
 
-One glyph is a small rectangle of bits: *1 = ink, 0 = background*.
+*Bitmap.* A glyph is a rectangle of bits: 1 = ink, 0 = background. Our Cozette is 6
+pixels wide and 15 tall, one byte per row (most significant bit = leftmost pixel), 256
+glyphs indexed by character code. Drawing is copying lit bits. Crisp and trivially
+fast — and *fixed*: the only way to make it bigger is to stamp every pixel as a 2×2
+block, which looks like what it is (§8).
 
-Throughout §1–§4 we use *8 pixels wide × 16 tall* as the worked example, because
-8 is exactly one byte and that makes every number below fall out cleanly. It is
-also a real font — =CONFIG_FONT_8x16= is what the *kernel console* draws with
-(see [[file:kernel-config.org][kernel-config.org]]). But it is *not* what our own renderer ships: the browser
-uses *Cozette, 6 × 15*, in our own =.lolf= blob (§7). Nothing in the mechanism
-changes — a 6-wide glyph still stores one byte per row and simply ignores the low
-2 bits. Read §1–§4 with 8×16 in your head, then §7 for what is actually loaded.
+*Outline.* A glyph is a set of closed *contours* — the boundary of the ink, like a
+cookie cutter. The coordinates live in *font units* on an "em square" (DejaVu Sans
+Mono's is 2048 units a side; the em is, historically, the height of the metal block
+a letter was cast on). To draw at 18 pixels, multiply every coordinate by 18/2048 and
+ask, for each pixel, how much of it lies inside the contours. Any size, one file.
 
-Eight bits fit in one byte, so, for the 8×16 example:
+The price of outlines is that a curve rarely lands on pixel boundaries, so an edge
+pixel is *partly* inside. Painting it fully on or off gives jagged stairs; painting it
+in proportion — a grey — gives smooth edges. That proportion is the pixel's
+*coverage*, and computing it exactly is the rasteriser's whole job (§4).
 
-- each *row* of a glyph is *one byte* (8 horizontal pixels), and
-- each *glyph* is *16 bytes* (16 rows), and
-- the *font* is *256 glyphs*, indexed by character code (=A= = code 65 = glyph 65).
+* 2. Inside a .ttf: a directory of tables
 
-That is the whole data structure. Here is a capital *H*, drawn 8×8 for brevity
-(the real ones are 8×16). Read each row as a byte, *most-significant bit on the
-left*:
+A TrueType file is a small *table directory* followed by the tables. The first 12
+bytes hold a version (=0x00010000=) and the number of tables; then come 16-byte
+records — a 4-letter *tag*, a checksum, an offset, a length. Every number in the file
+is *big-endian* (most significant byte first — the format came from 1990s Apple; x86
+is little-endian, so we assemble each number from its bytes by hand, =u16= / =u32= in
+[[file:../poc/ttf.lisp][ttf.lisp]]). [[file:../poc/ttf.lisp::defun parse-ttf][=parse-ttf=]] reads the whole file into one octet vector and
+records where each table starts; nothing is copied out.
 
-#+begin_src
-  row  pixels     bits        byte
-   0   . . . . . . . .   00000000   #x00
-   1   . # . . . . # .   01000010   #x42
-   2   . # . . . . # .   01000010   #x42
-   3   . # . . . . # .   01000010   #x42
-   4   . # # # # # # .   01111110   #x7E
-   5   . # . . . . # .   01000010   #x42
-   6   . # . . . . # .   01000010   #x42
-   7   . . . . . . . .   00000000   #x00
-#+end_src
+The tables a monospace font needs, and what we take from each:
 
-So this "H" *is* the 8 bytes =00 42 42 42 7E 42 42 00=. Store 256 of these and you
-have a font. That "MSB = leftmost pixel" convention is the one thing to remember —
-the blitter (§4) relies on it.
+| table  | holds                                       | we use                                                       |
+|--------+---------------------------------------------+--------------------------------------------------------------|
+| =head= | global facts                                | =unitsPerEm= (2048); whether =loca= is 16- or 32-bit          |
+| =hhea= | horizontal layout header                    | ascender 1901, descender −483, lineGap 0; how many glyphs have their own advance |
+| =maxp= | limits                                      | the number of glyphs (3377 in DejaVu Sans Mono)               |
+| =cmap= | character code → glyph number               | the format 12 subtable (all of Unicode), else format 4 (U+0000–U+FFFF) |
+| =hmtx= | per-glyph advance width + left bearing      | the advance — 1233 units for *every* glyph here              |
+| =loca= | where each glyph's outline starts in =glyf= | offsets; equal neighbours mean "no outline" (a space)         |
+| =glyf= | the outlines                                | contours of points, and composite glyphs                      |
+| =name= | human-readable strings                      | the full name, "DejaVu Sans Mono", for the status line        |
 
-* 2. The PSF file format — the simplest way to get glyphs
+(The numbers were checked against the file with an independent reader — Perl's
+=unpack= on the raw bytes — and the charset with =fc-query=, not against our parser;
+[[file:../poc/font-test.lisp][poc/font-test.lisp]] asserts them.)
 
-We do not hand-type those bytes; a *PSF* file (the Linux console font format) is
-the simplest source, and the one to understand first. (What the tool actually
-ships is Cozette in our own =.lolf= blob — §7 — but that is a two-byte tweak on
-this same idea, so learn PSF here.) *PSF1* is trivial:
+*cmap, the lookup.* Format 4 cuts the 16-bit range into *segments* =[start, end]=; a
+code in a segment maps to =code + delta= or, when the segment has an
+=idRangeOffset=, to an entry of a glyph array that the offset points at — relative to
+the address of the offset word *itself*, a celebrated piece of 1990s pointer
+arithmetic ([[file:../poc/ttf.lisp::defun glyph-index][=glyph-index=]]). Format 12 is a sorted list of =(start end first-glyph)=
+groups and covers emoji and mathematics too. We binary-search either. A character the
+font lacks maps to *glyph 0*, =.notdef= — the font's own "missing" box, which is
+exactly the fallback glyph we want on screen. The host test checks that formats 4 and
+12 agree on every code from 0 to =#x2FFF=.
 
-#+begin_src
-  ┌─ 4-byte header ─┐
-  │ #x36  #x04       magic ("this is a PSF1 file")
-  │ mode  charsize   mode flags; charsize = bytes-per-glyph = the HEIGHT (16)
-  └──────────────────┘
-  then 256 glyphs, each `charsize` bytes, back to back.
-#+end_src
+*hmtx, the advance.* Pairs of (advance, left side bearing) for the first
+=numberOfHMetrics= glyphs; every later glyph shares the *last* advance. DejaVu Sans
+Mono has =numberOfHMetrics= = 4: one width for three thousand glyphs, which is what
+"monospace" looks like inside the file.
 
-The reader is [[file:../poc/canvas.lisp][=load-psf=]]: it checks the magic, takes =charsize= as the glyph
-height, and slurps 256 glyphs into a vector. Width is *always 8* in PSF1 — that is
-why =load-psf= hardcodes =:cw 8=.
+*glyf, the outlines.* A *simple* glyph lists the index of each contour's last point,
+skips some hinting bytecode, then stores its points compactly: one *flags* byte per
+point (with a "repeat" bit, so runs share a byte), then all the x's, then all the
+y's, each a *delta* from the previous point in one byte or two
+([[file:../poc/ttf.lisp::defun simple-glyph][=simple-glyph=]]). A *composite* glyph instead references other glyphs with an offset
+and maybe a scale or a 2×2 matrix — =é= is =e= plus an acute accent, placed;
+[[file:../poc/ttf.lisp::defun glyph-outline][=glyph-outline=]] resolves them recursively, with a depth guard for a broken font.
 
-To try =load-psf= against a real PSF, any host console font works, e.g.
-=gunzip -c /usr/share/consolefonts/Lat15-Fixed16.psf.gz > /tmp/f.psf=. But the
-*shipped* font is not a PSF at all — it is Cozette baked into our own =.lolf= blob
-(§7), committed with its MIT license, the way [[file:framebuffer.org][the alien]] is baked
-([[file:code-browser.org][code-browser.org §6.2]]).
+*What we deliberately skip.* *Hinting* — TrueType's bytecode virtual machine that
+nudges outlines onto the pixel grid at small sizes; *kerning and shaping* — a
+monospace cell grid needs neither; *CFF* outlines (the cubic curves of
+OpenType/PostScript =.otf= files — =parse-ttf= refuses them by name); colour and
+bitmap-strike tables. Without hinting, small sizes are a little softer than a desktop
+renders them (§4 shows what the gamma buys back).
 
-*PSF2* (magic =72 b5 4a 86=) is the richer format: it stores *width and height as
-real numbers*, so it can hold fonts wider than 8 (a 16×32 font, say). =load-psf=
-does not read PSF2 yet — that is step one of "a genuinely bigger font" in §7.
+* 3. Quadratic Béziers: what the points mean
 
-* 3. The font object in the code
-
-=load-psf= returns a =font= struct — three fields, and that is the entire model
-([[file:../poc/canvas.lisp][poc/canvas.lisp]]):
-
-#+begin_src lisp
-  (defstruct font
-    (cw 8  :type fixnum)    ; cell WIDTH  in pixels (8 for PSF1)
-    (ch 16 :type fixnum)    ; cell HEIGHT in pixels (the charsize byte)
-    (glyphs ... ))          ; a 256-element vector; glyph N = a (ch)-byte array
-#+end_src
-
-Everything downstream asks the font only three questions: how wide is a cell
-(=cw=), how tall (=ch=), and what are the bytes of glyph N (=glyphs=). Because the
-font is *just data behind those three accessors*, swapping fonts is swapping data,
-never code — that is the whole point of keeping it a small "backend" ([[file:code-browser.org][§6.2]]).
-
-* 4. Blitting — glyph → pixels (the heart: =draw-string=)
-
-[[file:../poc/canvas.lisp][=draw-string=]] is where a character becomes light. Stripped to its logic, for one
-character at pen position =(x, y)=:
-
-#+begin_src
-  glyph = glyphs[char-code]
-  for row in 0..ch-1:                 ; each row is one byte
-    bits = glyph[row]
-    for col in 0..cw-1:               ; each of the 8 columns
-      if bit (7 - col) of bits is set:   ; MSB is the LEFT pixel (§1)
-        set canvas pixel (x+col, y+row) = colour
-  advance pen by cw                   ; next character sits cw pixels right
-#+end_src
-
-Three things worth seeing in the real code:
-
-1. *=(logbitp (- 7 col) bits)=* is the "is this pixel lit?" test. The =(- 7 col)=
-   is the MSB-first convention from §1: column 0 is bit 7.
-2. *It writes only lit pixels* — background is left untouched, so text composites
-   over whatever is already on the canvas (a panel colour, a selection band).
-3. *It returns the pen's final x.* That return value is how a line gets *syntax
-   colouring*: draw the =(defun= in one colour, take the returned x, draw the name
-   in another colour starting there, and so on — a chain of coloured runs on one
-   line. The lexer in [[file:../poc/textview.lisp][textview.lisp]] produces exactly those runs.
-
-*The =scale= knob.* =draw-string= takes =&key scale=; with =scale 2= it stamps each
-glyph pixel as a 2×2 block (the =sx=/=sy= inner loops), doubling the size. This is
-"integer scaling" — instant, but *blocky* (a dot becomes a square). It is half of
-the cheap size path in §7. The other half is that the *metrics* (§5) must agree, or
-the layout still thinks the text is small and everything overlaps.
-
-* 5. From a glyph to a line to the browser
-
-Above =draw-string= sit two more layers.
-
-*Measuring:* [[file:../poc/canvas.lisp][=string-px=]] returns =length × cw × scale= — the pixel width a string
-will take. Layout code needs this to place things and to wrap.
-
-*The text view's cells:* [[file:../poc/textview.lisp][textview.lisp]] is a grid of character cells, and every cell
-metric comes from the font:
-
-#+begin_src lisp
-  (defun tv-cw (tv)          (font-cw (tv-font tv)))         ; a column's pixel width
-  (defun tv-line-height (tv) (+ (font-ch (tv-font tv)) 3))   ; a row's pixel height (+lead)
-#+end_src
-
-and *hit-testing* — turning a mouse pixel into a (line, column) — is just those
-metrics run backwards ([[file:../poc/textview.lisp][=x-of-col=]] / [[file:../poc/textview.lisp][=col-at-x=]]):
-
-#+begin_src lisp
-  x-of-col : screen-x = tv-x + pad + col * cw     ; column -> pixel
-  col-at-x : col      = round((px - tv-x - pad) / cw)   ; pixel -> column
-#+end_src
-
-*This is the monospace assumption in ONE place.* Because every glyph is =cw= wide,
-column ↔ pixel is a multiply/divide. A proportional font (variable widths) would
-replace only these two functions with a per-glyph width scan — nothing else in the
-editor changes. (Also the reason getting =cw= right matters when you scale: §7.)
-
-The whole flow, then:
+Each point carries an *on-curve* flag. Two on-curve points in a row are joined by a
+straight line. An *off-curve* point between two on-curve ones is a *control point*:
+the segment is a quadratic Bézier curve
 
 #+begin_src
-  font file  ──load-psf──▶  font struct ──┐
-                                          ├─▶ draw-string ─▶ pixels in the canvas
-  textview / browser panes  ──cw, ch──────┘   (colour by run; scale optional)
+  B(t) = (1-t)² P0  +  2t(1-t) C  +  t² P1        t from 0 to 1
 #+end_src
 
-* 6. How the pixels reach the panel
+which leaves =P0= heading toward =C=, arrives at =P1= coming from =C=, and never
+leaves the triangle the three points make (so the points' bounding box bounds the
+glyph — [[file:../poc/ttf.lisp::defun rasterize-glyph][=rasterize-glyph=]] relies on it). The format's space-saving trick: *two*
+off-curve points in a row imply an on-curve point exactly halfway between them. A
+circle can be four control points and no on-curve point at all.
+[[file:../poc/ttf.lisp::defun walk-contour][=walk-contour=]] turns a contour into line and curve calls under those rules,
+inventing the implied points, and first finds an on-curve starting point (inventing
+one between the last and first points when there is none).
 
-=draw-string= writes into a *canvas* — an off-screen ARGB pixel buffer the renderer
-owns ([[file:../poc/canvas.lisp][=make-canvas=]]). Nothing in the font layer knows about the screen. A separate
-*backend* then ships that buffer out:
+A rasteriser wants straight edges, so each curve is *flattened* into short lines.
+How many: [[file:../poc/ttf.lisp::defun accumulate-quad][=accumulate-quad=]] measures the curve's bend, =|P0 − 2C + P1|= (zero for a
+straight one), and uses =1 + ⌊√√(3·bend²)⌋= pieces — the font-rs rule, enough that no
+piece strays a visible fraction of a pixel from the true curve. B(t) is evaluated by
+"lerping twice": the point =t= of the way from =P0= to =C=, the point =t= of the way
+from =C= to =P1=, then =t= of the way between those two.
 
-- [[file:../poc/fb.lisp][poc/fb.lisp]] copies it to =/dev/fb0= (the framebuffer, on the LoL machine), or
-- [[file:../poc/x11.lisp][poc/x11.lisp]] =PutImage='s it into an X window (on the dev host).
+* 4. Coverage: the signed-area accumulator
 
-From there it is [[file:framebuffer.org][framebuffer.org]]'s story: the GPU scans the framebuffer out to the
-panel ~60×/second. So the full chain for one letter is:
+The rasteriser is the method Raph Levien popularised in *font-rs*
+([[file:../poc/ttf.lisp::defun accumulate-line][=accumulate-line=]]). It needs no sorting of edges, no scanline lists and no
+supersampling, and it is exact.
+
+Picture one row of pixels and a downward edge crossing it. Everything to the right of
+the edge, within the vertical slice the edge sweeps in this row, is *inside* the
+shape (for an upward edge, *outside* — that is the edge's sign). Instead of adding
+that slice height to every pixel to the right, the edge *deposits* it once, where it
+is: the pixel(s) it passes through get the part lying to their right (a trapezoid's
+area, cut per pixel), and the next pixel gets the rest. Then one *running sum along
+the row* carries the deposit rightward — until the shape's other edge deposits the
+opposite amount and the sum falls back to zero. After the pass:
 
 #+begin_src
-  char code → glyph bytes → draw-string stamps lit pixels → canvas (ARGB buffer)
-            → backend (fb0 memcpy / X PutImage) → GPU scanout → the panel
+  coverage(pixel) = min(1, |running sum at that pixel|)
 #+end_src
 
-* 7. Changing the font — and its size
+The =abs= makes the winding direction irrelevant (TrueType draws outer contours
+clockwise and holes anticlockwise — a hole's edges deposit the opposite sign, so the
+=O= keeps its counter; the host test checks the centre pixel of an =O= is empty). The
+=min 1= handles parts that overlap (an accent touching its letter). The sum runs over
+the whole buffer row-major, not row by row: each row's deposits add up to zero for a
+closed outline, so nothing leaks into the next row.
 
-Because a font is *data behind three accessors* (§3), all of this is local to
-[[file:../poc/canvas.lisp][canvas.lisp]] (+ a two-line metric tweak in [[file:../poc/textview.lisp][textview.lisp]]); the browser code never
-changes.
+*Gamma.* Exact coverage looks *thin* for light text on a dark ground: the eye does
+not respond linearly, and without hinting a one-pixel stem often lands half on each of
+two pixels — two half-lit greys instead of one lit pixel. So coverage is raised to
+=1/γ= before it becomes a byte (=lol.ttf:*gamma*=, 1.45). It was chosen by rendering
+the same line at 11–18 px with γ = 1.0, 1.45 and 1.8 and looking: 1.0 is spindly at
+12 px, 1.8 starts to look bold at 18, 1.45 keeps =0O=, =1lI= and =;:= distinct at
+every size from 11 up. Changing it needs the glyph caches emptied
+(=lol.canvas::clear-font-cache=).
 
-*The shipped font is Cozette (MIT), via our own blob — not a raw PSF.* =load-psf=
-(§2) is the pedagogical baseline, but what the tool actually loads is =load-font=,
-reading a =.lolf= blob produced by [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] from a BDF. The blob is trivial
-(magic =LF=, width byte, height byte, then 256 glyphs) and, crucially, *its glyphs
-are indexed by real Unicode codepoint* — which is exactly what defeats the =·=→=Ö=
-trap (§9). Cozette is 6×15; its MIT license ships beside the blob. To regenerate:
-=sbcl --script poc/bdf2font.lisp cozette.bdf poc/cozette.lolf= (see [[file:../poc/README.org][poc/README.org]]).
+* 5. The FONT object, the glyph cache, and blending
 
-*Swap the whole font:* point =load-font= at a different =.lolf= (rebuild it from a
-BDF with =bdf2font.lisp=), or =load-psf= at a =.psf=. Done. (Both are 1 byte per row,
-so ≤8 wide today; wider needs the PSF2 / multi-byte-row path below.)
+=lol.canvas:font= has two kinds ([[file:../poc/canvas.lisp::defstruct font][=defstruct font=]]): a *bitmap* one (the 256 glyph
+vectors) and an *outline* one (a =lol.ttf:face=). Both answer the questions layout
+asks — =font-cw= and =font-ch=, the *cell* width and height — so nothing above the
+canvas knows which kind it has.
 
-*Make it bigger — two paths* (decided: bitmap-first, see [[file:code-browser.org][§6.2]]):
+*The size, and the cell it implies.* [[file:../poc/canvas.lisp::defun set-font-size][=set-font-size=]] sets the font's pixel size
+(the em) *in place* and recomputes the cell from the font's own metrics, rounded to
+whole pixels because a grid can only be whole pixels:
 
-- /Path A — integer scaling (cheap, blocky)./ =draw-string= already scales; the
-  work is making the metrics agree so nothing overlaps:
-  1. add a =scale= field to the =font= struct (default 1);
-  2. default =draw-string='s and =string-px='s =scale= to =(font-scale font)=;
-  3. in [[file:../poc/textview.lisp][textview.lisp]], multiply by scale in =tv-cw= and =tv-line-height=;
-  4. =(setf (font-scale font) 2)= → uniform 16×32, pixel-doubled.
-  A dot becomes a 2×2 square — fine for reading while experimenting, not for shipping.
+#+begin_src
+  scale    = size / unitsPerEm
+  cw       = round(advance('M') × scale)              ; every glyph's, in a monospace font
+  ch       = round((ascender − descender + lineGap) × scale)
+  baseline = round((ascender + lineGap/2) × scale)    ; pixels below the cell's top
+#+end_src
 
-- /Path B — a real bigger font (crisp)./ A true 16×32 font is *wider* than 8, i.e.
-  *PSF2*. So: teach =load-psf= the PSF2 header (width/height are real fields), and
-  generalise =draw-string='s inner loop to glyphs wider than 8 (each row spans
-  =ceil(width/8)= bytes instead of one). Then load a 16×32 font. Properly drawn
-  glyphs, no blockiness.
+For DejaVu Sans Mono (computed with the code itself, one line per size):
 
-- /Path C — TrueType (the future, separate effort)./ Arbitrary size/weight from any
-  =.ttf=, but a rasteriser + a grayscale-blending blitter. Out of scope for now
-  ([[file:code-browser.org][§6.2]]); it slots in as a second font backend behind the same =draw-string=.
+| size | cell  | baseline | columns × list rows on 1920×1080 |
+|------+-------+----------+----------------------------------|
+|   12 | 7×14  |       11 | 274 × 56                         |
+|   14 | 8×16  |       13 | 240 × 51                         |
+|   16 | 10×19 |       15 | 192 × 45                         |
+| *18* | 11×21 |       17 | 174 × 41 — the default           |
+|   20 | 12×23 |       19 | 160 × 38                         |
+|   23 | 14×27 |       21 | 137 × 33                         |
+|   29 | 17×34 |       27 | 112 × 27                         |
+|   40 | 24×47 |       37 | 80 × 20                          |
 
-* 8. The map — where everything is
+*Why 18 px by default.* The laptop is a 14-inch 1920×1080 panel, about 157 pixels to
+the inch; the old 6×15 bitmap's capitals were about 1.5 mm tall there — the complaint
+that started this. At 18 px a capital is about 2.2 mm (close to 10-point type held at
+arm's length), and a full-width pane still holds 170 columns.
+=lol.canvas:*default-font-size*= holds it; the user's own choice overrides it (§6).
 
-| you want to…                          | look at                                   |
-|---------------------------------------+-------------------------------------------|
-| read a font file                      | =load-psf=            ([[file:../poc/canvas.lisp][canvas.lisp]])          |
-| the font's shape (cw/ch/glyphs)       | =defstruct font=     ([[file:../poc/canvas.lisp][canvas.lisp]])          |
-| turn a glyph into pixels              | =draw-string=        ([[file:../poc/canvas.lisp][canvas.lisp]])          |
-| measure text width                    | =string-px=          ([[file:../poc/canvas.lisp][canvas.lisp]])          |
-| a row/column's pixel size             | =tv-cw= / =tv-line-height=  ([[file:../poc/textview.lisp][textview.lisp]])   |
-| mouse pixel ↔ (line,column)           | =col-at-x= / =x-of-col=     ([[file:../poc/textview.lisp][textview.lisp]])   |
-| get the pixels onto the screen        | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]     |
-| see it run                            | =sbcl --script poc/run-editor.lisp=       |
+*The cache.* Rasterising is cheap but not free, and a screen repeats the same few
+dozen glyphs thousands of times, so [[file:../poc/canvas.lisp::defun font-glyph][=font-glyph=]] keeps every glyph it makes, keyed
+by *(size, codepoint)* packed into one fixnum (=size × 2²¹ + code= — codepoints stop
+below 2²¹), in a per-font =eql= hash table: the cheapest lookup there is. A size
+change throws nothing away; going back to a size finds its glyphs waiting. Each
+cached glyph is a coverage bitmap plus where its top-left sits relative to the pen
+and the baseline; it is shifted by a fraction of a pixel so it is *centred* in its
+rounded cell (the rounding error goes half to each side).
 
-* 9. Gotchas & glossary
+*Blending.* [[file:../poc/canvas.lisp::defun draw-string-outline][=draw-string-outline=]] composites each glyph over whatever is already in
+the canvas, channel by channel:
 
-- *MSB-first.* Column 0 is bit 7 of the row byte, not bit 0. Get this backwards and
-  every glyph mirrors left-to-right. (=(logbitp (- 7 col) bits)=.)
-- *The =·= → =Ö= trap — FIXED for the shipped font.* PSF1's 256-glyph order is an
-  *implicit* Latin-1-ish table; a codepoint you assume (say =#\·=) may map to a
-  different glyph. That is why the tool ships a =.lolf= blob whose glyphs are
-  *indexed by real codepoint* ([[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] / =load-font=, §7): =#\·= (183) is the
-  middle dot, verified. The trap only bites raw =load-psf= use — still, keep UI
-  text to characters the font actually has ([[file:code-browser.org][§6.2]]).
-- *Past 255 there is no glyph — so it is folded, not wrapped.* =draw-string= used to
-  index the glyph vector with =(logand code #xff)=, so a character beyond Latin-1
-  silently became a /different/ one: the em dash U+2014 drew glyph =#x14=, a
-  box-drawing tee, and every "a — b" title in the browser read "a ┤ b" for months;
-  the ellipsis U+2026 drew as =&=. [[file:../poc/canvas.lisp::defun glyph-index][=glyph-index=]] now folds the punctuation the
-  UI uses (dashes, ellipsis, curly quotes, arrows) to its ASCII cousin, and anything
-  else past 255 to =?=, which at least looks missing rather than wrong.
-- *Aliased, not antialiased.* Bitmap glyphs are pure on/off — crisp and fast, no
-  grey edges. Antialiasing only arrives with the TrueType path (§7 Path C).
-- *cell vs glyph.* =cw=/=ch= are the *cell* (the box a character occupies, incl.
-  spacing); the glyph's ink usually fills less. Line spacing is =ch + lead= (the
-  =+ 3= in =tv-line-height=).
-- *scale ≠ a bigger font.* Scaling magnifies the same 8×16 bitmap (blocky). A
-  bigger *font* has more, properly-drawn pixels. Different things (§7 A vs B).
+#+begin_src
+  out = (ink × a + old × (255 − a)) / 255        a = coverage, 0..255
+#+end_src
+
+Full coverage is a plain store (most of a stem); zero is skipped (most of a cell). The
+canvas has no alpha channel and needs none: the "background" is simply the pixels
+already there — a panel colour, a selection band.
+
+*Numbers* (host, [[file:../poc/font-test.lisp][poc/font-test.lisp]]'s timing block, 18 px): the 94 printable ASCII
+glyphs rasterise *cold* in 0.6 ms; a full 1920×1080 screen of cached text (170×51
+cells) draws in about 5 ms, against 1.6 ms for the same glyph count with the bitmap
+font. In the guest under KVM at 1280×800 (tag #26), [[file:../check-pointer.lisp][check-pointer.lisp]] measured a
+whole frame (draw + present) at 4 ms. That is why stb_truetype (the C route
+[[file:previews.org][previews.org]] took for JPEG) was *not* needed: pure Lisp is fast enough by a wide
+margin.
+
+* 6. How a size change reaches every pixel of layout
+
+The rule that makes runtime resizing work: *no layout code may hold a text metric in
+a constant.* Every distance that depends on text is computed from the current font
+*at draw time*. There is exactly one font object — =*bfont*= in the shell, the same
+object as =lol.widgets:*font*= and every text view's =tv-font= — and
+=set-font-size= mutates it. So "change the size, redraw" is the whole mechanism; there
+is no relayout pass, because layout is redone every frame anyway.
+
+*The metric accessors* ([[file:../poc/widgets.lisp][poc/widgets.lisp]] unless noted), and what they were as
+constants:
+
+| accessor                       | is                                           | at 6×15 (the old constant) |
+|--------------------------------+----------------------------------------------+----------------------------|
+| =char-w=, =line-h=             | the font's cell                              | 6, 15                      |
+| =+row-h+= → =(row-h)=          | a list row: cell + 5                         | 20                         |
+| =+bar-h+= → =(bar-h)=          | a header band / breadcrumb / the tab strip   | 20                         |
+| =card-head-h=                  | a card's title strip: cell + 9              | 24                         |
+| =+cell-w+=, =+cell-h+=         | a dispatch-matrix cell: 13 chars × (cell + 3) | 78 × 18                   |
+| =text-dy=                      | how far down a band to draw text, centred    | (was =(+ y 3)=)            |
+| =status-h= (shell)             | the status line / minibuffer: cell + 7       | 22                         |
+| =tv-gutter-w= (textview)       | the line-number gutter: 4 chars + 16         | 40 (=*gutter-w*=)          |
+| =tv-line-height= (textview)    | a text-view line: cell + 3                   | 18 (always derived)        |
+| =stage-transcript-h=, =dbg-row-h=, =dbg-band-h= | the stage strip, debugger rows and title band | 92, 17, 24 |
+
+=+row-h+= and friends kept their names as *symbol macros*: the compiler replaces the
+symbol with a call, =(row-h)=, at each of the hundred places that use it. That kept
+the diff small and means code anyone writes with =+row-h+= is automatically right;
+the price is a "+constant+" that varies, which is why this table exists.
+
+*What consumes them:* row heights and the list viewport, the tab strip and its close
+boxes, the systray, breadcrumbs, the status line, the minibuffer and its caret, the
+Spotter and clipboard cards (their heights and how many rows fit), the context menu's
+width, the halo's caption and handle labels (and their hit boxes), the dispatch
+matrix, the stage's heads-up line and transcript, image captions, the debugger (title
+band, restart and frame rows, locals strip, source viewer, value prompt), the
+=SuperL-?= cheatsheet (which now pours its groups into as many pages as the size
+needs — PageDown or Space turns them), and the hit maps all of these record, which
+are made from the same numbers as the drawing so a click and a pixel cannot
+disagree. Mouse → (line, column) in a text view is =col-at-x=, which divides by the
+current =tv-cw=.
+
+*Long lines.* With a 6-pixel font a line rarely reached a pane's edge; at 28 px most
+do. So the text view now *clips* at its edge (it used to draw over the frame) and
+*scrolls sideways* to keep the caret visible (=tv-hscroll=, followed in =tv-draw=,
+counted by =x-of-col= / =col-at-x= so clicks still land).
+
+*The keys* (=browser-key= in [[file:../poc/shell.lisp][shell.lisp]], calling [[file:../poc/shell.lisp::defun change-font-size][=change-font-size=]]):
+
+| keys                                           | does                                         |
+|------------------------------------------------+----------------------------------------------|
+| =SuperL-== or =SuperL-+=                       | bigger                                       |
+| =SuperL--=                                     | smaller                                      |
+| =SuperL-0=                                     | back to the size the font was loaded at      |
+| =C-x C-== (or =C-x C-+=), =C-x C--=, =C-x C-0= | the same, Emacs's =text-scale-adjust= keys   |
+| then a bare =+= (or ===), =-=, =0=             | repeats, without the =C-x= — as in Emacs     |
+
+Steps are 2 px below 20 and 3 px above (one pixel at 12 px is 8 %, at 30 px 3 % and
+too small to notice), clamped to 10–40 px; from 18 the sizes go 20, 23, 26, 29 … 40.
+The status line says the result — =font: DejaVu Sans Mono 20px (12x23)= — and "at the
+largest end" when there is no further to go.
+
+*Two chords the console does not send.* On the framebuffer the characters come from
+the cooked tty and only the modifiers from the keyboard's evdev ([[file:input.org][input.org]]). The
+kernel's default keymap (=drivers/tty/vt/defkeymap.map=) gives keycodes 11 (=0=) and 13
+(===) *no control column*, so =Ctrl-0= and =Ctrl-== produce *no byte at all* — found
+when [[file:../check-font.lisp][check-font.lisp]]'s =C-x C-== did nothing and the next plain === completed the
+chord instead. =Ctrl--= is fine (=Control_underscore=, byte 31, reaching us as =C-_=).
+So =note-modifier-key= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] reports those two chords from evdev, the
+way it already reported the Menu key.
+
+*Remembering the size.* Every change is written to =~/.config/lol/settings=, a plist
+the Lisp reader reads back — =(:FONT-SIZE 20)= — by =save-setting=
+([[file:../initramfs/settings.lisp][initramfs/settings.lisp]]), atomically (a temp file and a rename). =run-browser-fb=
+reads it at start. Neither direction ever signals, =*read-eval*= is off when reading,
+and nothing is written when there is no real home: a diskless boot has =HOME=/=, a
+tmpfs that dies at power-off. Because =/home= is the laptop's own =/home=
+([[file:storage.org][storage.org]]), the image on the laptop finds the size you last chose there.
+(=render-frame.lisp= never loads it, so a rendered frame does not depend on your
+preferences.)
+
+* 7. Which font ships, and changing it
+
+*At build time.* [[file:../build.sh][build.sh]] copies a monospace TrueType file *from the build host*
+into the gitignored =initramfs/mono.ttf=, and the cpio list puts it at
+=/usr/share/lol/mono.ttf= (343 140 bytes for DejaVu Sans Mono). It is someone else's
+work, so — like firmware — it is never committed. =LOL_FONT=/path/to/font.ttf= picks
+one; the default is =/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf=, else
+whatever =fc-match monospace= names. Its licence (the Bitstream Vera licence; DejaVu's
+own changes are public domain) is in [[file:../README.org][README.org]]'s licensing table. If the host has no
+TrueType font at all, build.sh ships an *empty* file, the image fails to parse it, and
+falls back to the bitmap — harder to read, never broken.
+
+*On the host.* =render-frame.lisp=, =run-browser.lisp= (X11) and the host tests take
+=$LOL_FONT=, else the host's DejaVu, else =poc/cozette.lolf=.
+=sbcl --script poc/render-frame.lisp workspace --size 28= renders a frame at 28 px;
+=--font PATH= tries another file (a =.lolf= path selects the bitmap fallback).
+
+*At run time.* =(set-font "/mnt/host/usr/share/fonts/truetype/cascadia-code/CascadiaMono.ttf")=
+in the Workspace switches the whole environment to any TrueType file the laptop has
+(=/mnt/host= is its root, read-only — [[file:storage.org][storage.org]]), keeping the size. It replaces the
+font object and repoints the open text views at the new one. A proportional font will
+draw, but on the monospace grid — every glyph centred in a cell as wide as its =M=.
+
+* 8. The bitmap fallback
+
+What shipped before, and still ships as =/cozette.lolf=: Cozette (MIT), 6×15, converted
+from its BDF by [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] into our own =.lolf= blob — magic =LF=, a width byte, a
+height byte, then 256 glyphs of one byte per row, *indexed by real codepoint*. (A
+console *PSF1* font, read by =load-psf=, is the same idea with an implicit,
+Latin-1-ish glyph order — which is how =·= once drew as =Ö=; owning the order in
+=.lolf= is what fixed that.) =draw-string-bitmap= stamps the lit bits, testing
+=(logbitp (- 7 col) bits)= because column 0 is the *most* significant bit.
+
+It is the fallback when no TrueType file loads, and it *still resizes*: a bitmap
+cannot be redrawn at another size, only magnified, so =set-font-size= rounds to the
+nearest whole multiple of 15 and stamps each pixel as a k×k block (size 30 gives 12×30
+cells). Because the cell metrics follow, layout is right at either size; only the
+letters are blocky.
+
+Its 256-glyph limit is why the chrome folds characters past Latin-1 to ASCII cousins
+(an em dash to =-=, an ellipsis to =.= — =glyph-index= in canvas.lisp) and why
+elisions are two dots. The outline font has none of these limits: it maps anything
+its =cmap= covers and draws =.notdef= for the rest.
+
+* 9. Testing it
+
+- *Host, the engine:* =sbcl --script poc/font-test.lisp= — 43 checks: the tables, cmap
+  (both formats, agreeing), advances, rasterised coverage (a space is empty, =l= has a
+  solid stem *and* grey edges, =g= descends, =O= keeps its hole, =é= is a composite),
+  the cell at 18 px, clamping, the cache (one miss per distinct glyph, then hits; a new
+  size misses again), blending, the bitmap fallback's magnification; then the timings
+  of §5.
+- *Host, the pixels:* =poc/render-frame.lisp SUBJECT --size N= at 12, 18 and 28 — look
+  at the frames; =-k "s-= s-="= replays the keys and shows the status line.
+- *Guest, the machine:* =LOL_GUEST_DISK=test-disk.img sbcl --script check-font.lisp=
+  boots the image and presses the keys through QMP: the TTF loaded, the default size,
+  =SuperL-= / - / 0=, =C-x C-= / C-- / C-0= and the bare repeat, the row height
+  following the cell, =draw-browser= having run, the screendump differing, the status
+  line, a letter typed after the chord not being swallowed, and the size landing in
+  =~/.config/lol/settings= (diskless: that nothing is written). 18/18 at tag #26.
+  =check-scroll=, =check-clipboard= and =check-pointer= pass at 18 px
+  (=check-clipboard= needed =*gutter-w*= → =tv-gutter-w=).
+
+* 10. The map — where everything is
+
+| you want to…                          | look at                                                          |
+|---------------------------------------+------------------------------------------------------------------|
+| parse a .ttf / look up a glyph        | =parse-ttf=, =glyph-index=, =glyph-outline= ([[file:../poc/ttf.lisp][ttf.lisp]])                |
+| turn an outline into coverage         | =rasterize-glyph=, =accumulate-line=, =walk-contour= ([[file:../poc/ttf.lisp][ttf.lisp]])       |
+| the font object, its size, the cache  | =defstruct font=, =set-font-size=, =font-glyph= ([[file:../poc/canvas.lisp][canvas.lisp]])         |
+| draw text / measure it                | =draw-string=, =string-px= ([[file:../poc/canvas.lisp][canvas.lisp]])                               |
+| a layout metric                       | =char-w=, =line-h=, =row-h=, =text-dy= … ([[file:../poc/widgets.lisp][widgets.lisp]])               |
+| mouse pixel ↔ (line, column)          | =x-of-col=, =col-at-x= ([[file:../poc/textview.lisp][textview.lisp]])                               |
+| the keys, loading, switching fonts    | =change-font-size=, =open-browser-font=, =set-font= ([[file:../poc/shell.lisp][shell.lisp]])     |
+| where the size is kept                | =setting=, =save-setting= ([[file:../initramfs/settings.lisp][settings.lisp]])                          |
+| which file ships                      | step 2a′ of [[file:../build.sh][build.sh]]; [[file:../initramfs/initramfs.sbcl.list][initramfs.sbcl.list]]                       |
+| the pixels reach the screen           | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]                          |
+
+* 11. Gotchas, and what was ruled out
+
+- *Never copy a metric into a constant.* A =(defparameter +foo-h+ 20)= sized for one
+  font is the bug this change removed; ask =line-h= at draw time. Every track's code is
+  held to the same rule ([[file:code-browser.org][code-browser.org §6.2]]).
+- *Cell vs glyph.* =cw=/=ch= are the *cell*; ink usually fills less, and =g=/=y= descend
+  below the baseline into the cell's bottom. Drawing takes the cell's top-left, not
+  the baseline.
+- *A pane's text is clipped, not wrapped.* Long lines scroll sideways with the caret
+  (§6); lists elide with =..=.
+- *Ruled out: stb_truetype.* The plan allowed a C rasteriser through the existing
+  =libstbi.so= pattern if pure Lisp proved too slow or too ugly. Measured (§5), it is
+  neither, so there is no C here.
+- *Not a finding:* one early timing printed "0.0 ms" for rasterising 94 glyphs — a
+  single run too short to time reliably; the test now times twenty cold runs and
+  reports 0.6 ms.
+- *Ctrl-= and Ctrl-0 are silent on the console* (§6). Any future Ctrl-digit or
+  Ctrl-punctuation binding will meet the same keymap gap: check =defkeymap.map= for a
+  =control= line before assuming a byte arrives.

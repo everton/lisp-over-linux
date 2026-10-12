@@ -47,6 +47,10 @@ requests (set the clock; copy the host's NetworkManager profiles).
 =check-net.lisp= asserts it all (=LOL_GUEST_HOSTROOT=1=).
 The same day the image gained the *agent* — an LLM client in Lisp with the image's
 introspection as its tools ([[file:agent.org][agent.org]]).
+Userland, 2026-10-12: the environment draws with a TrueType font (the build host's
+DejaVu Sans Mono, copied into the cpio by =build.sh=; Cozette as the fallback) whose
+size =SuperL-= / - / 0= change at run time and =~/.config/lol/settings= remembers
+([[file:fonts.org][fonts.org]]).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -175,7 +179,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
   | [[file:../initramfs/stage.lisp][=stage.lisp=]]       | the =COLLIDE= stage (§3b): bodies, both-ways dispatch, =eql=-specialised enact |
   | [[file:../initramfs/worker.lisp][=worker.lisp=]]      | a second PROCESS that contributes a *view* — =subj-worker=, the =job= argv role ([[file:processes.org][processes.org]] §2) |
-  | [[file:../poc/canvas.lisp][=poc/canvas.lisp=]]  | the pixel buffer + font + =draw-string= ([[file:fonts.org][fonts.org]])       |
+  | [[file:../poc/ttf.lisp][=poc/ttf.lisp=]]     | =lol.ttf=: the TrueType reader + anti-aliased rasteriser, pure Lisp ([[file:fonts.org][fonts.org]]) |
+  | [[file:../poc/canvas.lisp][=poc/canvas.lisp=]]  | the pixel buffer + the resizable =font= (outline or bitmap, glyph cache) + =draw-string= ([[file:fonts.org][fonts.org]]) |
   | [[file:../poc/textview.lisp][=poc/textview.lisp=]] | the editable text view (uses canvas)                    |
   | [[file:../poc/widgets.lisp][=poc/widgets.lisp=]] | =lol.widgets=: panel/bar/list/scrollbar/grid/card + the semantic palette |
   | [[file:../poc/fb.lisp][=poc/fb.lisp=]]      | the =/dev/fb0= presenter + =KD_GRAPHICS= ([[file:framebuffer.org][framebuffer.org]] §9) |
@@ -186,6 +191,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../poc/inflate.lisp][=poc/inflate.lisp=]] | =lol.inflate=: DEFLATE / zlib / gzip in pure Lisp ([[file:previews.org][previews.org]]) — the file manager's =.gz= previews |
   | [[file:../poc/image.lisp][=poc/image.lisp=]]   | =lol.image=: image files -> canvas pixels (uses inflate; [[file:previews.org][previews.org]]) — the file manager's image previews |
   | [[file:../initramfs/files.lisp][=files.lisp=]]       | the file system as data: lstat/readdir/rename/symlink/… via =sb-unix= + libc, bounded =find-files=, the atomic save, the Spotter's path grammar ([[file:file-manager.org][file-manager.org]]) |
+  | [[file:../initramfs/settings.lisp][=settings.lisp=]]    | =~/.config/lol/settings=: the user's preferences as a READable plist (=setting=, =save-setting=), e.g. the font size; never signals, writes nothing without a real home ([[file:fonts.org][fonts.org]] §6) |
   | [[file:../initramfs/file-views.lisp][=file-views.lisp=]]  | folders and files as SUBJECTS: =present= / =present-preview= / =commands-for=, the sniffers and archive readers ([[file:file-manager.org][file-manager.org]]) |
   | [[file:../poc/shell.lisp][=poc/shell.lisp=]]   | the drill-down accordion shell (present + canvas + textview + line-editor) |
   | [[file:../poc/file-manager.lisp][=poc/file-manager.lisp=]] | the file manager's keys, minibuffer prompts and operations; =C-x C-s= (uses shell + file-views) |
@@ -546,6 +552,12 @@ root, which is why we use it instead of =find | cpio=:
   # --- previews: stb_image as a shared object, libc+libm only (previews.org) ---
   dir  /usr/lib/lol                0755 0 0
   file /usr/lib/lol/libstbi.so     poc/out/libstbi.so 0755 0 0
+  # --- fonts (fonts.org): the build host's monospace .ttf, copied by build.sh and
+  #     never committed (empty when the host has none), and the Cozette fallback ---
+  dir  /usr/share                  0755 0 0
+  dir  /usr/share/lol              0755 0 0
+  file /usr/share/lol/mono.ttf     initramfs/mono.ttf 0644 0 0
+  file /cozette.lolf poc/cozette.lolf 0644 0 0
   # --- the SBCL standalone image ---
   file /sbin/lisp initramfs/lisp-init 0755 0 0
   # --- glibc runtime the SBCL binary needs (paths matter) ---
@@ -557,6 +569,13 @@ root, which is why we use it instead of =find | cpio=:
 (The =file= source paths are *relative to the project root* — =build.sh= runs
 =gen_init_cpio= from there. Never write an absolute =$HOME= path here; it would
 make the repo unbuildable for anyone else.)
+
+*The font comes from the build host.* =initramfs/mono.ttf= is not in git: build.sh
+(step 2a′) copies =$LOL_FONT=, else =/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf=,
+else whatever =fc-match monospace= names, and writes an *empty* file when there is
+none — =gen_init_cpio= needs the file to exist, and the image treats an unparseable
+font as "use the bitmap". Like the glibc files above, it is the host's, shipped
+verbatim; its licence is in README.org's table ([[file:fonts.org][fonts.org]] §7).
 
 ** Reading those =nod= lines — what a device node is
 
