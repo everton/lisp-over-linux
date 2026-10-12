@@ -196,7 +196,7 @@ Prefer a few well-placed sections over one-liners scattered about.
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
   doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
-- Kernel build tags are `#NN` (currently **#26**). Always say which tag a claim
+- Kernel build tags are `#NN` (currently **#27**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
   them via those names, never an absolute/`$HOME` path. `build.sh` derives its own

@@ -11,7 +11,8 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#26* (the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
+Current tag: *#27* (USB Ethernet dongles — the RTL8153 and the generic CDC classes, §8; built
+on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
 seccomp, SysV IPC, inotify, fw_cfg and virtio-9p — §8; built on top of #25 = storage:
 NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased the config onto Linux 7.2.5, #23 =
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
@@ -38,7 +39,8 @@ POWER_SUPPLY|ACPI_AC|ACPI_BATTERY|RTC_MC146818_LIB|\
 BLK_DEV_NVME|NVME_CORE|EXT4_FS|EXT4_FS_POSIX_ACL|JBD2|VIRTIO_BLK|\
 MSDOS_PARTITION|EFI_PARTITION|USER_NS|OVERLAY_FS|SYSVIPC|POSIX_MQUEUE|\
 INOTIFY_USER|SECCOMP|SECCOMP_FILTER|IPV6|CFG80211|MAC80211|IWLWIFI|IWLMVM|RFKILL|\
-FW_CFG_SYSFS|DMI_SYSFS|NET_9P|NET_9P_VIRTIO|9P_FS)=' .config | sort
+FW_CFG_SYSFS|DMI_SYSFS|NET_9P|NET_9P_VIRTIO|9P_FS|\
+USB_USBNET|USB_RTL8152|USB_NET_CDCETHER|USB_NET_CDC_NCM)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -261,6 +263,8 @@ the helpers listed in the change log.
 | =CONFIG_FW_CFG_SYSFS= | y | QEMU's firmware-config blobs under =/sys/firmware/qemu_fw_cfg=: how a test boot passes switches (=opt/lol/netrepl=, =opt/lol/disk=) to an EFISTUB kernel whose cmdline is built in. Real hardware has no fw_cfg, so these switches cannot exist there |
 | =CONFIG_DMI_SYSFS= | y | raw SMBIOS tables in sysfs; a second channel for machine identity, cheap |
 | =CONFIG_NET_9P= + =NET_9P_VIRTIO= + =9P_FS= | y | QEMU only in practice: the build host's real =/= shared read-only over virtio-9p, so tests can run its programs (=LOL_GUEST_HOSTROOT=1=, preinit's =mount_storage_9p=) |
+| =CONFIG_USB_RTL8152= | y | #27: the user's USB Ethernet dongle (=0bda:8153=, RTL8153), a wired fallback for a laptop with no port; =network-up= leases on any interface. Its =rtl_nic/rtl8153*.fw= files are optional patches (=unable to load firmware patch= is a warning), so none are shipped. Selects =MII= and =PHYLIB=; it does not need =USB_USBNET= (that is for the CDC rows below) |
+| =CONFIG_USB_NET_CDCETHER= + =USB_NET_CDC_NCM= | y | #27: the standard USB Ethernet classes (ECM, NCM) most other dongles and phone tethering speak |
 
 /Tried and dropped:/ =CONFIG_MAC80211_HWSIM= would have let QEMU emulate Wi-Fi
 radios, but built in (we have no modules) it creates two fake radios on *every*
@@ -407,3 +411,11 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   throwaway test =/home=; the cause was not investigated), drops to uid 1000 and serves the net REPL./ Wi-Fi
   is not yet booted on the laptop; the boot log shows =cfg80211: failed to load
   regulatory.db= until the networking track ships it in the initramfs.
+- =#27= *USB Ethernet* (2026-10-12): =USB_NET_DRIVERS=, =USB_USBNET=, =USB_RTL8152=,
+  =USB_NET_CDCETHER=, =USB_NET_CDC_NCM= (§8). =make olddefconfig= added =MII=,
+  =PHYLIB=/=PHYLINK=/=SWPHY=, =FWNODE_MDIO=/=ACPI_MDIO=, =NET_SELFTESTS=,
+  =USB_RTL8153_ECM= and the drivers that default to =y= under =USB_USBNET=
+  (=AX8817X=, =AX88179_178A=, =NET1080=, =CDC_SUBSET= with =BELKIN=/=ARMLINUX=,
+  =ZAURUS=) — left on: they are small and cover common dongles. =bootx64.efi= is
+  4,064,256 bytes at #27. Found by the networking track: the host's =lsusb= shows
+  =0bda:8153 RTL8153 Gigabit Ethernet Adapter=. /Not yet booted on the laptop./
