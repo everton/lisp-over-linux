@@ -199,7 +199,9 @@
 ;;;      kernel shows it at /sys/firmware/qemu_fw_cfg/by_name/opt/lol/netrepl/raw.
 ;;;      Real hardware has no fw_cfg device, so this switch cannot exist there —
 ;;;      which is exactly what makes it a safe test hook. build.sh and every
-;;;      check-*.lisp pass it.
+;;;      check-*.lisp pass it. The fw_cfg files are root-only (0400) and the
+;;;      Lisp usually runs as the user, so preinit reads the blob while still
+;;;      root and passes LOL_NETREPL=1 down in the environment.
 ;;;   2. The kernel cmdline: `lol.netrepl=1` (e.g. typed into the host's GRUB
 ;;;      entry for a debugging session). Our built-in CONFIG_CMDLINE never has it.
 ;;;
@@ -217,5 +219,6 @@
   "True when this boot asked for the network REPL (fw_cfg or kernel cmdline)."
   (let ((fw (%slurp-small *fw-cfg-netrepl*))
         (cmdline (%slurp-small "/proc/cmdline")))
-    (or (and fw (string= (string-trim '(#\Space #\Newline #\Nul) fw) "1"))
+    (or (equal (sb-ext:posix-getenv "LOL_NETREPL") "1") ; preinit read fw_cfg as root
+        (and fw (string= (string-trim '(#\Space #\Newline #\Nul) fw) "1"))
         (and cmdline (search "lol.netrepl=1" cmdline) t))))

@@ -498,16 +498,28 @@ int main(void) {
     static char env_home[300], env_user[100], env_rootd[40];
     snprintf(env_home, sizeof env_home, "HOME=%s", u.ok ? u.home : "/");
     snprintf(env_user, sizeof env_user, "USER=%s", u.ok ? cfg_user : "root");
-    char *envp[] = { env_home, env_user, "PATH=/sbin", "TERM=linux", env_rootd, NULL };
+    /* Fixed slots first; optional ones are appended at N and the array stays
+     * NULL-terminated because it is zero-initialised past them. */
+    char *envp[8] = { env_home, env_user, "PATH=/sbin", "TERM=linux" };
+    int n_env = 4;
     env_rootd[0] = 0;
-    envp[4] = NULL;
+
+    /* QEMU's net-REPL switch (net.lisp, NET-REPL-WANTED-P). The fw_cfg files are
+     * readable by root only (0400), and the Lisp may run as the user, so we read
+     * it here, while still root, and hand it down as LOL_NETREPL=1. */
+    {
+        char sw[8];
+        if (slurp("/sys/firmware/qemu_fw_cfg/by_name/opt/lol/netrepl/raw", sw, sizeof sw) > 0
+            && sw[0] == '1')
+            envp[n_env++] = "LOL_NETREPL=1";
+    }
 
     if (u.ok) {
         give_devices(u.uid, u.gid);
         pid_t rootd = start_rootd(u.uid, u.gid, have_disk);
         if (rootd > 0) {
             snprintf(env_rootd, sizeof env_rootd, "LOL_ROOTD_PID=%d", (int)rootd);
-            envp[4] = env_rootd;
+            envp[n_env++] = env_rootd;
         }
         if (become_user(&u)) {
             say("user: now %s (uid %d gid %d, %d groups), home %s",
