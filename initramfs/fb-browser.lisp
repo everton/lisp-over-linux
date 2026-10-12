@@ -1830,7 +1830,7 @@
      ("C-c C-i"            "Inspect it: open the value")
      ("C-c C-d"            "Debug it: debugger armed"))
     ("Web page"
-     ("C-l / M-Left,Right" "address / back, forward")
+     ("C-l / Super-Left,Rt" "address / back, forward")
      ("C-r  C-f  C-+ C--"  "reload, find, zoom")
      ("C-c / C-v"          "copy / paste via OUR clipboard"))
     ("Inspector"

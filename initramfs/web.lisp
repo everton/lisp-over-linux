@@ -1145,7 +1145,8 @@
   "A key while a web pane has focus. The environment keeps SuperL-* (handled before
    this is reached) and a handful of browser chords; everything else is the page's.
 
-     C-l        the address          M-Left / M-Right  back / forward
+     C-l        the address          SuperL-Left/Right back / forward (M-Left/Right too,
+                                     where they arrive: not on the console, see shell)
      C-r        reload               Esc (loading)     stop
      C-f        find in the page     C-c / C-x / C-v   copy / cut / paste, via OUR clipboard
      C-+ C-- C-0  zoom               Shift-Insert / Ctrl-Insert  paste / copy (X style)
@@ -1179,9 +1180,9 @@
   (let ((tab (subj-web-tab s)))
     (list (make-command :label "Address..." :key "C-l" :surfaces '(:menu :halo)
                         :action (lambda () (web-prompt-address tab)))
-          (make-command :label "Back" :key "M-left" :surfaces '(:menu)
+          (make-command :label "Back" :key "SuperL-left" :surfaces '(:menu)
                         :action (lambda () (web-go tab -1)))
-          (make-command :label "Forward" :key "M-right" :surfaces '(:menu)
+          (make-command :label "Forward" :key "SuperL-right" :surfaces '(:menu)
                         :action (lambda () (web-go tab 1)))
           (make-command :label "Reload" :key "C-r" :surfaces '(:menu :halo)
                         :action (lambda () (web-reload tab)))
@@ -1198,7 +1199,7 @@
 
 (defmethod subject-hints ((s subj-web) pane)
   (declare (ignore pane))
-  '(("C-l" . "address") ("M-left/right" . "back/fwd") ("C-r" . "reload")
+  '(("C-l" . "address") ("SuperL-left/right" . "back/fwd") ("C-r" . "reload")
     ("C-f" . "find") ("C-c/C-v" . "copy/paste") ("SuperL-b" . "new tab")))
 
 (defun web-open (&optional url)

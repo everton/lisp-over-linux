@@ -1941,6 +1941,11 @@
       ((lol.canvas:super-p state)
        (setf *pending-prefix* nil)
        (cond
+         ;; on a web page, SuperL-Left / -Right are the PAGE's back and forward: the
+         ;; browser's usual Alt-Left never arrives on the bare console, whose keymap
+         ;; spends Alt-Left/Right on switching virtual terminals (defkeymap.map)
+         ((and (member key '(:left :right)) (eq (view-kind (pane-view (current-pane))) :web))
+          (funcall 'web-go (view-data (pane-view (current-pane))) (if (eq key :left) -1 1)) nil)
          ((eq key :left) (trail-pop) (setf *browser-status* nil) nil)          ; back in trail
          ((eq key :tab) (cycle-trail (if (lol.canvas:shift-p state) -1 1)) nil) ; cycle tabs
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N

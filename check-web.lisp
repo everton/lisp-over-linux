@@ -11,7 +11,8 @@
 ;;;;   - an address typed over QMP loads a page this script serves on the host
 ;;;;     (QEMU's user network reaches it at 10.0.2.2), and its title reaches the
 ;;;;     tab strip;
-;;;;   - a real pointer click on a link navigates; Alt-Left goes back;
+;;;;   - a real pointer click on a link navigates; SuperL-Left goes back (Alt-Left
+;;;;     switches virtual terminals on the console, so it never reaches us);
 ;;;;   - keys typed into a focused input reach it (read back with Runtime.evaluate);
 ;;;;   - the wheel scrolls the page;
 ;;;;   - a public HTTPS page loads, when the guest has a resolver (it is skipped and
@@ -177,8 +178,8 @@
   (check "a real click on a link navigates"
          (wait-until 30 (lambda () (search "LoL page two" (title)))))
   (sleep 1)
-  (qmp-hold "alt" "left")
-  (check "Alt-Left goes back"
+  (qmp-hold "meta_l" "left")
+  (check "SuperL-Left goes back"
          (wait-until 30 (lambda () (search "LoL test index" (title)))))
   (sleep 1)
   (let ((xy (element-center "q")))
