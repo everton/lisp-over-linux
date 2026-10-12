@@ -36,6 +36,7 @@ And the process tree:
 |-----+---------------+---------------------------------+----------------------------------------------|
 |   1 | =/sbin/lisp=  | uid 1000 + 5 capabilities       | the whole environment                        |
 |  ~28| =lol-rootd=   | root (real uid 1000, see §6)    | chown hotplugged devices; remount ro at exit |
+|  any| =lol-ct=      | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs |
 
 * 2. The kernel half (tag #25)
 
@@ -203,6 +204,26 @@ Verified in the guest over the net REPL: =(sb-unix:unix-getuid)= → 1000,
 the five. A file written to =~/= from the Lisp is owned 1000:1000 (=debugfs= on
 the image afterwards agrees). The framebuffer, the keyboard, the evdev mouse,
 DHCP and the TCP REPL all still work.
+
+** The five, and containers
+
+A container ([[file:containers.org][containers.org]]) needed *no sixth capability* and no new job for
+=lol-rootd=: an ordinary user may create a user namespace, and every mount a
+container makes happens inside one. What the five do across that boundary, all
+/verified/ in the guest (=check-containers.lisp=):
+
+- The Lisp starts =/sbin/lol-ct= as a plain child. Ambient capabilities survive
+  =execve= of a program without file capabilities, so =lol-ct= arrives holding
+  the same five. That outer process only waits and forwards signals.
+- =unshare(CLONE_NEWUSER)= gives the caller a full capability set /over the new
+  namespace only/, and *clears the ambient set*
+  (=linux/kernel/user_namespace.c=, =set_cred_user_ns=). Those namespace-local
+  capabilities are what let the container's init mount overlays, =proc= and a
+  tmpfs; they mean nothing to files the namespace does not own.
+- The command itself runs as uid 1000 inside, and a non-root uid keeps no
+  capabilities across =execve= without ambient ones; =lol-ct= also clears the
+  ambient set again and sets =NO_NEW_PRIVS=. Measured: =CapEff= inside is
+  =0000000000000000= — less than the Lisp itself has.
 
 ** Devices
 

@@ -71,6 +71,8 @@
     "initramfs/file-views.lisp"   ; folders and files as subjects
     "poc/shell.lisp"              ; draw-browser itself
     "poc/file-manager.lisp"       ; the file manager's keys and prompts
+    "initramfs/runs.lisp"         ; run panes: a command's output, streamed (needs shell)
+    "initramfs/containers.lisp"   ; containers as subjects (no lol-ct on the host: says so)
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).
@@ -113,6 +115,8 @@ exactly as open-environment does in the guest):
   symbol:NAME              the inspector on a symbol's cells
   function:NAME            the FUNCTION object: captures, doors, disassembly
   workspace                the Workspace scratch buffer
+  containers               the containers view (on the host: unavailable, and it says so)
+  run:CMD                  a run pane: sh -c CMD on the host, run to its end
   changes                  the change set
   dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
   file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
@@ -203,6 +207,14 @@ OPTIONS
          (dotimes (i n) (step-stage st))
          (subj-stage 'lol.examples:collide)))
       ((string= head "workspace") (subj-workspace))
+      ;; containers / run:CMD (doc/containers.org). The host has no lol-ct, so the
+      ;; containers view says so; a run is a HOST command (sh -c CMD), run to the end
+      ;; first, so the frame shows its whole coloured output and its exit line.
+      ((string= head "containers") (subj-containers))
+      ((and (string= head "run") rest)
+       (let ((run (start-run (list "sh" "-c" rest) :title rest)))
+         (loop while (run-live-p run) do (sleep 0.05))
+         run))
       ;; dir:PATH / file:PATH — the file manager (doc/file-manager.org). The path is
       ;; resolved like a prompt's: ~ is $HOME, a relative path is relative to where
       ;; the harness was started.

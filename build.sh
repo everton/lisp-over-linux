@@ -87,6 +87,8 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
+  "$INITRAMFS_DIR/runs.lisp"         # run a program, stream its output into a live pane (uses shell + ansi)
+  "$INITRAMFS_DIR/containers.lisp"   # the host's Debian as a container: lol-ct's Lisp side (doc/containers.org)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
@@ -160,7 +162,7 @@ for link in "$KERNEL:linux" "$SBCL:sbcl"; do
                       echo "       run  ./deps.sh  to fetch/link it — see README.org" >&2; exit 1; }
 done
 for f in "$GEN_INIT_CPIO" "$SBCL_RUNTIME" "$SBCL_CORE" \
-         "$INITRAMFS_DIR/preinit.c" "$REGISTRY_SRC" "${LISP_SOURCES[@]}" \
+         "$INITRAMFS_DIR/preinit.c" "$INITRAMFS_DIR/lol-ct.c" "$REGISTRY_SRC" "${LISP_SOURCES[@]}" \
          "$INITRAMFS_DIR/initramfs.sbcl.list"; do
   [ -e "$f" ] || { echo "ERROR: missing required input: $f" >&2; exit 1; }
 done
@@ -169,6 +171,14 @@ command -v musl-gcc >/dev/null || { echo "ERROR: musl-gcc not found (apt install
 # ---- 1. the C preinit (musl static, a few KB) ------------------------------
 say "Building preinit (musl static C)"
 musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/preinit" "$INITRAMFS_DIR/preinit.c"
+
+# ---- 1b. lol-ct, the container helper (musl static, like preinit) ----------
+# Runs a command inside the host's own Debian, in user+mount+pid+uts namespaces
+# (doc/containers.org §5.1). C for the same reason preinit is C, and a separate
+# program because unshare(CLONE_NEWUSER) refuses a multithreaded caller — which
+# our Lisp PID 1 is.
+say "Building lol-ct (musl static C)"
+musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/lol-ct" "$INITRAMFS_DIR/lol-ct.c"
 
 # ---- 2. the SBCL image with the supervisor baked in ------------------------
 say "Building lisp-init (SBCL save-lisp-and-die)"
@@ -240,6 +250,7 @@ fi
 # ---- summary ---------------------------------------------------------------
 say "Build done"
 printf '  %-28s %s bytes\n' "preinit"        "$(stat -c%s "$INITRAMFS_DIR/preinit")"
+printf '  %-28s %s bytes\n' "lol-ct"         "$(stat -c%s "$INITRAMFS_DIR/lol-ct")"
 printf '  %-28s %s bytes\n' "lisp-init"      "$(stat -c%s "$INITRAMFS_DIR/lisp-init")"
 printf '  %-28s %s bytes\n' "initramfs.cpio" "$(stat -c%s "$CPIO_OUT")"
 printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"

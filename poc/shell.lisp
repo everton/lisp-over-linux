@@ -1983,7 +1983,11 @@
          ;; as a menu-launched app, and killed the whole environment from a viewer
          ;; (an image, say). Leaving is SuperL-q, which asks.
          (#\q (trail-pop) nil)
-         (t nil)))
+         ;; a read-only text pane may still have VERBS: a run pane's k (stop) and
+         ;; r (run again), initramfs/runs.lisp. Same hook as a list's letters.
+         (t (unless (or (lol.canvas:ctrl-p state) meta)
+              (ignore-errors (subject-key (pane-subject p) p key state)))
+            nil)))
       ;; --- a subject's own keys on its list (the file manager's letters) ---
       ((and (null (pane-tv p))
             (not (lol.canvas:ctrl-p state)) (not meta)
