@@ -90,6 +90,8 @@ LISP_SOURCES=(
                                      #   (doc/file-manager.org; after sysinfo for *utc-offset*)
   "$INITRAMFS_DIR/settings.lisp"     # ~/.config/lol/settings: the user's preferences, e.g. the font size (uses files)
   "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
+  "$POC_DIR/terminal.lisp"           # lol.terminal: the VT engine — bytes in, a grid of cells out (doc/terminal.org)
+  "$INITRAMFS_DIR/pty.lisp"          # pseudo-terminals via posix_spawn: a program on a pty, as a session leader
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
   "$INITRAMFS_DIR/runs.lisp"         # run a program, stream its output into a live pane (uses shell + ansi)
@@ -98,6 +100,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/agent-wire.lisp"   # SSE framing + a plain-http transport (until/besides http.lisp)
   "$INITRAMFS_DIR/agent.lisp"        # the agent: conversation, Messages client, tools, approval, (ask ...)
   "$INITRAMFS_DIR/agent-ui.lisp"     # the agent in the environment: conversation panes, C-c C-a, tick
+  "$POC_DIR/terminal-pane.lisp"      # SUBJ-TERMINAL: the terminal as a pane (uses shell + terminal + pty)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)

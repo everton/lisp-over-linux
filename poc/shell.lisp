@@ -96,6 +96,12 @@
   "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
 
+(defun terminal-pane-p (pane)
+  "True when PANE is a TERMINAL (poc/terminal-pane.lisp): a program on a pty, which
+   takes every key but the SuperL layer. Defined here, with its siblings, because the
+   input routing below must ask it before that file is loaded."
+  (and pane (eq (view-kind (pane-view pane)) :terminal)))
+
 (defun file-pane-p (pane)
   "True when PANE edits a real FILE on disk (C-x C-s saves it; doc/file-manager.org)."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :file)))
@@ -130,7 +136,7 @@
    Spotter's recents — it existed twice for a while and the copies disagreed about
    what colour a remembered Workspace was."
   (case kind
-    (:workspace :restart)                  ; amber: a surface, not a definition
+    ((:workspace :terminal) :restart)      ; amber: a surface, not a definition
     ((:source :reference) :function)
     (:file :function)                      ; a text file reads like source
     (:image :macro)
@@ -1160,9 +1166,12 @@
     ;; a web page (initramfs/web.lisp): Chrome's frame under a toolbar
     ((eq (view-kind (pane-view pane)) :web)
      (funcall 'draw-web-body canvas pane x y w h))
+    ((terminal-pane-p pane)                       ; poc/terminal-pane.lisp
+     (note-drawn x y w h (pane-subject pane) '(draw-terminal-body) "terminal")
+     (funcall 'draw-terminal-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h into))))
 
-(defparameter +non-list-kinds+ '(:matrix :stage :image :web)
+(defparameter +non-list-kinds+ '(:matrix :stage :image :web :terminal)
   "View kinds with no textview that are NOT lists either: they draw themselves, and
    the list machinery (rows, the nav split, row hit-tests) must leave them alone.")
 
@@ -1996,6 +2005,12 @@
    Returns :quit to exit. STATE is the X modifier bitmask."
   ;; an open minibuffer takes EVERY key — it is where the user is typing
   (when *minibuffer* (return-from browser-key (minibuffer-key key state)))
+  ;; a TERMINAL takes every key but the SuperL layer: C-g, Esc, C-c belong to the
+  ;; program on the other end, as they would in any terminal (poc/terminal-pane.lisp)
+  (when (and (terminal-pane-p (current-pane)) (not (lol.canvas:super-p state)))
+    (setf *pending-meta* nil *pending-prefix* nil)
+    (funcall 'terminal-key (current-pane) key state)
+    (return-from browser-key nil))
   (let* ((p (current-pane))
          ;; Meta = the Alt/Esc-prefix bit on this key, OR a sticky Esc from last time.
          ;; Consume the sticky flag every keystroke; the Esc branch below re-arms it.
@@ -2080,6 +2095,14 @@
          ((member key '(#\o #\O)) (toggle-side-focus) nil)                     ; focus list <-> side
          ((eql key #\Space)                                                    ; the Spotter
           (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)) nil)
+         ;; SuperL-Return: a terminal (a shell — doc/terminal.org), the binding tiling
+         ;; window managers taught every hand. SuperL-Shift-Return keeps the old
+         ;; meaning: open the selection in a NEW tab (SuperL-click does the same).
+         ((and (member key '(:return #\Return)) (not (lol.canvas:shift-p state)))
+          (if (fboundp 'open-default-terminal)
+              (funcall 'open-default-terminal)
+              (setf *browser-status* "no terminal in this build"))
+          nil)
          ((member key '(:return #\Return))                                     ; open selection in a NEW tab
           (let ((it (selected-item (current-pane))))
             (when (and it (item-subject it)) (new-trail (item-subject it))))
@@ -2290,6 +2313,7 @@
     (cond
       ;; a web page scrolls itself: the wheel is sent to Chrome (initramfs/web.lisp)
       ((eq (view-kind (pane-view p)) :web) (funcall 'web-wheel lines))
+      ((terminal-pane-p p) (funcall 'terminal-wheel p lines))   ; history, or the program's
       ((pane-tv p) (lol.textview:tv-wheel (pane-tv p) lines))
       (t (setf (pane-top p) (max 0 (+ (pane-top p) lines))
                (pane-follow p) nil)))))
@@ -2312,6 +2336,11 @@
    rolls the fingertip, which nudges the pointer a pixel or two; without this slop
    every press would select a character or two instead of just placing the caret.")
 
+(defvar *term-drag* nil
+  "A press that landed in a TERMINAL pane, while the button is held: what a drag
+   extends there. Owned by poc/terminal-pane.lisp; declared here so the routing below
+   can test it without that file loaded.")
+
 (defun browser-drag (x y)
   "The left button is still held and the pointer is at X,Y: extend the selection in
    the view the press landed in. Returns T when the frame changed (so the caller
@@ -2319,6 +2348,7 @@
   ;; a press in a web page drags IN the page (selecting, sliding): web.lisp's
   (when (eq (view-kind (pane-view (current-pane))) :web)
     (return-from browser-drag (funcall 'web-drag x y)))
+  (when *term-drag* (return-from browser-drag (funcall 'terminal-drag x y)))
   (when *drag-tv*
     (when (and *drag-origin*
                (<= (abs (- x (car *drag-origin*))) +drag-slop+)
@@ -2398,7 +2428,7 @@
    in the half that already has focus behaves as it always did, and Ctrl-click /
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
-  (setf *drag-tv* nil *drag-origin* nil)    ; only a caret placed below re-arms it
+  (setf *drag-tv* nil *drag-origin* nil *term-drag* nil) ; only a press below re-arms one
   ;; a click ends a prompt: it is a change of subject, like C-g. (The live filter
   ;; keeps what was typed — its ON-CANCEL decides that, not us.)
   (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*)))
@@ -2426,6 +2456,8 @@
       ;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
       ((eq (view-kind (pane-view p)) :web)
        (when (>= y *content-top*) (funcall 'web-click p x y ctrl super)))
+      ;; a terminal: the program's click if it asked for the mouse, else a selection
+      ((terminal-pane-p p) (when (>= y *content-top*) (funcall 'terminal-press p x y)))
       ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
       ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
       ;; it is reading, not editing. The caret is simply not drawn there.
@@ -2697,7 +2729,7 @@
     (append
      (when subject
        (list (menu-entry "Open" (lambda () (trail-push subject)) :key "ret" :group "open")
-             (menu-entry "Open in a new tab" (lambda () (new-trail subject)) :key "SuperL-ret" :group "open")
+             (menu-entry "Open in a new tab" (lambda () (new-trail subject)) :key "SuperL-S-ret" :group "open")
              (menu-entry "Open beside"
                          (lambda ()
                            (set-pane-sel (getf target :pane) (getf target :index))
@@ -3083,13 +3115,18 @@
    edit is where a paste can land, so the paste wins there; a row, a sprite, a word in
    read-only text cannot receive a paste, so there the button is free for the halo."
   (let ((target (pointer-target x y)))
-    (if (and (eq (getf target :kind) :text) (getf target :editable)
-             (not force-halo) (primary-selection))
-        (paste-primary-at target)
-        (let ((layers (halo-layers x y)))
-          (if layers
-              (choose-and-run :halo (halo-entries (first layers)) x y layers)
-              (setf *browser-status* "nothing here to put a halo on"))))))
+    (cond
+      ;; a terminal is text you can type into, so the paste wins there too
+      ((and (terminal-pane-p (current-pane)) (not force-halo) (>= y *content-top*))
+       (funcall 'terminal-middle (current-pane)))
+      ((and (eq (getf target :kind) :text) (getf target :editable)
+            (not force-halo) (primary-selection))
+       (paste-primary-at target))
+      (t
+       (let ((layers (halo-layers x y)))
+         (if layers
+             (choose-and-run :halo (halo-entries (first layers)) x y layers)
+             (setf *browser-status* "nothing here to put a halo on")))))))
 
 (defun open-modules ()
   "The module index — every definition by the file it came from. Focus its tab if one
@@ -3267,6 +3304,7 @@
    selection becomes PRIMARY and enters the history — once, now, rather than on
    every motion event, or the history would fill with every intermediate stretch."
   (when (fboundp 'web-release) (funcall 'web-release))   ; a press in a web page, if any
+  (when *term-drag* (return-from browser-drag-end (funcall 'terminal-release)))
   (when *drag-tv*
     (let ((text (editor-region-text *drag-tv*)))
       (when (and text (null *drag-origin*))          ; it really was a drag

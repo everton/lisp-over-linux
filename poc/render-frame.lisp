@@ -71,6 +71,8 @@
     "poc/inflate.lisp"            ; lol.inflate — gzip previews
     "poc/image.lisp"              ; lol.image — image previews
     "initramfs/files.lisp"        ; the file system as data
+    "poc/terminal.lisp"           ; lol.terminal — the VT engine
+    "initramfs/pty.lisp"          ; pseudo-terminals (real ones: terminal:CMD runs CMD)
     "initramfs/file-views.lisp"   ; folders and files as subjects
     "poc/shell.lisp"              ; draw-browser itself
     "poc/file-manager.lisp"       ; the file manager's keys and prompts
@@ -80,6 +82,7 @@
     "initramfs/agent-wire.lisp"   ; SSE + the plain-http transport
     "initramfs/agent.lisp"        ; the agent: conversations, tools
     "initramfs/agent-ui.lisp"     ; a conversation as a Workspace pane, the tray item
+    "poc/terminal-pane.lisp"      ; the terminal pane
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).
@@ -127,6 +130,8 @@ exactly as open-environment does in the guest):
   tour                     the guided tour (initramfs/tour.lisp)
   changes                  the change set
   network                  the network view: links, routes, DNS, Wi-Fi (this host's state)
+  terminal:CMD             a terminal running CMD (through /bin/sh -c) on a REAL
+                           pty of this host, given ~1.5 s to draw  e.g. terminal:htop
   dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
   file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
                            (PATH: absolute, ~/..., or relative to the current
@@ -277,6 +282,11 @@ OPTIONS
          (dolist (m '("net" "dhcp" "dns" "sntp" "tls" "http" "wifi" "net-views"))
            (load (merge-pathnames (format nil "initramfs/~a.lisp" m) *root-dir*))))
        (funcall 'subj-network))
+      ;; terminal:CMD — a real program on a real pty of THIS host (doc/terminal.org)
+      ((and (string= head "terminal") rest)
+       (%subj-terminal :argv (list "/bin/sh" "-c" rest) :title rest
+                       :env (list (format nil "PATH=~a" (or (sb-ext:posix-getenv "PATH") "/usr/bin:/bin"))
+                                  (format nil "LANG=~a" (or (sb-ext:posix-getenv "LANG") "C.UTF-8")))))
       ((null rest) (error "subject ~s needs an argument — see -h" spec))
       ((string= head "package")
        (or (find-package (string-upcase rest)) (error "no such package: ~a" rest)))
@@ -363,6 +373,15 @@ OPTIONS
       ((= 1 (length tok)) (values (char tok 0) nil state))
       (t (error "unknown key token ~s — see -h" tok)))))
 
+(defun pump-terminals (seconds)
+  "Give every open terminal's program SECONDS to write, feeding its engine — the
+   guest's poll loop, done by the clock. A no-op without terminals."
+  (when *terminals*
+    (let ((deadline (+ (get-internal-real-time) (* seconds internal-time-units-per-second))))
+      (loop while (< (get-internal-real-time) deadline)
+            do (dolist (s (copy-list *terminals*)) (ignore-errors (service-one s)))
+               (sleep 0.05)))))
+
 (defun replay-keys (script canvas w h)
   "Replay SCRIPT (space-separated tokens) through the real input entry points. The
    canvas is redrawn between steps because clicks hit-test against geometry that
@@ -376,7 +395,8 @@ OPTIONS
         (:click (browser-click (car arg) (cdr arg)
                                (lol.canvas:ctrl-p state) (lol.canvas:super-p state)))
         (:wheel (browser-scroll arg))
-        (t (browser-key key state))))))
+        (t (browser-key key state)))
+      (pump-terminals 0.3))))
 
 ;;; ---- PPM out -------------------------------------------------------------
 
@@ -441,6 +461,9 @@ OPTIONS
                             (merge-pathnames "cozette.lolf" *poc-dir*) :size size)))
     (let ((canvas (lol.canvas:make-canvas w h)))
       (open-environment (parse-subject subject-spec))
+      (when *terminals*                 ; a terminal: size it (a first draw), let it run
+        (draw-browser canvas w h)
+        (pump-terminals 1.5))
       (when script (replay-keys script canvas w h))
       (if *spotter-query*
           ;; the Spotter draws the browser itself, as its backdrop
@@ -460,6 +483,7 @@ OPTIONS
               (format t "~&  handles: ~{~a~^ · ~}~%" (mapcar (lambda (e) (getf e :label)) entries))
               (draw-halo canvas w h layers depth entries 0 hx hy)))))
       (write-ppm canvas out)
+      (mapc #'terminal-close (copy-list *terminals*))
       (format t "~&~a  ~dx~d  ~a~@[  keys: ~a~]~%"
               out w h (view-title (pane-view (current-pane))) script))
     0))
