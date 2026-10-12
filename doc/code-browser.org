@@ -2362,6 +2362,20 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   forward there). It added one GENERIC piece to the loop: =*FB-SERVICES*= in
   =fb-browser.lisp=, other fds that wake the poll, with their own redraw. Tested by
   [[file:../poc/web-test.lisp][poc/web-test.lisp]] (host) and [[file:../check-web.lisp][check-web.lisp]] (guest).
+- *Not a phase: the agent* (2026-10-12). [DONE as agent.org's A0–A2 — [[file:agent.org][agent.org]]
+  §14] An LLM client living in the image, whose tools are this browser's own layers
+  (=source-of=, =senders=, =class-info=, =accept-source=). It added *one verb and no
+  idiom*: =C-c C-a= /Ask it/ on any pane (the selection, the form before point, or the
+  pane's subject — =C-c ?= too, because on a function's inspector =C-c C-a= was already
+  /Apply it/ and keeps that meaning there). A conversation is a *Workspace* pane: the
+  model's prose arrives as =;;= comments and its =```lisp= blocks as live code, so
+  =C-x C-e= and =C-c C-c= work on a proposal as it stands; =C-c C-o= on a =;; #N= line
+  opens what that tool call read (§8.6 there). =SuperL-a= shows the conversation; =C-g=
+  stops a turn. A write the model wants is a =TOOL-APPROVAL-REQUEST= *condition* whose
+  ALLOW / DENY / EDIT restarts are offered in the same chooser card the right-button
+  menu uses; the debugger's rail gains an =ASK= restart. Its state is the only
+  permanent chrome added since the tray: the tray's =agent ask $0.01= and a dot on the
+  conversation's tab. Verified in the guest by =check-agent.lisp= against a mock API.
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 
