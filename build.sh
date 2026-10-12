@@ -99,7 +99,11 @@ LISP_SOURCES=(
                                      #   +image; doc/web-browser.org). Chrome itself comes from the host's disk
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
-  "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client + configure-eth0 (uses net + sb-bsd-sockets)
+  "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client, the LEASE object, default route, netd renewals (uses net)
+  "$INITRAMFS_DIR/dns.lisp"          # stub resolver: resolve-host, TTL cache, /etc/resolv.conf (uses dhcp)
+  "$INITRAMFS_DIR/sntp.lisp"         # SNTP: clock drift, stepped through lol-rootd (uses dns)
+  "$INITRAMFS_DIR/tls.lisp"          # HTTPS crypto: the HOST's libssl, loaded at RUNTIME only
+  "$INITRAMFS_DIR/http.lisp"         # HTTP/1.1 client: http-request, chunked, redirects (uses dns + tls)
   "$INITRAMFS_DIR/supervisor.lisp"   # the menu loop + init-toplevel (entry)
 )
 ISO_ROOT="$MICRO/iso_root"
