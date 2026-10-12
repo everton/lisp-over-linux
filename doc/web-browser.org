@@ -1,0 +1,369 @@
+#+TITLE: A web browser in the image — choosing WPE WebKit, and testing it on the host first
+#+STARTUP: showall
+
+Sibling docs: [[file:networking.org][networking.org]] (the network the browser would ride on) ·
+[[file:processes.org][processes.org]] (why only one process may own =/dev/fb0=, and the
+"pixel peer" this would bring back) · [[file:framebuffer.org][framebuffer.org]] (why the image
+has no GPU driver) · [[file:agent.org][agent.org]] (the other plan that needs TLS in the image).
+
+Question that prompted this: /once networking and real storage work, what would it
+take to run a web browser here, ideally Nyxt, the browser written in Lisp?/
+
+*STATUS (2026-10-02): exploration only; nothing is in the image.* Every number below
+was measured on the dev host: Debian 14, Intel i7-1065G7 with Iris Plus G7
+graphics, =libwpewebkit-2.0-1= 2.54.0, =cog= 0.18.5, =cage= 0.3.1. The kernel tag
+for the image is still *#24*, with =DRM= off.
+
+* 1. The short answer
+
+A web browser is mostly its *engine*: the HTML/CSS layout, the JavaScript VM and the
+painting. Writing one is out of scope for this project, so the real question is
+/which engine, and how much of a desktop does it drag in with it/.
+
+- *Nyxt* is a Lisp shell around someone else's engine: WebKitGTK in Nyxt 3, Electron
+  (that is, Chromium) in Nyxt 4. The Lisp part would be easy; it is everything
+  under it that costs (§2).
+- *WPE WebKit* is the same WebKit with *no GTK and no display server*. It is the
+  engine we would pick (§3).
+- Before anything goes into the image, the engine can be tested on the host, with the
+  same Debian packages we would copy from (§4–§5).
+
+* 2. Why not Nyxt (yet)
+
+Nyxt 3 renders through WebKitGTK. Measured on the host by following every shared
+library it pulls in (=ldd=, the dynamic linker's "who do you need" listing):
+
+| Library                  | Shared libs it pulls in | Their size | Its own size |
+|--------------------------+-------------------------+------------+--------------|
+| =libwebkit2gtk-4.1.so.0= |                     166 | ~187 MB    | 96 MB, plus JavaScriptCore 33 MB |
+| =libWPEWebKit-2.0.so.1=  |                     143 | ~137 MB    | 130 MB (JavaScriptCore included) |
+
+The totals are close. *What* gets pulled in is where they differ. WebKitGTK needs GTK, and GTK
+needs a display server: an X server or a Wayland compositor (a "compositor"
+is the program that owns the screen and combines every window's pixels into one
+picture). Our image has neither, and its only screen is =/dev/fb0=. On top of that,
+GTK wants to own the main thread, and Nyxt compiles Lisp at runtime, which the guest
+currently cannot do safely (the generic-arithmetic fault in =AGENTS.md=). Nyxt
+would be the /last/ step, not the first.
+
+* 3. The options, and why WPE
+
+| Option                     | Engine / JavaScript                         | How it draws                       | Weight            | Verdict |
+|----------------------------+---------------------------------------------+------------------------------------+-------------------+---------|
+| Links2 =-g=                | own; HTML 4 + basic CSS; no JS              | its own framebuffer driver         | tiny, can be static | fast, but the modern web is out of reach |
+| w3m                        | text; no JS                                 | the terminal                       | tiny              | docs and Hacker News, little more |
+| NetSurf (framebuffer)      | own; HTML 4 / CSS 2.1, partial CSS 3; minimal JS | =libnsfb=, a Linux fb surface | a few MB          | the best of the small ones; SPAs break |
+| *WPE WebKit*               | *full WebKit + JavaScriptCore*              | DRM/KMS directly, or headless      | ~270 MB of libs   | *the real web, without a desktop* |
+| WebKitGTK / Nyxt 3         | full WebKit                                 | GTK → X or Wayland                 | §2                | needs a whole desktop |
+| Electron / Nyxt 4          | Chromium                                    | its own stack                      | larger still      | no |
+| Remote (VNC into the host) | any                                         | a Lisp RFB client in the guest     | no native deps    | a thin client, not a browser |
+| Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era               | McCLIM                             | Lisp only         | a historical toy |
+
+Two terms the WPE row leans on:
+
+- *DRM/KMS* is the kernel's modern display API (=/dev/dri/card0=). It is what a GPU
+  driver such as =i915= exposes, and it is what our image *lacks*: it only has the
+  old firmware framebuffer =efifb= (see [[file:framebuffer.org][framebuffer.org]]).
+- *Headless* means WebKit renders into memory buffers and shows them nowhere. Some
+  other program has to put the pixels on screen. For us that program would be our
+  Lisp, blitting into =/dev/fb0=, which is the "process that sends pixels" case
+  [[file:processes.org][processes.org]] declined for its own components and
+  which a web engine would justify.
+
+So WPE in *software rendering + headless* mode needs no GPU driver and no
+compositor at all. That is the combination worth testing.
+
+* 4. Setting up the host
+
+** 4.1 Install
+
+#+begin_src sh
+sudo apt install libwpewebkit-2.0-1 cage \
+     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
+#+end_src
+
+- =libwpewebkit-2.0-1= ships WebKit's own test browser, =MiniBrowser=, at
+  =/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser=. That is the launcher every
+  test below uses.
+- =cage= is a /kiosk/ Wayland compositor: it runs exactly one application,
+  full-window. Started from an X session, it opens as an ordinary X window. Our host
+  runs X (StumpWM), and WPE has *no X11 output*, so cage is the bridge.
+- The GStreamer plugins are only for audio and video (test T6).
+
+To save typing, put this in your shell for the session:
+
+#+begin_src sh
+MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
+#+end_src
+
+** 4.2 Two dead ends, recorded so nobody repeats them
+
+- *=cog= under X fails* with
+  =libwpe [FATAL]: could not load the impl library ... libWPEBackend-default.so=.
+  Debian builds cog with only the =drm=, =headless= and =wl= platforms (see
+  =/usr/lib/x86_64-linux-gnu/cog/modules/=); there is no =x11= platform, so
+  =-P x11= falls through to a backend that does not exist.
+- *=cog -P wl= under cage with =LIBGL_ALWAYS_SOFTWARE=1= crashes in a loop*: the
+  window stays black and cog prints
+  =Crash!: The renderer process crashed= over and over. The web process dies on
+  =wayland-egldisplay.c:525: dmabuf_feedback_check_main_device: Assertion `dev->size == sizeof(dev_t)' failed=,
+  inside *WPEBackend-fdo*, the legacy backend cog uses. None of
+  =WEBKIT_DISABLE_DMABUF_RENDERER=, =WEBKIT_DISABLE_COMPOSITING_MODE= or
+  =WEBKIT_SKIA_ENABLE_CPU_RENDERING= helps. =GALLIUM_DRIVER=softpipe= avoids it, but
+  softpipe is far too slow to measure anything with. *MiniBrowser does not crash*,
+  because it uses WebKit's newer built-in platform layer instead of libwpe/fdo. So
+  never pass it =--use-legacy-api=, which selects the crashing path again. For the
+  product this means: build on WebKit's new platform API, not on cog.
+
+** 4.3 The switches the tests use
+
+| Variable / flag                         | Effect                                                             | Verified here |
+|-----------------------------------------+--------------------------------------------------------------------+---------------|
+| =LIBGL_ALWAYS_SOFTWARE=1=               | Mesa renders on the CPU (=llvmpipe=) instead of the GPU            | yes |
+| =WPE_DISPLAY=drm= / =wayland= / =headless= | picks WebKit's output; an unknown name errors with =Display of type X was not found= | yes |
+| =WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999= | serves Web Inspector to an ordinary browser                  | yes, but only together with the next line |
+| =WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1= | turns off the web process's sandbox                           | yes; for debugging only |
+| =MiniBrowser --size=WxH=, =--fullscreen=, =--private= | window size, fullscreen, no saved state             | listed in =--help= |
+| =WEBKIT_SHOW_FPS=1=                     | the library knows the name, but *printed nothing* in our runs      | ruled out, see T2 |
+| =WEBKIT_DRAW_FPS=1=                     | present in the library; supposedly draws an FPS overlay            | *not verified* |
+
+* 5. The tests
+
+Run them in order. Each one says what to do, what to watch, and what to write down.
+Keep a terminal open next to the browser: MiniBrowser and the web process log to
+the terminal you started them from.
+
+** T1 — Smoke test on the GPU (does it work at all?)
+
+#+begin_src sh
+cage -- $MB https://example.org/
+#+end_src
+
+- *Expect*: an X window containing the page. Close it by closing the window, or with
+  =Ctrl-C= in the terminal.
+- *Watch*: the terminal. A loop of =renderer process crashed= means the web process
+  is dying; see T7 for how to find out why.
+- *Record*: works / doesn't.
+
+** T2 — The software floor (the image's real situation)
+
+The image has no GPU driver, so this is the configuration we would ship first.
+
+#+begin_src sh
+LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB https://example.org/
+#+end_src
+
+/Confirmed working by the user, 2026-10-02./
+
+To judge *smoothness*, use a page that counts its own frames, because
+=WEBKIT_SHOW_FPS= printed nothing on 2.54. Save this as =/tmp/fps.html=:
+
+#+begin_src html
+<!doctype html><title>fps</title>
+<body style="margin:0;font:48px monospace">
+<div id=box style="position:absolute;top:100px;width:200px;height:200px;background:#c33"></div>
+<div id=out style="position:absolute;top:10px;left:10px">…</div>
+<script>
+  // Move a box every frame and show how many frames the browser managed per second.
+  let x = 0, frames = 0, last = performance.now();
+  function tick(now) {
+    x = (x + 6) % (innerWidth - 200);
+    box.style.left = x + 'px';
+    frames++;
+    if (now - last >= 1000) { out.textContent = frames + ' fps'; frames = 0; last = now; }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+</script>
+#+end_src
+
+#+begin_src sh
+                        cage -- $MB file:///tmp/fps.html   # GPU
+LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB file:///tmp/fps.html   # software
+#+end_src
+
+- *Expect*: close to 60 fps on the GPU. Software will be lower; how much lower is the
+  number we want.
+- *Then* open a long real page (a Wikipedia article) in both modes and scroll it hard
+  with the touchpad and with the wheel. Note stutter, tearing and blank tiles
+  (patches that fill in late).
+- *Record*: fps in both modes, at the same window size, plus a sentence on how
+  scrolling felt.
+
+** T3 — Straight onto the display, on a bare VT (the product's architecture)
+
+This is the closest the host gets to the image: no X, no compositor; WebKit itself
+drives the screen through DRM/KMS.
+
+1. Press =Ctrl-Alt-F3= and log in on the text console. Logging in matters: WebKit
+   asks logind for the display device, and logind only hands it to the user /owning
+   that VT/. Run from your X session instead, it fails with
+   =Failed to take control of session ... EBUSY= and
+   =Failed to become DRM master= (verified).
+2. Run it under =timeout=. Once WebKit owns the screen, the keyboard goes to the
+   browser rather than to the shell, so =Ctrl-C= may never arrive:
+   #+begin_src sh
+   MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
+   WPE_DISPLAY=drm timeout 60 $MB https://en.wikipedia.org/wiki/Lisp_machine
+   #+end_src
+3. When it exits, the console comes back. =Ctrl-Alt-F7= (or F1/F2, whichever holds
+   your X) returns you to the desktop.
+4. Repeat with software rendering:
+   #+begin_src sh
+   WPE_DISPLAY=drm LIBGL_ALWAYS_SOFTWARE=1 timeout 60 $MB https://en.wikipedia.org/wiki/Lisp_machine
+   #+end_src
+   This combination is untested. If it refuses to start, note the error: it tells us
+   whether llvmpipe can hand its buffers to KMS at all, which decides between "DRM +
+   software" and "headless + our own blit" for the image.
+
+- *Watch*: the mouse pointer and the scroll wheel. Here WebKit reads input itself
+  through libinput, the same evdev devices our own [[file:input.org][input.org]] code reads.
+- *Record*: started / refused (with the error), fps from =file:///tmp/fps.html=,
+  and whether the pointer and the wheel behaved.
+- *If the screen is stuck*: wait for =timeout=. If even that fails, switch to another
+  VT (=Ctrl-Alt-F4=), log in, and run =pkill -f MiniBrowser=.
+
+** T4 — The standard benchmarks
+
+[[https://browserbench.org/][browserbench.org]] hosts the three benchmarks every engine vendor quotes:
+
+| Benchmark       | URL                                       | What it measures |
+|-----------------+-------------------------------------------+------------------|
+| Speedometer 3.1 | https://browserbench.org/Speedometer3.1/  | responsiveness of real web-app code (DOM + JS): how fast the browser /feels/ |
+| JetStream 3.0   | https://browserbench.org/JetStream3.0/    | JavaScript and WebAssembly throughput; barely touches rendering |
+| MotionMark 1.3.2 | https://browserbench.org/MotionMark1.3.2/ | graphics: how much animation it sustains at a steady frame rate. *The number software rendering hurts most* |
+
+How to run each one:
+
+1. Start the browser on the benchmark URL, e.g.
+   #+begin_src sh
+   LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB https://browserbench.org/Speedometer3.1/
+   #+end_src
+2. Click the start button and *don't touch anything* until the score appears: no
+   mouse movement, no other heavy programs. Plug the laptop in, because on battery
+   the CPU is throttled and the numbers stop being comparable.
+3. Write down the score. Run each benchmark *twice* per configuration; if the two
+   differ by more than ~5%, run a third time and keep the median.
+4. Keep the window size identical across runs. MotionMark in particular scales its
+   work with the window. Maximise cage's window the same way every time, or use
+   StumpWM to give it a fixed frame.
+
+Fill in this table:
+
+| Configuration                          | Speedometer 3.1 | JetStream 3.0 | MotionMark 1.3.2 |
+|----------------------------------------+-----------------+---------------+------------------|
+| Firefox (host, baseline)               |                 |               |                  |
+| MiniBrowser, GPU (T1 setup)            |                 |               |                  |
+| MiniBrowser, software (T2 setup)       |                 |               |                  |
+| MiniBrowser, DRM on a VT (T3), if it ran |               |               |                  |
+
+How to read it: Speedometer and JetStream should barely move between GPU and
+software, because they are mostly JavaScript, which runs on the CPU anyway. MotionMark
+shows the cost of having no GPU driver. If software MotionMark is acceptable, the
+image can stay on =efifb= for a long time.
+
+** T5 — CPU and memory
+
+*CPU while working.* Start a browser (T2's software setup is the interesting one),
+then in another terminal:
+
+#+begin_src sh
+top -b -d 2 -n 15 -p "$(pgrep -d, -f 'MiniBrowser|WPEWebProcess|WPENetworkProcess|cage')" \
+  | grep -E 'MiniBrowser|WPE|cage'
+#+end_src
+
+That prints 15 samples, 2 s apart. Scroll a long page while it runs, then repeat
+while the page sits idle. =%CPU= above 100 means more than one core is busy.
+Rendering in software spreads across llvmpipe's threads.
+
+*Memory.* The obvious number, RSS ("resident set size": the pages a process has
+in RAM), *double-counts* the pages several processes share, and WebKit's processes
+share many libraries. *PSS* ("proportional set size") divides each shared page
+among the processes sharing it, so PSS values add up honestly:
+
+#+begin_src sh
+for p in $(pgrep -f 'MiniBrowser|WPEWebProcess|WPENetworkProcess'); do
+  printf '%-22s %8s kB PSS\n' "$(cat /proc/$p/comm)" \
+    "$(awk '/^Pss:/{print $2}' /proc/$p/smaps_rollup)"
+done
+#+end_src
+
+Measure three states: a blank page, one heavy site, and three heavy sites opened one
+after another. Each MiniBrowser run is a single page, so "three sites" means
+navigating via links within one run.
+
+/Measured so far/: with donorbox.org loaded in software mode, the web process held
+*~570 MB RSS* and the network process ~100 MB. That is RSS, so it is an upper bound.
+Redo it as PSS.
+
+| State            | Web process (PSS) | Network process (PSS) | UI process (PSS) | Total |
+|------------------+-------------------+-----------------------+------------------+-------|
+| =about:blank=    |                   |                       |                  |       |
+| one heavy site   |                   |                       |                  |       |
+| after three sites |                  |                       |                  |       |
+
+This decides how much RAM the image needs; the browser, not Lisp, will dominate it.
+
+** T6 — Your own sites (the bug list)
+
+Benchmarks don't find bugs; your daily sites do. For each site, start it in the
+software setup and go through this checklist:
+
+- does it render correctly (fonts, layout, icons)?
+- can you log in (cookies; with =--private= state is not kept between runs)?
+- do typing in forms, the clipboard and right-click work?
+- does video play (YouTube; this needs the GStreamer plugins from §4.1)?
+  Netflix-style protected video (Widevine DRM) will *not* play; that is a known gap.
+- does it complain about the browser (some sites sniff for Chrome)?
+
+Suggested set: a search engine, Wikipedia, GitHub (a repo page and a diff), YouTube,
+your webmail, Hacker News, and one heavy single-page app you actually use.
+
+| Site | Renders | Login | Forms/clipboard | Video | Notes |
+|------+---------+-------+-----------------+-------+-------|
+|      |         |       |                 |       |       |
+
+Remember that MiniBrowser is a test shell, not a browser: no tabs, no bookmarks, no
+download UI. Those are missing features, and in the image they would be our Lisp's
+job, so don't record them as bugs.
+
+** T7 — When a site breaks: finding out why
+
+1. *Read the terminal.* A web-process crash prints its assertion or signal there;
+   that is how §4.2's fdo bug was found.
+2. *Open Web Inspector* (the same devtools Safari has) in your normal browser:
+   #+begin_src sh
+   WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
+   WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999 \
+     cage -- $MB https://the-broken-site/
+   #+end_src
+   Then open =http://127.0.0.1:5999= in Firefox. It lists the page under
+   /Inspectable targets/ with an *Inspect* button: console errors, network
+   failures, DOM. Without the sandbox line, the web process cannot reach the inspector
+   server and logs =org.freedesktop.portal.Error.NotAllowed: This call is not
+   available inside the sandbox= (verified). The sandbox exists to contain hostile
+   pages, so only disable it while debugging.
+3. *Compare with Firefox*: if the site is broken in Firefox too, it is not a WebKit
+   problem.
+4. *Core dumps*: =coredumpctl list WPEWebProcess= shows web-process crashes if
+   systemd-coredump is installed. Without it, the terminal message is all there is.
+
+* 6. What it would take in the image
+
+This is not a plan yet, just the shopping list the tests feed into.
+
+| Need                       | Today (#24)                    | For WPE |
+|----------------------------+--------------------------------+---------|
+| storage                    | tmpfs only                     | a real filesystem: ~270 MB of libraries (§2), plus a profile dir for cookies and cache |
+| shared libraries           | ld.so + libc + libm, copied from the host | the =ldd= closure of =libWPEWebKit-2.0.so.1=, copied the same way |
+| DNS + TLS                  | sockets + DHCP, no resolver    | =/etc/resolv.conf=, =nsswitch.conf=, a CA bundle, =glib-networking= |
+| fonts                      | our own bitmap fonts           | TTF fonts + fontconfig and its cache |
+| display                    | =efifb= only, =DRM= off        | /headless/ + our Lisp blitting (no kernel change), or =DRM= + a GPU driver (T3 decides) |
+| input                      | our own evdev reader           | headless: we forward events into WebKit; DRM: WebKit reads them itself via libinput |
+| child processes            | the supervisor spawns workers  | web, network (and GPU) processes; PID 1 must reap them |
+| sandbox                    | no =USER_NS=, no =SECCOMP=     | run without it, or enable both (bubblewrap) |
+
+The headless route is the one that keeps the system ours: Lisp stays the only
+process on =/dev/fb0= and treats a web page as one more thing it draws. How WebKit's
+new platform API hands headless buffers to an embedder has *not* been looked at yet.
+That is the next question once the tests above say the engine is worth it.
