@@ -56,6 +56,10 @@
    to the user (doc/storage.org); returns to the caller if it is refused."
   (format t "~&Syncing disks and powering off...~%")
   (finish-output)
+  ;; Chrome first (web.lisp): Browser.close lets it write its profile — cookies,
+  ;; history — while /home is still writable, and its processes exit before
+  ;; RELEASE-DISK remounts that read-only
+  (when (fboundp 'web-shutdown) (ignore-errors (funcall 'web-shutdown)))
   (sb-alien:alien-funcall (sb-alien:extern-alien "sync" (function sb-alien:void)))
   (release-disk)
   (sleep 1)

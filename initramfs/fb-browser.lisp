@@ -68,12 +68,19 @@
     (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) 1 timeout-ms)
     (logbitp 0 (sb-alien:deref fds 6))))
 
-(defun fbb-wait (kb-fd mouse-fd kev-fd &optional (timeout-ms -1))
+(defvar *poll-extra-fds* '()
+  "Fds besides input that the next poll watches — the services' pipes (Chrome's, for a
+   web pane: see *FB-SERVICES*). FBB-WAIT binds it; POLL-INPUT-ONCE appends them.")
+(defvar *poll-extra-ready* '() "Which of *POLL-EXTRA-FDS* the last poll found readable.")
+
+(defun fbb-wait (kb-fd mouse-fd kev-fd &optional (timeout-ms -1) extra-fds)
   "Block until KB-FD (the console) is readable, or ANY open pointer, or ANY open
    keyboard's evdev — or until TIMEOUT-MS elapses (-1, the default, waits forever).
-   Returns (values kb-ready pointer-ready keyboard-ready); the caller then reads with
+   Returns (values kb-ready pointer-ready keyboard-ready extra); the caller then reads with
    (read-mouse *fb-mouse* …) / (read-keyboard-evdev *fb-kbd*), which drain exactly
-   the devices this call found ready.
+   the devices this call found ready. EXTRA is the list of EXTRA-FDS that are readable
+   (or hung up: a child that exited closed its end, and its service must hear that) —
+   the pipes of the processes the browser shows, see *FB-SERVICES*.
 
    MOUSE-FD and KEV-FD are IGNORED, and kept only so every loop's call reads as it
    always did. They were the one pointer and the one keyboard this used to poll,
@@ -102,8 +109,10 @@
                        -1))
              (rescan (input-rescan-timeout))
              (tmo (cond ((= left -1) rescan) ((= rescan -1) left) (t (min left rescan)))))
-        (multiple-value-bind (kb ptr key) (poll-input-once kb-fd tmo)
-          (when (or kb ptr key) (return (values kb ptr key)))
+        (multiple-value-bind (kb ptr key)
+            (let ((*poll-extra-fds* extra-fds)) (poll-input-once kb-fd tmo))
+          (when (or kb ptr key *poll-extra-ready*)
+            (return (values kb ptr key *poll-extra-ready*)))
           (when (and deadline (>= (get-internal-real-time) deadline))
             (return (values nil nil nil))))))))
 
@@ -964,15 +973,22 @@
    NVAL closes the fd and forgets the device, here, before anyone tries to read it."
   (sb-alien:with-alien ((fds (sb-alien:array sb-alien:unsigned-char 320)))   ; 40 slots
     (let* ((devs (subseq *input-devices* 0 (min (length *input-devices*) (- +max-poll-slots+ 2))))
-           (n (+ 2 (length devs))))
+           ;; the services' fds take whatever slots the devices left
+           (extra (subseq *poll-extra-fds* 0 (min (length *poll-extra-fds*)
+                                                   (- +max-poll-slots+ 2 (length devs)))))
+           (n (+ 2 (length devs) (length extra))))
       (dotimes (i (* n 8)) (setf (sb-alien:deref fds i) 0))
       (flet ((put-slot (i fd) (if fd (%put-pollfd fds i fd) (%put-pollfd fds i -1)))
              (revents (i) (sb-alien:deref fds (+ (* i 8) 6))))
         (put-slot 0 kb-fd)
         (put-slot 1 *input-watch-fd*)
         (loop for d in devs for i from 2 do (put-slot i (input-dev-fd d)))
+        (loop for fd in extra for i from (+ 2 (length devs)) do (put-slot i fd))
         (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) n timeout-ms)
         (incf *input-wakeups*)
+        (setf *poll-extra-ready*
+              (loop for fd in extra for i from (+ 2 (length devs))
+                    unless (zerop (revents i)) collect fd))
         (let ((kb (and kb-fd (logbitp 0 (revents 0)))) (ptr nil) (key nil) (house nil))
           (when (and *input-watch-fd* (plusp (revents 1)))
             (drain-input-watch)
@@ -1210,6 +1226,40 @@
             (stage-take-template p)))))))
 
 
+;;; ---- services: other things that can wake the loop -------------------------
+;;; Input and a stage's clock were, for a long time, the only reasons the loop woke.
+;;; A web pane adds a third: Chrome writes a frame down a pipe whenever the page
+;;; changes, and the loop must wake for THAT, without polling on a timer. A SERVICE
+;;; is the general form — a plist of functions the loop calls by name, so this file
+;;; needs no knowledge of what is behind them (web.lisp registers the first one):
+;;;
+;;;   :FD      () -> an fd to add to the poll, or NIL
+;;;   :TIMEOUT () -> ms until the service must run even with nothing to read, or -1
+;;;   :RUN     (canvas dirty) -> :REDRAW to repaint the browser; anything else, the
+;;;            service has done (or does not need) its own drawing. DIRTY says a
+;;;            full redraw is coming anyway, so a partial one would be wasted.
+;;;   :MOTION  (x y) -> a bare pointer move, which otherwise redraws nothing
+
+(defvar *fb-services* '() "Registered services, see above. FB-REGISTER-SERVICE adds one.")
+
+(defun fb-register-service (name &rest functions &key fd timeout run motion)
+  "Register (or replace) the service NAME. FUNCTIONS are symbols, called by name, so
+   redefining one at the REPL takes effect at once."
+  (declare (ignore fd timeout run motion))
+  (setf *fb-services* (cons (list* :name name functions)
+                            (remove name *fb-services* :key (lambda (s) (getf s :name))))))
+
+(defun fb-service-call (key &rest args)
+  "Call every service's KEY function with ARGS; -> the list of their non-NIL values.
+   A service that signals is reported in the status line, not allowed to kill PID 1."
+  (loop for s in *fb-services*
+        for fn = (getf s key)
+        for v = (and fn (fboundp fn)
+                     (handler-case (apply fn args)
+                       (serious-condition (c)
+                         (setf *browser-status* (format nil "~(~a~): ~a" (getf s :name) c))
+                         nil)))
+        when v collect v))
 
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
@@ -1257,13 +1307,16 @@
                        ;; A running stage (§3b) is the one thing on screen that changes
                        ;; without being asked, so it — and only it — makes the loop
                        ;; wake on a deadline rather than sleeping until input.
-                       (multiple-value-bind (kb ms kev)
+                       (multiple-value-bind (kb ms kev xs)
                            (fbb-wait 0 *fb-mouse* *fb-kbd*
-                                     (earliest-timeout (live-stage-timeout)
-                                                       (cursor-idle-timeout)
-                                                       (tray-timeout)
-                                                       ;; a live run pane (runs.lisp)
-                                                       (runs-timeout)))
+                                     (apply #'earliest-timeout
+                                            (live-stage-timeout)
+                                            (cursor-idle-timeout)
+                                            (tray-timeout)
+                                            ;; a live run pane (runs.lisp)
+                                            (runs-timeout)
+                                            (fb-service-call :timeout))
+                                     (fb-service-call :fd))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
                          ;; context menu where the caret (or selected row) is
                          (when (and kev (eq :menu (read-keyboard-evdev *fb-kbd*)))
@@ -1325,13 +1378,18 @@
                                ;; is in the wrong place (a redraw would move it anyway)
                                (when (and (not dirty)
                                           (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                                 (move-cursor canvas ox oy)))))
+                                 (move-cursor canvas ox oy)
+                                 (fb-service-call :motion *cursor-x* *cursor-y*)))))
                          ;; a run's reader thread may have collected output: copy it
                          ;; into its pane (cheap when nothing changed — a compare)
                          (when (tick-runs) (setf dirty t))
+                         ;; the services (a web page's frames, …): every turn, since
+                         ;; they also react to what input just did (a click's page)
+                         (when (member :redraw (fb-service-call :run canvas dirty))
+                           (setf dirty t))
                          ;; Nothing was ready: a deadline fired. Which one? A running
                          ;; stage advances the world; an idle pointer hides.
-                         (unless (or kb ms kev)
+                         (unless (or kb ms kev xs)
                            (when (/= -1 (live-stage-timeout))
                              (tick-live-stage) (setf dirty t))
                            (when (zerop (cursor-idle-timeout))
@@ -1753,6 +1811,7 @@
      ("Super-l"            "the CL-USER package, flat")
      ("Super-h"            "the clipboard history")
      ("Super-f"            "the file manager (home)")
+     ("Super-b"            "a web page (Chrome, doc/web-browser)")
      ("Super-?"            "this cheatsheet")
      ("Super-q"            "leave: console or shut down"))
     ("Tabs  (Super)"
@@ -1770,6 +1829,10 @@
      ("C-c C-p"            "Print it: result woven inline")
      ("C-c C-i"            "Inspect it: open the value")
      ("C-c C-d"            "Debug it: debugger armed"))
+    ("Web page"
+     ("C-l / M-Left,Right" "address / back, forward")
+     ("C-r  C-f  C-+ C--"  "reload, find, zoom")
+     ("C-c / C-v"          "copy / paste via OUR clipboard"))
     ("Inspector"
      ("C-c C-c"            "set the selected field")
      ("C-c C-e"            "evaluate in the object (SELF)")
