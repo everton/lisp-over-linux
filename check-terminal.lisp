@@ -70,6 +70,22 @@
            (string= "T" (row "session live" (probe "(and (session-live-p (pane-session (current-pane))) t)"))))
     (row "what it runs" (probe "(subj-terminal-title (pane-subject (current-pane)))"))
     (row "its size" (probe (term-form "(list (lol.terminal:term-cols ~a) (lol.terminal:term-rows ~:*~a))")))
+    (check "the login shell wrote to the grid"
+           (wait-until (term-form "(plusp (length (lol.terminal:term-row-text ~a 0)))")))
+    (row "its first line" (probe (term-form "(lol.terminal:term-row-text ~a 0)")))
+    (check "/dev/fd exists (bash's <(...) needs it; preinit makes it)"
+           (string= "/dev/fd" (row "readlink /dev/fd" (probe "(and (sb-unix:unix-readlink \"/dev/fd\") \"/dev/fd\")"))))
+    ;; A LOGIN shell runs the user's dotfiles, and those may stop to ask something (an
+    ;; ssh-agent passphrase, on the build host). So the typing checks below use a
+    ;; shell started the same way but without dotfiles; this one is closed with
+    ;; SuperL-w, which must hang its program up.
+    (let ((before (probe-int "(length *terminals*)")))
+      (qmp-hold "meta_l" "w") (sleep 2)
+      (check "SuperL-w closes the tab and hangs the program up"
+             (eql (row "live terminals after SuperL-w" (probe-int "(length *terminals*)"))
+                  (and before (1- before)))))
+    (probe "(progn (open-terminal (append (remove \"-l\" (default-terminal-command) :test #'string=) (list \"--norc\" \"--noprofile\")) :title \"check\") t)")
+    (sleep 3)
     (wait-until (term-form "(plusp (length (lol.terminal:term-row-text ~a 0)))"))
 
     (format t "~&~%== typing: echo hi ==~%")
@@ -95,10 +111,10 @@
            (eql 0 (row "view offset after a key" (probe-int (term-form "(lol.terminal:term-view-offset ~a)")))))
 
     (format t "~&~%== a full-screen program: less ==~%")
-    (qmp-type "less /mnt/host/etc/os-release") (qmp-key "ret") (sleep 3)
+    (qmp-type "less /proc/cpuinfo") (qmp-key "ret") (sleep 3)
     (check "less takes the alternate screen"
            (string= "T" (row "alternate screen" (probe (term-form "(lol.terminal:term-alt-screen-p ~a)")))))
-    (row "less shows" (screen-find "PRETTY_NAME"))
+    (row "less shows" (screen-find "processor"))
     (shot "terminal-less")
     (qmp-key "q") (sleep 2)
     (check "q gives the primary screen back"

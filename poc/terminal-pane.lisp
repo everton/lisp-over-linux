@@ -114,10 +114,15 @@
   "(values ARGV EXTRA-ENV LABEL) for SuperL-Return: see the comment above."
   (let ((host (probe-file (host-path "/usr/bin/bash"))))
     (cond
-      ((and host (fboundp 'container-command-line))
-       (values (funcall 'container-command-line (list "/bin/bash" "-l"))
-               '("PATH=/usr/local/bin:/usr/bin:/bin")
-               "container"))
+      ;; containers.lisp's own test: lol-ct shipped AND a host root with a /usr.
+      ;; lol-ct builds the program's environment afresh (taking HOME, USER and TERM
+      ;; from ours), so nothing else is passed; -C puts the shell where you were.
+      ((and (fboundp 'container-command-line) (fboundp 'containers-available-p)
+            (funcall 'containers-available-p))
+       (values (funcall 'container-command-line (list "bash" "-l")
+                        :cwd (and (fboundp 'container-cwd) (funcall 'container-cwd)))
+               '()
+               "shell in default"))
       ((and host (host-loader))
        (let ((libs (format nil "~{~a~^:~}" (mapcar #'host-path +host-lib-dirs+))))
          (values (list (host-loader) "--library-path" libs (host-path "/usr/bin/bash"))
