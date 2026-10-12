@@ -28,6 +28,7 @@ say "Building poc lisp-init"
 BUILD="$(mktemp /tmp/poc-build.XXXXXX.lisp)"
 trap 'rm -f "$BUILD"' EXIT
 cat > "$BUILD" <<LISP
+(load "$POC/ttf.lisp")
 (load "$POC/canvas.lisp")
 (load "$POC/fb.lisp")
 (load "$POC/scene.lisp")

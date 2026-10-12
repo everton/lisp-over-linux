@@ -16,6 +16,11 @@
   (:export #:canvas #:make-canvas #:canvas-w #:canvas-h #:canvas-pixels
            #:fill-rect #:draw-rect #:draw-line #:draw-poly #:draw-circle #:blit-rgba
            #:font #:load-psf #:load-font #:font-cw #:font-ch #:draw-string #:string-px
+           #:load-ttf-font #:font-outline-p #:font-size #:font-default-size #:font-ascent
+           #:font-face #:font-description #:set-font-size #:reset-font-size
+           #:font-glyph #:clear-font-cache #:font-hits #:font-misses #:glyph-w #:glyph-h
+           #:glyph-left #:glyph-top #:glyph-coverage
+           #:+min-font-size+ #:+max-font-size+ #:*default-font-size*
            #:rgb #:shift-p #:ctrl-p #:meta-p #:super-p))
 
 (in-package :lol.canvas)
@@ -173,22 +178,139 @@
                                (aref bytes (+ si 1))
                                (aref bytes (+ si 2))))))))))))))
 
-;;; ---- PSF bitmap font -----------------------------------------------------
+
+;;; ---- fonts: one FONT object, two kinds of glyph source -----------------------
 ;;;
-;;; PSF1 is about as simple as a font format gets, which is the point: the real
-;;; plan bakes a font blob into the image exactly like alien.rgba, and this is
-;;; that blob's reader. Header is 4 bytes (magic #x36 #x04, mode, charsize),
-;;; then 256 glyphs of CHARSIZE bytes each; each byte is one 8-pixel row, MSB
-;;; = leftmost pixel. No kerning, no antialiasing, no shaping. Crisp and fast —
-;;; Smalltalk-80 and Genera both looked superb this way.
+;;; A FONT answers the three questions all layout asks — how wide is a cell (CW), how
+;;; tall (CH), and what does character C look like — from one of two sources:
+;;;
+;;;   BITMAP   a .lolf / PSF1 blob: 256 hand-drawn glyphs at ONE size, one byte per
+;;;            pixel row, MSB = leftmost pixel. Crisp, tiny, and fixed: the only way
+;;;            to make it bigger is integer magnification (each pixel a 2x2 block).
+;;;            Kept as the FALLBACK, for when no TrueType file could be read.
+;;;   OUTLINE  a TrueType face (poc/ttf.lisp): curves, rasterised on demand at
+;;;            whatever pixel SIZE the font is currently set to, anti-aliased, and
+;;;            CACHED per (size, codepoint) so each glyph is computed once per size.
+;;;
+;;; The SIZE is a property of the FONT OBJECT and SET-FONT-SIZE changes it in place,
+;;; recomputing CW / CH. That is the whole runtime-resizing design: every piece of
+;;; layout code reads (font-cw font) / (font-ch font) at DRAW time, the shell holds the
+;;; one font object everyone shares, so a size change followed by a redraw relays out
+;;; everything. doc/fonts.org §5.
+
+(defconstant +min-font-size+ 10 "Smallest pixel size SET-FONT-SIZE allows.")
+(defconstant +max-font-size+ 40 "Largest pixel size SET-FONT-SIZE allows.")
+
+(defparameter *default-font-size* 18
+  "The em size, in pixels, an outline font starts at. Chosen for a 14-inch 1920x1080
+   panel (~157 dpi): 18 px makes DejaVu Sans Mono's cell 11 x 21, so a full-screen
+   pane holds about 170 columns by 45 rows — readable at arm's length, where the old
+   6 x 15 bitmap was not. ~/.config/lol/settings overrides it (doc/fonts.org §6).")
+
+(defstruct (glyph (:constructor make-glyph (coverage w h left top)))
+  "One rasterised outline glyph, as cached: a W x H coverage bitmap (octets, 0..255)
+   whose top-left sits LEFT pixels right of the pen and TOP pixels below the
+   baseline (negative = above it)."
+  (coverage nil :type (simple-array (unsigned-byte 8) (*)))
+  (w 0 :type fixnum) (h 0 :type fixnum)
+  (left 0 :type fixnum) (top 0 :type fixnum))
 
 (defstruct font
-  (cw 8  :type fixnum)                  ; cell width  (PSF1 is always 8)
-  (ch 16 :type fixnum)                  ; cell height (the charsize byte)
-  (glyphs (make-array 0) :type simple-vector))  ; 256 x (ch bytes)
+  (cw 8  :type fixnum)                  ; CELL width in pixels — what layout reads
+  (ch 16 :type fixnum)                  ; CELL height in pixels — likewise
+  (glyphs (make-array 0) :type simple-vector)  ; BITMAP: 256 x (bh bytes)
+  (bw 8 :type fixnum)                   ; BITMAP: the glyphs' native width ...
+  (bh 16 :type fixnum)                  ; ... and height (one byte per row)
+  (scale 1 :type fixnum)                ; BITMAP: integer magnification (1 = native)
+  (face nil)                            ; OUTLINE: a lol.ttf:face, or NIL for a bitmap
+  (size 0 :type fixnum)                 ; the current pixel size (bitmap: bh * scale)
+  (default-size 0 :type fixnum)         ; what SuperL-0 goes back to
+  (ascent 0 :type fixnum)               ; OUTLINE: the baseline, in px below the cell top
+  (cache (make-hash-table) :type hash-table)   ; OUTLINE: size*2^21+code -> GLYPH
+  (hits 0 :type fixnum) (misses 0 :type fixnum)) ; cache statistics (font-test.lisp)
+
+(defun font-outline-p (font) (and (font-face font) t))
+
+(defun font-description (font)
+  "A one-line human name: 'DejaVu Sans Mono 18px (11x21)' or 'bitmap 6x15 x2'."
+  (if (font-outline-p font)
+      (format nil "~a ~dpx (~dx~d)" (lol.ttf:face-name (font-face font))
+              (font-size font) (font-cw font) (font-ch font))
+      (format nil "bitmap ~dx~d~@[ x~d~]" (font-bw font) (font-bh font)
+              (and (> (font-scale font) 1) (font-scale font)))))
+
+(defun set-font-size (font px)
+  "Set FONT's pixel size to PX (clamped to +MIN-FONT-SIZE+..+MAX-FONT-SIZE+), in place,
+   and recompute its cell. Returns the size actually set.
+
+   OUTLINE: PX is the em — the height of the font's design square. The CELL follows
+   from the font's own metrics, scaled and rounded to whole pixels (a cell grid can
+   only be whole pixels): width = the advance of 'M' (every glyph's, in a monospace
+   font); height = ascender + descender + lineGap, the line distance the designer
+   intended; the baseline sits ascender (+ half the gap) below the cell top.
+
+   BITMAP: the glyphs cannot be redrawn, only magnified, so PX rounds to the nearest
+   whole multiple of the native height — 15, 30 for Cozette. Cheap, blocky, and it
+   means SuperL-= still does something useful on the fallback font."
+  (let ((px (max +min-font-size+ (min +max-font-size+ (round px)))))
+    (if (font-outline-p font)
+        (let* ((face (font-face font))
+               (s (/ (float px 1d0) (lol.ttf:face-units-per-em face)))
+               (adv (lol.ttf:advance-width face (lol.ttf:glyph-index face (char-code #\M))))
+               (asc (* s (lol.ttf:face-ascender face)))
+               (desc (* s (- (lol.ttf:face-descender face))))
+               (gap (* s (lol.ttf:face-line-gap face))))
+          (setf (font-size font) px
+                (font-cw font) (max 1 (round (* s adv)))
+                (font-ch font) (max 1 (round (+ asc desc gap)))
+                (font-ascent font) (round (+ asc (/ gap 2)))))
+        (let ((k (max 1 (round px (font-bh font)))))
+          (setf (font-scale font) k
+                (font-size font) (* k (font-bh font))
+                (font-cw font) (* k (font-bw font))
+                (font-ch font) (* k (font-bh font)))))
+    (font-size font)))
+
+(defun reset-font-size (font)
+  "Back to the size FONT was loaded at (SuperL-0)."
+  (set-font-size font (font-default-size font)))
+
+(defun load-ttf-font (path &key (size *default-font-size*))
+  "A FONT over the TrueType file at PATH, set to SIZE pixels."
+  (let ((font (make-font :face (lol.ttf:load-ttf path))))
+    (set-font-size font size)
+    (setf (font-default-size font) (font-size font))
+    font))
+
+(defun font-glyph (font code &optional (size (font-size font)))
+  "The cached GLYPH for character CODE at SIZE pixels, rasterising it on a miss. The
+   cache key packs size and codepoint into one fixnum (codepoints stop below 2^21), so
+   the table is an EQL table of small integers — the cheapest lookup there is.
+   Codepoints the font lacks map to glyph 0, its own '.notdef' box (lol.ttf:glyph-index)."
+  (declare (fixnum code size))
+  (let* ((key (+ (* size #x200000) code))
+         (hit (gethash key (font-cache font))))
+    (if hit
+        (progn (incf (font-hits font)) hit)
+        (let* ((face (font-face font))
+               (gid (lol.ttf:glyph-index face code))
+               (adv (* (/ (float size 1.0) (lol.ttf:face-units-per-em face))
+                       (lol.ttf:advance-width face gid)))
+               ;; the cell is a ROUNDED advance; centre the glyph in it, so the
+               ;; rounding error is shared by both side bearings
+               (cell (* (font-cw font) (/ (float size 1.0) (font-size font)))))
+          (incf (font-misses font))
+          (setf (gethash key (font-cache font))
+                (multiple-value-call #'make-glyph
+                  (lol.ttf:rasterize-glyph face gid size :dx (/ (- cell adv) 2))))))))
+
+(defun clear-font-cache (font)
+  "Forget every rasterised glyph (after changing lol.ttf:*gamma*, say)."
+  (clrhash (font-cache font)))
 
 (defun load-psf (path)
-  "Read a PSF1 font file into a FONT."
+  "Read a PSF1 font file into a (bitmap) FONT. Header: magic #x36 #x04, mode, charsize;
+   then 256 glyphs of CHARSIZE bytes. PSF1 is always 8 wide."
   (with-open-file (s path :element-type '(unsigned-byte 8))
     (let ((hdr (make-array 4 :element-type '(unsigned-byte 8))))
       (read-sequence hdr s)
@@ -200,7 +322,7 @@
           (let ((g (make-array ch :element-type '(unsigned-byte 8))))
             (read-sequence g s)
             (setf (svref glyphs i) g)))
-        (make-font :cw 8 :ch ch :glyphs glyphs)))))
+        (make-font :cw 8 :ch ch :bw 8 :bh ch :size ch :default-size ch :glyphs glyphs)))))
 
 (defun load-font (path)
   "Read a .lolf bitmap font blob into a FONT (the format poc/bdf2font.lisp writes).
@@ -220,21 +342,23 @@
           (let ((g (make-array h :element-type '(unsigned-byte 8))))
             (read-sequence g s)
             (setf (svref glyphs i) g)))
-        (make-font :cw w :ch h :glyphs glyphs)))))
+        (make-font :cw w :ch h :bw w :bh h :size h :default-size h :glyphs glyphs)))))
 
 (defun string-px (font string &key (scale 1))
-  "Pixel width STRING will occupy — the metric the layout code needs."
+  "Pixel width STRING will occupy — the metric the layout code needs. Every cell is
+   CW wide (a monospace grid, whatever the font), so this is a multiplication."
   (* (length string) (font-cw font) scale))
 
 (declaim (inline glyph-index))
 (defun glyph-index (code)
-  "The glyph for character CODE. The font holds 256 glyphs, indexed by codepoint, so
+  "The BITMAP glyph for character CODE. The font holds 256 glyphs, indexed by codepoint, so
    anything past Latin-1 has no glyph of its own -- and it used to be drawn as
    (LOGAND CODE #xFF), which is a DIFFERENT glyph: an em dash (U+2014) landed on
    #x14 and drew as a box-drawing tee, so every title of the form 'a -- b' in the
    UI read with a tee in the middle, and an ellipsis (U+2026) drew as an ampersand.
    The punctuation the UI actually uses folds to its ASCII cousin; anything else
-   past 255 is a question mark, which at least looks missing rather than wrong."
+   past 255 is a question mark, which at least looks missing rather than wrong.
+   (An OUTLINE font needs none of this: its cmap covers thousands of characters.)"
   (declare (fixnum code))
   (if (< code 256)
       code
@@ -247,13 +371,68 @@
         (t 63))))
 
 (defun draw-string (canvas font string x y color &key (scale 1))
-  "Draw STRING with its top-left at X,Y. Returns the x just past the last glyph,
-   so callers can chain runs of different colors — which is exactly how the
-   source pane gets syntax highlighting."
+  "Draw STRING with its CELL's top-left at X,Y. Returns the x just past the last
+   glyph, so callers can chain runs of different colors — which is exactly how the
+   source pane gets syntax highlighting. SCALE magnifies (the debugger's title)."
+  (if (font-outline-p font)
+      (draw-string-outline canvas font string x y color scale)
+      (draw-string-bitmap canvas font string x y color (* scale (font-scale font)))))
+
+(defun draw-string-outline (canvas font string x y color scale)
+  "The anti-aliased path: each glyph's COVERAGE blends COLOR over what is already
+   there, channel by channel — out = old + (new - old) * coverage/255. Full coverage
+   is a plain store (most of a stem); zero is skipped (most of a cell)."
+  (declare (optimize (speed 3) (safety 1)) (fixnum x y scale)
+           ((unsigned-byte 32) color))
+  (let* ((px (canvas-pixels canvas))
+         (cw (canvas-w canvas)) (chh (canvas-h canvas))
+         (size (* scale (font-size font)))
+         (adv (* scale (font-cw font)))
+         (base (+ y (* scale (font-ascent font))))
+         (fr (ldb (byte 8 16) color)) (fg (ldb (byte 8 8) color)) (fb (ldb (byte 8 0) color))
+         (pen x))
+    (declare (type pixmap px) (fixnum cw chh size adv base pen)
+             ((unsigned-byte 8) fr fg fb))
+    (loop for c across string do
+      (unless (char= c #\Space)
+        (let* ((g (font-glyph font (char-code c) size))
+               (cov (glyph-coverage g))
+               (gw (glyph-w g)) (gh (glyph-h g))
+               (ox (+ pen (glyph-left g))) (oy (+ base (glyph-top g))))
+          (declare (type (simple-array (unsigned-byte 8) (*)) cov) (fixnum gw gh ox oy))
+          (dotimes (row gh)
+            (let ((dy (+ oy row)))
+              (declare (fixnum dy))
+              (when (and (>= dy 0) (< dy chh))
+                (let ((src (* row gw)) (dst (* dy cw)))
+                  (declare (fixnum src dst))
+                  (dotimes (col gw)
+                    (let ((a (aref cov (+ src col)))
+                          (dx (+ ox col)))
+                      (declare ((unsigned-byte 8) a) (fixnum dx))
+                      (when (and (plusp a) (>= dx 0) (< dx cw))
+                        (let ((i (+ dst dx)))
+                          (declare (fixnum i))
+                          (if (= a 255)
+                              (setf (aref px i) color)
+                              (let* ((old (aref px i))
+                                     (ia (- 255 a)))
+                                (declare ((unsigned-byte 32) old) (fixnum ia))
+                                (setf (aref px i)
+                                      (logior
+                                       (ash (floor (+ (* fr a) (* (ldb (byte 8 16) old) ia)) 255) 16)
+                                       (ash (floor (+ (* fg a) (* (ldb (byte 8 8) old) ia)) 255) 8)
+                                       (floor (+ (* fb a) (* (ldb (byte 8 0) old) ia)) 255)))))))))))))))
+      (incf pen adv))
+    pen))
+
+(defun draw-string-bitmap (canvas font string x y color scale)
+  "The bitmap path: for each glyph row byte, stamp the lit bits (MSB = leftmost), each
+   as a SCALE x SCALE block. Background pixels are left alone."
   (declare (optimize (speed 3) (safety 1)) (fixnum x y scale))
   (let* ((px (canvas-pixels canvas))
          (cw (canvas-w canvas)) (chh (canvas-h canvas))
-         (fw (font-cw font)) (fh (font-ch font))
+         (fw (font-bw font)) (fh (font-bh font))
          (glyphs (font-glyphs font))
          (pen x))
     (declare (type pixmap px) (fixnum cw chh fw fh pen)

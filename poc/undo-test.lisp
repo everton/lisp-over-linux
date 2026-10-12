@@ -8,6 +8,7 @@
 
 (let ((dir (make-pathname :directory (pathname-directory *load-truename*))))
   (handler-bind ((warning #'muffle-warning))
+    (load (merge-pathnames "ttf.lisp" dir))
     (load (merge-pathnames "canvas.lisp" dir))
     (load (merge-pathnames "textview.lisp" dir))))
 
