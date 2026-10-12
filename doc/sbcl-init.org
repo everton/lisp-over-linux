@@ -11,8 +11,8 @@ STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #26). A C preinit mounts
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
 leave it or it dies — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
-list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the module
-index, (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
+list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the
+Workspace ([[file:../initramfs/fb-browser.lisp::defun run-browser-fb][run-browser-fb]]'s default root; the module index is =SuperL-m=), (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
 (w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
 the network REPL, (s) power off.
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
@@ -151,11 +151,12 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 *The load order is data, not prose*: it is the =LISP_SOURCES= array in
 [[file:../build.sh::LISP_SOURCES][build.sh → LISP_SOURCES]], and that array is the truth. Reproduced here in order:
 
-  | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly |
+  | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly; its last form records its *own* source (=record-source=), since =load-recording= cannot load the file that defines it |
   | [[file:../initramfs/logcount-fix.lisp][=logcount-fix.lisp=]] | *first*: patches SBCL 2.6.8's =LOGCOUNT= routine for CPUs without POPCNT (QEMU's default qemu64), then self-tests with POPCNT switched off — without it, compiling arithmetic at runtime faults the guest ([[file:inspector-history.org][inspector-history.org]] §5.6) |
   | [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] | SBCL's *own* source, read on demand from the =./sbcl= tree on the mounted =/home= (logical =SYS:= path → file → the form at the recorded offset, cut out by a textual scanner); =show-reference= appends it below a builtin's facts ([[file:code-browser.org][code-browser.org]], "Two kinds of subject") |
   | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector — incl. closures-as-records, =all-instances=, =retention-path=, =eval-in-context= ([[file:inspector-history.org][inspector-history.org]]) |
   | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless); the function/instances/retention/disassembly views |
+  | [[file:../initramfs/tour.lisp][=tour.lisp=]]        | the guided tour, =subj-tour=: a list of the image's own definitions in reading order, each drilling to the live source; the Spotter's "tour" ([[file:tour.org][tour.org]]) |
   | [[file:../initramfs/examples.lisp][=examples.lisp=]]    | didactic CLOS specimens — =COLLIDE=, a real 2-axis dispatch matrix |
   | [[file:../initramfs/stage.lisp][=stage.lisp=]]       | the =COLLIDE= stage (§3b): bodies, both-ways dispatch, =eql=-specialised enact |
   | [[file:../initramfs/worker.lisp][=worker.lisp=]]      | a second PROCESS that contributes a *view* — =subj-worker=, the =job= argv role ([[file:processes.org][processes.org]] §2) |
@@ -183,7 +184,10 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
 Ordering constraints, so you know which moves are safe: =line-editor= must precede
-=repl= and =shell= (both use its =with-raw-mode= macro at load time); =canvas=
+=repl= and =fb-browser= (both expand its =with-raw-mode= macro, which must exist when
+they are compiled) and, by convention, =shell= (it only *calls* =token-start= /
+=longest-common-prefix= and reads =*completer*= at run time — a softer need; the
+derived graph in [[file:guide/modules.html][the guide's module map]] lists every such edge); =canvas=
 precedes =textview=/=fb=/=shell=; =model= precedes =present=; =net= precedes
 =dhcp=; =logcount-fix= goes first so the image is repaired before anything else
 lands (nothing at build time needs it — the build host has POPCNT — but first is

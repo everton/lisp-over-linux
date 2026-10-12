@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pixels and input</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html" aria-current="page">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Pixels and input</h1>
+<p class="lede">There is no display server, no GPU driver and no font library. The environment draws every
+pixel itself into a Lisp vector and copies that vector to the screen. Input arrives as bytes on a tty and as
+24-byte event records from the kernel. Deep dives: <a href="../framebuffer.org">framebuffer.org</a>,
+<a href="../fonts.org">fonts.org</a>, <a href="../input.org">input.org</a>, <a href="../x11.org">x11.org</a>.</p>
+
+<h2>Rendering: one canvas, three ways out</h2>
+<figure>
+<svg viewBox="0 0 960 400" role="img" aria-label="Rendering pipeline: draw-browser calls the widgets (draw-panel, draw-list, draw-grid) and the textview's tv-draw; all of them write through lol.canvas primitives fill-rect and draw-string into one pixel vector of #x00RRGGBB words. That vector leaves through one of three backends: lol.fb:present-fb pwrites it to /dev/fb0 in the guest, lol.x11:present sends it with PutImage to an X server on the host, and render-frame.lisp writes it to a PPM file headless.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <text x="20" y="20" class="lbl">SHELL (what to draw)</text><text x="260" y="20" class="lbl">TOOLKIT (how)</text><text x="520" y="20" class="lbl">CANVAS (where)</text><text x="760" y="20" class="lbl">BACKEND (out)</text>
+  <rect class="box k-shell" x="20" y="40" width="200" height="160" rx="6"/>
+  <text x="30" y="62" class="title">draw-browser</text>
+  <text x="30" y="84" class="mono">draw-tabs + draw-tray</text><text x="30" y="100" class="mono">draw-crumb (per ancestor)</text><text x="30" y="116" class="mono">draw-pane-body</text><text x="30" y="132" class="mono">  list | text | matrix |</text><text x="30" y="148" class="mono">  image | stage</text><text x="30" y="164" class="mono">draw-status-line</text>
+  <text x="30" y="188" class="dim">overlays: Spotter, menus, halo</text>
+  <rect class="box k-ui" x="260" y="40" width="210" height="72" rx="6"/><text x="270" y="62" class="title">lol.widgets</text><text x="270" y="80" class="mono">draw-panel draw-list</text><text x="270" y="96" class="mono">draw-grid draw-card scrim</text>
+  <rect class="box k-ui" x="260" y="128" width="210" height="72" rx="6"/><text x="270" y="150" class="title">lol.textview</text><text x="270" y="168" class="mono">tv-draw: gutter, lexer</text><text x="270" y="184" class="mono">colours, caret, selection</text>
+  <path class="edge" d="M220,76 H258" marker-end="url(#ar)"/><path class="edge" d="M220,164 H258" marker-end="url(#ar)"/>
+  <rect class="box hot" x="520" y="40" width="200" height="160" rx="6"/><text x="530" y="62" class="title">lol.canvas</text>
+  <text x="530" y="84" class="mono">(simple-array (ub 32))</text><text x="530" y="100" class="mono">one word = #x00RRGGBB</text><text x="530" y="122" class="mono">fill-rect draw-rect</text><text x="530" y="138" class="mono">draw-line draw-circle</text><text x="530" y="154" class="mono">draw-string (bitmap font)</text><text x="530" y="176" class="dim">little-endian = B,G,R,0 =</text><text x="530" y="190" class="dim">exactly the framebuffer's BGRX</text>
+  <path class="edge" d="M470,76 H518" marker-end="url(#ar)"/><path class="edge" d="M470,164 H518" marker-end="url(#ar)"/>
+  <rect class="box k-kernel" x="760" y="40" width="190" height="58" rx="6"/><text x="770" y="60" class="title">lol.fb:present-fb</text><text x="770" y="78" class="mono">pwrite → /dev/fb0</text><text x="770" y="92" class="dim">guest; ~0.2-2 ms a frame</text>
+  <rect class="box k-tools" x="760" y="112" width="190" height="58" rx="6" stroke-dasharray="4 3"/><text x="770" y="132" class="title">lol.x11:present</text><text x="770" y="150" class="mono">PutImage, in bands</text><text x="770" y="164" class="dim">host window, no Xlib</text>
+  <rect class="box k-tools" x="760" y="184" width="190" height="58" rx="6" stroke-dasharray="4 3"/><text x="770" y="204" class="title">render-frame.lisp</text><text x="770" y="222" class="mono">→ PPM file</text><text x="770" y="236" class="dim">headless, ~1-3 s</text>
+  <path class="edge hot" d="M720,90 H758" marker-end="url(#ar)"/><path class="edge" d="M720,140 H758" marker-end="url(#ar)"/><path class="edge" d="M720,180 L758,210" marker-end="url(#ar)"/>
+  <!-- font -->
+  <rect class="box" x="520" y="240" width="200" height="60" rx="6"/><text x="530" y="260" class="title">the font</text><text x="530" y="278" class="mono">/cozette.lolf: 6x15</text><text x="530" y="292" class="dim">256 glyphs, 1 byte per row</text>
+  <path class="edge" d="M620,240 V202" marker-end="url(#ar)"/><text x="626" y="226" class="lbl">load-font, once</text>
+  <rect class="box" x="260" y="240" width="210" height="60" rx="6"/><text x="270" y="260" class="title">poc/bdf2font.lisp</text><text x="270" y="278" class="dim">BDF → .lolf (host, at</text><text x="270" y="292" class="dim">development time)</text>
+  <path class="edge dash" d="M470,270 H518" marker-end="url(#ar)"/>
+  <text x="20" y="340" class="lbl">The shell never calls a backend directly. It draws into the canvas it was given; whoever owns the loop decides where</text>
+  <text x="20" y="356" class="lbl">the canvas goes: run-browser-fb (guest), poc/run-browser.lisp (X11 host), poc/render-frame.lisp (file). Same pixels in all three.</text>
+</svg>
+<figcaption>One pixel format serves every output. That is why a frame rendered on the host with
+<code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
+</figure>
+<ul>
+  <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:59</span></a>,
+    <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:249</span></a>: for each character, for each glyph row, set the pixels
+    whose bits are on. That is the whole text renderer. <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:205</span></a> reads
+    the <code>.lolf</code> blob (magic <code>LF</code>, width, height, then 256 glyphs).</li>
+  <li><a class="ref" data-ref="poc/widgets.lisp#draw-list" href="../../poc/widgets.lisp"><code>draw-list</code><span class="loc">poc/widgets.lisp:297</span></a> returns <code>(values top hits)</code>. <em>hits</em> is
+    an alist of the screen y of each painted row and its index. A click is resolved against that map
+    (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:333</span></a>). The map is needed because section headers make "row N
+    on screen" differ from "item N".</li>
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:564</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:492</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:630</span></a>. The buffer is a vector of line strings that is
+    <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
+    (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
+  <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
+    syscall) and issues one <code>pwrite</code> for a full frame. <a class="ref" data-ref="poc/fb.lisp#with-graphics-console" href="../../poc/fb.lisp"><code>with-graphics-console</code><span class="loc">poc/fb.lisp:41</span></a>
+    puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
+  <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:242</span></a> is the host twin: the X11 wire protocol over a Unix socket,
+    written in Lisp. It is deliberately <em>not</em> in the image.</li>
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1058</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1078</span></a> repairs only the old and new
+    rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
+</ul>
+
+<h2>Input: from a finger to a command</h2>
+<p>As of the multi-device input work (<a href="../input.org">input.org</a> §4¾, merged 2026-10-12), every keyboard and every
+pointer is open at once, and devices plugged in later are picked up.</p>
+<figure>
+<svg viewBox="0 0 960 430" role="img" aria-label="Input pipeline: keyboards produce cooked bytes on the console tty, fd 0, merged across all keyboards by the kernel, and separately evdev events on one node each; mice and touchpads produce evdev events on their own nodes. An inotify watch on /dev/input reports nodes appearing. poll-input-once polls the tty, the watch and every open device. Tty bytes go through fb-read-key to a key and state; ready keyboards are drained by read-keyboards into per-device modifier state, ORed into shared flags; ready pointers are drained by read-pointers, each through read-mouse with its own state, all moving one cursor. A watch event or a hung-up device is housekeeping: rescan-input-devices or drop-input-dev. Keys go to browser-key; clicks to browser-click; wheel to browser-scroll; right and middle buttons to the context menu and the halo.">
+  <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <text x="20" y="20" class="lbl">HARDWARE</text><text x="180" y="20" class="lbl">KERNEL GIVES US</text><text x="410" y="20" class="lbl">DECODE (fb-browser.lisp)</text><text x="720" y="20" class="lbl">SHELL (shell.lisp)</text>
+  <rect class="box" x="20" y="40" width="130" height="120" rx="6"/><text x="30" y="62" class="title">keyboards</text><text x="30" y="80" class="dim">laptop's own +</text><text x="30" y="94" class="dim">external USB</text>
+  <rect class="box" x="20" y="230" width="130" height="70" rx="6"/><text x="30" y="252" class="title">pointers</text><text x="30" y="270" class="dim">mouse, touchpad,</text><text x="30" y="284" class="dim">usb-tablet</text>
+  <rect class="box k-kernel" x="180" y="40" width="200" height="50" rx="6"/><text x="190" y="60" class="title">fd 0: the console tty</text><text x="190" y="78" class="dim">bytes, all keyboards merged</text>
+  <rect class="box k-kernel" x="180" y="104" width="200" height="56" rx="6"/><text x="190" y="124" class="title">/dev/input/event*</text><text x="190" y="142" class="dim">one node per keyboard:</text><text x="190" y="155" class="dim">key down / up records</text>
+  <rect class="box k-kernel" x="180" y="240" width="200" height="50" rx="6"/><text x="190" y="260" class="title">/dev/input/event*</text><text x="190" y="278" class="dim">one per pointer, 24-byte records</text>
+  <rect class="box k-kernel" x="180" y="330" width="200" height="50" rx="6"/><text x="190" y="350" class="title">inotify on /dev/input</text><text x="190" y="368" class="dim">a node appeared / changed owner</text>
+  <path class="edge" d="M150,65 H178" marker-end="url(#ar2)"/><path class="edge" d="M150,130 H178" marker-end="url(#ar2)"/><path class="edge" d="M150,265 H178" marker-end="url(#ar2)"/>
+  <rect class="zone" x="395" y="34" width="305" height="370" rx="8"/><text x="405" y="52" class="lbl">fbb-wait → poll-input-once: ONE poll(2) over all</text>
+  <rect class="box" x="410" y="60" width="275" height="44" rx="5"/><text x="420" y="78" class="title">fb-read-key</text><text x="420" y="94" class="mono">→ (values key state)</text>
+  <rect class="box" x="410" y="114" width="275" height="56" rx="5"/><text x="420" y="132" class="title">read-keyboards</text><text x="420" y="148" class="mono">each: read-keyboard-evdev</text><text x="420" y="162" class="dim">→ OR of held keys: *ctrl-down* …</text>
+  <rect class="box" x="410" y="226" width="275" height="70" rx="5"/><text x="420" y="244" class="title">read-pointers</text><text x="420" y="260" class="mono">each: read-mouse, its own state</text><text x="420" y="274" class="dim">(with-device-state); all move ONE</text><text x="420" y="288" class="dim">cursor → clicked wheel button</text>
+  <rect class="box" x="410" y="316" width="275" height="70" rx="5"/><text x="420" y="334" class="title">housekeeping, never returned</text><text x="420" y="350" class="mono">rescan-input-devices</text><text x="420" y="366" class="mono">drop-input-dev (POLLHUP)</text>
+  <path class="edge" d="M380,65 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,135 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,265 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,355 H408" marker-end="url(#ar2)"/>
+  <path class="edge dash" d="M547,114 V106" marker-end="url(#ar2)"/><text x="555" y="111" class="lbl">ORed into state</text>
+  <rect class="box k-shell" x="720" y="60" width="220" height="44" rx="5"/><text x="730" y="78" class="title">browser-key</text><text x="730" y="94" class="dim">every key, routed by pane kind</text>
+  <rect class="box k-shell" x="720" y="190" width="220" height="40" rx="5"/><text x="730" y="214" class="title">browser-click</text>
+  <rect class="box k-shell" x="720" y="238" width="220" height="40" rx="5"/><text x="730" y="262" class="title">browser-scroll</text>
+  <rect class="box k-shell" x="720" y="286" width="220" height="48" rx="5"/><text x="730" y="304" class="title">context menu / halo</text><text x="730" y="322" class="dim">right / middle (Alt-click)</text>
+  <path class="edge hot" d="M685,82 H718" marker-end="url(#ar2)"/>
+  <path class="edge" d="M685,250 L718,210" marker-end="url(#ar2)"/><path class="edge" d="M685,260 H718" marker-end="url(#ar2)"/><path class="edge" d="M685,280 L718,306" marker-end="url(#ar2)"/>
+  <text x="20" y="420" class="lbl">Text comes from the tty because the kernel's keymap already made characters. Modifiers come from evdev because a held Ctrl sends no byte.</text>
+</svg>
+<figcaption>One <code>poll</code> over the tty, the watch and every device. The kernel keeps one shift state for all
+keyboards, so the browser's modifiers are the OR of every keyboard's held keys too: Ctrl on the external keyboard plus a
+touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry points are fed from X events instead
+(<code>poc/run-browser.lisp</code>).</figcaption>
+</figure>
+<ul>
+  <li>Finding devices without udev: <a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:194</span></a> reads
+    <code>/proc/bus/input/devices</code>, and <a class="ref" data-ref="initramfs/fb-browser.lisp#input-device-kind" href="../../initramfs/fb-browser.lisp"><code>input-device-kind</code><span class="loc">initramfs/fb-browser.lisp:360</span></a> classifies
+    each one by its bitmasks: <code>:mouse</code> (REL_X), <code>:pad</code> or <code>:tablet</code> (ABS_X, with PROP deciding),
+    <code>:keyboard</code> (EV_KEY + EV_REP, which rules out the power button).</li>
+  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:906</span></a> opens everything and starts
+    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:854</span></a>
+    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:952</span></a>
+    drops a device that reports <code>POLLHUP</code> (unplugged) before anyone reads it.</li>
+  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:804</span></a> rebinds the decoder's
+    special variables to one device's saved values (<code>progv</code>) for one drain. <code>read-mouse</code> does not know there
+    is more than one device.</li>
+  <li><code>*fb-mouse*</code> / <code>*fb-kbd*</code> are now the markers <code>:pointers</code> / <code>:keyboards</code>, not fds.
+    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:996</span></a>),
+    so the older loops (debugger, Spotter) did not change.</li>
+  <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:394</span></a>). A touchpad's motion is integrated as relative
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:478</span></a>), and a tap is a click.</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2208</span></a> decides what was under the pointer from the hit maps of the
+    <em>last drawn frame</em>: tabs, crumbs, list rows, text, matrix cells.</li>
+</ul>
+
+<div class="pager"><a href="present.html">← present and the shell</a><a href="live.html">Live editing →</a></div>
+</main>
+</div>
+</body>
+</html>

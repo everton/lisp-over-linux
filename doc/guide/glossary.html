@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Glossary</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html" aria-current="page">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Glossary</h1>
+<p class="lede">The terms the code and the documents use without stopping to explain them. Each entry says briefly what the
+term is and then where <em>this</em> code uses it. Grouped from the metal up.</p>
+
+<h2>Boot and kernel</h2>
+<dl class="glossary">
+  <dt>EFISTUB</dt>
+  <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
+    <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:238</span></a>;
+    <a href="../micro-distro.org">micro-distro.org</a>).</dd>
+  <dt>initramfs, cpio</dt>
+  <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
+    not built into the kernel, listed line by line in <a class="ref" data-ref="initramfs/initramfs.sbcl.list" href="../../initramfs/initramfs.sbcl.list"><code>initramfs.sbcl.list</code><span class="loc">initramfs/initramfs.sbcl.list</span></a>.</dd>
+  <dt>PID 1</dt>
+  <dd>The first user process. The kernel panics if it exits, and orphaned processes are re-parented to it. Here it is
+    <code>preinit</code> and then, after <code>execve</code>, the Lisp (<a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:84</span></a>,
+    whose docstring says "Never returns").</dd>
+  <dt>devtmpfs</dt>
+  <dd>A filesystem the kernel fills with <code>/dev</code> nodes for the devices it finds, so no udev is needed. Mounted first thing in
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;mount(&quot;devtmpfs&quot;&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:462</span></a>. Its nodes are root-owned,
+    which is why <code>lol-rootd</code> exists.</dd>
+  <dt>sysfs, /proc</dt>
+  <dd>Kernel state presented as small text files. The framebuffer's geometry comes from <code>/sys/class/graphics/fb0</code>
+    (<a class="ref" data-ref="poc/fb.lisp#fb-geometry" href="../../poc/fb.lisp"><code>fb-geometry</code><span class="loc">poc/fb.lisp:18</span></a>), input devices from <code>/proc/bus/input/devices</code>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:194</span></a>), the battery from <code>/sys/class/power_supply</code>.</dd>
+  <dt>ioctl</dt>
+  <dd>"Do this device-specific thing": a syscall taking an fd, a request number and a pointer to a struct. Used for
+    <code>KDSETMODE</code> (<a class="ref" data-ref="poc/fb.lisp#with-graphics-console" href="../../poc/fb.lisp"><code>with-graphics-console</code><span class="loc">poc/fb.lisp:41</span></a>), <code>EVIOCGABS</code>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:394</span></a>) and <code>SIOCSIFADDR</code>
+    (<a class="ref" data-ref="initramfs/net.lisp#bring-up-interface" href="../../initramfs/net.lisp"><code>bring-up-interface</code><span class="loc">initramfs/net.lisp:68</span></a>). The struct is built byte by byte in a Lisp vector.</dd>
+  <dt>framebuffer, efifb, fbcon</dt>
+  <dd>A framebuffer is screen memory you can write to (<code>/dev/fb0</code>). <code>efifb</code> is the driver that exposes the one
+    the firmware set up. <code>fbcon</code> is the kernel's text console drawn onto it, which must be told to stop
+    (<code>KD_GRAPHICS</code>) while we draw. <a href="../framebuffer.org">framebuffer.org</a>.</dd>
+  <dt>evdev, input_event</dt>
+  <dd>The kernel's generic input interface: one <code>/dev/input/eventN</code> per device, read as 24-byte records (time, type,
+    code, value). Decoded by hand in <a class="ref" data-ref="initramfs/fb-browser.lisp#read-mouse" href="../../initramfs/fb-browser.lisp"><code>read-mouse</code><span class="loc">initramfs/fb-browser.lisp:538</span></a>.
+    <a href="../input.org">input.org</a>.</dd>
+  <dt>poll(2), inotify</dt>
+  <dd><code>poll</code> sleeps until one of several fds is readable. <code>inotify</code> makes a directory change readable as an fd.
+    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:952</span></a>).</dd>
+  <dt>raw mode (termios)</dt>
+  <dd>A tty normally buffers a line and turns Ctrl-C into a signal. Raw mode delivers each byte as it arrives, which is needed
+    for <kbd>C-c C-c</kbd> to reach us (<a class="ref" data-ref="initramfs/line-editor.lisp#with-raw-mode" href="../../initramfs/line-editor.lisp"><code>with-raw-mode</code><span class="loc">initramfs/line-editor.lisp:43</span></a>).</dd>
+  <dt>fw_cfg</dt>
+  <dd>QEMU's firmware-configuration device, visible under <code>/sys/firmware/qemu_fw_cfg</code>. Real hardware has none, which makes
+    it a safe test-only switch for the net REPL (<a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:218</span></a>).</dd>
+</dl>
+
+<h2>Privilege and storage</h2>
+<dl class="glossary">
+  <dt>capabilities, ambient set</dt>
+  <dd>Root's power split into about 40 pieces. A capability is normally lost across <code>execve</code> for a non-root program. The
+    <em>ambient</em> set (Linux 4.3+) is how it survives. preinit keeps five
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:425</span></a>).</dd>
+  <dt>bind mount</dt>
+  <dd>The same directory made visible at a second path, possibly with different flags. Only <code>/mnt/host/home</code> is bound onto
+    <code>/home</code> (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:267</span></a>).</dd>
+  <dt>real vs effective uid</dt>
+  <dd>The effective uid decides permissions; the real uid decides who may signal you. <code>lol-rootd</code> is real = user,
+    effective = root, so the user's Lisp can signal it and it keeps root's powers
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:373</span></a>).</dd>
+</dl>
+
+<h2>SBCL and the image</h2>
+<dl class="glossary">
+  <dt>core, frozen heap, save-lisp-and-die</dt>
+  <dd>The whole Lisp heap written to a file, which wakes up as it was. What is loaded before the save is all the image has. No
+    Quicklisp, no <code>require</code> at run time (<a href="build.html">How the image is built</a>).</dd>
+  <dt>sb-alien (FFI)</dt>
+  <dd>SBCL's foreign function interface: declare a C function and call it. Every syscall here goes through it, e.g.
+    <code>poll</code>, <code>open</code>, <code>ioctl</code> at the top of <a class="ref" data-ref="initramfs/fb-browser.lisp#%fbb-poll" href="../../initramfs/fb-browser.lisp"><code>%fbb-poll</code><span class="loc">initramfs/fb-browser.lisp:24</span></a>.
+    <code>sb-posix</code> is avoided on purpose (<a href="../processes.org">processes.org</a> §6).</dd>
+  <dt>pinning, SAP</dt>
+  <dd>The GC moves objects. <code>with-pinned-objects</code> promises it will not, and <code>vector-sap</code> gives the raw address
+    (a "system area pointer") to hand to the kernel (<a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a>).</dd>
+  <dt>package</dt>
+  <dd>A namespace of symbols. Most of the image is in <code>CL-USER</code>; the toolkit has <code>lol.*</code> packages. A
+    <code>pkg:name</code> needs the package to exist when the file is <em>read</em>, which constrains the load order.
+    <code>load-recording</code> follows <code>in-package</code> so each definition is filed in its real package.</dd>
+  <dt>reader macro</dt>
+  <dd>A character that changes how the reader parses. <code>!#RRGGBB</code> is a colour literal
+    (<a class="ref" data-ref="poc/canvas.lisp#&quot;(set-macro-character #\!&quot;" data-label="!# in canvas.lisp" href="../../poc/canvas.lisp"><code>!# in canvas.lisp</code><span class="loc">poc/canvas.lisp:31</span></a>), installed in the
+    readtable that is saved into the image.</dd>
+  <dt>POPCNT, the LOGCOUNT fix</dt>
+  <dd>A CPU instruction QEMU's default CPU lacks. SBCL 2.6.8's fallback routine had a register mismatch, so compiling arithmetic
+    crashed the guest. <a class="ref" data-ref="initramfs/logcount-fix.lisp#patch-logcount-routine" href="../../initramfs/logcount-fix.lisp"><code>patch-logcount-routine</code><span class="loc">initramfs/logcount-fix.lisp:124</span></a> patches the machine
+    code at build time (<a href="../inspector-history.org">inspector-history.org</a> §5.6).</dd>
+</dl>
+
+<h2>CLOS and the condition system</h2>
+<dl class="glossary">
+  <dt>generic function, method, specializer</dt>
+  <dd>A function whose behaviour is chosen from its arguments' classes. Each <code>defmethod</code> handles one combination
+    (its specializers). <code>present</code> is the central one (<a class="ref" data-ref="initramfs/present.lisp#present" href="../../initramfs/present.lisp"><code>present</code><span class="loc">initramfs/present.lisp:339</span></a>).
+    Tutorial: <a href="../background/learn-clos.org">learn-clos.org</a>.</dd>
+  <dt>multiple dispatch, dispatch matrix</dt>
+  <dd>Choosing a method on <em>several</em> arguments. <code>lol.examples:collide</code> dispatches on two, and its matrix of
+    covered and missing pairs is <a class="ref" data-ref="initramfs/model.lisp#dispatch-matrix" href="../../initramfs/model.lisp"><code>dispatch-matrix</code><span class="loc">initramfs/model.lisp:211</span></a>.</dd>
+  <dt>EQL specializer</dt>
+  <dd>A method for one specific object rather than a class, written <code>(eql :hull-breach)</code>. Printing it correctly is why
+    <a class="ref" data-ref="initramfs/registry.lisp#specializer-label" href="../../initramfs/registry.lisp"><code>specializer-label</code><span class="loc">initramfs/registry.lisp:48</span></a> uses <code>prin1</code>.</dd>
+  <dt>method combination, effective method</dt>
+  <dd>How <code>:around</code>, <code>:before</code>, primary and <code>:after</code> methods are combined for one call.
+    <a class="ref" data-ref="initramfs/model.lisp#effective-method-onion" href="../../initramfs/model.lisp"><code>effective-method-onion</code><span class="loc">initramfs/model.lisp:253</span></a> draws it as layers.</dd>
+  <dt>MOP (metaobject protocol)</dt>
+  <dd>Classes, generic functions and methods are themselves objects you can query (<code>sb-mop:class-direct-superclasses</code> …).
+    The whole model layer is built on it (<a class="ref" data-ref="initramfs/model.lisp#class-info" href="../../initramfs/model.lisp"><code>class-info</code><span class="loc">initramfs/model.lisp:63</span></a>).</dd>
+  <dt>condition, handler, restart</dt>
+  <dd>Lisp's error system separates <em>signalling</em> a condition, <em>handling</em> it, and the <em>restarts</em> (ways out)
+    the code around it established. <code>handler-bind</code> runs the handler before unwinding, which is how the debugger sees a
+    live stack (<a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:500</span></a>,
+    <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:715</span></a>).</dd>
+  <dt>closure, captured variable, value cell</dt>
+  <dd>A function that remembers variables from where it was made. SBCL stores a captured variable that is assigned in a boxed
+    "value cell", and only those can be written from the inspector (<a class="ref" data-ref="initramfs/model.lisp#closure-captures" href="../../initramfs/model.lisp"><code>closure-captures</code><span class="loc">initramfs/model.lisp:359</span></a>).</dd>
+</dl>
+
+<h2>The environment's own words</h2>
+<dl class="glossary">
+  <dt>registry, DEFN</dt>
+  <dd>The table of every definition's source text, kept in the image (<a class="ref" data-ref="initramfs/registry.lisp#*registry*" href="../../initramfs/registry.lisp"><code>*registry*</code><span class="loc">initramfs/registry.lisp:37</span></a>).</dd>
+  <dt>subject, view, item, command</dt>
+  <dd>The <code>present</code> protocol's data (<a href="present.html">present and the shell</a>).</dd>
+  <dt>pane, trail, tab</dt>
+  <dd>The shell's state: a presented view; a stack of them, shown as breadcrumbs; several trails, shown as tabs.</dd>
+  <dt>drill</dt>
+  <dd>Opening an item's subject as a new pane at the bottom of the trail (<a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:160</span></a>).</dd>
+  <dt>nav split, preview</dt>
+  <dd>A list on the left, a live read-only view of the selected item on the right (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1037</span></a>).</dd>
+  <dt>Workspace</dt>
+  <dd>A Lisp scratch buffer with Do it / Print it / Inspect it / Debug it / Accept (<a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:842</span></a>).</dd>
+  <dt>Accept, change set</dt>
+  <dd>Compiling an edit into the running image, and the list of everything accepted this session
+    (<a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>).</dd>
+  <dt>Spotter</dt>
+  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2031</span></a>).</dd>
+  <dt>halo</dt>
+  <dd>Handles around whatever is under the middle button: what it is, and which code drew it. After Morphic
+    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2688</span></a>).</dd>
+  <dt>stage</dt>
+  <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
+    (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a>).</dd>
+  <dt>PRIMARY, CLIPBOARD</dt>
+  <dd>X11's two selections: PRIMARY is "what you last selected" (middle-click pastes it), CLIPBOARD is what you copied. Kept as plain
+    data (<a class="ref" data-ref="poc/clipboard.lisp#primary" href="../../poc/clipboard.lisp"><code>primary</code><span class="loc">poc/clipboard.lisp:267</span></a>; <a href="../clipboard.org">clipboard.org</a>).</dd>
+  <dt>QMP, SLIRP</dt>
+  <dd>QEMU's JSON control socket (tests use it to type), and QEMU's user-mode network (the guest is <code>10.0.2.15</code>, the host
+    forwards port 4005).</dd>
+</dl>
+
+<div class="pager"><a href="paths.html">← Reading paths</a><a href="exercises.html">Exercises →</a></div>
+</main>
+</div>
+</body>
+</html>

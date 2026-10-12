@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Subsystems in progress</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html" aria-current="page">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Subsystems in progress</h1>
+<p class="lede">The rest of this guide describes the system as merged on <code>main</code> on 2026-10-12. Several pieces were being
+built in parallel at that time. Each one gets a section in this guide once it lands. Until then, its design document is the
+place to read.</p>
+
+<table>
+  <tr><th>Subsystem</th><th>State on 2026-10-12</th><th>Read</th><th>Will extend</th></tr>
+  <tr><td>Multi-device input and hotplug</td><td><strong>Merged.</strong> Every keyboard and pointer at once, plus inotify on <code>/dev/input</code>. Already described.</td>
+    <td><a href="../input.org">input.org</a> §4¾</td><td><a href="pixels.html">Pixels and input</a> (done)</td></tr>
+  <tr><td>Runtime-resizable fonts</td><td>In progress. Today the font is a fixed 6x15 <code>/cozette.lolf</code>, and <code>QEMU_ZOOM=fit</code> is the stopgap.</td>
+    <td><a href="../fonts.org">fonts.org</a></td><td>Pixels (the font box in the rendering diagram)</td></tr>
+  <tr><td>Networking beyond wired DHCP: DNS, default route, SNTP, Wi-Fi (iwlwifi, tag #26), HTTP + TLS</td><td>In progress. Today: DHCP, static fallback, the net REPL.</td>
+    <td><a href="../networking.org">networking.org</a></td><td>Storage, privilege, network → Networking</td></tr>
+  <tr><td>An LLM agent client in the image</td><td>Plan, being built.</td><td><a href="../agent.org">agent.org</a></td><td>a new page, plus a <code>present</code> row for its subjects</td></tr>
+  <tr><td>A web browser (WPE WebKit)</td><td>Exploration. Nothing is in the image.</td><td><a href="../web-browser.org">web-browser.org</a></td><td>Pixels (a second pixel producer, see processes.org)</td></tr>
+  <tr><td>Containers (<code>lol-ct</code>, user namespaces over <code>/mnt/host</code>)</td><td>Plan. Kernel options <code>USER_NS</code> and <code>OVERLAY_FS</code> are in tag #26.</td>
+    <td><a href="../containers.org">containers.org</a></td><td>Storage, privilege, network</td></tr>
+  <tr><td>A terminal-emulator pane</td><td>In progress. <code>/dev/pts</code> is mounted by preinit since tag #26.</td><td>no doc yet</td><td>present (a new view kind) and Pixels</td></tr>
+  <tr><td>Session persistence and file-out</td><td>Plan, awaiting decisions. Today every Accept is lost at reboot.</td>
+    <td><a href="../session-persistence.org">session-persistence.org</a></td><td>Live editing → Accept</td></tr>
+  <tr><td>Kernel tag #26 in kernel-config.org</td><td>The config is committed (<code>kernel/config-7.2.5</code>). The doc still says #25.</td>
+    <td><a href="../kernel-config.org">kernel-config.org</a></td><td>Start here (tags)</td></tr>
+</table>
+
+<h2>How to add a section when one of these lands</h2>
+<ol>
+  <li>Write the page as a copy of an existing one. Keep the empty <code>&lt;!-- nav:begin --&gt;&lt;!-- nav:end --&gt;</code> markers,
+    then add one line for it to <code>+pages+</code> in <code>doc/guide/regen.lisp</code>.</li>
+  <li>Cite code only as <code>&lt;a class="ref" data-ref="FILE#NAME"&gt;&lt;/a&gt;</code> (or <code>FILE#NAME@SPECIALIZER</code> for a method,
+    <code>FILE#"literal text"</code> for C, shell or org). Never type a line number by hand.</li>
+  <li>New Lisp files: add each one to a layer in <code>+layers+</code> in the same script. The script warns about a module with no layer.</li>
+  <li>Run <code>sbcl --script doc/guide/regen.lisp</code> until it says <code>0 unresolved; 0 errors</code>, then <code>./check-links.sh --quiet</code>.</li>
+  <li>If the subsystem deserves a stop in the in-image tour, add one entry to <code>*tour-stops*</code> in
+    <code>initramfs/tour.lisp</code> and to <a href="../tour.org">tour.org</a>, then run <code>check-tour.lisp</code>.</li>
+  <li>Move its row above from "in progress" to merged, or delete it.</li>
+</ol>
+
+<div class="pager"><a href="exercises.html">← Exercises</a><a href="index.html">Back to the start</a></div>
+</main>
+</div>
+</body>
+</html>

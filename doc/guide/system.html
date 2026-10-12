@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Storage, privilege, network</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html" aria-current="page">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Storage, privilege, network</h1>
+<p class="lede">How the machine around the environment is set up: whose files it can touch, which root powers it
+keeps, and how it gets an address. Design documents: <a href="../storage.org">storage.org</a> (tag #25),
+<a href="../networking.org">networking.org</a> (tag #21 onward), <a href="../processes.org">processes.org</a>.</p>
+
+<h2>Two processes, two trust levels</h2>
+<figure>
+<svg viewBox="0 0 960 360" role="img" aria-label="preinit, running as root, mounts the laptop's ext4 at /mnt/host and makes that view read-only, bind-mounts /mnt/host/home onto /home read-write, forks lol-rootd and then drops to the user's uid with five ambient capabilities before exec'ing the Lisp. lol-rootd keeps euid 0: it chowns new device nodes every second and, on SIGUSR1 from the Lisp's power-off, syncs and remounts the disk read-only.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <!-- filesystem -->
+  <text x="20" y="20" class="lbl">THE FILE TREE THE LISP SEES</text>
+  <rect class="box" x="20" y="30" width="280" height="300" rx="6"/>
+  <text x="32" y="54" class="mono">/            initramfs (tmpfs, in RAM)</text>
+  <text x="32" y="74" class="mono">├ sbin/lisp  the image</text>
+  <text x="32" y="94" class="mono">├ etc/lol.conf</text>
+  <text x="32" y="114" class="mono">├ proc sys dev tmp</text>
+  <text x="32" y="140" class="mono">├ mnt/host   laptop's ext4</text>
+  <text x="32" y="156" class="dim">│            READ-ONLY view</text>
+  <text x="32" y="182" class="mono">└ home       = /mnt/host/home</text>
+  <text x="32" y="198" class="dim">             bind mount, READ-WRITE</text>
+  <text x="32" y="232" class="dim">Only /home crosses over. The host's</text>
+  <text x="32" y="248" class="dim">/etc, /usr … are readable (fonts,</text>
+  <text x="32" y="264" class="dim">SBCL's source) but never writable.</text>
+  <text x="32" y="294" class="dim">Without a disk: no /mnt/host, an</text>
+  <text x="32" y="310" class="dim">empty /home, everything as root.</text>
+  <!-- processes -->
+  <text x="340" y="20" class="lbl">PROCESSES</text>
+  <rect class="box k-kernel" x="340" y="30" width="270" height="74" rx="6"/><text x="350" y="52" class="title">preinit (PID 1, root)</text><text x="350" y="70" class="dim">mounts, looks up the user in the</text><text x="350" y="86" class="dim">HOST's /etc/passwd</text>
+  <rect class="box k-kernel" x="680" y="30" width="260" height="110" rx="6"/><text x="690" y="52" class="title">lol-rootd</text><text x="690" y="70" class="mono">ruid = user, euid = 0</text><text x="690" y="90" class="dim">every 1 s: chown fb*, tty*,</text><text x="690" y="104" class="dim">input/event* to the user</text><text x="690" y="124" class="dim">SIGUSR1: sync, remount ro</text>
+  <path class="edge" d="M610,60 H678" marker-end="url(#ar)"/><text x="620" y="54" class="lbl">fork</text>
+  <rect class="box k-runtime hot" x="340" y="170" width="270" height="160" rx="6"/><text x="350" y="192" class="title">/sbin/lisp (still PID 1)</text><text x="350" y="210" class="mono">uid = the user (e.g. 1000)</text>
+  <text x="350" y="232" class="dim">ambient capabilities, and why:</text>
+  <text x="350" y="250" class="mono">CAP_SYS_BOOT        reboot(2)</text>
+  <text x="350" y="266" class="mono">CAP_NET_ADMIN       ifup ioctls</text>
+  <text x="350" y="282" class="mono">CAP_NET_RAW         DHCP bind-to-dev</text>
+  <text x="350" y="298" class="mono">CAP_NET_BIND_SERVICE  UDP :68</text>
+  <text x="350" y="314" class="mono">CAP_SYS_TTY_CONFIG  KD_GRAPHICS</text>
+  <path class="edge" d="M475,104 V168" marker-end="url(#ar)"/><text x="482" y="130" class="lbl">become_user, then</text><text x="482" y="144" class="lbl">execve (same PID)</text>
+  <path class="edge dash" d="M610,250 H810 V142" marker-end="url(#ar)"/><text x="640" y="244" class="lbl">power-off → release-disk</text><text x="640" y="268" class="lbl">kill(LOL_ROOTD_PID, SIGUSR1)</text>
+
+</svg>
+<figcaption>Privilege separation in miniature. The environment cannot write anywhere the user could not, because it
+has no <code>CAP_DAC_OVERRIDE</code> and no <code>CAP_SYS_ADMIN</code>. The two jobs that need root (hotplugged device nodes,
+a clean read-only disk at power-off) stay with a small helper inside preinit.</figcaption>
+</figure>
+<ul>
+  <li>Finding the disk without udev or blkid: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int find_disk&quot;" data-label="find_disk" href="../../initramfs/preinit.c"><code>find_disk</code><span class="loc">initramfs/preinit.c:201</span></a>
+    reads each block device's ext4 superblock (magic <code>0xEF53</code> at offset 0x438, the UUID at 0x468) and compares it with
+    <code>disk=UUID=…</code> from <code>lol.conf</code>.</li>
+  <li>Mounting: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:267</span></a>.
+    The filesystem is mounted read-write, because one superblock has one rw/ro state and <code>/home</code> needs to write.
+    Then the <code>/mnt/host</code> <em>view</em> is bind-remounted read-only.</li>
+  <li>Dropping privileges: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:425</span></a>.
+    Shrink the bounding set, <code>PR_SET_KEEPCAPS</code>, set gid then uid, <code>capset</code>, then raise each of the five as
+    <em>ambient</em>. Ambient capabilities are what survive <code>execve</code> for a non-root program.</li>
+  <li>The helper: <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:373</span></a>.
+    Its real uid is the user's, so the user may signal it, and its effective uid is 0, so it keeps root's powers.
+    The Lisp side is <a class="ref" data-ref="initramfs/process.lisp#release-disk" href="../../initramfs/process.lisp"><code>release-disk</code><span class="loc">initramfs/process.lisp:36</span></a> and
+    <a class="ref" data-ref="initramfs/process.lisp#power-off" href="../../initramfs/process.lisp"><code>power-off</code><span class="loc">initramfs/process.lisp:53</span></a>.</li>
+  <li>QEMU-only alternatives (tag #26): <code>lol.disk=9p:hostroot</code> mounts the build host's whole root over virtio-9p, with
+    <code>/home</code> as an overlay whose writes vanish
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage_9p&quot;" data-label="mount_storage_9p" href="../../initramfs/preinit.c"><code>mount_storage_9p</code><span class="loc">initramfs/preinit.c:244</span></a>).
+    Tests use <code>test-disk.img</code>, attached <code>snapshot=on</code>. Never pass the real disk to QEMU.</li>
+</ul>
+<p>The file system as data is <a class="ref" data-ref="initramfs/files.lisp#file-entry" href="../../initramfs/files.lisp"><code>file-entry</code><span class="loc">initramfs/files.lisp:224</span></a> and friends, calling libc through
+<code>sb-unix</code> / <code>sb-alien</code> rather than <code>sb-posix</code> (<a href="../processes.org">processes.org</a> §6 explains
+why: an inlined <code>sb-posix</code> entry point cannot be recompiled in the guest). Folders and files become subjects in
+<code>file-views.lisp</code>. The keys and operations are in <code>poc/file-manager.lisp</code>
+(<a href="../file-manager.org">file-manager.org</a>).</p>
+
+<h2>Networking, as it is today</h2>
+<figure>
+<svg viewBox="0 0 960 230" role="img" aria-label="At boot supervisor-main calls configure-eth0: bring-up-interface brings the link up with no address, dhcp-acquire does DISCOVER, OFFER, REQUEST and ACK on UDP port 68 bound to eth0, then bring-up-interface sets the address and netmask with SIOCSIFADDR and SIOCSIFNETMASK; with no answer it falls back to 10.0.2.15/24. Then, only if fw_cfg or the kernel command line asked, start-net-repl listens on TCP 4005 in a thread and runs the editing REPL per connection.">
+  <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <rect class="box k-runtime" x="20" y="30" width="150" height="50" rx="6"/><text x="30" y="52" class="title">supervisor-main</text><text x="30" y="70" class="dim">at boot</text>
+  <rect class="box k-kernel" x="210" y="20" width="220" height="70" rx="6"/><text x="220" y="40" class="title">configure-eth0</text><text x="220" y="58" class="mono">1 link up, address 0.0.0.0</text><text x="220" y="74" class="mono">2 dhcp-acquire</text>
+  <rect class="box k-kernel" x="470" y="20" width="220" height="70" rx="6"/><text x="480" y="40" class="title">dhcp-acquire</text><text x="480" y="58" class="mono">DISCOVER→OFFER</text><text x="480" y="74" class="mono">REQUEST→ACK  (UDP :68)</text>
+  <rect class="box k-kernel" x="730" y="20" width="210" height="70" rx="6"/><text x="740" y="40" class="title">bring-up-interface</text><text x="740" y="58" class="mono">SIOCSIFADDR, NETMASK</text><text x="740" y="74" class="dim">or static 10.0.2.15/24</text>
+  <path class="edge" d="M170,55 H208" marker-end="url(#ar3)"/><path class="edge" d="M430,55 H468" marker-end="url(#ar3)"/><path class="edge" d="M690,55 H728" marker-end="url(#ar3)"/><text x="694" y="48" class="lbl">lease</text>
+  <rect class="box" x="210" y="130" width="220" height="70" rx="6"/><text x="220" y="150" class="title">net-repl-wanted-p</text><text x="220" y="168" class="dim">LOL_NETREPL=1 (preinit read</text><text x="220" y="182" class="dim">fw_cfg) or lol.netrepl=1</text>
+  <rect class="box hot" x="470" y="130" width="220" height="70" rx="6"/><text x="480" y="150" class="title">start-net-repl</text><text x="480" y="168" class="mono">TCP 0.0.0.0:4005</text><text x="480" y="182" class="dim">a thread; editing-repl per client</text>
+  <path class="edge" d="M95,80 V165 H208" marker-end="url(#ar3)"/><text x="100" y="120" class="lbl">then</text>
+  <path class="edge" d="M430,165 H468" marker-end="url(#ar3)"/><text x="436" y="158" class="lbl">only if</text>
+  <text x="730" y="150" class="lbl">Remote eval, no authentication:</text><text x="730" y="166" class="lbl">off by default since tag #26;</text><text x="730" y="182" class="lbl">the menu's 't' toggles it.</text>
+</svg>
+<figcaption>Wired IPv4 only, as of 2026-10-12. The lease's router and DNS are stored in <code>*gateway*</code> and
+<code>*dns*</code> but not yet used. DNS, a default route, Wi-Fi and HTTP/TLS are being built by another track
+(<a href="in-progress.html">Subsystems in progress</a>).</figcaption>
+</figure>
+<ul>
+  <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:160</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:130</span></a>,
+    <a class="ref" data-ref="initramfs/dhcp.lisp#build-dhcp" href="../../initramfs/dhcp.lisp"><code>build-dhcp</code><span class="loc">initramfs/dhcp.lisp:67</span></a> (the packet, byte by byte),
+    <a class="ref" data-ref="initramfs/net.lisp#bring-up-interface" href="../../initramfs/net.lisp"><code>bring-up-interface</code><span class="loc">initramfs/net.lisp:68</span></a> (an <code>ifreq</code> built in a byte vector and
+    passed to <code>ioctl</code>).</li>
+  <li>The REPL server: <a class="ref" data-ref="initramfs/net.lisp#start-net-repl" href="../../initramfs/net.lisp"><code>start-net-repl</code><span class="loc">initramfs/net.lisp:160</span></a>,
+    <a class="ref" data-ref="initramfs/net.lisp#%serve-net-repl" href="../../initramfs/net.lisp"><code>%serve-net-repl</code><span class="loc">initramfs/net.lisp:136</span></a>, <a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:218</span></a>.
+    The host client is <code>host-client/lol-repl-client.c</code>. The test harness uses the same socket to read the
+    guest's state (<a href="verify.html">How to verify things</a>).</li>
+  <li>Tutorial from scratch: <a href="../background/learn-networking.org">learn-networking.org</a>.</li>
+</ul>
+
+<h2>A second process</h2>
+<p>Only one process writes <code>/dev/fb0</code>. A peer process contributes a <em>view</em> (data), never pixels.
+<a class="ref" data-ref="initramfs/worker.lisp#call-worker" href="../../initramfs/worker.lisp"><code>call-worker</code><span class="loc">initramfs/worker.lisp:141</span></a> re-executes <code>/sbin/lisp job NAME</code>, reads one
+plist from the pipe with <code>*read-eval*</code> off, and <a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:179</span></a>
+rebuilds real subjects from the names it receives. <a href="../processes.org">processes.org</a> §2 and §7 explain the
+design. <code>check-worker.lisp</code> proves the fork is real.</p>
+
+<div class="pager"><a href="live.html">← Live editing</a><a href="verify.html">How to verify things →</a></div>
+</main>
+</div>
+</body>
+</html>

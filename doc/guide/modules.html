@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The module map</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+<script src="deps-data.js"></script>
+<style>
+  #map { cursor: default; }
+  #map .mod rect { fill: var(--box); stroke-width: 1.6; }
+  #map .mod.host rect { stroke-dasharray: 4 3; }
+  #map .mod text { font-size: 11.5px; }
+  #map .mod { cursor: pointer; }
+  #map .mod.sel rect { fill: var(--accent-bg); stroke-width: 3; }
+  #map .mod.dim { opacity: .28; }
+  #map .e { fill: none; stroke-width: 1.4; opacity: .9; }
+  #map .e.out { stroke: var(--accent); }
+  #map .e.in  { stroke: var(--amber); }
+  #map .e.late { stroke-dasharray: 5 4; }
+  #map .e.faint { stroke: var(--line); opacity: .16; stroke-width: 1; }
+  #map .band { fill: none; stroke: var(--rule); }
+  #detail { min-height: 6rem; }
+  #detail h3 { margin-top: .4rem; }
+  #detail ul { margin: .2rem 0 .8rem; }
+  #detail li { font-size: .9rem; }
+  .legend span { display: inline-block; margin-right: 1.2rem; font-size: .88rem; }
+  .sw { display: inline-block; width: 26px; height: 0; border-top: 2px solid; vertical-align: middle; margin-right: .3rem; }
+  #modtable td:nth-child(4), #modtable td:nth-child(5) { text-align: right; }
+</style>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html" aria-current="page">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>The module map</h1>
+<p class="lede">Every <code>initramfs/*.lisp</code> and <code>poc/*.lisp</code> module, grouped into layers.
+The edges are <em>derived from the code</em>: a module uses another when it mentions a name the other one
+defines. Click a module to see what it uses and what uses it.</p>
+
+<div class="note">This page is generated data. <code>sbcl --script doc/guide/regen.lisp</code> re-scans the
+source and rewrites <code>deps-data.js</code>. Its header explains the rules for counting a mention: calls and
+quoted names only, binding positions excluded, strings and comments stripped. The rules lean towards
+missing an edge rather than inventing one. The layer of each file is a hand-written table in the same
+script (<code>+layers+</code>). That table is a judgement call. The edges are not.</div>
+
+<p class="legend">
+  <span><i class="sw" style="border-color:var(--accent)"></i>uses (outgoing)</span>
+  <span><i class="sw" style="border-color:var(--amber)"></i>used by (incoming)</span>
+  <span><i class="sw" style="border-color:var(--line);border-top-style:dashed"></i>late-bound: target loads later in <code>LISP_SOURCES</code></span>
+  <span>dashed box = host-only (not in the image)</span>
+  <label><input type="checkbox" id="showall"> show all edges, faint</label>
+</p>
+
+<figure>
+<svg id="map" viewBox="0 0 960 700" role="img" aria-label="Module dependency map, layered from the framebuffer runtime at the top down to the kernel interface, with host-only tools at the bottom."></svg>
+<figcaption id="mapcap">Layers from top to bottom. A module mostly uses modules in the layers below it. The
+exceptions are the interesting part: click <code>poc/shell.lisp</code> and look for the dashed edges up to
+<code>fb-browser.lisp</code> and <code>file-manager.lisp</code>.</figcaption>
+</figure>
+<div id="detail"><p class="dim">Select a module above.</p></div>
+
+<h2>All modules</h2>
+<table id="modtable">
+  <thead><tr><th>Module</th><th>Layer</th><th>Role (from its header)</th><th>Lines</th><th>Defs</th><th>Uses</th><th>Used by</th></tr></thead>
+  <tbody></tbody>
+</table>
+
+<h2>Reading the map</h2>
+<ul>
+  <li><strong>The spine</strong> runs <code>registry → model → present → shell → fb-browser → supervisor</code>.
+    Read those six files in that order and you know how the environment works.</li>
+  <li><strong>The toolkit knows nothing about Lisp.</strong> <code>canvas</code>, <code>widgets</code> and <code>textview</code> do
+    not use <code>present</code>. The shell adapts between them (<a class="ref" data-ref="poc/shell.lisp#item-&gt;row" href="../../poc/shell.lisp"><code>item-&gt;row</code><span class="loc">poc/shell.lisp:536</span></a>
+    converts a protocol <code>item</code> into a widget <code>row</code>). That is why the same widgets draw a package,
+    the Spotter and the debugger's restarts.</li>
+  <li><strong>The protocol does not know about pixels.</strong> <code>present.lisp</code> uses only <code>model</code> and
+    <code>registry</code>. You can run it at a plain REPL: <code>(show-view (subj-modules))</code>.</li>
+  <li><strong>Late-bound edges are deliberate.</strong> For example, the shell calls <code>run-spotter-fb</code> through
+    <code>(funcall 'run-spotter-fb)</code> under <code>(fboundp …)</code>. On the host there is no
+    <code>fb-browser.lisp</code>, and the same shell still runs in an X11 window and in
+    <code>render-frame</code>.</li>
+  <li><strong>Packages.</strong> Most of the image lives in <code>CL-USER</code>. The toolkit modules have their own
+    packages (<code>lol.canvas</code>, <code>lol.widgets</code>, <code>lol.textview</code>, <code>lol.fb</code>,
+    <code>lol.clipboard</code>, <code>lol.inflate</code>, <code>lol.image</code>, <code>lol.examples</code>, and
+    host-only <code>lol.x11</code>, <code>lol.scene</code>), so a qualified name like <code>lol.widgets:draw-list</code> tells you
+    which file to open.</li>
+</ul>
+
+<div class="pager"><a href="build.html">← How the image is built</a><a href="present.html">present and the shell →</a></div>
+</main>
+</div>
+<script>
+(function () {
+  var D = window.LOL_DEPS; if (!D) return;
+  var NS = "http://www.w3.org/2000/svg";
+  var svg = document.getElementById("map");
+  var layerKeys = ["kernel", "data", "model", "present", "ui", "shell", "runtime", "tools"];
+  // top-to-bottom drawing order: callers above callees, host tools last
+  var drawOrder = [6, 5, 3, 4, 2, 1, 0, 7];
+  var W = 960, padX = 14, boxW = 146, boxH = 30, gapX = 9, gapY = 10, bandPad = 22;
+  var byFile = {}, pos = {};
+  D.modules.forEach(function (m) { byFile[m.file] = m; });
+  function base(f) { return f.replace(/^.*\//, ""); }
+  function el(name, attrs, parent) {
+    var e = document.createElementNS(NS, name);
+    for (var k in attrs) e.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+  var y = 8, bands = el("g", {}, svg), edges = el("g", {}, svg), nodes = el("g", {}, svg);
+  var perRow = Math.floor((W - 2 * padX - 6 + gapX) / (boxW + gapX));
+  drawOrder.forEach(function (li) {
+    var mods = D.modules.filter(function (m) { return m.layer === li; })
+                        .sort(function (a, b) { return (a.load === null) - (b.load === null) || a.file.localeCompare(b.file); });
+    if (!mods.length) return;
+    var rows = Math.ceil(mods.length / perRow);
+    var h = bandPad + rows * (boxH + gapY);
+    el("rect", { x: 4, y: y, width: W - 8, height: h, rx: 8, "class": "band" }, bands);
+    var t = el("text", { x: 12, y: y + 15, "class": "lbl" }, bands);
+    t.textContent = D.layers[li].name.toUpperCase() + " — " + D.layers[li].blurb;
+    mods.forEach(function (m, i) {
+      var r = Math.floor(i / perRow), c = i % perRow;
+      var x = padX + 6 + c * (boxW + gapX), yy = y + bandPad + r * (boxH + gapY);
+      pos[m.file] = { x: x, y: yy };
+      var g = el("g", { "class": "mod" + (m.load === null ? " host" : ""), tabindex: 0 }, nodes);
+      g.dataset.file = m.file;
+      el("rect", { x: x, y: yy, width: boxW, height: boxH, rx: 5, "class": "k-" + layerKeys[li] }, g);
+      var tx = el("text", { x: x + 8, y: yy + 19 }, g);
+      tx.textContent = (m.file.indexOf("poc/") === 0 ? "poc/" : "") + base(m.file);
+      var tt = el("title", {}, g); tt.textContent = m.file + " — " + m.role;
+    });
+    y += h + 8;
+  });
+  svg.setAttribute("viewBox", "0 0 " + W + " " + (y + 4));
+
+  function path(a, b) {
+    var pa = pos[a], pb = pos[b];
+    var x1 = pa.x + boxW / 2, x2 = pb.x + boxW / 2, y1, y2;
+    if (pb.y > pa.y + 1) { y1 = pa.y + boxH; y2 = pb.y; }
+    else if (pb.y < pa.y - 1) { y1 = pa.y; y2 = pb.y + boxH; }
+    else { y1 = pa.y + boxH; y2 = pb.y + boxH; }
+    var my = (y1 === y2) ? y1 + 26 : (y1 + y2) / 2;
+    return "M" + x1 + "," + y1 + " C" + x1 + "," + my + " " + x2 + "," + my + " " + x2 + "," + y2;
+  }
+  function clear() { while (edges.firstChild) edges.removeChild(edges.firstChild); }
+  function drawFaint() {
+    if (!document.getElementById("showall").checked) return;
+    D.edges.forEach(function (e) {
+      if (pos[e.from] && pos[e.to]) el("path", { d: path(e.from, e.to), "class": "e faint" }, edges);
+    });
+  }
+  function esc(s) { return s.replace(/[&<>]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]; }); }
+  function select(file) {
+    clear(); drawFaint();
+    var outs = D.edges.filter(function (e) { return e.from === file; });
+    var ins = D.edges.filter(function (e) { return e.to === file; });
+    var touched = {}; touched[file] = 1;
+    outs.forEach(function (e) { touched[e.to] = 1; if (pos[e.to]) el("path", { d: path(file, e.to), "class": "e out" + (e.late ? " late" : "") }, edges); });
+    ins.forEach(function (e) { touched[e.from] = 1; if (pos[e.from]) el("path", { d: path(e.from, file), "class": "e in" + (e.late ? " late" : "") }, edges); });
+    Array.prototype.forEach.call(nodes.childNodes, function (g) {
+      g.classList.toggle("sel", g.dataset.file === file);
+      g.classList.toggle("dim", !touched[g.dataset.file]);
+    });
+    var m = byFile[file];
+    var h = "<h3><a href=\"../../" + m.file + "\">" + m.file + "</a></h3><p>" + esc(m.role) + ". " +
+      D.layers[m.layer].name + " layer · " + m.lines + " lines · " + m.defs + " top-level definitions" +
+      (m.packages.length ? " · defines package " + m.packages.join(", ") : "") +
+      (m.load === null ? " · <strong>host-only</strong>" : " · load position " + m.load) + "</p>";
+    function list(title, es, key) {
+      if (!es.length) return "<p class=\"dim\">" + title + ": nothing.</p>";
+      return "<p><strong>" + title + "</strong></p><ul>" + es.map(function (e) {
+        return "<li><code>" + e[key] + "</code>" + (e.late ? " <em>(late-bound)</em>" : "") + ": " +
+          e.names.slice(0, 14).map(function (n) { return "<code>" + esc(n) + "</code>"; }).join(" ") +
+          (e.names.length > 14 ? " … +" + (e.names.length - 14) : "") + "</li>";
+      }).join("") + "</ul>";
+    }
+    document.getElementById("detail").innerHTML = h + list("Uses", outs, "to") + list("Used by", ins, "from");
+  }
+  nodes.addEventListener("click", function (ev) {
+    var g = ev.target.closest(".mod"); if (g) select(g.dataset.file);
+  });
+  nodes.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") { var g = ev.target.closest(".mod"); if (g) select(g.dataset.file); }
+  });
+  document.getElementById("showall").addEventListener("change", function () {
+    var s = document.querySelector("#map .mod.sel"); if (s) select(s.dataset.file); else { clear(); drawFaint(); }
+  });
+  select("poc/shell.lisp");
+
+  // the table
+  var tb = document.querySelector("#modtable tbody");
+  drawOrder.forEach(function (li) {
+    D.modules.filter(function (m) { return m.layer === li; }).forEach(function (m) {
+      var uses = D.edges.filter(function (e) { return e.from === m.file; }).map(function (e) { return base(e.to); });
+      var by = D.edges.filter(function (e) { return e.to === m.file; }).map(function (e) { return base(e.from); });
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td><a href=\"../../" + m.file + "\">" + m.file + "</a>" + (m.load === null ? " <em>(host)</em>" : "") +
+        "</td><td>" + D.layers[li].name + "</td><td>" + esc(m.role) + "</td><td>" + m.lines + "</td><td>" + m.defs +
+        "</td><td>" + uses.join(", ") + "</td><td>" + by.join(", ") + "</td>";
+      tb.appendChild(tr);
+    });
+  });
+})();
+</script>
+</body>
+</html>

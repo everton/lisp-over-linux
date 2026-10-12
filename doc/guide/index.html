@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lisp-over-Linux guide</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html" aria-current="page">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>Start here: the big picture</h1>
+<p class="lede">A guide to reading the code of lisp-over-linux: what runs, in what order, and
+where each part lives. Every diagram box and every <code>file:line</code> below was checked
+against the source. The line numbers are generated, so they stay correct when the code moves.</p>
+
+<h2>How to use this guide</h2>
+<ul>
+  <li><strong>References</strong> look like <a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:1876</span></a>.
+    The link opens the file. The grey <code>file:line</code> is for Emacs: <kbd>M-x find-file</kbd>, then
+    <kbd>M-g g</kbd> to the line. Better still, open the definition in the running environment itself
+    (<a href="paths.html">Reading paths</a> shows how).</li>
+  <li><strong>The guide checks itself.</strong> <code>sbcl --script doc/guide/regen.lisp</code> rewrites
+    every reference from the current source. It exits non-zero if a function was renamed or a file
+    disappeared. It also re-derives the <a href="modules.html">module map</a> and stamps this sidebar.
+    Run it after you change code, the same way you run <code>./check-links.sh</code> after you change the docs.</li>
+  <li><strong>The environment has a twin of this guide.</strong> In the running system, press
+    <kbd>SuperL</kbd>-<kbd>Space</kbd>, type <code>tour</code> and press <kbd>Enter</kbd>. You get the same walk as a
+    list of the image's own live definitions. The <code>.org</code> index of these pages is
+    <a href="../tour.org">doc/tour.org</a>.</li>
+  <li>The design documents in <code>doc/*.org</code> explain <em>why</em> things are the way they are. This guide
+    is a map of <em>where</em> they are and <em>how</em> they connect, and it links to those documents when you need the why.</li>
+</ul>
+
+<h2>From the power button to the Workspace</h2>
+<p>This is the whole boot. Read it left to right, then down. Each box names the file, or the
+function, that does that step.</p>
+
+<figure>
+<svg viewBox="0 0 960 600" role="img" aria-label="Boot chain: UEFI firmware loads BOOTX64.EFI, which is the kernel's EFI stub; the kernel unpacks initramfs.cpio and runs /init, the C preinit, as PID 1; preinit mounts filesystems and the disk, forks the root helper lol-rootd, drops to the user and execs /sbin/lisp, the saved SBCL image, still PID 1; init-toplevel picks the supervisor role; supervisor-main configures the network and runs the environment, falling back to a menu; power-off asks lol-rootd to remount the disk read-only.">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
+  </defs>
+  <!-- tier 1: firmware to PID 1 -->
+  <text x="20" y="16" class="lbl">FIRMWARE AND KERNEL (doc/micro-distro.org)</text>
+  <rect class="box k-kernel" x="20" y="24" width="200" height="58" rx="6"/>
+  <text x="30" y="46" class="title">UEFI firmware</text>
+  <text x="30" y="66" class="dim">OVMF in QEMU, or the laptop's</text>
+  <a href="../../build.sh"><rect class="box k-kernel" x="260" y="24" width="200" height="58" rx="6"/>
+  <text x="270" y="46" class="title">\EFI\BOOT\BOOTX64.EFI</text>
+  <text x="270" y="66" class="dim">= the bzImage (EFI stub)</text></a>
+  <a href="../kernel-config.org"><rect class="box k-kernel" x="500" y="24" width="200" height="58" rx="6"/>
+  <text x="510" y="46" class="title">Linux kernel</text>
+  <text x="510" y="66" class="dim">built-in cmdline; unpacks the cpio</text></a>
+  <a href="../../initramfs/preinit.c"><rect class="box hot" x="740" y="24" width="200" height="58" rx="6"/>
+  <text x="750" y="46" class="title">/init = preinit</text>
+  <text x="750" y="66" class="dim">initramfs/preinit.c · PID 1 · C</text></a>
+  <path class="edge" d="M220,53 H258" marker-end="url(#ar)"/>
+  <text x="225" y="98" class="lbl">loads from the ESP</text>
+  <path class="edge" d="M460,53 H498" marker-end="url(#ar)"/>
+  <text x="440" y="98" class="lbl">initrd=initramfs.cpio</text>
+  <path class="edge" d="M700,53 H738" marker-end="url(#ar)"/>
+  <text x="690" y="98" class="lbl">exec /init as PID 1</text>
+
+  <!-- tier 2: preinit -->
+  <rect class="zone" x="490" y="116" width="460" height="232" rx="8"/>
+  <text x="500" y="134" class="lbl">PREINIT main() — still root, every step non-fatal</text>
+  <g class="mono">
+  <rect class="box" x="510" y="142" width="420" height="26" rx="4"/><text x="520" y="160" class="mono">1 mount proc, sysfs, devtmpfs, tmpfs /tmp, devpts, /dev/shm</text>
+  <rect class="box" x="510" y="174" width="420" height="26" rx="4"/><text x="520" y="192" class="mono">2 read_config: /etc/lol.conf (+ lol.user= lol.disk=)</text>
+  <rect class="box" x="510" y="206" width="420" height="26" rx="4"/><text x="520" y="224" class="mono">3 mount_storage: ext4 → /mnt/host (ro), bind /home (rw)</text>
+  <rect class="box" x="510" y="238" width="420" height="26" rx="4"/><text x="520" y="256" class="mono">4 start_rootd: fork the one process that stays root</text>
+  <rect class="box" x="510" y="270" width="420" height="26" rx="4"/><text x="520" y="288" class="mono">5 become_user: host uid, keep 5 ambient capabilities</text>
+  <rect class="box hot" x="510" y="302" width="420" height="26" rx="4"/><text x="520" y="320" class="mono">6 execve /sbin/lisp — same process, same PID 1</text>
+  </g>
+  <path class="edge" d="M840,82 V140" marker-end="url(#ar)"/>
+  <!-- lol-rootd -->
+  <a href="../storage.org"><rect class="box k-kernel" x="250" y="222" width="210" height="58" rx="6"/>
+  <text x="260" y="244" class="title">lol-rootd (root helper)</text>
+  <text x="260" y="262" class="dim">every 1 s: chown new /dev nodes</text>
+  <text x="260" y="276" class="dim">SIGUSR1: sync, remount ro</text></a>
+  <path class="edge" d="M510,251 H462" marker-end="url(#ar)"/>
+  <text x="470" y="244" class="lbl">fork</text>
+
+  <!-- tier 3: the Lisp -->
+  <rect class="zone" x="10" y="364" width="940" height="226" rx="8"/>
+  <text x="20" y="382" class="lbl">/sbin/lisp — THE SAVED SBCL IMAGE (initramfs/lisp-init), running as the user</text>
+  <path class="edge" d="M840,328 V398" marker-end="url(#ar)"/>
+  <a href="../../initramfs/supervisor.lisp"><rect class="box k-runtime" x="740" y="400" width="200" height="54" rx="6"/>
+  <text x="750" y="422" class="title">init-toplevel</text>
+  <text x="750" y="440" class="dim">argv chooses the role</text></a>
+  <a href="../../initramfs/supervisor.lisp"><rect class="box k-runtime" x="500" y="400" width="200" height="54" rx="6"/>
+  <text x="510" y="422" class="title">supervisor-main</text>
+  <text x="510" y="440" class="dim">PID 1's Lisp body; never returns</text></a>
+  <a href="../../initramfs/fb-browser.lisp"><rect class="box hot" x="260" y="400" width="200" height="54" rx="6"/>
+  <text x="270" y="422" class="title">run-browser-fb</text>
+  <text x="270" y="440" class="dim">the environment, on /dev/fb0</text></a>
+  <path class="edge" d="M740,427 H702" marker-end="url(#ar)"/>
+  <text x="706" y="418" class="lbl">no args</text>
+  <path class="edge" d="M500,427 H462" marker-end="url(#ar)"/>
+  <text x="466" y="418" class="lbl">then</text>
+
+  <a href="../../initramfs/dhcp.lisp"><rect class="box k-kernel" x="500" y="500" width="200" height="66" rx="6"/>
+  <text x="510" y="520" class="title">boot diagnostics</text>
+  <text x="510" y="538" class="dim">input devices · configure-eth0</text>
+  <text x="510" y="554" class="dim">(DHCP) · net REPL if asked</text></a>
+  <path class="edge" d="M600,454 V498" marker-end="url(#ar)"/>
+  <text x="606" y="482" class="lbl">first</text>
+
+  <a href="../../initramfs/worker.lisp"><rect class="box k-runtime" x="740" y="500" width="200" height="66" rx="6"/>
+  <text x="750" y="520" class="title">child roles</text>
+  <text x="750" y="538" class="dim">"worker N" → worker-main</text>
+  <text x="750" y="554" class="dim">"job NAME" → run-worker-job</text></a>
+  <path class="edge dash" d="M840,454 V498" marker-end="url(#ar)"/>
+  <text x="846" y="482" class="lbl">re-exec'd copies</text>
+
+  <a href="../../initramfs/supervisor.lisp"><rect class="box k-runtime" x="260" y="500" width="200" height="66" rx="6"/>
+  <text x="270" y="520" class="title">the menu loop</text>
+  <text x="270" y="538" class="dim">r b p c l w a m t s</text>
+  <text x="270" y="554" class="dim">(on the text console)</text></a>
+  <path class="edge" d="M340,454 V498" marker-end="url(#ar)"/>
+  <path class="edge" d="M380,498 V456" marker-end="url(#ar)"/>
+  <text x="300" y="482" class="lbl">leave</text>
+  <text x="386" y="482" class="lbl">b p c l</text>
+
+  <a href="../../initramfs/process.lisp"><rect class="box k-kernel" x="20" y="500" width="200" height="66" rx="6"/>
+  <text x="30" y="520" class="title">power-off</text>
+  <text x="30" y="538" class="dim">sync · release-disk</text>
+  <text x="30" y="554" class="dim">reboot(2) RB_POWER_OFF</text></a>
+  <path class="edge" d="M260,533 H222" marker-end="url(#ar)"/>
+  <text x="228" y="526" class="lbl">s</text>
+  <path class="edge dash" d="M120,500 V251 H248" marker-end="url(#ar)"/>
+  <text x="128" y="300" class="lbl">kill(pid, SIGUSR1)</text>
+  <text x="128" y="314" class="lbl">via $LOL_ROOTD_PID</text>
+</svg>
+<figcaption>The boot chain. Solid arrows are the order things happen in. Dashed arrows are a
+re-exec (child roles) or a signal (power-off asking lol-rootd for the one privileged thing
+it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs as root, as QEMU without
+<code>test-disk.img</code> does.</figcaption>
+</figure>
+
+<h3>The same chain in words, with references</h3>
+<ol class="stops">
+  <li><span class="where">firmware → <code>BOOTX64.EFI</code></span>
+    There is no bootloader. The kernel's <code>bzImage</code> <em>is</em> an EFI application (the "EFI stub"),
+    and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:238</span></a>).
+    The kernel's command line is compiled in (
+    <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:397</span></a>). It says
+    <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is
+    the "separate initrd", and it is why a Lisp change rebuilds in seconds without touching the kernel. More in
+    <a href="../micro-distro.org">micro-distro.org</a>.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/initramfs.sbcl.list#&quot;file /init&quot;" data-label="/init in the cpio list" href="../../initramfs/initramfs.sbcl.list"><code>/init in the cpio list</code><span class="loc">initramfs/initramfs.sbcl.list:30</span></a></span>
+    The cpio list maps <code>initramfs/preinit</code> to <code>/init</code> and <code>initramfs/lisp-init</code>
+    to <code>/sbin/lisp</code>. It also ships glibc's loader, <code>libc</code> and <code>libm</code>, because
+    the SBCL runtime is a dynamically linked program.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/preinit.c#&quot;int main(void)&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:457</span></a></span>
+    Why C first? An SBCL executable finds its own heap by reading <code>/proc/self/exe</code>, so
+    <code>/proc</code> has to be mounted before SBCL starts. preinit then does the privileged work once, while
+    it is still root:
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:267</span></a>,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:373</span></a>,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:425</span></a>.
+    Then it <code>execve</code>s the Lisp. <code>execve</code> replaces the program, not the process, so the Lisp
+    <em>is</em> PID 1. Details are on <a href="system.html">Storage, privilege, network</a>.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:149</span></a></span>
+    <code>save-lisp-and-die</code> named this function as the image's <code>:toplevel</code>
+    (<a href="build.html">How the image is built</a>). One binary plays three roles, chosen by
+    <code>argv</code>. The <code>worker</code> and <code>job</code> roles exist so that the image can run
+    <em>itself</em> as a child process (<a href="../processes.org">processes.org</a>).</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:84</span></a></span>
+    It prints diagnostics, runs DHCP (<a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:160</span></a>),
+    starts the network REPL only if the boot asked for it, and then calls
+    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1214</span></a>. That function catches every
+    error, so a broken environment drops you at the menu instead of killing PID 1. A kernel panics if PID 1
+    exits, so every path here either loops or powers off.</li>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1214</span></a></span>
+    The environment: one loop that redraws when something changed, then blocks in <code>poll(2)</code> on the
+    keyboard and mouse. It opens on the Workspace. Everything from here on is the subject of
+    <a href="present.html">present and the shell</a> and <a href="pixels.html">Pixels and input</a>.</li>
+</ol>
+
+<h2>Three ideas the rest hangs on</h2>
+<div class="cards">
+  <div class="card"><h3>The image carries its own source</h3>
+    <p>When the image is built, every module is loaded with <code>load-recording</code>, which also stores
+    each definition's text in <code>*registry*</code>. The running system can show and edit its own code with
+    no source files on disk. <a href="build.html">Build →</a></p></div>
+  <div class="card"><h3>Everything is a subject</h3>
+    <p><code>(present subject)</code> returns a <em>view</em>: a title, items and maybe text. An item that
+    carries a subject can be drilled. One generic function covers source, classes, files, processes and
+    this tour. <a href="present.html">present →</a></p></div>
+  <div class="card"><h3>Pixels are one vector</h3>
+    <p>The canvas is a vector of <code>#x00RRGGBB</code> words, which is already the framebuffer's byte
+    order. Showing a frame on <code>/dev/fb0</code> is one <code>pwrite</code>. The X11 window and the headless
+    renderer show the same vector. <a href="pixels.html">Pixels →</a></p></div>
+</div>
+
+<h2>Where things live</h2>
+<table>
+  <tr><th>Directory</th><th>What is in it</th><th>Ships in the image?</th></tr>
+  <tr><td><code>initramfs/</code></td><td>The guest userland: preinit, the supervisor, the model and
+    <code>present</code> layers, the framebuffer runtime, networking, files.</td><td>Yes. The <code>.lisp</code> files are
+    compiled into <code>lisp-init</code>. They are not shipped as files, but their text is kept in the registry.</td></tr>
+  <tr><td><code>poc/</code></td><td>The pixel toolkit shared with the host: canvas, textview, widgets,
+    shell, the file manager's keys, decoders. Also host-only runners, <code>x11.lisp</code> and
+    <code>render-frame.lisp</code>.</td><td>Partly: whatever <code>LISP_SOURCES</code> lists
+    (<a href="modules.html">module map</a> marks it).</td></tr>
+  <tr><td><code>host-client/</code></td><td>Host tools: QMP, PNG writer, the guest test harness, the net-REPL client.</td><td>Never.</td></tr>
+  <tr><td><code>check-*.lisp</code></td><td>Tests that boot the image in QEMU and check its state.</td><td>Never.</td></tr>
+  <tr><td><code>doc/</code></td><td>The design documents (<code>.org</code>) and this guide (<code>doc/guide/</code>).</td><td>No.</td></tr>
+  <tr><td><code>./linux</code>, <code>./sbcl</code></td><td>Gitignored symlinks to the kernel and SBCL trees (<code>deps.sh</code>).</td><td>Their outputs do.</td></tr>
+</table>
+
+<div class="pager"><span></span><a href="build.html">How the image is built →</a></div>
+</main>
+</div>
+</body>
+</html>

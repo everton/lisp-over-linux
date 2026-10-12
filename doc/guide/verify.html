@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to verify things</title>
+<link rel="stylesheet" href="guide.css">
+<script src="guide.js"></script>
+</head>
+<body>
+<div class="wrap">
+<!-- nav:begin -->
+<nav class="side" aria-label="Guide pages">
+  <div class="brand"><a href="index.html">lisp-over-linux</a></div>
+  <div class="sub">a guide to the code · <a href="../tour.org">tour.org</a></div>
+  <ol>
+    <li><a href="index.html">Start here: the big picture</a></li>
+    <li><a href="build.html">How the image is built</a></li>
+    <li><a href="modules.html">The module map</a></li>
+    <li><a href="present.html">present and the shell</a></li>
+    <li><a href="pixels.html">Pixels and input</a></li>
+    <li><a href="live.html">Live editing, the debugger</a></li>
+    <li><a href="system.html">Storage, privilege, network</a></li>
+    <li><a href="verify.html" aria-current="page">How to verify things</a></li>
+    <li><a href="paths.html">Reading paths</a></li>
+    <li><a href="glossary.html">Glossary</a></li>
+    <li><a href="exercises.html">Exercises</a></li>
+    <li><a href="in-progress.html">Subsystems in progress</a></li>
+  </ol>
+  <div class="theme">theme: <button type="button" data-theme-toggle>auto</button></div>
+</nav>
+<!-- nav:end -->
+<main>
+<h1>How to verify things</h1>
+<p class="lede">The project's rule is "verify, don't assert". There are four tools, from cheapest to most thorough:
+a plain SBCL on the host, a rendered frame, the docs' own checkers, and a booted guest that is questioned over the network.</p>
+
+<h2>Pick the cheapest check that can fail</h2>
+<table>
+  <tr><th>You changed…</th><th>Run</th><th>Time</th><th>What it proves</th></tr>
+  <tr><td>a pure module (clipboard, files, image, sysinfo, undo)</td><td><code>sbcl --script poc/NAME-test.lisp</code></td><td>seconds</td><td>the data layer, on the host, in a scratch directory</td></tr>
+  <tr><td>anything you can see</td><td><code>sbcl --script poc/render-frame.lisp SUBJECT -k "keys"</code></td><td>~1-3 s</td><td>the exact pixels the guest would show (same canvas, same code)</td></tr>
+  <tr><td>a doc</td><td><code>./check-links.sh --quiet</code></td><td>seconds</td><td>every <code>[[file:…]]</code> link and <code>::anchor</code> resolves</td></tr>
+  <tr><td>code this guide points at</td><td><code>sbcl --script doc/guide/regen.lisp</code></td><td>~2 s</td><td>every <code>file:line</code> here still names a real definition; the module map is current</td></tr>
+  <tr><td>behaviour with real input, processes, the disk</td><td><code>./build.sh</code> then <code>LOL_PORT=40NN sbcl --script check-NAME.lisp</code></td><td>1-3 min</td><td>the booted image does it, under QEMU</td></tr>
+</table>
+
+<h3>Host tests</h3>
+<ul>
+  <li><a class="ref" data-ref="poc/clipboard-test.lisp" href="../../poc/clipboard-test.lisp"><code>clipboard-test.lisp</code><span class="loc">poc/clipboard-test.lisp</span></a>, <a class="ref" data-ref="poc/undo-test.lisp" href="../../poc/undo-test.lisp"><code>undo-test.lisp</code><span class="loc">poc/undo-test.lisp</span></a>,
+    <a class="ref" data-ref="poc/files-test.lisp" href="../../poc/files-test.lisp"><code>files-test.lisp</code><span class="loc">poc/files-test.lisp</span></a>, <a class="ref" data-ref="poc/sysinfo-test.lisp" href="../../poc/sysinfo-test.lisp"><code>sysinfo-test.lisp</code><span class="loc">poc/sysinfo-test.lisp</span></a> (fake
+    <code>/sys/class/power_supply</code> trees, since QEMU has no battery), <a class="ref" data-ref="poc/image-test.lisp" href="../../poc/image-test.lisp"><code>image-test.lisp</code><span class="loc">poc/image-test.lisp</span></a>
+    (fixtures generated with ImageMagick).</li>
+  <li><a class="ref" data-ref="poc/sbcl-source-test.lisp" href="../../poc/sbcl-source-test.lisp"><code>sbcl-source-test.lisp</code><span class="loc">poc/sbcl-source-test.lisp</span></a> must run under <code>./sbcl</code>'s own runtime:
+    <code>SBCL_HOME=sbcl/obj/sbcl-home sbcl/src/runtime/sbcl --core sbcl/output/sbcl.core --script poc/sbcl-source-test.lisp</code>
+    gives 23/23. The system <code>sbcl</code> on this machine is a different version (2.6.6), its source locations point
+    elsewhere, and it gives 14/23. That is not a regression (checked 2026-10-12).</li>
+</ul>
+
+<h3>render-frame</h3>
+<p><a class="ref" data-ref="poc/render-frame.lisp#parse-subject" href="../../poc/render-frame.lisp"><code>parse-subject</code><span class="loc">poc/render-frame.lisp:191</span></a> lists the subjects it can open (<code>-h</code> prints
+them). It loads most of the stack in build order, but not <code>fb.lisp</code>, <code>fb-browser.lisp</code>, the network modules
+or the supervisor. In a rendered frame those modules' definitions show as "not in this image". That is expected.
+Convert the PPM with <code>sbcl --script host-client/ppm2png.lisp in.ppm out.png</code>.</p>
+<pre><code>sbcl --script poc/render-frame.lisp tour -s 1280x800
+sbcl --script poc/render-frame.lisp workspace --spotter tour
+sbcl --script poc/render-frame.lisp defn:accept-source
+sbcl --script poc/render-frame.lisp modules --halo 300,200</code></pre>
+
+<h2>The guest harness</h2>
+<figure>
+<svg viewBox="0 0 960 250" role="img" aria-label="A check script on the host boots the image under QEMU through guest-harness.lisp. It has two channels: QMP, QEMU's control socket, sends synthetic keys, held modifiers and wheel notches, which QEMU turns into real evdev records in the guest; the net REPL on a forwarded TCP port evaluates probe forms in the guest and reads back the guest's own state. Assertions are on that state, not on pixels.">
+  <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
+  <rect class="zone" x="10" y="20" width="330" height="210" rx="8"/><text x="20" y="38" class="lbl">HOST</text>
+  <rect class="box k-tools" x="30" y="50" width="290" height="50" rx="6"/><text x="40" y="70" class="title">check-NAME.lisp</text><text x="40" y="88" class="dim">(check "label" ok) … run-guest-checks</text>
+  <rect class="box k-tools" x="30" y="120" width="290" height="90" rx="6"/><text x="40" y="140" class="title">host-client/guest-harness.lisp</text><text x="40" y="158" class="mono">boot-guest   qmp-key qmp-hold</text><text x="40" y="174" class="mono">qmp-wheel    probe probe-int</text><text x="40" y="194" class="dim">QEMU -fw_cfg …netrepl,string=1</text>
+  <path class="edge" d="M175,100 V118" marker-end="url(#ar)"/>
+  <rect class="zone" x="560" y="20" width="390" height="210" rx="8"/><text x="570" y="38" class="lbl">QEMU GUEST (the real image)</text>
+  <rect class="box k-kernel" x="580" y="50" width="350" height="50" rx="6"/><text x="590" y="70" class="title">evdev records</text><text x="590" y="88" class="dim">indistinguishable from a finger: same input path</text>
+  <rect class="box k-runtime" x="580" y="140" width="350" height="70" rx="6"/><text x="590" y="160" class="title">net REPL on :4005</text><text x="590" y="178" class="mono">(format t "&lt;&lt;~s&gt;&gt;" (pane-sel (current-pane)))</text><text x="590" y="196" class="dim">the answer is wrapped so the echo can't match it</text>
+  <path class="edge hot" d="M320,150 C440,150 440,75 578,75" marker-end="url(#ar)"/><text x="370" y="100" class="lbl">QMP: input</text>
+  <path class="edge hot" d="M320,185 H578" marker-end="url(#ar)"/><path class="edge dash" d="M578,200 H322" marker-end="url(#ar)"/><text x="400" y="178" class="lbl">probe form</text><text x="400" y="216" class="lbl">the guest's own state</text>
+</svg>
+<figcaption>Two channels with a clean split: QMP to <em>act</em> like a user, the net REPL to <em>ask</em> the image what
+happened. Assertions are on values the image computed about itself, never on pixels.</figcaption>
+</figure>
+<ul>
+  <li>Harness: <a class="ref" data-ref="host-client/guest-harness.lisp#boot-guest" href="../../host-client/guest-harness.lisp"><code>boot-guest</code><span class="loc">host-client/guest-harness.lisp:80</span></a>,
+    <a class="ref" data-ref="host-client/guest-harness.lisp#probe" href="../../host-client/guest-harness.lisp"><code>probe</code><span class="loc">host-client/guest-harness.lisp:299</span></a>,
+    <a class="ref" data-ref="host-client/guest-harness.lisp#qmp-hold" href="../../host-client/guest-harness.lisp"><code>qmp-hold</code><span class="loc">host-client/guest-harness.lisp:199</span></a>. Its header records two hard-won traps:
+    hold the modifier (a QMP chord releases it before the tty byte is read) and make answers self-identifying.</li>
+  <li>Environment: <code>LOL_PORT</code> (host port of the forward, default 4005), <code>LOL_QEMU_CPU</code> (default
+    qemu64, which has no POPCNT; that is how the LOGCOUNT bug was caught), <code>LOL_GUEST_DISK=test-disk.img</code> (attached
+    <code>snapshot=on</code>).</li>
+</ul>
+<table>
+  <tr><th>Check</th><th>Asserts</th></tr>
+  <tr><td><code>check-scroll.lisp</code></td><td>PageUp/Down and real wheel notches move <code>pane-top</code>/<code>tv-scroll</code> correctly</td></tr>
+  <tr><td><code>check-pointer.lisp</code></td><td>a bare mouse move does not redraw; press-and-drag selects text</td></tr>
+  <tr><td><code>check-clipboard.lisp</code></td><td>the clipboard keys, PRIMARY, menus, the halo, Spotter keys, undo</td></tr>
+  <tr><td><code>check-compile.lisp</code></td><td>the guest compiles arithmetic at run time (the LOGCOUNT fix)</td></tr>
+  <tr><td><code>check-worker.lisp</code></td><td>a second process really computes the view</td></tr>
+  <tr><td><code>check-files.lisp</code></td><td>storage, capabilities, the file manager (needs <code>test-disk.img</code>)</td></tr>
+  <tr><td><code>check-input.lisp</code></td><td>every keyboard and pointer at once, and hotplug</td></tr>
+  <tr><td><code>check-tour.lisp</code></td><td>every tour stop resolves and presents; the registry shows its own code as source</td></tr>
+</table>
+<p>Screenshots for the docs are produced the same way, by <code>refresh-screenshot.sh</code> and
+<code>host-client/drive-scene.lisp</code>.</p>
+
+<h2>Writing down a negative result</h2>
+<p>AGENTS.md asks for this: when a check rules something out, record it, so the next reader does not search again.
+This guide's own examples are the red "Ruled out / corrected" boxes (the registry that could not show itself, the
+debugger that was never entered through <code>*debugger-hook*</code>, the 14/23 above).</p>
+
+<div class="pager"><a href="system.html">← Storage, privilege, network</a><a href="paths.html">Reading paths →</a></div>
+</main>
+</div>
+</body>
+</html>
