@@ -40,7 +40,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>EFISTUB</dt>
   <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
     <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:238</span></a>;
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:248</span></a>;
     <a href="../micro-distro.org">micro-distro.org</a>).</dd>
   <dt>initramfs, cpio</dt>
   <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
@@ -168,10 +168,10 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dd>Compiling an edit into the running image, and the list of everything accepted this session
     (<a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>).</dd>
   <dt>Spotter</dt>
-  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2031</span></a>).</dd>
+  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2036</span></a>).</dd>
   <dt>halo</dt>
   <dd>Handles around whatever is under the middle button: what it is, and which code drew it. After Morphic
-    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2688</span></a>).</dd>
+    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2692</span></a>).</dd>
   <dt>stage</dt>
   <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
     (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a>).</dd>

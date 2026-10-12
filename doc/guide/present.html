@@ -124,6 +124,8 @@ shell draws it.</p>
   <tr><td><code>subj-worker</code></td><td>a view computed in a <em>second process</em></td><td><a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:179</span></a></td></tr>
   <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a></td></tr>
   <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:133</span></a></td></tr>
+  <tr><td><code>subj-containers</code> / <code>subj-container</code></td><td>the host Debian as containers (<code>lol-ct</code>); merged as this guide was finished</td><td><a class="ref" data-ref="initramfs/containers.lisp#present@subj-containers" href="../../initramfs/containers.lisp"><code>(present subj-containers)</code><span class="loc">initramfs/containers.lisp:281</span></a></td></tr>
+  <tr><td><code>run</code> / <code>subj-runs</code></td><td>a program's output streamed into a read-only pane</td><td><a class="ref" data-ref="initramfs/runs.lisp#present@run" href="../../initramfs/runs.lisp"><code>(present run)</code><span class="loc">initramfs/runs.lisp:246</span></a></td></tr>
 </table>
 <p><strong>To add a subject:</strong> one <code>defstruct</code>, one <code>present</code> method, and optionally
 <code>commands-for</code> and <code>present-preview</code>. To make it findable, push a function onto
@@ -133,12 +135,12 @@ page walks through it.</p>
 
 <h2>Commands: content declares, the shell disposes</h2>
 <p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:344</span></a> returns data. It never opens anything itself.
-The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:2435</span></a>), builds menu
-entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:2477</span></a>) and runs the chosen one through
-<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2414</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:2887</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:2891</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:2876</span></a>. That function calls whatever <code>*chooser*</code> the
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:2439</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:2481</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2418</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:2891</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:2895</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:2880</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser-fb</code> on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>

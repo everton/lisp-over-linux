@@ -389,7 +389,8 @@
      "initramfs/registry.lisp" "initramfs/model.lisp" "initramfs/sbcl-source.lisp")
     ("present protocol" "subjects -> views of items + commands; pure, headless"
      "initramfs/present.lisp" "initramfs/tour.lisp" "initramfs/file-views.lisp"
-     "initramfs/worker.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp")
+     "initramfs/worker.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
+     "initramfs/containers.lisp" "initramfs/runs.lisp")
     ("UI toolkit" "pixels and text: the canvas, fonts, widgets, the text editor, the TTY line editor"
      "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter"
