@@ -20,7 +20,7 @@ terminals all their life without needing to know what one is.
 | [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run. |
 | [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 95 checks, incl. recordings of less, vi and bash. |
 | [[file:../poc/pty-test.lisp][poc/pty-test.lisp]] | host test of the ptys: 13 checks on real programs (bash, htop). |
-| [[file:../check-terminal.lisp][check-terminal.lisp]] | the guest check over QMP: 16 checks. |
+| [[file:../check-terminal.lisp][check-terminal.lisp]] | the guest check over QMP: 18 checks. |
 
 * 1. What a terminal is
 
@@ -198,7 +198,8 @@ since it may be a perfectly good ESC.
 
 * 6. The grid
 
-*A cell is not an object.* A 1280x800 screen in our 6x15 font is 208x48 = ~10,000
+*A cell is not an object.* A 1280x800 screen in the Cozette fallback font (6x15)
+is 208x48 = ~10,000
 cells, and a busy program rewrites most of them many times a second. So a *line*
 (=tline=) is two parallel arrays — the characters, and one fixnum per cell packing
 everything else: 8 bits of flags (bold, faint, italic, underline, blink, inverse,
@@ -344,10 +345,13 @@ no cost — and =present-preview= never starts a program. Its view kind is
   =./linux/drivers/tty/tty_io.c=). The ioctl is the whole protocol.
 - *Glyphs.* Text is drawn in runs of one colour with the browser's own
   =draw-string=. Bold brightens the first eight colours (xterm's =boldColors=),
-  faint fades, inverse swaps. The font is Latin-1 ([[file:fonts.org][fonts.org]]), so box drawing
-  (U+2500-257F) and blocks (U+2580-259F) — what tmux, mc, =tree=, htop's meters
-  and ncurses' DEC graphics use — are drawn as lines and rectangles from each
-  character's /arms/; anything else past Latin-1 shows the font's =?=.
+  faint fades, inverse swaps. The font is the environment's TrueType monospace
+  ([[file:fonts.org][fonts.org]]), which covers what its cmap has (htop's =▽= sort arrow, CJK if the
+  face has it). Box drawing (U+2500-257F) and blocks (U+2580-259F) — what tmux,
+  mc, =tree=, htop's meters and ncurses' DEC graphics use — are drawn by us as lines
+  and rectangles from each character's /arms/ anyway: they must join cell to cell,
+  edge to edge, which a glyph drawn at a fractional advance does not promise, and
+  the Cozette fallback has none of them.
 - *The cursor*: a block in the accent colour, an outline when the pane is not
   focused, a bar or underline if the program asked (=DECSCUSR=).
 - *The mouse.* Press and drag selects — on release the text goes to PRIMARY and the
@@ -411,7 +415,7 @@ syscall per terminal):
 | the engine | =sbcl --script poc/terminal-test.lisp= | 95/95 |
 | ptys on real programs | =sbcl --script poc/pty-test.lisp= | 13/13 (bash, htop) |
 | a frame, headless | =sbcl --script poc/render-frame.lisp terminal:htop= | htop drawn in the pane |
-| the guest | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 16/16 |
+| the guest | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 18/18 |
 
 *Testing against real programs.* The recordings in =poc/terminal-data/= were made on
 the build host with =script(1)= at 80x24 and =TERM=xterm-256color=, the input fed on
@@ -438,7 +442,8 @@ because a login shell runs the user's dotfiles, and the build host's =.profile=
 stops to ask for an ssh key's passphrase, which a test cannot answer. Then: =echo
 hi=, the frame count, =seq 1 200= into the scrollback, Shift-PageUp from the evdev,
 =less /proc/cpuinfo= on the alternate screen and back, a breadcrumb above the pane
-taking a row (the same path a font change takes) with =stty size= agreeing, and
+taking a row with =stty size= agreeing, =SuperL-== (a bigger font) taking columns
+with =stty size= agreeing again, and
 =exit= reported and closed.
 
 * 13. What it does not do (yet)
@@ -447,9 +452,8 @@ taking a row (the same path a font change takes) with =stty size= agreeing, and
   there opens but does not update. =render-frame= is the host's way to look.
 - No *reflow* on resize (xterm's newer behaviour); no *italics* (no italic font);
   bold is colour, not a heavier glyph.
-- Characters past Latin-1 other than boxes and blocks show =?= until the font has
-  them ([[file:fonts.org][fonts.org]]); wide characters still take their two cells, so alignment
-  holds.
+- A character the font's cmap lacks shows as its fallback; wide characters still
+  take their two cells, so alignment holds.
 - Not implemented: OSC 52 (a program setting the clipboard), left/right margins
   (=DECLRMM=, mode 69), sixel, the title stack, focus events (1004 is recorded and
   not sent), synchronized output (2026 reports "unknown"), application keypad (§8).

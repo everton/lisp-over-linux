@@ -14,6 +14,7 @@
 ;;;;     keyboard's evdev — the console keymap swallows it) scrolls the view back;
 ;;;;   - `less' takes the alternate screen and `q' gives it back;
 ;;;;   - a smaller pane reaches the program: `stty size' after a crumb is added above;
+;;;;   - so does a bigger font (SuperL-=, doc/fonts.org): fewer columns, `stty size';
 ;;;;   - `exit' ends the program and the pane says how.
 ;;;;
 ;;;; LOL_SHOTS=DIR keeps screendumps of the shell and of less.
@@ -133,6 +134,16 @@
         (check "stty size in the shell agrees with the grid"
                (row "stty says" (screen-has (format nil "~d ~d" after cols))))))
 
+    (format t "~&~%== a bigger font reaches the program (SuperL-=) ==~%")
+    (let ((cols0 (row "grid cols before" (probe-int (term-form "(lol.terminal:term-cols ~a)")))))
+      (qmp-hold "meta_l" "equal") (sleep 2)
+      (let ((cols1 (row "grid cols after SuperL-=" (probe-int (term-form "(lol.terminal:term-cols ~a)"))))
+            (rows1 (probe-int (term-form "(lol.terminal:term-rows ~a)"))))
+        (check "a bigger font means fewer columns" (and cols0 cols1 (< cols1 cols0)))
+        (qmp-type "stty size") (qmp-key "ret") (sleep 2)
+        (check "stty size follows the font (TIOCSWINSZ)"
+               (row "stty says" (screen-has (format nil "~d ~d" rows1 cols1)))))
+      (qmp-hold "meta_l" "0") (sleep 1.5))
     (format t "~&~%== exit ==~%")
     (qmp-type "exit") (qmp-key "ret") (sleep 2)
     (check "exit ends the program, and the pane says so"

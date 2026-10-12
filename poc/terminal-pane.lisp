@@ -9,7 +9,7 @@
 ;;;;  - DRAWING the grid with the browser's own font, cell size read from that font at
 ;;;;    draw time (so a font change re-flows the terminal: the new size goes to the
 ;;;;    program by TIOCSWINSZ, as when an xterm window is resized). Box-drawing and
-;;;;    block characters, which our Latin-1 font lacks, are drawn as lines and rects.
+;;;;    block characters are drawn as lines and rects, so they join cell to cell.
 ;;;;  - KEYS: everything goes to the program, except the SuperL layer (tabs, the
 ;;;;    Spotter, leaving), which stays the environment's on every pane. Shift-PageUp/
 ;;;;    PageDown and the wheel scroll the history; Shift-Insert pastes.
@@ -377,8 +377,10 @@
     (when (logtest flags lol.terminal:+invisible+) (setf fg bg))
     (values fg bg)))
 
-;;; Box drawing (U+2500-257F) and blocks (U+2580-259F). Our font is Latin-1, so these
-;;; would come out as "?" — and they are exactly what tmux, mc, htop's meters,
+;;; Box drawing (U+2500-257F) and blocks (U+2580-259F). The TrueType face may have
+;;; them, but a glyph need not reach the cell's edges, and lines that do not JOIN
+;;; read as dashes (the Cozette fallback has none at all) — and these are exactly
+;;; what tmux, mc, htop's meters,
 ;;; `tree' and ncurses' line-drawing (via DEC graphics, see terminal.lisp) send. Each
 ;;; is drawn from its ARMS: which of up/down/left/right a line leaves the centre by.
 ;;; Heavy and double lines are drawn single; the shape is what carries the meaning.
