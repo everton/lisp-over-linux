@@ -105,7 +105,7 @@
 ;;; 2. URLs, and headers whatever their shape
 ;;; ===========================================================================
 
-(defun parse-url (url)
+(defun agent-parse-url (url)
   "\"http://host:port/path\" => (values SCHEME HOST PORT PATH). Only what an API
    endpoint needs: no user-info, no fragment."
   (let* ((sep (or (search "://" url) (error "not a URL: ~a" url)))
@@ -121,7 +121,7 @@
                    (if (string= scheme "https") 443 80))))
     (values scheme host port path)))
 
-(defun header-value (headers name)
+(defun agent-header-value (headers name)
   "NAME's value in HEADERS, case-insensitively, whatever shape HEADERS has: an alist
    of (name . value), a plist, or a hash table. The networking track's HTTP-REQUEST
    and ours need not agree on the shape for the client to read either."
@@ -212,7 +212,7 @@
    arrives (de-chunked) and the third value is NIL; otherwise it is returned whole, as
    a string or (WANT :octets) a byte vector. Response headers come back as an alist
    with lower-cased names."
-  (multiple-value-bind (scheme host port path) (parse-url url)
+  (multiple-value-bind (scheme host port path) (agent-parse-url url)
     (unless (string= scheme "http")
       (error "~a: this transport speaks plain http:// only — https needs HTTP-REQUEST ~
               (initramfs/http.lisp, the networking track) or a TLS broker (doc/agent.org §4)"
@@ -249,7 +249,7 @@
                     (pieces '())
                     (sink (or on-chunk (lambda (p) (push p pieces)))))
                (cond
-                 ((search "chunked" (or (header-value resp-headers "transfer-encoding") ""))
+                 ((search "chunked" (or (agent-header-value resp-headers "transfer-encoding") ""))
                   ;; chunked transfer: "<hex size>[;ext]" CRLF <bytes> CRLF ... "0" CRLF CRLF
                   (loop for size-line = (br-line r)
                         for size = (and size-line
@@ -257,8 +257,8 @@
                         while (and size (plusp size))
                         do (br-take r size sink)
                            (br-line r)))                    ; the CRLF after the data
-                 ((header-value resp-headers "content-length")
-                  (br-take r (parse-integer (header-value resp-headers "content-length")) sink))
+                 ((agent-header-value resp-headers "content-length")
+                  (br-take r (parse-integer (agent-header-value resp-headers "content-length")) sink))
                  (t (br-take r nil sink)))
                (values status resp-headers
                        (unless on-chunk

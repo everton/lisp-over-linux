@@ -71,16 +71,36 @@
    Used both locally (under with-raw-mode, via run-repl) and over the network
    (net.lisp drives it on a socket stream — the host client supplies raw mode)."
   (loop
-    (let ((text "") (prompt "lisp> ") (prompt-sgr (col-prompt)))
+    (let ((text "") (prompt "lisp> ") (prompt-sgr (col-prompt)) (prose nil))
       (block one-form
         (loop
-          (let ((line (read-line-edited in out prompt prompt-sgr)))
+          (block next-line (let ((line (read-line-edited in out prompt prompt-sgr)))
             (when (eq line :cancel)            ; Ctrl-C: abandon the in-progress form
               (return-from one-form))
             (when (eq line :eof)
               (if (string= text "")
                   (return-from editing-repl)   ; EOF at a fresh prompt: leave the REPL
                   (return-from one-form)))      ; EOF mid-form: drop it, start fresh
+            ;; ?prose — a question for the agent, not a form (doc/agent.org §8.2). A bare ?
+            ;; opens prose mode: lines accumulate until a blank one, like an open form.
+            (cond
+              (prose
+               (if (string= (string-trim " " line) "")
+                   (progn (push-history (format nil "?~a" text))
+                          (funcall 'repl-ask-line text out)
+                          (return-from one-form))
+                   (setf text (if (string= text "") line
+                                  (concatenate 'string text (string #\Newline) line))))
+               (setf prompt "   ?> ")
+               (return-from next-line))
+              ((and (string= text "") (fboundp 'repl-question-p) (funcall 'repl-question-p line))
+               (let ((q (string-trim " " (subseq (string-left-trim " " line) 1))))
+                 (if (string= q "")
+                     (setf prose t prompt "   ?> " prompt-sgr (col-cont))
+                     (progn (push-history line)
+                            (funcall 'repl-ask-line q out)
+                            (return-from one-form))))
+               (return-from next-line)))
             (setf text (if (string= text "") line
                            (concatenate 'string text (string #\Newline) line)))
             (multiple-value-bind (form status) (complete-form text)
@@ -98,7 +118,7 @@
                    (serious-condition (c)
                      (format out "~&~aerror:~a ~a~%" (col-error) (col-reset) c)))
                  (finish-output out)
-                 (return-from one-form))))))))))
+                 (return-from one-form)))))))))))
 
 (defun plain-repl (in out)
   "Fallback REPL when stdin is NOT a TTY (a pipe/file): ordinary line-buffered

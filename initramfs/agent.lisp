@@ -36,8 +36,9 @@
 
 (in-package :cl-user)
 
-(eval-when (:compile-toplevel :load-toplevel :execute)
-  (use-package :lol.json))
+;; LOL.JSON's names are written package-qualified (lol.json:jget …) rather than
+;; imported: CL-USER is shared by every module, and another one defining its own JOBJ
+;; there must not collide with — or silently redefine — ours.
 
 ;;; ===========================================================================
 ;;; Settings: special variables, overridable from ~/.config/lol/agent.lisp
@@ -76,6 +77,8 @@
   "§8.9's second dial (§7.2's policy) — what may it touch? :READ-ONLY (write tools
    are not even offered), :ASK (each write is a TOOL-APPROVAL-REQUEST you answer: the
    default), :ALLOW (writes run).")
+
+(defvar *agent-system-prompt*)   ; the text is defined at the end of this file
 
 (defvar *agent-transport* nil
   "A function designator with HTTP-REQUEST's signature, or NIL for 'HTTP-REQUEST when
@@ -186,7 +189,7 @@
   (:documentation "A text, thinking, tool_use or tool_result block (or any type this
    client does not know, carried through untouched)."))
 
-(defun block-type (b) (jget (block-json b) "type"))
+(defun block-type (b) (lol.json:jget (block-json b) "type"))
 
 (defclass tool-call ()
   ((id :initarg :id :reader call-id)
@@ -288,10 +291,10 @@
 (defun add-usage (conv usage-json)
   "Fold one response's usage into the conversation's totals; returns the request's
    (values PLIST COST)."
-  (let* ((in (or (jget usage-json "input_tokens") 0))
-         (out (or (jget usage-json "output_tokens") 0))
-         (cr (or (jget usage-json "cache_read_input_tokens") 0))
-         (cw (or (jget usage-json "cache_creation_input_tokens") 0))
+  (let* ((in (or (lol.json:jget usage-json "input_tokens") 0))
+         (out (or (lol.json:jget usage-json "output_tokens") 0))
+         (cr (or (lol.json:jget usage-json "cache_read_input_tokens") 0))
+         (cw (or (lol.json:jget usage-json "cache_creation_input_tokens") 0))
          (in (if (integerp in) in 0)) (cr (if (integerp cr) cr 0)) (cw (if (integerp cw) cw 0))
          (cost (usage-cost (conversation-model conv) in out cr cw)))
     (with-conversation-lock (conv)
@@ -331,10 +334,10 @@
    model sent, already checked for the required strings) and CALL (the TOOL-CALL)."
   `(let ((tool (make-agent-tool
                 :name ,name :description ,description
-                :schema (jobj "type" "object"
-                              "properties" (apply #'jobj
+                :schema (lol.json:jobj "type" "object"
+                              "properties" (apply #'lol.json:jobj
                                                   (loop for (n type doc) in ',properties
-                                                        append (list n (jobj "type" type "description" doc))))
+                                                        append (list n (lol.json:jobj "type" type "description" doc))))
                               "required" (coerce ',required 'simple-vector))
                 :write-p ,write :available-p ,available
                 :handler (lambda (,input ,call) (declare (ignorable ,input ,call)) ,@body))))
@@ -358,23 +361,23 @@
    burst — and so the client must check what it receives (CHECK-TOOL-INPUT). The LAST
    tool carries the cache breakpoint: tools + system are one cached prefix."
   (coerce (loop for (tool . more) on tools
-                collect (let ((o (jobj "name" (agent-tool-name tool)
+                collect (let ((o (lol.json:jobj "name" (agent-tool-name tool)
                                        "description" (agent-tool-description tool)
                                        "input_schema" (agent-tool-schema tool)
                                        "eager_input_streaming" t)))
-                          (unless more (jset o "cache_control" (jobj "type" "ephemeral")))
+                          (unless more (lol.json:jset o "cache_control" (lol.json:jobj "type" "ephemeral")))
                           o))
           'simple-vector))
 
 (defun check-tool-input (tool input)
   "NIL when INPUT satisfies TOOL's schema well enough to run, else a complaint. With
    eager streaming the API no longer validates the input for us."
-  (cond ((not (json-object-p input)) "the input is not a JSON object")
-        (t (let ((props (jget (agent-tool-schema tool) "properties")))
-             (or (loop for r across (jget (agent-tool-schema tool) "required")
-                       unless (jhas input r) return (format nil "missing ~s" r))
-                 (loop for (k . v) in (json-object-pairs input)
-                       for want = (jget (jget props k) "type")
+  (cond ((not (lol.json:json-object-p input)) "the input is not a JSON object")
+        (t (let ((props (lol.json:jget (agent-tool-schema tool) "properties")))
+             (or (loop for r across (lol.json:jget (agent-tool-schema tool) "required")
+                       unless (lol.json:jhas input r) return (format nil "missing ~s" r))
+                 (loop for (k . v) in (lol.json:json-object-pairs input)
+                       for want = (lol.json:jget (lol.json:jget props k) "type")
                        when (and want (not (case (intern (string-upcase want) :keyword)
                                              (:string (stringp v))
                                              (:integer (integerp v))
@@ -455,8 +458,8 @@
    ("limit" "integer" "Most results to return (default 40)"))
   ("query")
   (input call)
-  (let* ((limit (let ((l (jget input "limit"))) (if (integerp l) (max 1 (min l 200)) 40)))
-         (hits (spotter-filter (jget input "query") (spotter-candidates) limit)))
+  (let* ((limit (let ((l (lol.json:jget input "limit"))) (if (integerp l) (max 1 (min l 200)) 40)))
+         (hits (spotter-filter (lol.json:jget input "query") (spotter-candidates) limit)))
     (setf (call-summary call) (format nil "~d match~:*~[es~;~:;es~]" (length hits)))
     (if hits
         (format nil "~{~a~%~}"
@@ -470,7 +473,7 @@
   (("name" "string" "The name, e.g. \"draw-alien\" or \"lol.canvas:draw-string\""))
   ("name")
   (input call)
-  (let* ((sym (require-symbol (jget input "name")))
+  (let* ((sym (require-symbol (lol.json:jget input "name")))
          (defns (definitions-of sym)))
     (setf (call-subject call) (subj-defn sym))
     (if defns
@@ -493,8 +496,8 @@
    ("relation" "string" "senders | referrers | binders | setters | macro-users"))
   ("name")
   (input call)
-  (let* ((sym (require-symbol (jget input "name")))
-         (rel (or (jget input "relation") "senders"))
+  (let* ((sym (require-symbol (lol.json:jget input "name")))
+         (rel (or (lol.json:jget input "relation") "senders"))
          (fn (cdr (assoc rel '(("senders" . senders) ("referrers" . referrers) ("binders" . binders)
                                ("setters" . setters) ("macro-users" . macro-users))
                          :test #'string=))))
@@ -512,7 +515,7 @@
   (("name" "string" "The class name"))
   ("name")
   (input call)
-  (let* ((sym (require-symbol (jget input "name")))
+  (let* ((sym (require-symbol (lol.json:jget input "name")))
          (info (or (class-info sym) (error "~(~s~) is not a class" sym))))
     (setf (call-subject call) (find-class sym) (call-summary call) "class")
     (with-output-to-string (s)
@@ -531,7 +534,7 @@
   (("name" "string" "The generic function's name"))
   ("name")
   (input call)
-  (let* ((sym (require-symbol (jget input "name")))
+  (let* ((sym (require-symbol (lol.json:jget input "name")))
          (info (or (gf-info sym) (error "~(~s~) is not a generic function" sym))))
     (setf (call-subject call) (fdefinition sym)
           (call-summary call) (format nil "~d method~:p" (length (getf info :methods))))
@@ -548,7 +551,7 @@
   (("name" "string" "The symbol's name"))
   ("name")
   (input call)
-  (let ((sym (require-symbol (jget input "name"))))
+  (let ((sym (require-symbol (lol.json:jget input "name"))))
     (setf (call-subject call) sym (call-summary call) "describe")
     (clip-result (captured-output (lambda () (describe sym))) 8000)))
 
@@ -558,7 +561,7 @@
   (("module" "string" "Optional: a module, e.g. \"initramfs/net\" or \"poc/shell\""))
   ()
   (input call)
-  (let ((groups (categorize :file)) (want (jget input "module")))
+  (let ((groups (categorize :file)) (want (lol.json:jget input "module")))
     (if want
         (let ((g (find want groups :key (lambda (g) (string-downcase (princ-to-string (car g))))
                                    :test #'string-equal)))
@@ -578,8 +581,8 @@
    ("offset" "integer" "Byte to start at (default 0)"))
   ("path")
   (input call)
-  (let* ((path (agent-path (jget input "path")))
-         (offset (let ((o (jget input "offset"))) (if (integerp o) (max 0 o) 0))))
+  (let* ((path (agent-path (lol.json:jget input "path")))
+         (offset (let ((o (lol.json:jget input "offset"))) (if (integerp o) (max 0 o) 0))))
     (unless (eq (followed-type path) :regular) (error "~a is not a regular file" path))
     (let* ((size (fentry-size (file-entry path)))
            (bytes (read-prefix path 65536 :start offset))
@@ -597,7 +600,7 @@
   (("path" "string" "The directory (default: home)"))
   ()
   (input call)
-  (let* ((path (agent-path (or (jget input "path") "~/")))
+  (let* ((path (agent-path (or (lol.json:jget input "path") "~/")))
          (entries (sort-entries (list-directory path) :by :name)))
     (setf (call-subject call) (subj-dir path)
           (call-summary call) (format nil "~d entr~:@p" (length entries)))
@@ -625,7 +628,7 @@
    ("package" "string" "Package to read it in (default CL-USER)"))
   ("form")
   (input call)
-  (let* ((form (read-in-package (jget input "form") (jget input "package")))
+  (let* ((form (read-in-package (lol.json:jget input "form") (lol.json:jget input "package")))
          (out (make-string-output-stream))
          (values (let ((*standard-output* out) (*trace-output* out))
                    (multiple-value-list (eval form))))
@@ -647,7 +650,7 @@
   (("source" "string" "The complete definition, as text"))
   ("source")
   (input call)
-  (let ((text (jget input "source")))
+  (let ((text (lol.json:jget input "source")))
     ;; ACCEPT-SOURCE reads the form itself; read it once here first with #. disabled
     (let ((*read-eval* nil)) (read-from-string text))
     (let ((name (let ((*read-eval* nil)) (accept-source text))))
@@ -662,8 +665,8 @@
    ("content" "string" "The complete new contents"))
   ("path" "content")
   (input call)
-  (let* ((path (agent-path (jget input "path") :for-write t))
-         (octets (sb-ext:string-to-octets (jget input "content") :external-format :utf-8)))
+  (let* ((path (agent-path (lol.json:jget input "path") :for-write t))
+         (octets (sb-ext:string-to-octets (lol.json:jget input "content") :external-format :utf-8)))
     (write-file-atomically path octets)
     (setf (call-subject call) (subj-file path) (call-summary call) (format nil "wrote ~d bytes" (length octets)))
     (format nil "Wrote ~d bytes to ~a." (length octets) path)))
@@ -676,10 +679,10 @@
    ("cwd" "string" "Working directory (default: home)"))
   ("argv")
   (input call)
-  (let* ((argv (coerce (jget input "argv") 'list))
+  (let* ((argv (coerce (lol.json:jget input "argv") 'list))
          (out (make-string-output-stream))
          (proc (progn (unless (and argv (every #'stringp argv)) (error "argv must be strings"))
-                      (funcall 'run-in-container argv :cwd (jget input "cwd") :output out :wait t)))
+                      (funcall 'run-in-container argv :cwd (lol.json:jget input "cwd") :output out :wait t)))
          (code (ignore-errors (sb-ext:process-exit-code proc))))
     (setf (call-summary call) (format nil "exit ~a" code))
     (clip-result (format nil "exit ~a~%~a" code (get-output-stream-string out)))))
@@ -699,9 +702,9 @@
 (defun call-headline (call)
   "One line naming a call and its main argument."
   (let* ((in (call-input call))
-         (arg (or (jget in "form") (jget in "name") (jget in "path") (jget in "query")
-                  (let ((src (jget in "source"))) (and src (first-line src)))
-                  (let ((argv (jget in "argv"))) (and argv (format nil "~{~a~^ ~}" (coerce argv 'list)))))))
+         (arg (or (lol.json:jget in "form") (lol.json:jget in "name") (lol.json:jget in "path") (lol.json:jget in "query")
+                  (let ((src (lol.json:jget in "source"))) (and src (first-line src)))
+                  (let ((argv (lol.json:jget in "argv"))) (and argv (format nil "~{~a~^ ~}" (coerce argv 'list)))))))
     (format nil "~a~@[ ~a~]" (call-name call) (and arg (lol.widgets:clip-text (substitute #\Space #\Newline arg) 70)))))
 
 (defun first-line (s) (subseq s 0 (or (position #\Newline s) (length s))))
@@ -740,13 +743,13 @@
          :interactive (lambda () (list (prompt-for-reason "New input: ")))
          (let ((key (editable-input-key call)))
            (unless key (error "this call has no single text input to edit"))
-           (jset (call-input call) key new-text))
+           (lol.json:jset (call-input call) key new-text))
          (setf (call-status call) :running)
          (funcall thunk))))))
 
 (defun editable-input-key (call)
   "The input field EDIT rewrites: the form, the source, or the content."
-  (find-if (lambda (k) (jhas (call-input call) k)) '("form" "source" "content")))
+  (find-if (lambda (k) (lol.json:jhas (call-input call) k)) '("form" "source" "content")))
 
 (defun prompt-for-reason (&optional (prompt "Reason (optional): "))
   (format *query-io* "~&~a" prompt) (finish-output *query-io*)
@@ -769,14 +772,14 @@
                                             (t :done)))
              (unless (call-summary call)
                (setf (call-summary call) (if error "error" (first-line text))))
-             (jobj "type" "tool_result" "tool_use_id" (call-id call)
+             (lol.json:jobj "type" "tool_result" "tool_use_id" (call-id call)
                    "content" text "is_error" (if error t :false))))
       (cond
         ((null tool) (result (format nil "There is no tool named ~a." (call-name call)) t))
         ((null input)
          ;; eager streaming hands us the raw fragments; if they never became JSON, say
          ;; so in the form the API's guidance asks for, so the model can retry
-         (result (to-json (jobj "INVALID_JSON" (or (call-raw-input call) ""))) t))
+         (result (lol.json:to-json (lol.json:jobj "INVALID_JSON" (or (call-raw-input call) ""))) t))
         ((check-tool-input tool input)
          (result (format nil "Invalid input: ~a." (check-tool-input tool input)) t))
         (t
@@ -852,7 +855,7 @@
 
 (defun anthropic-endpoint-p (url)
   "Is URL the real API, over TLS? The ONE place the key may go."
-  (multiple-value-bind (scheme host) (parse-url url)
+  (multiple-value-bind (scheme host) (agent-parse-url url)
     (and (string= scheme "https") (string-equal host "api.anthropic.com"))))
 
 (defun request-headers (url)
@@ -876,7 +879,7 @@
 
 (defun messages-json (conv)
   (coerce (loop for m across (conversation-messages conv)
-                collect (jobj "role" (message-role m)
+                collect (lol.json:jobj "role" (message-role m)
                               "content" (coerce (mapcar #'block-json (message-blocks m)) 'simple-vector)))
           'simple-vector))
 
@@ -885,18 +888,18 @@
    same conversation must serialise identically every time. Cache breakpoints: the
    last tool (tools + system are one stable prefix) and the top-level automatic one,
    which caches the conversation so far."
-  (let ((body (jobj "model" (conversation-model conv)
+  (let ((body (lol.json:jobj "model" (conversation-model conv)
                     "max_tokens" *agent-max-tokens*
                     "stream" t
-                    "system" (vector (jobj "type" "text" "text" *agent-system-prompt*
-                                           "cache_control" (jobj "type" "ephemeral")))
+                    "system" (vector (lol.json:jobj "type" "text" "text" *agent-system-prompt*
+                                           "cache_control" (lol.json:jobj "type" "ephemeral")))
                     "tools" (tools-json (offered-tools conv))
                     "messages" (messages-json conv)
-                    "thinking" (jobj "type" "adaptive" "display" *agent-thinking-display*)
-                    "cache_control" (jobj "type" "ephemeral"))))
-    (when *agent-effort* (jset body "output_config" (jobj "effort" *agent-effort*)))
+                    "thinking" (lol.json:jobj "type" "adaptive" "display" *agent-thinking-display*)
+                    "cache_control" (lol.json:jobj "type" "ephemeral"))))
+    (when *agent-effort* (lol.json:jset body "output_config" (lol.json:jobj "effort" *agent-effort*)))
     (when (and *agent-fallbacks* (member (conversation-model conv) +fallback-models+ :test #'string=))
-      (jset body "fallbacks" "default"))
+      (lol.json:jset body "fallbacks" "default"))
     body))
 
 ;;; A reply arrives as events. We rebuild its content blocks from them:
@@ -918,74 +921,74 @@
 
 (defun handle-event (conv reply name data)
   (declare (ignore name))
-  (let* ((ev (parse-json data))
-         (type (jget ev "type")))
+  (let* ((ev (lol.json:parse-json data))
+         (type (lol.json:jget ev "type")))
     (flet ((block-at (i) (find i (live-reply-blocks reply) :key #'live-block-index)))
       (cond
         ((equal type "message_start")
-         (setf (live-reply-usage reply) (jget* ev "message" "usage")
-               (live-reply-model reply) (jget* ev "message" "model")))
+         (setf (live-reply-usage reply) (lol.json:jget* ev "message" "usage")
+               (live-reply-model reply) (lol.json:jget* ev "message" "model")))
         ((equal type "content_block_start")
-         (let* ((cb (jget ev "content_block"))
-                (lb (make-live-block :index (jget ev "index") :json cb :type (jget cb "type"))))
+         (let* ((cb (lol.json:jget ev "content_block"))
+                (lb (make-live-block :index (lol.json:jget ev "index") :json cb :type (lol.json:jget cb "type"))))
            (with-conversation-lock (conv)
              (setf (live-reply-blocks reply) (append (live-reply-blocks reply) (list lb))))
            (touch conv)))
         ((equal type "content_block_delta")
-         (let ((lb (block-at (jget ev "index"))) (d (jget ev "delta")))
+         (let ((lb (block-at (lol.json:jget ev "index"))) (d (lol.json:jget ev "delta")))
            (when lb
-             (let ((dt (jget d "type")))
+             (let ((dt (lol.json:jget d "type")))
                (cond ((equal dt "text_delta")
-                      (write-string (jget d "text") (live-block-text lb))
+                      (write-string (lol.json:jget d "text") (live-block-text lb))
                       (with-conversation-lock (conv)
-                        (setf (live-block-shown lb) (concatenate 'string (live-block-shown lb) (jget d "text")))))
+                        (setf (live-block-shown lb) (concatenate 'string (live-block-shown lb) (lol.json:jget d "text")))))
                      ((equal dt "thinking_delta")
-                      (write-string (jget d "thinking") (live-block-text lb))
+                      (write-string (lol.json:jget d "thinking") (live-block-text lb))
                       (with-conversation-lock (conv)
-                        (setf (live-block-shown lb) (concatenate 'string (live-block-shown lb) (jget d "thinking")))))
-                     ((equal dt "signature_delta") (write-string (jget d "signature") (live-block-signature lb)))
-                     ((equal dt "input_json_delta") (write-string (jget d "partial_json") (live-block-partial lb)))))
+                        (setf (live-block-shown lb) (concatenate 'string (live-block-shown lb) (lol.json:jget d "thinking")))))
+                     ((equal dt "signature_delta") (write-string (lol.json:jget d "signature") (live-block-signature lb)))
+                     ((equal dt "input_json_delta") (write-string (lol.json:jget d "partial_json") (live-block-partial lb)))))
              (touch conv))))
         ((equal type "content_block_stop")
-         (let ((lb (block-at (jget ev "index")))) (when lb (setf (live-block-done lb) t)) (touch conv)))
+         (let ((lb (block-at (lol.json:jget ev "index")))) (when lb (setf (live-block-done lb) t)) (touch conv)))
         ((equal type "message_delta")
-         (setf (live-reply-stop-reason reply) (jget* ev "delta" "stop_reason")
-               (live-reply-stop-details reply) (jget* ev "delta" "stop_details"))
+         (setf (live-reply-stop-reason reply) (lol.json:jget* ev "delta" "stop_reason")
+               (live-reply-stop-details reply) (lol.json:jget* ev "delta" "stop_details"))
          ;; message_delta's usage is CUMULATIVE: it supersedes message_start's counts
          ;; field by field (output_tokens always; the input counts when present)
-         (let ((u (jget ev "usage")))
-           (when (json-object-p u)
-             (let ((merged (or (live-reply-usage reply) (jobj))))
-               (loop for (k . v) in (json-object-pairs u) do (jset merged k v))
+         (let ((u (lol.json:jget ev "usage")))
+           (when (lol.json:json-object-p u)
+             (let ((merged (or (live-reply-usage reply) (lol.json:jobj))))
+               (loop for (k . v) in (lol.json:json-object-pairs u) do (lol.json:jset merged k v))
                (setf (live-reply-usage reply) merged)))))
         ((equal type "error")
-         (error 'agent-api-error :status 200 :kind (jget* ev "error" "type")
-                                 :message (or (jget* ev "error" "message") "error event")))
+         (error 'agent-api-error :status 200 :kind (lol.json:jget* ev "error" "type")
+                                 :message (or (lol.json:jget* ev "error" "message") "error event")))
         (t nil)))))                          ; ping, message_stop, anything new
 
 (defun finish-block (conv lb)
   "A live block, complete, as the CONTENT-BLOCK we keep and echo back."
-  (let* ((json (make-instance 'json-object :pairs (copy-alist (json-object-pairs (live-block-json lb)))))
+  (let* ((json (make-instance 'lol.json:json-object :pairs (copy-alist (lol.json:json-object-pairs (live-block-json lb)))))
          (type (live-block-type lb)))
     (cond
-      ((equal type "text") (jset json "text" (get-output-stream-string (live-block-text lb)))
+      ((equal type "text") (lol.json:jset json "text" (get-output-stream-string (live-block-text lb)))
        (make-instance 'content-block :json json))
       ((equal type "thinking")
-       (jset json "thinking" (get-output-stream-string (live-block-text lb)))
+       (lol.json:jset json "thinking" (get-output-stream-string (live-block-text lb)))
        (let ((sig (get-output-stream-string (live-block-signature lb))))
-         (when (plusp (length sig)) (jset json "signature" sig)))
+         (when (plusp (length sig)) (lol.json:jset json "signature" sig)))
        (make-instance 'content-block :json json))
       ((equal type "tool_use")
        (let* ((raw (get-output-stream-string (live-block-partial lb)))
-              (input (cond ((zerop (length raw)) (or (jget json "input") (jobj)))
-                           (t (ignore-errors (parse-json raw)))))
-              (call (make-instance 'tool-call :id (jget json "id") :name (jget json "name")
+              (input (cond ((zerop (length raw)) (or (lol.json:jget json "input") (lol.json:jobj)))
+                           (t (ignore-errors (lol.json:parse-json raw)))))
+              (call (make-instance 'tool-call :id (lol.json:jget json "id") :name (lol.json:jget json "name")
                                               :number (length (conversation-calls conv))
                                               :input input :raw-input raw)))
          (vector-push-extend call (conversation-calls conv))
          ;; the echoed block carries the input as an object; an unparseable input is
          ;; sent back as {} with the error in the tool_result
-         (jset json "input" (if (json-object-p input) input (jobj)))
+         (lol.json:jset json "input" (if (lol.json:json-object-p input) input (lol.json:jobj)))
          (make-instance 'content-block :json json :call call)))
       (t (make-instance 'content-block :json json)))))   ; redacted_thinking, fallback, …
 
@@ -994,7 +997,7 @@
    While it streams, (CONVERSATION-LIVE CONV) is the LIVE-REPLY the UI draws."
   (let* ((url (concatenate 'string (string-right-trim "/" *agent-endpoint*) "/v1/messages"))
          (headers (request-headers url))
-         (body (to-json (request-body conv)))
+         (body (lol.json:to-json (request-body conv)))
          (reply (make-live-reply))
          (raw (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
          (parser (make-sse-parser (lambda (name data) (handle-event conv reply name data)))))
@@ -1009,19 +1012,19 @@
                  :timeout 300)
       (unless (eql status 200)
         (let* ((text (ignore-errors (sb-ext:octets-to-string raw :external-format :utf-8)))
-               (err (ignore-errors (parse-json text))))
+               (err (ignore-errors (lol.json:parse-json text))))
           (error 'agent-api-error :status status
-                                  :kind (jget* err "error" "type")
-                                  :message (or (jget* err "error" "message")
+                                  :kind (lol.json:jget* err "error" "type")
+                                  :message (or (lol.json:jget* err "error" "message")
                                                (and text (lol.widgets:clip-text text 200)) "")
-                                  :retry-after (let ((ra (header-value resp-headers "retry-after")))
+                                  :retry-after (let ((ra (agent-header-value resp-headers "retry-after")))
                                                  (and ra (ignore-errors (parse-integer ra :junk-allowed t)))))))
       (sse-finish parser)
       (unless (live-reply-stop-reason reply)
         (error 'agent-api-error :kind "incomplete" :message "the stream ended before the message did"))
       (values (mapcar (lambda (lb) (finish-block conv lb)) (live-reply-blocks reply))
               (live-reply-stop-reason reply)
-              (or (live-reply-usage reply) (jobj))
+              (or (live-reply-usage reply) (lol.json:jobj))
               (live-reply-stop-details reply)))))
 
 (defun interruptible-sleep (conv seconds)
@@ -1088,12 +1091,12 @@
    append-only, which is what keeps earlier thinking valid and the cache warm."
   (let ((closers (mapcar (lambda (b)
                            (make-instance 'content-block
-                                          :json (jobj "type" "tool_result"
-                                                      "tool_use_id" (jget (block-json b) "id")
+                                          :json (lol.json:jobj "type" "tool_result"
+                                                      "tool_use_id" (lol.json:jget (block-json b) "id")
                                                       "content" "Not run: the turn ended before this call could run."
                                                       "is_error" t)))
                          (dangling-tool-uses conv)))
-        (text-block (make-instance 'content-block :json (jobj "type" "text" "text" text)))
+        (text-block (make-instance 'content-block :json (lol.json:jobj "type" "text" "text" text)))
         (ms (conversation-messages conv)))
     (if (and (null closers) (plusp (length ms)) (equal (message-role (aref ms (1- (length ms)))) "user"))
         (with-conversation-lock (conv)
@@ -1117,7 +1120,7 @@
     (when (equal (conversation-title conv) (format nil "conversation ~d" (conversation-id conv)))
       (setf (conversation-title conv) (lol.widgets:clip-text (first-line question) 40)))
     (add-user-text conv prompt)
-    (touch conv "thinking…")
+    (touch conv "thinking...")
     (let ((turn-usage (list :input 0 :output 0 :cache-read 0 :cache-write 0)) (turn-cost 0))
       (unwind-protect
            (let ((outcome
@@ -1129,7 +1132,7 @@
                                     (append-message conv "assistant" blocks)
                                     (dolist (b blocks)
                                       (when (equal (block-type b) "text")
-                                        (agent-listen :text (jget (block-json b) "text"))))
+                                        (agent-listen :text (lol.json:jget (block-json b) "text"))))
                                     (multiple-value-bind (u cost) (add-usage conv usage)
                                       (loop for (k v) on u by #'cddr do (incf (getf turn-usage k) v))
                                       (when (and cost turn-cost) (incf turn-cost cost))
@@ -1138,7 +1141,7 @@
                                       (cond
                                         ((equal stop "refusal")
                                          (note conv (format nil "the model declined~@[ (~a)~]"
-                                                            (jget details "category")))
+                                                            (lol.json:jget details "category")))
                                          (return :refused))
                                         ((and uses (equal stop "max_tokens"))
                                          (note conv "stopped at max_tokens in the middle of a tool call; not run")
@@ -1162,7 +1165,7 @@
                                                                  (agent-listen :tool-done call)
                                                                  (make-instance 'content-block :json r)))))
                                            (append-message conv "user" results)
-                                           (touch conv "thinking…")))))))
+                                           (touch conv "thinking...")))))))
                        (agent-api-error (c)
                          (note conv (format nil "~a" c)) :error)
                        (serious-condition (c)
@@ -1238,7 +1241,7 @@ why, briefly."
     (let ((restarts (remove-if-not (lambda (r) (member (restart-name r) '(allow deny edit)))
                                    (compute-restarts c))))
       (format stream-out "~&~a~a~a~%" (sgr 93) c (col-reset))
-      (let ((input (jget (call-input (approval-call c)) (or (editable-input-key (approval-call c)) "path"))))
+      (let ((input (lol.json:jget (call-input (approval-call c)) (or (editable-input-key (approval-call c)) "path"))))
         (when input (format stream-out "~a~a~a~%" (sgr 90) input (col-reset))))
       (loop for r in restarts for i from 1
             do (format stream-out "  ~d: ~a~%" i r))
@@ -1294,14 +1297,3 @@ why, briefly."
   (handler-case (progn (ask text) (values))
     (serious-condition (c)
       (format out "~&~aagent:~a ~a~%" (col-error) (col-reset) c))))
-
-(defun agent-prompt-mark ()
-  "The REPL prompt's agent mark (§8.9): a coloured 'a' whose colour is the authority —
-   cyan read-only, yellow ask, red allow — or dim when the agent is off. The 16 ANSI
-   colours only: fbcon renders no more (ansi.lisp)."
-  (format nil "~a~a~a"
-          (if (eq *agent-initiative* :off)
-              (sgr 90)
-              (ecase *agent-authority* (:read-only (sgr 96)) (:ask (sgr 93)) (:allow (sgr 91))))
-          (if (eq *agent-initiative* :interacting) "A" "a")
-          (col-reset)))

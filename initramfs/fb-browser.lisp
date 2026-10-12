@@ -1300,6 +1300,10 @@
                      ;; a key, a click, the wheel or a stage tick can change it; a held
                      ;; modifier or a bare pointer move cannot, so neither redraws.
                      (loop with dirty = t do
+                       ;; the agent (agent-ui.lisp): stream a reply into its panes and
+                       ;; run the tool calls its turn posted — on THIS thread
+                       (when (and (fboundp 'agent-ui-tick) (funcall 'agent-ui-tick))
+                         (setf dirty t))
                        (when dirty
                          (draw-browser canvas xres yres)
                          (show-frame canvas)
@@ -1315,6 +1319,9 @@
                                             (tray-timeout)
                                             ;; a live run pane (runs.lisp)
                                             (runs-timeout)
+                                            ;; a conversation streaming (agent-ui.lisp)
+                                            (if (fboundp 'agent-ui-timeout)
+                                                (funcall 'agent-ui-timeout) -1)
                                             (fb-service-call :timeout))
                                      (fb-service-call :fd))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
@@ -1724,6 +1731,19 @@
           (invoke-restart-interactively (getf r :restart))))))
 
 (defun run-debugger-fb (condition)
+  "The debugger, with one more restart when the agent is in the image: ASK — explain
+   this, and propose a fix (doc/agent.org §8.8, initramfs/agent-ui.lisp). It is a real
+   restart, established here around the rail, so it is listed and chosen like the
+   condition's own; choosing it shows the agent's answer and comes back here, with the
+   stack still standing."
+  (restart-case (%run-debugger-fb condition)
+    (ask-the-agent ()
+      :report "ASK - explain this, and propose a fix"
+      :test (lambda (c) (declare (ignore c)) (fboundp 'agent-ask-about-condition))
+      (ignore-errors (funcall 'agent-ask-about-condition condition))
+      (run-debugger-fb condition))))
+
+(defun %run-debugger-fb (condition)
   "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
    a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
    the browser's live canvas + input (published in *fb-*). Returns only by invoking a
@@ -1731,12 +1751,14 @@
    (Enter/0-9/click invoke) and the backtrace (up-dn/click walk frames); the locals of
    the selected frame are always shown beside it, and M-. opens the selected frame's
    definition source in a modal viewer without unwinding the stack."
-  (let* ((restarts (restart-list condition))
+  (let* ((restarts (let ((rs (restart-list condition)))   ; ASK last: Enter keeps meaning
+                     (flet ((ask-p (r) (eq (getf r :name) 'ask-the-agent)))   ; the condition's own first
+                       (append (remove-if #'ask-p rs) (remove-if-not #'ask-p rs)))))
          (frame-objs (backtrace-frame-objects 40 4))    ; skip our own hook machinery
          (backtrace (mapcar #'frame-label frame-objs))
          (rsel 0) (fsel 0) (focus :restarts) (pending-meta nil)
          (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
-    (when (null restarts) (return-from run-debugger-fb))  ; nothing to do; let it pass
+    (when (null restarts) (return-from %run-debugger-fb))  ; nothing to do; let it pass
     (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
       (when dirty
         ;; locals read fresh on each redraw — cheap, and a redraw only follows input
@@ -1834,10 +1856,16 @@
      ("C-l / Super-Left,Rt" "address / back, forward")
      ("C-r  C-f  C-+ C--"  "reload, find, zoom")
      ("C-c / C-v"          "copy / paste via OUR clipboard"))
+    ("The agent  (doc/agent.org)"
+     ("C-c C-a / C-c ?"    "Ask it: selection, form or subject")
+     ("Super-a"            "the conversation (its tab)")
+     ("C-c C-a in it"      "send the question typed at the end")
+     ("C-c C-o"            "open what a ;; #N tool call read")
+     ("C-g"                "stop the turn that is answering"))
     ("Inspector"
      ("C-c C-c"            "set the selected field")
      ("C-c C-e"            "evaluate in the object (SELF)")
-     ("C-c C-a"            "apply this function"))
+     ("C-c C-a"            "apply this function (else: Ask)"))
     ("Jump"
      ("M-. / Ctrl-click"   "the definition at point / clicked")
      ("M-,"                "senders of the symbol at point"))
