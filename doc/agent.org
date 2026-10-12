@@ -780,6 +780,17 @@ Stage 2 is a legitimate resting place for a long time.
 
 * 10. The network track — closing networking.org §2c
 
+*DONE (2026-10-12)* — see [[file:networking.org][networking.org]] §2c–f and §8. All four pieces
+shipped, larger than estimated (the resolver grew a cache, TCP fallback and
+overrides; the "plain-HTTP GET" became a full HTTP/1.1 client), and one decision
+changed: *HTTPS exists now*, without the broker and before §9, by loading the
+*host's* OpenSSL from =/mnt/host= at runtime ([[file:../initramfs/tls.lisp][=tls.lisp=]]; never at build time, so
+the image does not depend on it). So the agent can call
+=(http-request "https://api.anthropic.com/…" :method :post :body json :on-chunk fn)=
+directly on the laptop; the broker (§4) is only needed where there is no
+=/mnt/host=, and §9 (TLS in Lisp) remains the way to drop the host dependency. The
+plan as written follows.
+
 Per §0.4 this comes *first*, and it is a subsystem completion rather than
 groundwork for the agent: it is what =networking.org= has had marked "(later)"
 since the DHCP client landed, and every piece is independently testable with no
@@ -836,10 +847,10 @@ image that exercises them.
 
 | Phase | Ships                                                        | Kernel work |
 |-------+--------------------------------------------------------------+-------------|
-| N1    | off-subnet default route via the leased gateway              | none        |
-| N2    | DNS client in Lisp; names resolve                            | none        |
-| N3    | SNTP client; the guest knows what time it is                 | none        |
-| N4    | plain-HTTP =GET= end to end — the outbound path is proven    | none        |
+| N1    | off-subnet default route via the leased gateway — *DONE*     | none        |
+| N2    | DNS client in Lisp; names resolve — *DONE*                   | none        |
+| N3    | SNTP client; the guest knows what time it is — *DONE*        | none        |
+| N4    | plain-HTTP =GET= end to end — *DONE*, and HTTPS via the host's libssl (§10) | none |
 
 *Agent track* (§4–§8 — pure Lisp, testable against a broker on loopback;
 §8.2 first, since it works over the network REPL with no pixels involved):

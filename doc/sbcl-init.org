@@ -36,6 +36,14 @@ container ([[file:containers.org][containers.org]]; section "lol-ct" below), wit
 =runs.lisp= streaming its output into a live pane. The same day the environment
 gained a web browser: =web-cdp.lisp= and =web.lisp= drive the host's Google Chrome,
 headless, through lol-ct (section "The web pane" below; [[file:web-browser.org][web-browser.org]]).
+Also since 2026-10-12 the network is complete in QEMU ([[file:networking.org][networking.org]]): =network-up=
+replaces =configure-eth0= at boot (DHCP on any wired link, the default route, a Lisp
+DNS resolver writing =/etc/resolv.conf=, SNTP, an HTTP/1.1 client, HTTPS through the
+host's libssl), and =build.sh= packs the AX201's Wi-Fi firmware from the host into the
+cpio (=LOL_WIFI_FIRMWARE=0= leaves it out); preinit creates =/etc/resolv.conf= for the
+user, hands =/dev/rfkill= over too, and =lol-rootd= answers two more one-signal
+requests (set the clock; copy the host's NetworkManager profiles).
+=check-net.lisp= asserts it all (=LOL_GUEST_HOSTROOT=1=).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -97,6 +105,8 @@ Crucial runtime behaviour:
   | /lib64/ld-linux-x86-64.so.2                | /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2   | dynamic loader (hard path)  |
   | /usr/lib/x86_64-linux-gnu/libc.so.6        | same                                             | glibc                       |
   | /usr/lib/x86_64-linux-gnu/libm.so.6        | same                                             | glibc math                  |
+  | /etc/hosts, /etc/nsswitch.conf             | initramfs/etc/ (committed, static)               | names for glibc programs    |
+  | /lib/firmware/iwlwifi-Qu*-hr-b0-77.ucode, regulatory.db{,.p7s} | the build host's =/lib/firmware= (generated =initramfs/firmware.list=, gitignored; never committed) | Wi-Fi firmware, card-keyed ([[file:networking.org][networking.org]] §7) |
   | /dev/console,/dev/null,/dev/tty (nodes)    | gen_init_cpio nod entries                        | stdio before devtmpfs       |
   | dirs: /proc /sys /dev /tmp /sbin /lib64 /usr /usr/lib /usr/lib/x86_64-linux-gnu | gen_init_cpio dir entries | mount points + lib paths |
 
@@ -181,8 +191,14 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
   | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾) |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
-  | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls) + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
-  | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client (=configure-eth0=) — leases eth0's IP at boot ([[file:networking.org][networking.org]]) |
+  | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls), the default route (=add-default-route=, =SIOCADDRT=), routes/v6 addresses read from =/proc=, interfaces from =/sys/class/net=, + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
+  | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client for any interface, the =LEASE= object, =apply-lease= (address + default route + =*lease-hooks*=), the =netd= renewal thread, and =network-up= — what the supervisor runs at boot ([[file:networking.org][networking.org]] §2b–c) |
+  | [[file:../initramfs/dns.lisp][=dns.lisp=]]         | the stub resolver (=resolve-host=), its TTL cache, =/etc/resolv.conf= from each lease ([[file:networking.org][networking.org]] §2c) |
+  | [[file:../initramfs/sntp.lisp][=sntp.lisp=]]        | SNTP: measures clock drift, steps the clock through =lol-rootd= ([[file:networking.org][networking.org]] §2d) |
+  | [[file:../initramfs/tls.lisp][=tls.lisp=]]         | HTTPS's crypto: the HOST's =libssl.so.3= from =/mnt/host=, loaded at *runtime* only ([[file:networking.org][networking.org]] §2e) |
+  | [[file:../initramfs/http.lisp][=http.lisp=]]        | the HTTP/1.1 client, =http-request= (chunked, redirects, streaming) ([[file:networking.org][networking.org]] §2e) |
+  | [[file:../initramfs/wifi.lisp][=wifi.lisp=]]        | Wi-Fi: rfkill, the host's =wpa_supplicant= and its control socket, saved / imported networks, the systray item ([[file:networking.org][networking.org]] §7) |
+  | [[file:../initramfs/net-views.lisp][=net-views.lisp=]]   | the network as a subject: =SuperL-n=, the Spotter's "network"/"wifi" (uses shell + wifi) |
   | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
 Ordering constraints, so you know which moves are safe: =line-editor= must precede
@@ -191,7 +207,8 @@ they are compiled) and, by convention, =shell= (it only *calls* =token-start= /
 =longest-common-prefix= and reads =*completer*= at run time — a softer need; the
 derived graph in [[file:guide/modules.html][the guide's module map]] lists every such edge); =canvas=
 precedes =textview=/=fb=/=shell=; =model= precedes =present=; =net= precedes
-=dhcp=; =logcount-fix= goes first so the image is repaired before anything else
+=dhcp=, which precedes =dns= / =sntp= / =wifi= (they hang on its =*lease-hooks*= and
+=*netd-hooks*=); =tls= precedes =http=; =net-views= comes after =shell= and =wifi=; =logcount-fix= goes first so the image is repaired before anything else
 lands (nothing at build time needs it — the build host has POPCNT — but first is
 where a reader looks for a patch to SBCL itself); and =supervisor= is last because
 it is the entry point. Everything else
@@ -201,7 +218,8 @@ Note that the =poc/= toolkit is not a copy — =build.sh= loads those files
 *straight out of =poc/=*, the same sources =sbcl --script poc/run-host.lisp= runs
 on the dev host. One implementation, two backends ([[file:../poc/README.org][poc/README.org]]).
 
-The network REPL starts *ON at boot* and can be toggled off from the menu (=t=).
+The network REPL is *off at boot* unless QEMU's =fw_cfg= (or =lol.netrepl=1=) asks
+for it (tag #26), and can be toggled from the menu (=t=).
 It serves the full line editor over the socket; a host-side raw-forwarding client
 lives in =host-client/= (NOT in the image). See [[file:networking.org][networking.org]] §6a.
 

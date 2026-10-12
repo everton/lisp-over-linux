@@ -263,5 +263,9 @@
             (list (when b
                     (list :kind :battery :text (battery-string b)
                           :tone (battery-tone b) :data b))
+                  ;; the host's field 2, the Wi-Fi SSID (or the wired link): wifi.lisp
+                  ;; loads later, so it is called by name, and only reads cached state
+                  (and (fboundp 'network-tray-item)
+                       (ignore-errors (funcall 'network-tray-item)))
                   (let ((c (ignore-errors (clock-string))))
                     (and c (list :kind :clock :text c)))))))

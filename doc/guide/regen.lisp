@@ -382,7 +382,8 @@
   '(("kernel interface" "the image talking to Linux: syscalls via sb-alien, ioctls, sysfs, /dev"
      "initramfs/logcount-fix.lisp" "poc/fb.lisp" "initramfs/framebuffer.lisp" "initramfs/files.lisp"
      "initramfs/sysinfo.lisp" "initramfs/meminfo.lisp" "initramfs/process.lisp"
-     "initramfs/net.lisp" "initramfs/dhcp.lisp")
+     "initramfs/net.lisp" "initramfs/dhcp.lisp" "initramfs/dns.lisp" "initramfs/sntp.lisp"
+     "initramfs/tls.lisp" "initramfs/http.lisp" "initramfs/wifi.lisp")
     ("data" "pure formats and algorithms: bytes in, values out, no I/O of their own"
      "poc/inflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
     ("model" "the image describing itself: captured source, CLOS via the MOP, SBCL's own source"
@@ -390,7 +391,7 @@
     ("present protocol" "subjects -> views of items + commands; pure, headless"
      "initramfs/present.lisp" "initramfs/tour.lisp" "initramfs/file-views.lisp"
      "initramfs/worker.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
-     "initramfs/containers.lisp" "initramfs/runs.lisp")
+     "initramfs/containers.lisp" "initramfs/runs.lisp" "initramfs/net-views.lisp")
     ("UI toolkit" "pixels and text: the canvas, fonts, widgets, the text editor, the TTY line editor"
      "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter"

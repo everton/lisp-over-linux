@@ -15,6 +15,7 @@ obvious.
 | =screenshot.lisp=   | CLI: QMP screendump -> PPM -> PNG. Used by =build.sh= and =poc/build-poc.sh=. |
 | =ppm2png.lisp=      | CLI: just the conversion. Used by =refresh-screenshot.sh=.     |
 | =drive-scene.lisp=  | CLI: drive the guest through a named scene and screendump it. The engine behind =refresh-screenshot.sh=. |
+| =http-test-server.lisp= | a tiny HTTP/1.1 server with one path per body framing (length, read-to-close, chunked with an extension and a trailer, redirect, echo, UTF-8) — what =poc/http-test.lisp= (loopback) and =check-net.lisp= (the guest, at =10.0.2.2=) test the image's client against ([[file:../doc/networking.org][networking.org]] §8). |
 
 * Why the Lisp ones exist
 

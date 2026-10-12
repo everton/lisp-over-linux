@@ -42,11 +42,15 @@ CATS=(
 # ansi.lisp stays "conformance" with its SGR READER added, since both directions
 # implement ECMA-48's colour codes. initramfs/web-cdp.lisp is "conformance" (the
 # DevTools protocol's framing, plus the JSON and base64 it rides on); web.lisp,
-# which decides what a web tab IS in the environment, is "ours".
+# which decides what a web tab IS in the environment, is "ours". The network:
+# dns/sntp/http are RFC wire formats and tls.lisp is an FFI binding to OpenSSL's
+# API — conformance; wifi.lisp and net-views.lisp are "ours" (which supplicant
+# requests, when, what to keep — a design, though it speaks wpa_supplicant's
+# control protocol).
 ORIGINS=(
   "vendored|poc/vendor/*"
-  "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp"
-  "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
+  "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp"
+  "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
   "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )

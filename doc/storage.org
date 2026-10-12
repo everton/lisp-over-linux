@@ -35,7 +35,7 @@ And the process tree:
 | PID | Program       | Runs as                         | Why                                          |
 |-----+---------------+---------------------------------+----------------------------------------------|
 |   1 | =/sbin/lisp=  | uid 1000 + 5 capabilities       | the whole environment                        |
-|  ~28| =lol-rootd=   | root (real uid 1000, see §6)    | chown hotplugged devices; remount ro at exit |
+|  ~28| =lol-rootd=   | root (real uid 1000, see §6)    | chown hotplugged devices; remount ro at exit; set the clock, copy NM profiles on request |
 |  any| =lol-ct=      | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs |
 
 * 2. The kernel half (tag #25)
@@ -251,7 +251,8 @@ is reachable then, so there is nothing to protect.
 
 * 6. =lol-rootd=: the one process that stays root
 
-Two jobs need root /after/ the drop, and a user may do neither:
+Two jobs need root /after/ the drop, and a user may do neither (two small
+requests were added later — end of this section):
 
 - *Hotplug.* A USB mouse plugged in after boot gets a fresh root-owned
   =/dev/input/eventN=; a browser restarted later could not open it. =lol-rootd=
@@ -275,6 +276,19 @@ root's powers). =/proc/<pid>/status= in the guest reads =Uid: 1000 0 0 0=.
 Verified: =(power-off)= from the REPL printed
 =EXT4-fs (vda): re-mounted 3d89cf97-… ro.= then =reboot: Power down=, and
 =dumpe2fs -h test-disk.img= afterwards says =Filesystem state: clean=.
+
+*Two more requests (2026-10-12, the network track — [[file:networking.org][networking.org]] §2d, §7.2).*
+Each is one signal, never a message to parse:
+- *signal 40, set the clock* — queued with =sigqueue(2)=, whose one-word payload is
+  the new time in Unix milliseconds; [[file:../initramfs/preinit.c::static void do_settime][=do_settime=]] refuses anything before
+  2026. PID 1 has no =CAP_SYS_TIME=; =sntp.lisp= measures, =lol-rootd= sets.
+- *signal 41, copy the host's NetworkManager Wi-Fi profiles* (root-only on the
+  host) to =/tmp/lol-nm-import/= — read as root, *written as the user* through
+  =setfsuid(2)= ([[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]).
+And preinit hands the user two more things before the drop: =/dev/rfkill= (in
+=give_devices=, so a hotplugged radio's is handed over too — the Wi-Fi kill switch)
+and the one file =/etc/resolv.conf= in our root, which =dns.lisp= rewrites from each
+DHCP lease.
 
 * 7. Logging
 

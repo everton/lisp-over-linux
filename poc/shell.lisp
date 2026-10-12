@@ -969,7 +969,7 @@
       (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) 3 *ui-rule*)
       (incf pen 16)
       (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen 3
-                                        (if (eq (getf it :kind) :battery)
+                                        (if (member (getf it :kind) '(:battery :wifi :wired))
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
     (setf *tray-rect* (list x0 0 tw (- +bar-h+ 1)))
@@ -1502,17 +1502,19 @@
   on-cancel              ; (lambda ()) or NIL — Esc / C-g
   completer              ; (lambda (text)) -> new text, or NIL — Tab
   single-key             ; T: the next key answers (y/n), no Enter needed
-  hint)                  ; a short dim note at the right end, or NIL
+  hint                   ; a short dim note at the right end, or NIL
+  secret)                ; T: drawn as bullets — a Wi-Fi passphrase (initramfs/net-views.lisp)
 
 (defun minibuffer-read (prompt on-done &key (initial "") on-change on-cancel completer
-                                             single-key hint)
+                                             single-key hint secret)
   "Open the minibuffer with PROMPT, pre-filled with INITIAL and the caret at its end.
    ON-DONE is called with the final text on Enter (or with the key's character, for
    a SINGLE-KEY prompt); everything else is optional. Returns at once — the answer
    comes later, through ON-DONE."
   (setf *minibuffer* (make-mb :prompt prompt :text initial :point (length initial)
                               :on-done on-done :on-change on-change :on-cancel on-cancel
-                              :completer completer :single-key single-key :hint hint))
+                              :completer completer :single-key single-key :hint hint
+                              :secret secret))
   nil)
 
 (defun minibuffer-finish (fn &rest args)
@@ -1582,7 +1584,8 @@
          (room (max 4 (floor (- w px 14 hint-w) cw)))
          (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
          (first (max 0 (- pt (1- room))))
-         (shown (subseq text first (min (length text) (+ first room)))))
+         (shown (subseq text first (min (length text) (+ first room))))
+         (shown (if (mb-secret mb) (make-string (length shown) :initial-element #\*) shown)))
     (lol.canvas:fill-rect canvas 0 y w 22 *ui-hi*)
     (lol.canvas:fill-rect canvas 0 y w 2 *ui-amber*)
     (note-drawn 0 y w 22 mb '(draw-minibuffer) "the minibuffer")
@@ -1967,6 +1970,8 @@
          ((member key '(#\f #\F)) (funcall 'open-files) nil)                   ; the file manager
          ((and (member key '(#\b #\B)) (fboundp 'web-open))                   ; a web page (web.lisp)
           (funcall 'web-open) nil)
+         ((member key '(#\n #\N))                                              ; the network view
+          (when (fboundp 'open-network) (funcall 'open-network)) nil)
          ((member key '(#\l #\L))                                              ; the CL-USER package
           (new-trail (find-package :cl-user)) nil)
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history

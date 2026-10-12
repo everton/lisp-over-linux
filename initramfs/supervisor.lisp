@@ -89,7 +89,8 @@
           (software-type) (software-version))
   (sleep 2)                       ; give USB a moment to enumerate
   (show-input-devices)            ; diagnostic: which keyboard(s) bound?
-  (configure-eth0)                ; DHCP (DISCOVER/REQUEST), static fallback; prints result
+  (network-up)                    ; DHCP on each wired link + default route + resolv.conf,
+                                  ;   then the netd thread (renewals, Wi-Fi); prints result
   ;; The network REPL starts only when the boot asked for it (QEMU's fw_cfg or
   ;; lol.netrepl=1 on the cmdline) — never on the laptop by default. net.lisp,
   ;; NET-REPL-WANTED-P. The menu's 't' can still switch it on by hand.
