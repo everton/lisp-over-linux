@@ -78,10 +78,11 @@ reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
   so it is live under QEMU with no kernel change. =fb-browser.lisp= reads it: a
   cursor tracks motion, left-click drills, and the wheel scrolls. The device is
   *not* a fixed =eventN= and has no =mouseN= handler (=mousedev= is not built), so
-  =find-mouse-device= locates it by *capability* — the block in
+  =input-device-kind= finds it by *capability* — a block in
   =/proc/bus/input/devices= whose =B: EV=- mask has EV_REL (bit 2) or EV_ABS
-  (bit 3) set. Here that resolves to =/dev/input/event2=. The whole mechanism —
-  the 24-byte =input_event= record, the three-fd =poll(2)=, the wheel's sign
+  (bit 3) with an X axis. Every such pointer (and every keyboard) is opened, and
+  hotplugged ones too. The whole mechanism —
+  the 24-byte =input_event= record, the =poll(2)= over every device, the wheel's sign
   convention, and why a bare Ctrl needs the keyboard's *own* evdev — is written up
   in [[file:../doc/input.org][doc/input.org]].
 

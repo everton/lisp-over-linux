@@ -1834,10 +1834,13 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   into a click. Motion with the button held is a *drag* that selects text
   (=browser-drag=) — on a clickpad, press the pad and slide ([[file:input.org][input.org]] §4½). /Finding the device:/ do *not* assume =eventN= or grep the
   Handlers line for =mouse= — =mousedev= is not built, so a plain PS/2 mouse shows
-  only =Handlers=eventN= with no =mouseN= token. =find-mouse-device= instead reads
-  =/proc/bus/input/devices= and ranks the blocks by their =B: EV=- capability mask
-  (EV_REL bit 2, EV_ABS bit 3) and =B: PROP=- property mask: tablet, then mouse,
-  then touchpad. /On real hardware the pointer is a touchpad/, whose absolute
+  only =Handlers=eventN= with no =mouseN= token. =input-device-kind= instead reads
+  =/proc/bus/input/devices= and classifies each block by its =B: EV=- capability
+  mask (EV_REL bit 2, EV_ABS bit 3, with an X axis) and =B: PROP=- property mask:
+  mouse, tablet, touchpad or keyboard — and *every* one is open at once, hotplug
+  included ([[file:input.org][input.org]] §4¾; it used to rank them and open only the winner, which
+  is why an external mouse and the touchpad never both worked). /On a laptop one of
+  the pointers is a touchpad/, whose absolute
   readings are in the pad's own units and describe a pad, not a screen — they get
   differenced rather than mapped ([[file:input.org][input.org]] §4½).
 - *A bare modifier needs the keyboard's own evdev.* The cooked tty reports Ctrl
