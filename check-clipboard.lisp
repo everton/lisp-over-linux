@@ -208,7 +208,7 @@
   ;; the Workspace tab is showing tv-draw's source since F2: aim at line 0, column 2,
   ;; which is inside "defun"
   (probe "(setf (lol.textview::tv-scroll (pane-tv (current-pane))) 0)")
-  (let* ((geo (probe "(let ((tv (pane-tv (current-pane)))) (list (+ (lol.textview::tv-x tv) (lol.textview::tv-pad tv) lol.textview::*gutter-w* (floor (* 5 (lol.textview::tv-cw tv)) 2)) (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) (floor (lol.textview:tv-line-height tv) 2))))"))
+  (let* ((geo (probe "(let ((tv (pane-tv (current-pane)))) (list (+ (lol.textview::tv-x tv) (lol.textview::tv-pad tv) (lol.textview::tv-gutter-w tv) (floor (* 5 (lol.textview::tv-cw tv)) 2)) (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) (floor (lol.textview:tv-line-height tv) 2))))"))
          (xy (read-from-string geo))
          (line0 (probe "(aref (lol.textview:tv-lines (pane-tv (current-pane))) 0)")))
     (glide-to (first xy) (second xy))
