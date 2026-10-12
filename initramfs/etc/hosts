@@ -1,0 +1,5 @@
+# /etc/hosts of the lisp-over-linux initramfs (doc/networking.org §2c).
+# Read by our resolver (initramfs/dns.lisp) before it asks DNS, and by glibc
+# programs run in a container. Add your own names in ~/.config/lol/hosts.
+127.0.0.1	localhost lol
+::1		localhost ip6-localhost ip6-loopback

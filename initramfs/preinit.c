@@ -14,9 +14,10 @@
  *   1. find the laptop's own disk and mount it PRIVATELY at /mnt/host
  *      (read-only), and bind-mount ONLY its /home onto our /home (read-write).
  *      Our / stays the tiny initramfs; the host's / is never our /.
- *   2. fork a tiny root helper, "lol-rootd", that keeps the two privileged
+ *   2. fork a tiny root helper, "lol-rootd", that keeps the few privileged
  *      jobs the Lisp cannot do as a user: chown hotplugged devices to the
- *      user, and remount the disk read-only before power-off.
+ *      user, remount the disk read-only before power-off, set the clock, and
+ *      copy the host's Wi-Fi profiles for the user.
  *   3. become the USER (e.g. everton, uid 1000) before exec'ing the Lisp,
  *      keeping only five named capabilities. Everything the environment
  *      creates on the real disk is then owned by the user — and it cannot
@@ -32,7 +33,9 @@
 #include <sys/types.h>
 #include <sys/prctl.h>
 #include <sys/syscall.h>
+#include <sys/fsuid.h>
 #include <dirent.h>
+#include <stdint.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -354,12 +357,29 @@ static void give_devices(uid_t uid, gid_t gid) {
     chown_dir_matching("/dev", "fb", uid, gid);
     chown_dir_matching("/dev", "tty", uid, gid);   /* tty, tty0, tty1 … (not ttyS*: harmless too) */
     chown_dir_matching("/dev/input", "event", uid, gid);
+    /* Wi-Fi's soft kill switch (doc/networking.org §7): writing an rfkill_event to
+     * /dev/rfkill unblocks the radio, and the kernel checks nothing but the file's
+     * permission (net/rfkill/core.c, rfkill_fop_write) — so the user owning the
+     * node is all it takes. (The sysfs `soft' file would also want CAP_NET_ADMIN.) */
+    chown_dir_matching("/dev", "rfkill", uid, gid);
+}
+
+/* /etc/resolv.conf (doc/networking.org §2c). The Lisp rewrites it from every DHCP
+ * lease (dns.lisp, WRITE-RESOLV-CONF) so glibc programs — the host's tools run in
+ * a container — resolve through the same servers. Our /etc is root's, and the user
+ * gets no write permission on it; instead we create this ONE file now and give it
+ * to the user. Created in every boot, so a root-run (diskless) Lisp finds it too. */
+static void give_resolv_conf(uid_t uid, gid_t gid, int to_user) {
+    int fd = open("/etc/resolv.conf", O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+    if (fd < 0) { say("resolv.conf: %s", strerror(errno)); return; }
+    if (to_user && fchown(fd, uid, gid) != 0) say("resolv.conf: chown: %s", strerror(errno));
+    close(fd);
 }
 
 /* ---- lol-rootd: the one process that stays root ------------------------- */
 /*
  * Privilege separation in miniature. The Lisp runs as the user; this child of
- * ours keeps root for exactly two jobs:
+ * ours keeps root for these two jobs (and the two requests below them):
  *   - every second, give newly appeared device nodes to the user (a poor
  *     man's udev: polling is ~nothing at this scale and needs no netlink);
  *   - on SIGUSR1 (sent by the Lisp's power-off), sync and remount the disk
@@ -370,6 +390,82 @@ static void give_devices(uid_t uid, gid_t gid) {
 static volatile sig_atomic_t want_shutdown = 0;
 static void on_usr1(int sig) { (void)sig; want_shutdown = 1; }
 
+/* ---- two more requests, each one signal (doc/networking.org §2c, §7) ------ */
+/*
+ * A request to lol-rootd is a SIGNAL, never a message to parse: the whole
+ * vocabulary is three signal numbers, so there is nothing for a confused or
+ * hostile Lisp to smuggle in. The numbers are fixed here and in the Lisp (not
+ * SIGRTMIN+n, which glibc and musl number differently: 34 vs 35).
+ *
+ *   ROOTD_SIG_SETTIME (40)  set the clock. Queued with sigqueue(2), whose
+ *       one-word payload (si_value) carries the new time as UNIX MILLISECONDS.
+ *       Setting the clock needs CAP_SYS_TIME, which PID 1 deliberately lacks;
+ *       sntp.lisp asks the network what time it is and sends us the answer.
+ *       We refuse anything before 2026-01-01: a clock set to 1970 would make
+ *       every TLS certificate "not yet valid", the very thing this is for.
+ *   ROOTD_SIG_NMIMPORT (41) copy the host's NetworkManager Wi-Fi profiles
+ *       (the .nmconnection files in /mnt/host/etc/NetworkManager/system-
+ *       connections — root only, 0600, they hold the passphrases) to
+ *       /tmp/lol-nm-import/, so
+ *       wifi.lisp can join a network the laptop already knows. Read as root,
+ *       WRITTEN AS THE USER: setfsuid(2) switches the identity the kernel
+ *       checks for file access only, so whatever /tmp/lol-nm-import turns out
+ *       to be (a symlink the user planted, say) we can write nothing there the
+ *       user could not. /tmp is a tmpfs: the copies vanish at power-off.
+ */
+#define ROOTD_SIG_SETTIME  40
+#define ROOTD_SIG_NMIMPORT 41
+#define EARLIEST_SANE_TIME 1767225600LL     /* 2026-01-01T00:00:00Z */
+static volatile sig_atomic_t want_settime = 0, want_nmimport = 0;
+static volatile long long settime_ms = 0;
+static uid_t rootd_uid;
+
+static void on_settime(int sig, siginfo_t *si, void *ctx) {
+    (void)sig; (void)ctx;
+    /* Only the user's processes (or root) can signal us at all — kill(2)'s rule
+     * — but say so explicitly: si_uid is the SENDER's real uid. */
+    if (si->si_code == SI_QUEUE && (si->si_uid == rootd_uid || si->si_uid == 0)) {
+        settime_ms = (long long)(intptr_t)si->si_value.sival_ptr;
+        want_settime = 1;
+    }
+}
+static void on_nmimport(int sig) { (void)sig; want_nmimport = 1; }
+
+static void do_settime(void) {
+    long long ms = settime_ms;
+    if (ms / 1000 < EARLIEST_SANE_TIME) { say("lol-rootd: refused clock %lld ms (before 2026)", ms); return; }
+    struct timespec ts = { (time_t)(ms / 1000), (long)(ms % 1000) * 1000000L };
+    if (clock_settime(CLOCK_REALTIME, &ts) != 0) say("lol-rootd: clock_settime: %s", strerror(errno));
+    else say("lol-rootd: clock set to %lld (unix seconds)", ms / 1000);
+}
+
+static void do_nmimport(uid_t uid, gid_t gid) {
+    static const char *src = "/mnt/host/etc/NetworkManager/system-connections";
+    static const char *dst = "/tmp/lol-nm-import";
+    DIR *d = opendir(src);
+    struct dirent *e;
+    int n = 0;
+    if (!d) { say("lol-rootd: nm import: %s: %s", src, strerror(errno)); return; }
+    setfsgid(gid); setfsuid(uid);               /* from here on, file access as the user */
+    mkdir(dst, 0700);
+    setfsuid(0); setfsgid(0);
+    while ((e = readdir(d))) {
+        size_t len = strlen(e->d_name);
+        if (len < 14 || strcmp(e->d_name + len - 13, ".nmconnection")) continue;
+        char from[600], to[600], buf[16384];
+        snprintf(from, sizeof from, "%s/%s", src, e->d_name);
+        int sz = slurp(from, buf, sizeof buf);  /* as root: the source is 0600 root */
+        if (sz <= 0) continue;
+        snprintf(to, sizeof to, "%s/%s", dst, e->d_name);
+        setfsgid(gid); setfsuid(uid);
+        int fd = open(to, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+        if (fd >= 0) { if (write(fd, buf, (size_t)sz) == sz) n++; close(fd); }
+        setfsuid(0); setfsgid(0);
+    }
+    closedir(d);
+    say("lol-rootd: nm import: %d profile(s) copied to %s", n, dst);
+}
+
 static pid_t start_rootd(uid_t uid, gid_t gid, int have_disk) {
     pid_t pid = fork();
     if (pid != 0) return pid;                   /* parent (or fork failed: -1) */
@@ -378,8 +474,19 @@ static pid_t start_rootd(uid_t uid, gid_t gid, int have_disk) {
      * signal a process whose REAL (or saved) uid equals the sender's, so the
      * user's Lisp may send us SIGUSR1 — yet with euid 0 we keep root's powers. */
     setresuid(uid, 0, 0);
+    rootd_uid = uid;
     signal(SIGUSR1, on_usr1);
+    {
+        struct sigaction sa;
+        memset(&sa, 0, sizeof sa);
+        sa.sa_sigaction = on_settime;
+        sa.sa_flags = SA_SIGINFO;
+        sigaction(ROOTD_SIG_SETTIME, &sa, NULL);
+        signal(ROOTD_SIG_NMIMPORT, on_nmimport);
+    }
     for (;;) {
+        if (want_settime)  { want_settime = 0;  do_settime(); }
+        if (want_nmimport) { want_nmimport = 0; do_nmimport(uid, gid); }
         if (want_shutdown) {
             sync();
             if (have_disk) {
@@ -514,6 +621,7 @@ int main(void) {
             envp[n_env++] = "LOL_NETREPL=1";
     }
 
+    give_resolv_conf(u.uid, u.gid, u.ok);
     if (u.ok) {
         give_devices(u.uid, u.gid);
         pid_t rootd = start_rootd(u.uid, u.gid, have_disk);

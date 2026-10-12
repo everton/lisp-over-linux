@@ -109,6 +109,238 @@
              (sb-alien:free-alien buf)))
       (%close fd))))
 
+;;; ---- the routing table: SIOCADDRT, and reading it back -------------------
+;;;
+;;; Giving eth0 an address and a mask (above) makes the kernel add ONE route by
+;;; itself: "10.0.2.0/24 is on-link, out of eth0". Anything outside that subnet —
+;;; the whole internet — needs a DEFAULT route: "for every other destination, hand
+;;; the packet to the gateway 10.0.2.2". That is one more entry in the kernel's
+;;; routing table, and there are two ways to ask for it:
+;;;
+;;;   - the ioctl SIOCADDRT with a `struct rtentry` (what the old `route add`
+;;;     does) — the same throwaway-socket idiom as SIOCSIFADDR above;
+;;;   - rtnetlink: an AF_NETLINK socket and an RTM_NEWROUTE message (what `ip
+;;;     route add` does).
+;;;
+;;; We use the ioctl. It is IPv4-only and cannot express everything (several
+;;; tables, policy routing), but it is ~40 lines in an idiom this file already
+;;; teaches, and it needs nothing a netlink message would add: one default route
+;;; through one gateway. IPv6 routes we never ADD ourselves — the kernel installs
+;;; the v6 default route on its own from the router's advertisement (SLAAC) — so
+;;; the one place netlink would earn its keep does not arise. Reading the table
+;;; back needs no netlink either: the kernel prints it as text in /proc/net/route
+;;; (v4) and /proc/net/ipv6_route (v6). Both checked against linux/net/ipv4/
+;;; fib_frontend.c (SIOCADDRT wants CAP_NET_ADMIN — one of PID 1's five).
+;;;
+;;; struct rtentry on x86-64, measured with offsetof() against glibc's
+;;; <net/route.h> rather than worked out by hand (120 bytes):
+;;;    0 rt_pad1 · 8 rt_dst (sockaddr) · 24 rt_gateway · 40 rt_genmask
+;;;   56 rt_flags (u16) · 80 rt_metric (i16) · 88 rt_dev (char *) · …
+;;; rt_metric is stored PLUS ONE by the kernel's ioctl path (0 means "default"),
+;;; so metric 0 asks for the kernel default.
+
+(defconstant +rtentry-size+ 120)
+(defconstant +siocaddrt+ #x890b)
+(defconstant +siocdelrt+ #x890c)
+(defconstant +rtf-up+      #x1)
+(defconstant +rtf-gateway+ #x2)
+
+(defun %put-sockaddr-in (buf offset octets)
+  "A struct sockaddr_in at OFFSET in BUF: AF_INET, port 0, the four OCTETS."
+  (setf (sb-alien:deref buf offset) +af-inet+
+        (sb-alien:deref buf (+ offset 1)) 0)
+  (loop for o in octets for i from (+ offset 4) do (setf (sb-alien:deref buf i) o)))
+
+(defun %route-ioctl (request gateway &key (ifname nil) (metric 0))
+  "Add or delete (REQUEST = SIOCADDRT / SIOCDELRT) the DEFAULT route via GATEWAY
+   (an octet list), optionally pinned to IFNAME. Returns T, or NIL and the errno."
+  (let ((fd (%socket +af-inet+ +sock-dgram+ 0))
+        (buf (sb-alien:make-alien sb-alien:unsigned-char +rtentry-size+))
+        (dev (and ifname (sb-alien:make-alien-string ifname))))
+    (unwind-protect
+         (progn
+           (dotimes (i +rtentry-size+) (setf (sb-alien:deref buf i) 0))
+           (%put-sockaddr-in buf 8  '(0 0 0 0))     ; rt_dst     0.0.0.0  = "anywhere"
+           (%put-sockaddr-in buf 24 gateway)        ; rt_gateway the router
+           (%put-sockaddr-in buf 40 '(0 0 0 0))     ; rt_genmask /0       = matches all
+           (setf (sb-alien:deref buf 56) (logior +rtf-up+ +rtf-gateway+))
+           (setf (sb-alien:deref buf 80) (ldb (byte 8 0) metric)
+                 (sb-alien:deref buf 81) (ldb (byte 8 8) metric))
+           (when dev                                ; rt_dev: a char * at 88, little-endian
+             (let ((addr (sb-sys:sap-int (sb-alien:alien-sap dev))))
+               (dotimes (i 8) (setf (sb-alien:deref buf (+ 88 i)) (ldb (byte 8 (* 8 i)) addr)))))
+           (if (minusp (%ioctl fd request buf))
+               (values nil (sb-alien:get-errno))
+               t))
+      (sb-alien:free-alien buf)
+      (when dev (sb-alien:free-alien dev))
+      (%close fd))))
+
+(defun add-default-route (gateway &key ifname)
+  "Install the default route via GATEWAY (octets or \"a.b.c.d\"). Idempotent: an
+   identical route already present (EEXIST, errno 17) counts as success."
+  (let ((gw (if (stringp gateway) (ipv4-octets gateway) gateway)))
+    (multiple-value-bind (ok errno) (%route-ioctl +siocaddrt+ gw :ifname ifname)
+      (or ok (eql errno 17)))))
+
+(defun delete-default-route (gateway &key ifname)
+  "Remove the default route via GATEWAY. T on success."
+  (let ((gw (if (stringp gateway) (ipv4-octets gateway) gateway)))
+    (values (%route-ioctl +siocdelrt+ gw :ifname ifname))))
+
+(defun octets->dotted* (octets)
+  "(10 0 2 2) -> \"10.0.2.2\". dhcp.lisp's OCTETS->DOTTED does the same; this copy
+   exists because net.lisp loads first."
+  (format nil "~{~d~^.~}" octets))
+
+(defun %hex-le-ipv4 (hex)
+  "/proc/net/route prints each address as the 32-bit word in HOST byte order
+   (little-endian here), so \"0202000A\" is 10.0.2.2: read the bytes backwards."
+  (let ((n (parse-integer hex :radix 16)))
+    (list (ldb (byte 8 0) n) (ldb (byte 8 8) n) (ldb (byte 8 16) n) (ldb (byte 8 24) n))))
+
+(defun %split-ws (line)
+  "LINE split on runs of spaces/tabs."
+  (let ((out '()) (start nil))
+    (loop for i from 0 to (length line)
+          for c = (if (< i (length line)) (char line i) #\Space)
+          do (if (member c '(#\Space #\Tab))
+                 (when start (push (subseq line start i) out) (setf start nil))
+                 (unless start (setf start i))))
+    (nreverse out)))
+
+(defun %read-lines (path)
+  "Every line of the text file PATH, or NIL if it cannot be read."
+  (ignore-errors
+   (with-open-file (s path :external-format :latin-1)
+     (loop for l = (read-line s nil nil) while l collect l))))
+
+(defun ipv4-routes ()
+  "The IPv4 routing table as plists (:iface :dest :gateway :mask :flags :metric),
+   addresses as dotted strings — read from /proc/net/route."
+  (loop for line in (rest (%read-lines "/proc/net/route"))
+        for f = (%split-ws line)
+        when (>= (length f) 8)
+          collect (list :iface (first f)
+                        :dest (octets->dotted* (%hex-le-ipv4 (second f)))
+                        :gateway (octets->dotted* (%hex-le-ipv4 (third f)))
+                        :flags (parse-integer (fourth f) :radix 16)
+                        :metric (parse-integer (seventh f))
+                        :mask (octets->dotted* (%hex-le-ipv4 (eighth f))))))
+
+(defun ipv4-default-route ()
+  "The IPv4 default route (dest 0.0.0.0, mask 0.0.0.0) as a plist, or NIL."
+  (find-if (lambda (r) (and (string= (getf r :dest) "0.0.0.0")
+                            (string= (getf r :mask) "0.0.0.0")))
+           (ipv4-routes)))
+
+;;; IPv6 (tag #26 turned CONFIG_IPV6 on). We configure nothing by hand: when an
+;;; interface comes UP the kernel gives it a link-local fe80:: address by itself,
+;;; and when a router on the link sends a Router Advertisement the kernel builds a
+;;; global address from the advertised prefix + its own identifier (SLAAC,
+;;; "stateless address autoconfiguration") and installs the v6 default route. So
+;;; for v6 the Lisp only READS: /proc/net/if_inet6 and /proc/net/ipv6_route, both
+;;; 32-hex-digit addresses with no colons.
+
+(defun %hex->ipv6 (hex)
+  "\"fe800000000000000000000000000001\" -> \"fe80::1\" (RFC 5952 shortening:
+   the longest run of two or more zero groups becomes ::)."
+  (let* ((groups (loop for i from 0 below 32 by 4
+                       collect (parse-integer hex :start i :end (+ i 4) :radix 16)))
+         (best-start nil) (best-len 1))
+    (loop with start = nil
+          for g in (append groups '(1)) for i from 0
+          do (if (zerop g)
+                 (unless start (setf start i))
+                 (when start
+                   (when (> (- i start) best-len) (setf best-start start best-len (- i start)))
+                   (setf start nil))))
+    (if best-start
+        (format nil "~{~(~x~)~^:~}::~{~(~x~)~^:~}"
+                (subseq groups 0 best-start) (subseq groups (+ best-start best-len)))
+        (format nil "~{~(~x~)~^:~}" groups))))
+
+(defun ipv6-addresses (&optional ifname)
+  "The interfaces' IPv6 addresses as plists (:iface :address :prefix :scope),
+   from /proc/net/if_inet6; only IFNAME's when given. :scope is :global, :link or
+   :host (loopback)."
+  (loop for line in (%read-lines "/proc/net/if_inet6")
+        for f = (%split-ws line)
+        when (and (= (length f) 6) (or (null ifname) (string= (sixth f) ifname)))
+          collect (list :iface (sixth f)
+                        :address (%hex->ipv6 (first f))
+                        :prefix (parse-integer (third f) :radix 16)
+                        :scope (case (parse-integer (fourth f) :radix 16)
+                                 (#x00 :global) (#x20 :link) (#x10 :host) (t :other)))))
+
+(defun ipv6-default-route ()
+  "The IPv6 default route (::/0 with a gateway) as a plist (:iface :gateway), or
+   NIL. Its presence is the test for 'is IPv6 usable beyond this link' — the
+   resolver asks for AAAA records only when it is true."
+  (loop for line in (%read-lines "/proc/net/ipv6_route")
+        for f = (%split-ws line)
+        when (and (= (length f) 10)
+                  (string= (first f) "00000000000000000000000000000000")
+                  (string= (second f) "00")
+                  (string/= (fifth f) "00000000000000000000000000000000")
+                  (string/= (tenth f) "lo"))
+          return (list :iface (tenth f) :gateway (%hex->ipv6 (fifth f)))))
+
+;;; ---- which interfaces exist: /sys/class/net --------------------------------
+;;;
+;;; The kernel names interfaces itself (eth0, wlan0 — there is no udev here to
+;;; rename them to enp0s3/wlp0s20f3) and lists each one as a directory in
+;;; /sys/class/net. A few files in it say what it is: `type' (1 = Ethernet-like,
+;;; which Wi-Fi also is; 772 = loopback), `address' (the MAC), `operstate', and a
+;;; `wireless'/`phy80211' entry that only 802.11 interfaces have.
+
+(defun %sys-net (ifname file)
+  (let ((l (%slurp-small (format nil "/sys/class/net/~a/~a" ifname file))))
+    (and l (string-trim '(#\Space #\Newline) l))))
+
+(defun interface-names ()
+  "Names of every network interface the kernel has, sorted."
+  (sort (mapcar (lambda (p) (car (last (pathname-directory p))))
+                (directory "/sys/class/net/*/" :resolve-symlinks nil))
+        #'string<))
+
+(defun interface-wireless-p (ifname)
+  (and (probe-file (format nil "/sys/class/net/~a/phy80211/" ifname)) t))
+
+(defun interface-info (ifname)
+  "A plist describing IFNAME: :name :kind (:loopback :wireless :wired) :mac
+   :state (\"up\"/\"down\"/…) :carrier :ipv4 :ipv6 (a list of address plists)."
+  (list :name ifname
+        :kind (cond ((equal (%sys-net ifname "type") "772") :loopback)
+                    ((interface-wireless-p ifname) :wireless)
+                    (t :wired))
+        :mac (%sys-net ifname "address")
+        :state (%sys-net ifname "operstate")
+        :carrier (equal (%sys-net ifname "carrier") "1")
+        :ipv4 (ignore-errors (interface-ipv4 ifname))
+        :ipv6 (ipv6-addresses ifname)))
+
+(defun interfaces ()
+  "INTERFACE-INFO for every interface."
+  (mapcar #'interface-info (interface-names)))
+
+(defun set-interface-up (ifname &optional (up t))
+  "Raise (or lower) IFNAME's IFF_UP flag without touching its address. Wi-Fi must
+   be UP before the supplicant can scan; T on success."
+  (let ((fd (%socket +af-inet+ +sock-dgram+ 0))
+        (buf (sb-alien:make-alien sb-alien:unsigned-char +ifreq-size+)))
+    (unwind-protect
+         (progn
+           (%zero-ifreq buf) (%set-ifname buf ifname)
+           (when (minusp (%ioctl fd +siocgifflags+ buf)) (return-from set-interface-up nil))
+           (let* ((flags (logior (sb-alien:deref buf 16) (ash (sb-alien:deref buf 17) 8)))
+                  (new (if up (logior flags +iff-up+) (logandc2 flags +iff-up+))))
+             (setf (sb-alien:deref buf 16) (logand new #xff)
+                   (sb-alien:deref buf 17) (logand (ash new -8) #xff)))
+           (not (minusp (%ioctl fd +siocsifflags+ buf))))
+      (sb-alien:free-alien buf)
+      (%close fd))))
+
 ;;; ---- a TCP REPL server (sb-bsd-sockets, baked into the image) ------------
 ;;;
 ;;; SECURITY: this is plaintext, unauthenticated remote =eval= — i.e. remote
