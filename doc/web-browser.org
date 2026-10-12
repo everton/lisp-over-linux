@@ -1,20 +1,462 @@
-#+TITLE: A web browser in the image — choosing WPE WebKit, and testing it on the host first
+#+TITLE: The web browser — headless Chrome, drawn by the Lisp
 #+STARTUP: showall
 
-Sibling docs: [[file:networking.org][networking.org]] (the network the browser would ride on) ·
-[[file:processes.org][processes.org]] (why only one process may own =/dev/fb0=, and the
-"pixel peer" this would bring back) · [[file:framebuffer.org][framebuffer.org]] (why the image
-has no GPU driver) · [[file:agent.org][agent.org]] (the other plan that needs TLS in the image).
+Sibling docs: [[file:processes.org][processes.org]] (why only one process may own =/dev/fb0=,
+and the "pixel peer" this brings back) · [[file:containers.org][containers.org]] (the container
+Chrome runs in) · [[file:framebuffer.org][framebuffer.org]] (why the image has no GPU driver) ·
+[[file:previews.org][previews.org]] (the JPEG decoder every frame goes through) ·
+[[file:code-browser.org][code-browser.org]] (the shell the web pane lives in) ·
+[[file:networking.org][networking.org]] (the network under it).
 
-Question that prompted this: /once networking and real storage work, what would it
-take to run a web browser here, ideally Nyxt, the browser written in Lisp?/
+Question that prompted this: /a significant part of my work is web based, so I need a
+browser in the environment./ The first version of this document explored WPE WebKit
+and Nyxt; that exploration is kept, unchanged, as the appendix (§A1–§A6).
 
-*STATUS (2026-10-02): exploration only; nothing is in the image.* Every number below
-was measured on the dev host: Debian 14, Intel i7-1065G7 with Iris Plus G7
-graphics, =libwpewebkit-2.0-1= 2.54.0, =cog= 0.18.5, =cage= 0.3.1. The kernel tag
-for the image is still *#24*, with =DRM= off.
+*STATUS (2026-10-12, kernel tag #26): BUILT.* =SuperL-b= opens a web page in a tab of
+the environment. The engine is the host's own Google Chrome (148.0.7778.215 on the dev
+host), started headless inside a container whose root is the host's Debian, driven
+over the DevTools protocol, and drawn by our Lisp. Code:
+[[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
+[[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (21 checks, about ten
+seconds), [[file:../check-web.lisp][check-web.lisp]] in the guest (13 checks). Both pass.
 
-* 1. The short answer
+* 1. The decision: Chrome, headless, over the DevTools protocol
+
+The appendix chose an architecture before it chose an engine: *headless + our own
+blit*. The engine renders into memory and shows nothing. Our Lisp puts its pixels
+on the screen, as one more pane. The Lisp stays the only process on =/dev/fb0=,
+which [[file:processes.org][processes.org]] §1 requires. No GPU driver is needed and
+no compositor.
+
+It picked WPE WebKit to fill that shape. We use the same shape with a different
+engine: *Google Chrome*, which is already installed on the laptop, at
+=/usr/bin/google-chrome=, and which is the browser the user's web work is done in.
+Chrome has a headless mode (=--headless=new=) that is the real browser with no
+window. It also has a control protocol that already does everything the shape
+needs. WPE would have needed C code against an API nobody here has read yet
+(§A6, last paragraph).
+
+** 1.1 Chrome or WPE: the comparison that decided it
+
+| What matters | Chrome (built) | WPE WebKit (explored, §A) |
+|--------------+----------------+---------------------------|
+| Site compatibility | Chrome itself: Google Workspace, GitHub and most SaaS are *built against* it | WebKit, the Safari engine. Supported by the big sites, but some sniff the user agent and refuse or degrade |
+| The user's habits | the browser already in use; a profile can even be shared (§7.3) | a new browser |
+| How frames reach us | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3) | the new platform API's headless buffers; *not investigated* (§A6) |
+| How input reaches it | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4) | an embedder API in C |
+| Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=) | to be written against the API |
+| Code we wrote | 1,776 lines of Lisp, *no C* (=web-cdp.lisp= 480, =web.lisp= 1,296) | a C shim plus Lisp; not estimated |
+| Memory, one simple page | 240–280 MB PSS on the host (§8.2), 436 MB in the guest | ~570 MB RSS for one heavy site (§A5; RSS, an upper bound) |
+| Disk | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image | ~270 MB of libraries (§A2) |
+| Licence | proprietary binary, used as installed | LGPL |
+
+The licence row is the honest cost. Chrome is not free software. We do not ship
+it: the image *calls* the copy the user installed, from the host's own disk. That is
+the same stance [[file:previews.org][previews.org]] takes for =libstbi.so=, one step
+further: a host program, used at runtime, because writing our own is not
+realistic (see =loc.sh=, which counts only what we wrote).
+
+The appendix's checklists T1–T7 are still the right way to judge WPE, if that is
+ever wanted. Nothing in §2–§6 below is Chrome-specific except the protocol, so
+replacing the engine would replace =web-cdp.lisp= and keep the pane.
+
+* 2. What the user sees
+
+=SuperL-b= ("browse") opens a new tab with the address prompt in the minibuffer.
+Type an address or some words and press Enter. The Spotter (=SuperL-Space=) offers
+web rows too: "open URL" when the query looks like an address, "search the web" for
+any other text, and the open web tabs whose title or URL match.
+
+A web tab is an ordinary tab of the environment. Its label is the page's title, and
+=SuperL-1…9=, =SuperL-Tab= and =SuperL-w= work on it like on any other. Inside it,
+a toolbar shows back =<=, forward =>=, reload (or stop while loading) and the
+address; clicking the address edits it. Below is the page.
+
+| Key | Does |
+|-----+------|
+| =C-l= | the address prompt (an address, or words to search for) |
+| =SuperL-Left= / =SuperL-Right= | back / forward in the page's history |
+| =C-r= | reload |
+| =Esc= while loading | stop (otherwise =Esc= goes to the page) |
+| =C-f= | find in the page as you type; Enter finds the next |
+| =C-c= / =C-x= / =C-v= | copy / cut / paste through *our* clipboard (§4.2) |
+| =C-Insert= / =S-Insert= | copy / paste, X style |
+| =C-+= / =C--= / =C-0= | zoom in, out, back to 100% |
+| =Shift-F10=, the Menu key, right click | the environment's menu for the page |
+| =SuperL-click= on a link | open it in a new tab (Ctrl-click opens it behind) |
+| anything else | the page's |
+
+Every =SuperL= key stays the environment's. Every other key belongs to the page,
+=Tab=, =Esc=, =C-g=, =C-c= included, because the page is what you are typing into.
+The exceptions in the table are the chords a desktop browser also keeps for itself.
+
+*Alt-Left is not "back".* Every desktop browser uses it, so it was the first choice.
+In the guest, check-web.lisp's back check failed and every check after it failed too.
+The reason: the console keymap gives Alt-Left and Alt-Right to switching virtual
+terminals. /Verified/ in =./linux/drivers/tty/vt/defkeymap.c_shipped=: =alt_map[105]=
+and =alt_map[106]= (=KEY_LEFT=, =KEY_RIGHT=) are =0xf210= and =0xf211=, which are
+=K_DECRCONSOLE= and =K_INCRCONSOLE= in =include/uapi/linux/keyboard.h=. The kernel
+acts on them before any program sees a byte. So the guest had switched to another
+VT, and the later keys went there. =SuperL-Left/Right= are back and forward instead;
+=M-Left/Right= still work wherever they arrive (the host).
+
+* 3. How it works
+
+** 3.1 The DevTools protocol
+
+Chrome's developer tools (the panel you open with F12) control the browser through
+a protocol of their own: the *Chrome DevTools Protocol*, CDP. It is plain JSON. We
+send a *command*:
+
+#+begin_src js
+{"id": 7, "method": "Page.navigate", "params": {"url": "https://example.com"}}
+#+end_src
+
+Chrome answers with a *response* carrying the same id, ={"id":7,"result":{...}}= or
+={"id":7,"error":{...}}=. It also sends *events* whenever it likes, with no id:
+={"method":"Page.frameNavigated","params":{...}}=. That is the whole grammar. The
+vocabulary is a few hundred methods grouped into domains (=Page=, =Input=,
+=Target=, =Runtime=, =Emulation=, =Browser=), documented at
+https://chromedevtools.github.io/devtools-protocol/. Puppeteer and Playwright, the
+usual browser-automation libraries, are built on it. =web-cdp.lisp= is our much
+smaller equivalent, with a JSON reader and writer limited to what this traffic uses.
+
+** 3.2 The pipe, not a socket
+
+Chrome usually serves CDP on a TCP port, over a WebSocket. Started with
+=--remote-debugging-pipe=, it uses two inherited *file descriptors* instead. A file
+descriptor is a small integer naming an open file or pipe in a process: 0 is
+stdin, 1 is stdout, 2 is stderr. Chrome reads commands from fd 3 and writes replies
+and events to fd 4. Each message ends with a NUL byte, which can never occur inside
+JSON text, so it marks message boundaries unambiguously.
+
+This needs no HTTP, no WebSocket framing, and opens no port another program could
+connect to. The one difficulty is getting the pipes onto fds 3 and 4.
+=sb-ext:run-program= gives a child fresh pipes on its stdin and stdout only. So we
+start a shell that moves them before it becomes Chrome
+([[file:../initramfs/web-cdp.lisp::defun pipe-wrapper][=pipe-wrapper=]]):
+
+#+begin_src sh
+exec 3<&0 4>&1 >>/tmp/lol-chrome-1.log 2>&1 </dev/null; exec google-chrome --headless=new --remote-debugging-pipe ...
+#+end_src
+
+=3<&0= makes fd 3 a copy of stdin, our command pipe. =4>&1= makes fd 4 a copy of
+stdout, our reply pipe. Chrome's own messages then go to a log file, so they can
+never interleave with the protocol. Our end of the reply pipe is non-blocking:
+=web-cdp.lisp= reads whatever is there and never waits on it.
+
+** 3.3 Tabs, sessions, and frames
+
+One Chrome process holds many tabs. In CDP a tab is a *target*. =Target.createTarget=
+makes one, and =Target.attachToTarget= with =flatten: true= returns a *session id*.
+After that, a command meant for that tab carries ="sessionId"= beside ="method"=, and
+every event from that tab carries it too. One pipe, many tabs, told apart by one
+string.
+
+Pixels come from *screencasting*. =Page.startScreencast= asks Chrome to send a
+=Page.screencastFrame= event whenever the page repaints. The event holds the frame
+as a JPEG, base64-encoded (JSON strings cannot carry raw bytes; base64 spells every
+3 bytes as 4 letters). We answer each frame with =Page.screencastFrameAck=, and
+Chrome does not send the next frame until it gets that ack. This is the protocol's
+*flow control*: a slow reader (us, under QEMU) gets fewer frames, not a growing
+backlog. A page that does not change sends nothing, so an idle tab costs no CPU.
+
+Each frame is decoded the way an image preview is: base64, then the JPEG through
+stb_image ([[file:previews.org][previews.org]]), into the canvas's own =#x00RRGGBB=
+pixels. Only the newest frame is decoded. A frame replaced before we drew it is
+dropped undecoded.
+
+The pane's size becomes the page's: =Emulation.setDeviceMetricsOverride= lays the
+page out as if the window were exactly the pane, and the screencast is restarted at
+that size. When the pane changes size (another font, a different screen), the next
+draw records the new size and the next turn resends both. Zoom is the
+=deviceScaleFactor= of the same call, so =C-+= re-lays-out and re-rasterises the
+text larger. It does not enlarge a picture.
+
+Only the tab on screen streams. When you switch to another tab, =Page.stopScreencast=
+stops the one you left.
+
+** 3.4 Input
+
+A click becomes =Input.dispatchMouseEvent=: a =mousePressed=, then a =mouseReleased=
+when the button comes up, with the point converted to the page's CSS pixels. A drag
+sends =mouseMoved= with the button held, so text selection and sliders work. A bare
+pointer move is sent too, for hover menus. A touchpad tap has no release of its own,
+so it is sent as press and release together. The wheel becomes a =mouseWheel= of
+100 CSS pixels per notch, Chrome's own step on Linux, at the pointer's position, so
+the page scrolls whatever is under it.
+
+A key becomes =Input.dispatchKeyEvent=, a =keyDown= and a =keyUp=, filled in the way
+the page's =KeyboardEvent= expects. =key= is what the key means (="a"=, ="Enter"=).
+=code= is which physical key it is (="KeyA"=). =windowsVirtualKeyCode= is the old
+numeric code many sites still read. =text= is present only when the key inserts
+something: a keyDown with text types a character; one without (=C-a=, an arrow) is a
+command. The modifiers map Shift, Ctrl and Alt to CDP's bits 8, 2 and 1.
+
+Paste uses =Input.insertText=, which inserts a whole string the way an input method
+commits text.
+
+* 4. The pane in the shell
+
+** 4.1 A tab is a trail
+
+=SUBJ-WEB= is a subject like a folder or a definition. =present= gives a view of kind
+=:web= whose data is the =WEB-TAB=, so the tab strip, the right-button menu (from
+=commands-for=), the halo and the Spotter's recents all work without knowing what a
+web page is.
+
+Each web tab is its own trail, so it gets its own tab in the strip. Closing it needs
+no hook in the shell. On every turn, =WEB-COLLECT-TABS= closes the Chrome page of any
+web tab that no trail holds any more. A link that opens a new window
+(=target=_blank=, =window.open=, Ctrl-click) arrives as a =Target.targetCreated= event
+with an /opener/, and becomes a new trail. The opener test matters: Chrome also
+reports pages that already exist, its own startup =about:blank= among them, and those
+must not become tabs.
+
+The page title comes from =Target.targetInfoChanged=, and also directly from
+=document.title= whenever a load finishes. The second source exists because for a
+=file://= page Chrome 148 kept reporting the file name as the title (found by
+poc/web-test.lisp).
+
+** 4.2 Copy and paste go through our clipboard
+
+Headless Chrome keeps its clipboard inside its own process, where nothing else can
+paste from it. So =C-c= asks the page for its selection (the selection inside a
+focused text field, which =getSelection()= alone does not see, else the document's)
+and puts it in =lol.clipboard='s history ([[file:clipboard.org][clipboard.org]]). The
+key is also sent on to the page, so a site with its own copy handler still sees it.
+=C-v= types our newest clipboard entry. Selecting text with a drag puts it in
+PRIMARY when the button comes up, as everywhere else in the environment, so a middle
+click can paste it into the Workspace.
+
+** 4.3 Downloads, dialogs, find
+
+- *Downloads* go to =~/Downloads= under their own names
+  (=Browser.setDownloadBehavior=), and the status line reports progress and the
+  result. =/home= is the laptop's own, so a download is a real file on the disk.
+- *alert(), confirm(), prompt()* freeze the page until they are answered. They are
+  answered in the minibuffer at once: Enter is OK (with the typed text, for a
+  prompt), =C-g= is Cancel.
+- *Find* is the page's own =window.find=, re-run as you type.
+
+* 5. The event loop: services
+
+The browser's loop ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) used to wake
+only for input, a running stage, or a clock deadline. A web page adds another
+reason: Chrome writes to a pipe whenever the page changes, and the loop has to wake
+for that without polling on a timer. =*FB-SERVICES*= is the general mechanism. A
+service registers functions the loop calls by name:
+
+| Key | Called | Web pane's |
+|-----+--------+------------|
+| =:fd= | before each poll; an fd to watch | Chrome's reply pipe |
+| =:timeout= | before each poll; ms until it must run anyway | 10 ms while a resize is being sent, 100 ms while waiting for a first frame, else never |
+| =:run= | every turn, after input | pump the pipe, sync the screencast, decode the newest frame |
+| =:motion= | on a bare pointer move | hover: =mouseMoved= into the page |
+
+When only the page's pixels changed, =:run= copies the new frame into the canvas
+and sends just the page rectangle to the screen. This is the same economy the
+pointer and the systray clock already use, so a scrolling page costs one JPEG decode
+and one rectangle, not a full repaint. The input track's poll
+(=poll-input-once=) gives the services' fds the slots its devices leave free.
+
+Two smaller things in this layer:
+
+- *The first frame is nudged.* Starting a screencast usually makes the page repaint,
+  which sends the first frame. In about one run in twenty of poc/web-test.lisp it did
+  not, and the pane stayed white. So a tab still without a frame 700 ms after its
+  stream started gets one =Page.captureScreenshot= to show in the meantime.
+- *Nothing blocks.* Starting Chrome takes about a second on the host and five in the
+  guest. So every exchange is a chain of callbacks, run as the replies arrive, and
+  the pane says "starting Chrome ..." until then. Only =WEB-JS=, for tests and the
+  REPL, waits for an answer. When called from another thread (the net REPL), it sends
+  with a callback and waits for the browser's loop to deliver the reply, because two
+  threads reading one pipe would race.
+
+* 6. Running it in the guest
+
+** 6.1 Why a container
+
+Chrome is not one file. It needs the host's whole userland: 81 shared libraries
+(=ldd /opt/google/chrome/chrome= on the dev host), fonts and fontconfig, =/proc/self/exe= (it re-executes itself for its
+child processes), =/dev/shm= for shared memory, and a writable =/tmp=. Our root is a
+small initramfs with none of that. The containers track built exactly what is
+needed: =lol-ct= runs a command with the host's Debian (at =/mnt/host=) as its root,
+as the user, with our =/home=, =/tmp=, =/dev= and network
+([[file:containers.org][containers.org]]). =web.lisp= asks for that through
+=container-command-line=, in a container of its own named =web=, so that Chrome's
+writes never mix with a project's container. Chrome's state lives in =/home= anyway
+(§7.3).
+
+The =/bin/sh= that moves the pipes (§3.2) is therefore the host's, inside the
+container. Our root has no shell of its own, and that absence is also how =web.lisp=
+tells that it runs in the image (=WEB-IN-GUEST-P=). On the host, Chrome starts
+directly.
+
+** 6.2 Lifecycle
+
+- *Lazily.* Chrome starts with the first web tab, not at boot.
+- *If it dies*, every tab says so. =r= or a click restarts Chrome and reloads each tab
+  at its last address.
+- *At power-off*, =POWER-OFF= calls =WEB-SHUTDOWN= first. That sends =Browser.close=,
+  which lets Chrome write its profile while =/home= is still writable, and then
+  waits for it to exit before =RELEASE-DISK= remounts =/home= read-only.
+- *Reaping.* When a process dies, its children are handed to PID 1. A dead child
+  stays a *zombie* (a process-table entry holding its exit status) until its parent
+  waits for it. =sb-ext:run-program= waits only for processes it started. Inside the
+  container this is not our problem: lol-ct's init is PID 1 of the container's pid
+  namespace and reaps there. As a safety net for a Chrome started any other way,
+  =WEB-REAP-ORPHANS= looks at every waitable child *without* reaping it
+  (=waitid= with =WNOWAIT=) and reaps only the ones SBCL does not know. That way
+  =run-program='s exit codes are never taken from it. check-web.lisp asserts that
+  no zombie is left after =WEB-SHUTDOWN=.
+
+** 6.3 Memory
+
+Measured in the guest (tag #26, QEMU, =-m 2048=, with one simple page): Chrome's
+processes total *436 MB PSS*, and =MemAvailable= went from 1890 MB to 1573 MB. PSS
+("proportional set size") divides each shared page among the processes sharing it,
+so per-process PSS adds up honestly; RSS would count the shared libraries again for
+every process. 2 GB was enough for the checks, and =-m 4096= was not needed. The
+laptop has far more. Heavy single-page apps will use several times this; that is
+the norm for any browser.
+
+** 6.4 Chrome's sandbox works inside the container
+
+Chrome confines its renderers, the processes that run web pages' code, in a sandbox
+of their own. One layer is namespaces (a renderer sees no other process and no
+network of its own); the other is seccomp-BPF, a kernel filter on which system calls
+a process may make. Both work without privileges on a kernel with =USER_NS= and
+=SECCOMP_FILTER=, both of which are on since tag #26.
+
+Inside lol-ct, Chrome runs as PID 2 of its own pid namespace with =NO_NEW_PRIVS= and
+no capabilities. =NO_NEW_PRIVS= is a prerequisite of seccomp, not an obstacle. A
+user namespace may create further, nested user namespaces. So we keep the sandbox:
+=*WEB-SANDBOX*= is =:auto=, which passes no =--no-sandbox=. check-web.lisp opens
+=chrome://sandbox=, Chrome's own report, and asserts the line it prints when all is
+well. In the guest it reads: "Layer 1 Sandbox: Namespace · PID namespaces: Yes ·
+Network namespaces: Yes · Seccomp-BPF sandbox: Yes · Seccomp-BPF sandbox supports
+TSYNC: Yes · *You are adequately sandboxed.*" =--no-sandbox= remains available
+(=(setf *web-sandbox* nil)=) for a kernel without those options. It means that a
+page which exploits a bug in Chrome's renderer runs with all of the user's rights.
+
+* 7. Settings
+
+All are =defvar=​s in =web.lisp=, to be set from the Workspace or a future init file.
+
+** 7.1 The engine and the window
+
+- =*web-chrome-binary*= — ="/usr/bin/google-chrome"=, as seen *inside* the container
+  (the host's Debian is its =/=). That path is the alternatives link to
+  =/opt/google/chrome/google-chrome=, a bash script that execs the real binary beside
+  it.
+- =*web-extra-args*= — more switches, e.g. ="--force-dark-mode"=.
+- =*web-quality*= — the screencast's JPEG quality, 80.
+- =*web-zoom*= — the page zoom, also set by =C-+=/=C--=/=C-0=.
+
+** 7.2 Search
+
+=*web-search*= is a =FORMAT= string. The default is Google
+(="https://www.google.com/search?q=~a"=). The address bar decides what you typed
+(=WEB-URL-FOR=): anything with =://= or a known scheme is used as it is; something
+shaped like a host (=github.com/x=, =localhost:3000=, =10.0.2.2:8000/a=) gets a
+scheme, which is =http= for =localhost= and bare IPv4 addresses (where development
+servers live) and =https= otherwise; anything else is percent-encoded and searched
+for.
+
+** 7.3 The profile: ours by default, yours if you choose
+
+A Chrome *profile* is the directory that holds cookies (your logins), history,
+saved passwords and cache. =*web-profile*= is =NIL= by default, which means
+=~/.config/lol/chrome/=: *our own* profile, separate from the one the desktop
+Chrome uses (=~/.config/google-chrome=). Two reasons it is not the default:
+
+- *A profile is locked by the Chrome using it.* The desktop Chrome is usually
+  running when the laptop is in its desktop session. Then it holds the lock and a
+  second Chrome cannot open that profile. (In the image the desktop is not running,
+  so this only bites when both run at once, as under QEMU on the dev host.)
+- *Its secrets may not decrypt here.* On Linux, Chrome encrypts cookie values and
+  saved passwords with a key it keeps in the desktop keyring (the Secret Service,
+  provided here by =gnome-keyring-daemon=). The dev host runs one (/verified/:
+  =gnome-keyring-daemon --components=pkcs11,secrets= is running). The image has no
+  keyring. That is why we pass =--password-store=basic=, which keeps the key in the
+  profile itself. A profile whose cookies were encrypted with the *keyring* key
+  would open, but its logins would be unreadable, so you would be logged out
+  everywhere. /Not tested here/: we did not read the user's cookie database to
+  confirm which key it uses.
+
+To try your own profile, with the desktop Chrome closed, evaluate
+=(setf *web-profile* "/home/<you>/.config/google-chrome")= before the first web tab.
+The lasting answer is to log in once in our profile: it persists in =/home= like
+any other file.
+
+* 8. Tests and measurements
+
+** 8.1 What is asserted
+
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] (host, =sbcl --script
+poc/web-test.lisp=) drives the host's Chrome through the shell's own entry points
+(=browser-click=, =browser-key=, =browser-scroll=) and reads every answer back from
+the page with =Runtime.evaluate=, never from pixels. It checks: start and first
+page, a decoded frame, the title in the tab strip, the viewport equal to the pane, a
+link click, back, typing and Backspace, =C-a C-c= into =lol.clipboard=, =C-v= from it,
+=C-f=, a download into =~/Downloads= with its status line, the wheel, a
+=target=_blank= link becoming a new tab with its own title and frame, closing that
+tab closing its Chrome page, =C-l= and typed addresses, and =WEB-URL-FOR='s rules. It
+writes PPMs of three states to =poc/out/=. One thing it ruled out: a =file://=
+page's =download= attribute is ignored by Chrome (a file URL is an opaque origin, so
+Chrome navigates to the file instead), which is why the test's download link is a
+=data:= URL.
+
+[[file:../check-web.lisp][check-web.lisp]] (guest:
+=LOL_GUEST_HOSTROOT=1 LOL_PORT=4015 sbcl --script check-web.lisp=) boots the image
+with the host's root shared in, serves two pages from the host on =LOL_PORT=+1000
+(QEMU's user network shows the host as =10.0.2.2=), and drives everything with real
+QMP input: =SuperL-b= held down, an address typed key by key, a click by relative
+pointer motion, =SuperL-Left=, typing into a field, wheel notches. It then loads
+=https://example.com= (DNS and TLS are Chrome's own, inside the container), reads
+=chrome://sandbox=, and checks that =WEB-SHUTDOWN= leaves no Chrome process and no
+zombie. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
+
+** 8.2 Numbers
+
+| Measure | Host (the dev laptop) | Guest (tag #26, QEMU/KVM, 2 GB) |
+|---------+---------------------------+----------------------------------|
+| Chrome cold start to first page | 0.25 s | 5 s |
+| Decode of one 1256x701 frame (base64 + JPEG + convert) | 8 ms | 4–8 ms |
+| Input to the next frame (16 samples) | — | 20–72 ms, mostly 24–44 |
+| Chrome PSS, all processes, one simple page | 240–280 MB | 436 MB |
+
+"Input to next frame" is measured in =web.lisp= itself (=WEB-TAB-LATENCIES=): from
+the moment a key or a click is sent to the moment the next frame arrives. Add the
+decode and a rectangle blit for what the eye sees.
+
+* 9. Limits, and what is next
+
+- *No video or audio.* The image has no sound driver. Video frames come through the
+  screencast like any other pixels, at whatever rate it manages, with no
+  synchronisation and no sound.
+- *Non-ASCII typing.* The console delivers UTF-8 as separate bytes and the shell
+  reads one byte as one character, so =ç= or =ã= typed on the console arrives as two
+  wrong characters. This is a shell-wide limitation, not one of the web pane's; paste
+  (=C-v=) carries any text correctly.
+- *No file upload dialog.* =<input type=file>= opens nothing yet. The next step is
+  =Page.setInterceptFileChooserDialog= plus a file-manager prompt.
+- *No per-link right-click menu.* The right button shows the page's commands, not the
+  link under the pointer. "Open in new tab" is =SuperL-click=.
+- *Frame rate* is bounded by one decode and one blit per frame in Lisp; smooth
+  scrolling of heavy pages is not 60 fps in the guest.
+- *Hover* is sent on every bare pointer move, unthrottled. Chrome copes.
+
+* Appendix: the WPE exploration (2026-10-02)
+
+This was the whole document before the browser was built, kept as it was written.
+Section numbers inside it are its own (A1–A6). Its "what it would take in the image"
+table (§A6) is now mostly answered by the container and the network rather than by
+copying libraries in.
+
+** A1. The short answer
 
 A web browser is mostly its *engine*: the HTML/CSS layout, the JavaScript VM and the
 painting. Writing one is out of scope for this project, so the real question is
@@ -22,13 +464,13 @@ painting. Writing one is out of scope for this project, so the real question is
 
 - *Nyxt* is a Lisp shell around someone else's engine: WebKitGTK in Nyxt 3, Electron
   (that is, Chromium) in Nyxt 4. The Lisp part would be easy; it is everything
-  under it that costs (§2).
+  under it that costs (§A2).
 - *WPE WebKit* is the same WebKit with *no GTK and no display server*. It is the
-  engine we would pick (§3).
+  engine we would pick (§A3).
 - Before anything goes into the image, the engine can be tested on the host, with the
-  same Debian packages we would copy from (§4–§5).
+  same Debian packages we would copy from (§A4–§A5).
 
-* 2. Why not Nyxt (yet)
+** A2. Why not Nyxt (yet)
 
 Nyxt 3 renders through WebKitGTK. Measured on the host by following every shared
 library it pulls in (=ldd=, the dynamic linker's "who do you need" listing):
@@ -46,7 +488,7 @@ GTK wants to own the main thread, and Nyxt compiles Lisp at runtime, which the g
 currently cannot do safely (the generic-arithmetic fault in =AGENTS.md=). Nyxt
 would be the /last/ step, not the first.
 
-* 3. The options, and why WPE
+** A3. The options, and why WPE
 
 | Option                     | Engine / JavaScript                         | How it draws                       | Weight            | Verdict |
 |----------------------------+---------------------------------------------+------------------------------------+-------------------+---------|
@@ -54,7 +496,7 @@ would be the /last/ step, not the first.
 | w3m                        | text; no JS                                 | the terminal                       | tiny              | docs and Hacker News, little more |
 | NetSurf (framebuffer)      | own; HTML 4 / CSS 2.1, partial CSS 3; minimal JS | =libnsfb=, a Linux fb surface | a few MB          | the best of the small ones; SPAs break |
 | *WPE WebKit*               | *full WebKit + JavaScriptCore*              | DRM/KMS directly, or headless      | ~270 MB of libs   | *the real web, without a desktop* |
-| WebKitGTK / Nyxt 3         | full WebKit                                 | GTK → X or Wayland                 | §2                | needs a whole desktop |
+| WebKitGTK / Nyxt 3         | full WebKit                                 | GTK → X or Wayland                 | §A2                | needs a whole desktop |
 | Electron / Nyxt 4          | Chromium                                    | its own stack                      | larger still      | no |
 | Remote (VNC into the host) | any                                         | a Lisp RFB client in the guest     | no native deps    | a thin client, not a browser |
 | Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era               | McCLIM                             | Lisp only         | a historical toy |
@@ -73,9 +515,9 @@ Two terms the WPE row leans on:
 So WPE in *software rendering + headless* mode needs no GPU driver and no
 compositor at all. That is the combination worth testing.
 
-* 4. Setting up the host
+** A4. Setting up the host
 
-** 4.1 Install
+*** A4.1 Install
 
 #+begin_src sh
 sudo apt install libwpewebkit-2.0-1 cage \
@@ -96,7 +538,7 @@ To save typing, put this in your shell for the session:
 MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
 #+end_src
 
-** 4.2 Two dead ends, recorded so nobody repeats them
+*** A4.2 Two dead ends, recorded so nobody repeats them
 
 - *=cog= under X fails* with
   =libwpe [FATAL]: could not load the impl library ... libWPEBackend-default.so=.
@@ -115,7 +557,7 @@ MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
   never pass it =--use-legacy-api=, which selects the crashing path again. For the
   product this means: build on WebKit's new platform API, not on cog.
 
-** 4.3 The switches the tests use
+*** A4.3 The switches the tests use
 
 | Variable / flag                         | Effect                                                             | Verified here |
 |-----------------------------------------+--------------------------------------------------------------------+---------------|
@@ -127,13 +569,13 @@ MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
 | =WEBKIT_SHOW_FPS=1=                     | the library knows the name, but *printed nothing* in our runs      | ruled out, see T2 |
 | =WEBKIT_DRAW_FPS=1=                     | present in the library; supposedly draws an FPS overlay            | *not verified* |
 
-* 5. The tests
+** A5. The tests
 
 Run them in order. Each one says what to do, what to watch, and what to write down.
 Keep a terminal open next to the browser: MiniBrowser and the web process log to
 the terminal you started them from.
 
-** T1 — Smoke test on the GPU (does it work at all?)
+*** T1 — Smoke test on the GPU (does it work at all?)
 
 #+begin_src sh
 cage -- $MB https://example.org/
@@ -145,7 +587,7 @@ cage -- $MB https://example.org/
   is dying; see T7 for how to find out why.
 - *Record*: works / doesn't.
 
-** T2 — The software floor (the image's real situation)
+*** T2 — The software floor (the image's real situation)
 
 The image has no GPU driver, so this is the configuration we would ship first.
 
@@ -190,7 +632,7 @@ LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB file:///tmp/fps.html   # software
 - *Record*: fps in both modes, at the same window size, plus a sentence on how
   scrolling felt.
 
-** T3 — Straight onto the display, on a bare VT (the product's architecture)
+*** T3 — Straight onto the display, on a bare VT (the product's architecture)
 
 This is the closest the host gets to the image: no X, no compositor; WebKit itself
 drives the screen through DRM/KMS.
@@ -223,7 +665,7 @@ drives the screen through DRM/KMS.
 - *If the screen is stuck*: wait for =timeout=. If even that fails, switch to another
   VT (=Ctrl-Alt-F4=), log in, and run =pkill -f MiniBrowser=.
 
-** T4 — The standard benchmarks
+*** T4 — The standard benchmarks
 
 [[https://browserbench.org/][browserbench.org]] hosts the three benchmarks every engine vendor quotes:
 
@@ -262,7 +704,7 @@ software, because they are mostly JavaScript, which runs on the CPU anyway. Moti
 shows the cost of having no GPU driver. If software MotionMark is acceptable, the
 image can stay on =efifb= for a long time.
 
-** T5 — CPU and memory
+*** T5 — CPU and memory
 
 *CPU while working.* Start a browser (T2's software setup is the interesting one),
 then in another terminal:
@@ -304,7 +746,7 @@ Redo it as PSS.
 
 This decides how much RAM the image needs; the browser, not Lisp, will dominate it.
 
-** T6 — Your own sites (the bug list)
+*** T6 — Your own sites (the bug list)
 
 Benchmarks don't find bugs; your daily sites do. For each site, start it in the
 software setup and go through this checklist:
@@ -312,7 +754,7 @@ software setup and go through this checklist:
 - does it render correctly (fonts, layout, icons)?
 - can you log in (cookies; with =--private= state is not kept between runs)?
 - do typing in forms, the clipboard and right-click work?
-- does video play (YouTube; this needs the GStreamer plugins from §4.1)?
+- does video play (YouTube; this needs the GStreamer plugins from §A4.1)?
   Netflix-style protected video (Widevine DRM) will *not* play; that is a known gap.
 - does it complain about the browser (some sites sniff for Chrome)?
 
@@ -327,10 +769,10 @@ Remember that MiniBrowser is a test shell, not a browser: no tabs, no bookmarks,
 download UI. Those are missing features, and in the image they would be our Lisp's
 job, so don't record them as bugs.
 
-** T7 — When a site breaks: finding out why
+*** T7 — When a site breaks: finding out why
 
 1. *Read the terminal.* A web-process crash prints its assertion or signal there;
-   that is how §4.2's fdo bug was found.
+   that is how §A4.2's fdo bug was found.
 2. *Open Web Inspector* (the same devtools Safari has) in your normal browser:
    #+begin_src sh
    WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
@@ -348,13 +790,13 @@ job, so don't record them as bugs.
 4. *Core dumps*: =coredumpctl list WPEWebProcess= shows web-process crashes if
    systemd-coredump is installed. Without it, the terminal message is all there is.
 
-* 6. What it would take in the image
+** A6. What it would take in the image
 
 This is not a plan yet, just the shopping list the tests feed into.
 
 | Need                       | Today (#24)                    | For WPE |
 |----------------------------+--------------------------------+---------|
-| storage                    | tmpfs only                     | a real filesystem: ~270 MB of libraries (§2), plus a profile dir for cookies and cache |
+| storage                    | tmpfs only                     | a real filesystem: ~270 MB of libraries (§A2), plus a profile dir for cookies and cache |
 | shared libraries           | ld.so + libc + libm, copied from the host | the =ldd= closure of =libWPEWebKit-2.0.so.1=, copied the same way |
 | DNS + TLS                  | sockets + DHCP, no resolver    | =/etc/resolv.conf=, =nsswitch.conf=, a CA bundle, =glib-networking= |
 | fonts                      | our own bitmap fonts           | TTF fonts + fontconfig and its cache |

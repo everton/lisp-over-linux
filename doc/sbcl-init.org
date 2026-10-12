@@ -33,7 +33,9 @@ for it ([[file:networking.org][networking.org]]).
 Since 2026-10-12 a second static C program ships beside
 preinit: =/sbin/lol-ct=, which runs a command inside the host's own Debian as a
 container ([[file:containers.org][containers.org]]; section "lol-ct" below), with
-=runs.lisp= streaming its output into a live pane.
+=runs.lisp= streaming its output into a live pane. The same day the environment
+gained a web browser: =web-cdp.lisp= and =web.lisp= drive the host's Google Chrome,
+headless, through lol-ct (section "The web pane" below; [[file:web-browser.org][web-browser.org]]).
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -465,6 +467,25 @@ here is how it fits the build:
 Its output reaches the screen through =runs.lisp= (a pty, a reader thread, a
 snapshot copied into a read-only pane on the poll loop's tick) and the SGR
 reader at the end of =ansi.lisp= — both in =LISP_SOURCES=, after the file manager.
+
+* The web pane — a third process tree, and no new file in the image
+
+[[file:../initramfs/web-cdp.lisp][=web-cdp.lisp=]] and [[file:../initramfs/web.lisp][=web.lisp=]] come last in =LISP_SOURCES= before the
+network modules, after =fb-browser.lisp=, because =web.lisp= registers itself with
+the browser loop's =*FB-SERVICES*= when it is loaded (Chrome's pipe joins the poll;
+each turn runs =WEB-LOOP-SERVICE=). Nothing is added to the cpio: Chrome is the
+*host's* =/usr/bin/google-chrome=, started on first use through
+=container-command-line= in a container named =web=, so the image grows by the two
+Lisp files only. Three things touch PID 1's duties:
+
+- *Reaping.* lol-ct's init reaps inside the container; =WEB-REAP-ORPHANS= is a
+  safety net that reaps only children SBCL did not start (=waitid= with =WNOWAIT=
+  first, so =run-program='s exit codes are never stolen).
+- *Power-off.* =POWER-OFF= ([[file:../initramfs/process.lisp::defun power-off][process.lisp]]) calls =WEB-SHUTDOWN= before
+  =RELEASE-DISK=, so Chrome writes its profile while =/home= is still writable.
+- *Threads.* The net REPL may ask a page a question (=WEB-JS=) while the
+  browser's loop reads the pipe; sends are serialised by a mutex and replies are
+  delivered by the loop. Details: [[file:web-browser.org][web-browser.org]] §5–§6.
 
 * The initramfs description (gen_init_cpio)
 
