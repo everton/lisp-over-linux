@@ -1,9 +1,16 @@
 #+TITLE: Containers — running a real distro's projects from inside the environment
 #+STARTUP: showall
 
-*PLAN. Nothing is built in the image.* The host-side prototype in §4 is real and
-was run. Written 2026-10-12 against kernel tag #25. The host where the prototype
-ran is Debian on kernel 7.1.13.
+*BUILT (2026-10-12, kernel tag #26), and verified in the guest.* [[file:../initramfs/lol-ct.c][=lol-ct=]] is the
+namespace helper, [[file:../initramfs/containers.lisp][=containers.lisp=]] its Lisp side and public API, and
+[[file:../initramfs/runs.lisp][=runs.lisp=]] streams a command's output into a live pane. §7 says how to use it,
+§8 what the guest showed, §9 what changed against the plan below. Not yet booted
+on the laptop itself: the guest tests run the build host's Debian over 9p, and an
+ext4 stand-in disk for the layout.
+
+The plan (§§0–6) was written the same morning against tag #25, and a host-side
+prototype (§4) was run on the build host (Debian, kernel 7.1.13). It is kept as
+written, with the answers and the guest findings marked where they land.
 
 Parent docs: [[file:storage.org][storage.org]] (the disk, =/mnt/host=, and why PID 1 is the
 user) · [[file:processes.org][processes.org]] (a second process, and the =sb-posix= rule) ·
@@ -31,7 +38,8 @@ session scratchpad and were not kept. §4 gives them in full so they can be reru
   A write to =/etc= landed in the overlay and not on the real root.
 - *Two findings shaped the design:*
   1. The whole root cannot be the overlay's lower layer (§3.3). The container's
-     root is therefore built one directory at a time.
+     root is therefore built one directory at a time. /(In the guest at tag #26
+     the whole root DOES mount — §8. The per-directory root stayed, by choice.)/
   2. With a single-uid user namespace, files that root owns on the host cannot be
      changed (§3.5), so =apt install= fails. The answer is that dependencies go in
      =/home=, which is already how Ruby developers work. There are two escape
@@ -164,8 +172,8 @@ The second needs one extra step:
 1. The helper does its mounts while it still holds the namespace's capabilities.
 2. It then =execve=​s the shell as uid 1000. A non-root uid loses its
    capabilities across =execve=, so the shell inside starts with none.
-   /Estimate/ that this is the exact Linux rule here. The host probe kept them on
-   purpose with =unshare --keep-caps=.
+   /Verified/ in the guest since: =CapEff= inside is =0000000000000000= (§8). The
+   host probe had kept them on purpose with =unshare --keep-caps=.
 
 /Verified:/ with the identity map, =initdb= created a cluster in =/tmp=, and
 =pg_ctl= started it on a Unix socket. =psql= answered =PostgreSQL 17.5 (Debian
@@ -198,6 +206,18 @@ was not found. Its =pr_err= goes to the kernel log, which the user cannot read o
 this host, and the =fsopen= log channel was empty. *Re-test in the guest at tag
 #26*, where the lower is =/mnt/host=, a separate read-only mount. Until then the
 design does not depend on it.
+
+*Re-tested (2026-10-12): in the guest it mounts.* =lol-ct --probe-root= tries
+exactly this — an overlay with =lowerdir=/mnt/host= and a tmpfs upper, with and
+without =userxattr= — and both MOUNTED, over 9p (the build host's root) and over
+ext4 (=test-disk.img=). So the host's =EINVAL= is a property of that host's
+setup, not of overlayfs over a root filesystem. Which property is still not
+known. Candidates nobody has checked: the host's kernel is Debian's 7.1.13 and
+ours is a vanilla 7.2.5, and on the host the lower was the /root of the mount
+namespace/ itself, while in the guest =/mnt/host= is an ordinary mount below it.
+Ruled out along the way: one overlayfs =EINVAL= is "maximum fs stacking depth
+exceeded" (=fs/overlayfs/super.c=), but the host's =/= is plain ext4, depth 0.
+The per-directory root was *kept anyway*, for the reasons in the next paragraph.
 
 *So the container's root is built one directory at a time* (§3.4). That is also
 cleaner. There is no lost+found, no =/boot=, no host =/root=. The host's =/home=
@@ -322,6 +342,11 @@ Not run on the host: a server inside the container reached from outside (§3.1).
 | *a terminal pane* | — | *the real work* (§5.2) |
 | looking at the app | — | =curl= now, a browser later ([[file:web-browser.org][web-browser.org]]) |
 
+/At tag #26 (2026-10-12):/ =USER_NS= and =OVERLAY_FS= are on, preinit mounts
+=devpts= on =/dev/pts= and a tmpfs on =/dev/shm=, =lol-ct= is built (627 lines of
+C, more than the ~150 estimated: the fallbacks, the signal forwarding and the
+comments), and run-and-stream is built. The terminal pane is the open item.
+
 /Verified/ in =./linux=:
 - Our vanilla kernel has no =unprivileged_userns_clone= switch. That is a Debian
   patch, and only Debian's kernel needs it set.
@@ -392,3 +417,196 @@ Two steps, cheapest first:
    that it widens the root helper?
 4. *Terminal first, or run-and-stream first?* The second is useful within days.
    The first is what makes the environment a shell.
+
+*Answered (2026-10-12), each with this doc's own recommendation:*
+1. Yourself. Inside you are uid 1000 with the identity map; no fake root.
+2. =~/.lol/ct/<name>/=. A project that wants its own container passes =-n NAME=
+   (or =:name= from Lisp); nothing is written into project trees.
+3. No. No uid range, and =lol-rootd= keeps exactly its two jobs.
+4. Run-and-stream first, and it is built (§7). The real terminal is a separate
+   piece of work (=open-terminal=, a terminal pane), not part of this one;
+   =containers.lisp= calls it when it exists.
+
+* 7. As built: using it
+
+** From the environment
+
+- *SuperL-Space* (the Spotter), type =containers=: the list of containers, plus
+  "run a command in default…" and "new container…". Each existing container is
+  also a Spotter row of its own (=container default=), and =runs= lists every
+  command started this session, live ones first.
+- On a container: *x* asks for a command line and runs it there (*Enter* on the
+  "run a command…" row does the same). The minibuffer offers the last command.
+  It starts in the folder the focused pane shows when that folder is under
+  =/home= — so *x* from the file manager runs /there/, as a shell would — and
+  otherwise in =$HOME=. *s* opens a login shell in a terminal pane once that
+  pane exists (=open-terminal=; until then it says so). *D* deletes the
+  container, after you type =yes=. *g* refreshes.
+- The container's own view shows its runs this session, its state directory
+  (drill into it: it is the file manager), and *what its last run was given*:
+  the =layout= file =lol-ct= writes on every run, one line per mount, with any
+  fallback and its reason tinted as a warning.
+
+A *run pane* is a read-only text pane that fills while the command runs. Its
+title says =running 4 s=, then =exit 0 after 1.2 s= (or =killed by signal 9=), and
+a last line in green or red says the same. *k* stops it — SIGTERM, and SIGKILL
+three seconds later if it lingers. *r* runs it again. *G* or *End* jumps to the
+end; new output follows the end only while you are /at/ the end, so scrolling up
+to read stops the chase. *M-w* copies a selection. A run keeps its last 20,000
+lines.
+
+Commands go through a *login* bash (=bash -lc=, [[file:../initramfs/containers.lisp::(defparameter *container-run-shell*][=*container-run-shell*=]]):
+=~/.profile= is where rbenv and nvm put themselves on the =PATH=, so =ruby= is
+the project's Ruby. The price is that whatever your login dotfiles print heads
+every run pane. On the build host that is an ssh-agent banner and an =ssh-add=
+passphrase prompt, which reads end-of-file and gives up. Set the variable to
+='("bash" "-c")= to skip the dotfiles, and with them the =PATH= they set.
+
+** From Lisp: the API other parts of the system use
+
+#+begin_src lisp
+  (container-command-line '("git" "status") :name "default" :cwd "/home/me/app")
+  ;; => ("/sbin/lol-ct" "-n" "default" "-C" "/home/me/app" "--" "git" "status")
+  ;;    :env '("RAILS_ENV=test")  adds -e pairs;  :no-input t  adds -N (stdin = /dev/null)
+
+  (run-in-container '("bash" "-l") :pty t)        ; => an SB-EXT:PROCESS (lol-ct's)
+  (container-run-output "id -u; hostname")        ; => lines and exit code, waited for
+  (run-shell-in-container "bundle exec rails test" :cwd "/home/me/app")  ; a run pane
+#+end_src
+
+[[file:../initramfs/containers.lisp::defun container-command-line][=container-command-line=]] is the contract: the terminal pane runs a shell
+through it, and the web browser runs Chrome through it. =run-in-container=
+signals nothing about the container itself; to stop what it started, signal the
+process it returns — =lol-ct= forwards the signal inside.
+
+=create-container=, =list-containers= and =delete-container= are the state
+directory, nothing more: =mkdir=, a directory listing, and a recursive delete
+that first makes overlay's mode-000 =work/work= directory listable. Deleting is
+refused while /any/ =lol-ct= for that container is running — found by reading
+=/proc/*/cmdline=, so it also sees runs the terminal pane started. (Removing a
+mount point from outside would pull the floor from under the running
+container: the kernel detaches mounts on a directory removed in another
+namespace.)
+
+** =lol-ct= itself
+
+#+begin_example
+lol-ct [-n NAME] [-s STATEDIR] [-r HOSTROOT] [-C DIR] [-e VAR=VALUE]... [-N] [-v]
+       [--] PROGRAM [ARG...]
+lol-ct --probe-root [-r HOSTROOT]
+#+end_example
+
+| Exit | Means |
+|------+-------|
+| the program's | it ran; 128+N if signal N killed it |
+| 125 | =lol-ct= could not build the container (the reason is on stderr) |
+| 127 | the program could not be executed |
+
+The process tree is three deep, and each level exists for a reason:
+
+#+begin_example
+the Lisp ── lol-ct (OUTER)   unshare user+mount+uts, write the id maps,
+              │              unshare pid, fork; forward signals; relay the status
+              └─ lol-ct (INIT, PID 1 inside)   build the root, pivot_root, fork;
+                   │                           reap orphans; forward signals
+                   └─ PROGRAM (PID 2)          execve'd as you, no capabilities
+#+end_example
+
+- *Why an OUTER process.* =unshare(CLONE_NEWPID)= moves only the caller's
+  /children/ into the new pid namespace, so the container's PID 1 has to be
+  forked.
+- *Why an INIT that is not the program.* The kernel ignores any signal sent to a
+  pid namespace's PID 1 for which it has no handler (=pid_namespaces(7)=). A
+  program run directly as PID 1 that never installs a SIGTERM handler — =sleep=,
+  most shells — could then not be stopped politely at all. Our init catches the
+  polite signals and forwards them to PID 2. It also reaps the orphans that a
+  daemonising program leaves behind.
+- *One command, one lifetime.* When PID 2 exits, the init exits, and the kernel
+  kills whatever else is left in the namespace. A server you want to keep, such
+  as =postgres=, therefore runs as its /own/ run, in the foreground, where its log
+  streams into a pane and *k* stops it. A shared =/tmp= is what lets a later run
+  reach it on its Unix socket. Shared networking does the same for TCP.
+- *If the outer process is killed*, =PR_SET_PDEATHSIG= takes the init down with
+  it, and with the init the whole namespace.
+
+* 8. What the guest showed
+
+=check-containers.lisp= has two modes, because no single QEMU setup is the
+laptop.
+
+*=LOL_GUEST_HOSTROOT=1=*: the build host's real Debian, read-only over virtio-9p.
+19 of 19 checks pass:
+
+| Check | Result |
+|-------+--------|
+| identity inside | =uid=1000=, =hostname= =lol-default=, the command is PID 2 |
+| capabilities inside | =CapEff 0000000000000000= |
+| write =/etc=, then =/etc/apt= | the first works; the second is refused (§3.5, as on the host) |
+| =ruby -e 'require "openssl"; …'= (rbenv shim, from =/home=) | =3.1.0= |
+| =rails -v= | =Rails 8.1.2= |
+| private Postgres: =initdb=, =pg_ctl start=, =psql=, =pg_ctl stop= | answers =select 1 + 41= with 42, stops cleanly |
+| =git status= in this repository, under =/home= | works |
+| =curl https://example.com= from inside | =200=, using the host's =/etc/resolv.conf= (we write none yet) |
+| SIGTERM to a run of =sleep 300= (PID 2) | stops it (exit 143); no =lol-ct= is left in =/proc= |
+| *x*, typed over QMP, with a 3-second coloured loop | the pane holds 6 lines at 1.5 s and 8 at 5.5 s (it fills live), the red is =#E06C75=, the title says =exit 0= |
+
+Two things were *different from the laptop* in this mode, and the check records
+them instead of failing on them:
+
+- *Overlay over 9p works as a LOWER layer.* All four of =usr=, =etc=, =var= and
+  =opt= mount with =/mnt/host/<d>= on 9p underneath.
+- *The uppers cannot live in =~/.lol/ct=* here, and fall back to a tmpfs: the
+  overlay mount fails with =EINVAL=, with and without =userxattr=. The cause is
+  the test setup, not the design. In this mode =/home= is /itself/ an overlay
+  (the host's =/home= under a tmpfs, so tests cannot write to the host), and an
+  overlay cannot be another overlay's upper layer. The layout file says so:
+  =/usr: overlay, upper in tmpfs (changes VANISH) [state upper: Invalid argument / Invalid argument]=.
+
+*=LOL_GUEST_DISK=test-disk.img=*: ext4, as on the laptop. The disk has an =/etc=
+but no Debian, so nothing can run inside. =lol-ct= builds the container and the
+exec fails with 127, as it should. 4 of 4 pass: =/etc= is an overlay *with its
+upper in =/home/everton/.lol/ct/default/etc/upper=*, and the root is entered with
+=pivot_root=. Together the two modes cover the laptop: the toolchain runs (9p),
+and the uppers persist on ext4.
+
+Also learned on the way:
+
+- *=pivot_root= works from an initramfs.* Before kernel 6.x it refused to move
+  rootfs. 7.2 puts an immutable =nullfs= under rootfs, which is exactly what
+  makes it legal (see the comment above =pivot_root= in =linux/fs/namespace.c=).
+  =lol-ct= keeps =MS_MOVE= + =chroot= as a fallback and logs which one it used.
+  The guest has only ever used =pivot_root=.
+- *=getppid()= is 0 in a pid namespace's init*, because the parent lives in the
+  ancestor namespace, which has no number for it there. The first =lol-ct=
+  checked "is my parent still alive?" that way, and silently exited 125 on every
+  run.
+- *A pty for output, =/dev/null= for input* (=-N=). Behind a pipe, programs turn
+  colour off and buffer whole blocks, so nothing looks live. Behind a pty, a
+  login script's =ssh-add= would wait for a passphrase forever. The run pane
+  gives the program the pty's /output/ side and =/dev/null= as stdin.
+
+Not verified yet: a server inside the container reached from the Lisp side
+(§3.1 still /Estimate/; =curl= outbound is verified), and anything on the
+laptop's real disk.
+
+* 9. What changed against the plan
+
+- *=/tmp= is our =/tmp=, bound in, not a fresh tmpfs* (§3.4 said fresh). One
+  run's Postgres socket must be reachable from the next run, and the browser
+  (Chrome through the same API) wants the same =/tmp= as the Lisp.
+- *=/sys= is bound in read-only.* The plan did not mention it. A fresh sysfs
+  cannot be mounted without a network namespace of our own, which we do not
+  take.
+- *Our =/etc/resolv.conf= and =/etc/hosts= go over the host's*, when we have
+  them. When the host's =resolv.conf= is a symlink (systemd's
+  =../run/systemd/resolve/…=), =lol-ct= follows it inside the new root and binds
+  over the target. We have none yet, so the host's file is used.
+- *A UTS namespace* (=hostname= =lol-NAME=), so a prompt says where you are.
+- *Overlay fallbacks, logged.* A state upper, then =userxattr=, then a tmpfs upper
+  (the changes vanish), then a read-only bind. The first that mounts wins, and
+  the =layout= file records the outcome and the reasons. The plan assumed the
+  first would always work. 9p's =/home= showed it does not.
+- *Signals and lifetime* (§7): an init that forwards, =PDEATHSIG=, and "one
+  command, one lifetime". The plan had the helper =execve= the command directly.
+- *The helper is 627 lines, not ~150*: the fallbacks, the =etc= files, the
+  signal handling, and comments in preinit's register.

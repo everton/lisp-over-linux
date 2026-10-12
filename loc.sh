@@ -36,6 +36,10 @@ CATS=(
 # case pattern * also matches /). First match wins, so the order matters.
 # file-views.lisp stays in "ours" although it carries tar/zip/ELF readers: they
 # are a minority of a file that is otherwise views.
+# initramfs/lol-ct.c is "ours" too: it calls the kernel's namespace ABI, but which
+# mounts, in which order, with which fallbacks is a design (doc/containers.org);
+# ansi.lisp stays "conformance" with its SGR READER added, since both directions
+# implement ECMA-48's colour codes.
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp"

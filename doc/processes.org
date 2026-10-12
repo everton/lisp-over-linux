@@ -596,6 +596,11 @@ Everything §2 lists beyond the first step, and the omissions are the honest par
   =fbb-ready-p= wrote only the low byte of a descriptor.
 - §1–§5 — *analysis only.* Dated 2026-09-19/20. If any of it is implemented,
   this document is stale and the code is truth.
+- A different liveness has landed beside it (2026-10-12): [[file:../initramfs/runs.lisp][runs.lisp]]'s run
+  panes stream a child's TEXT output live — a reader thread per run, and the poll
+  loop waking on a deadline (not a fourth poll slot) to copy a snapshot into the
+  pane ([[file:containers.org][containers.org]] §7). It carries lines, not views, so the
+  worker's own liveness below is still owed.
 - Next: liveness. A socket, a fourth poll slot, and =(:invalidate handle)= — at
   which point §2's =EQ=-interning trap becomes real. The irreducible cost is that
   it can only be proven by booting, since it is a view changing with no key
