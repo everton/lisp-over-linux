@@ -53,3 +53,6 @@ test-disk.img
 # the firmware list fragment build.sh generates from the HOST's /lib/firmware
 # (the blobs themselves are never in the tree, only in the cpio):
 initramfs/firmware.list
+# the outline font, copied from the BUILD HOST by build.sh ($LOL_FONT, default DejaVu Sans
+# Mono): third-party, never committed — doc/fonts.org §6
+initramfs/mono.ttf

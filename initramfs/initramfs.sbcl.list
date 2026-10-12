@@ -54,7 +54,13 @@ file /alien.rgba initramfs/alien.rgba 0644 0 0
 dir  /usr/lib/lol                0755 0 0
 file /usr/lib/lol/libstbi.so     poc/out/libstbi.so 0755 0 0
 
-# --- the code browser's font: Cozette (MIT), our 6x15 .lolf blob (poc/README) ---
+# --- the code browser's fonts (doc/fonts.org) ---
+# the outline font, a monospace .ttf build.sh copies from the BUILD HOST (never committed;
+# empty when the host had none, and then the image falls back to the bitmap below)
+dir  /usr/share                  0755 0 0
+dir  /usr/share/lol              0755 0 0
+file /usr/share/lol/mono.ttf     initramfs/mono.ttf 0644 0 0
+# the fallback: Cozette (MIT), our 6x15 .lolf bitmap blob (poc/README)
 file /cozette.lolf poc/cozette.lolf 0644 0 0
 
 # --- glibc runtime the SBCL binary needs (exact paths the loader expects) ---
