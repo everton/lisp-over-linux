@@ -33,7 +33,8 @@
    #:*ui-accent* #:*ui-sel* #:*ui-amber* #:*ui-lit*
    #:*concept-colors* #:concept-color
    ;; metrics
-   #:+row-h+ #:+bar-h+ #:+scrollbar-w+
+   #:+row-h+ #:+bar-h+ #:+scrollbar-w+ #:+cell-w+ #:+cell-h+
+   #:char-w #:line-h #:text-dy #:card-head-h
    ;; rows
    #:row #:make-row #:row-label #:row-detail #:row-tint #:row-stripe #:row-marker
    #:row-group
@@ -50,7 +51,10 @@
 ;;; Lisp-concept colours are the semantic scheme from media/lisp-concepts-visual.html:
 ;;; a list of 350 definitions reads by COLOUR rather than as a grey wall.
 
-(defvar *font* nil "The UI font (a lol.canvas:font). Set once at startup.")
+(defvar *font* nil
+  "The UI font (a lol.canvas:font), set at startup. Its SIZE can change at any time
+   (SuperL-= and friends, doc/fonts.org) — so never copy a metric out of it into a
+   constant: ask CHAR-W / LINE-H, or the metric macros below, at draw time.")
 
 (defparameter *ui-bg*     !#14161A "the page behind everything")
 (defparameter *ui-panel*  !#1B1E24 "a pane's body")
@@ -106,16 +110,35 @@
 
 ;;; ---- metrics -------------------------------------------------------------
 
-(defparameter +row-h+ 20
-  "Height of one list row, in pixels.
+;;; Every metric that depends on text is a FUNCTION of the current font, evaluated at
+;;; draw time — because the font's size changes at run time (doc/fonts.org §5). They
+;;; used to be constants (+ROW-H+ was 20, for the 6x15 bitmap font). The + names are
+;;; kept, as SYMBOL MACROS: the reader still sees +row-h+ at the hundred places that
+;;; lay out rows, but the compiler substitutes (ROW-H) — a call — at each one. So the
+;;; call sites did not change, and a size change followed by a redraw relays out
+;;; every row, bar, cell and hit map. The price is a naming oddity (a "+constant+"
+;;; that varies), accepted to keep the diff, and every other track's code, unchanged.
 
-   Was 17, which is the 6x15 font's 15px cell plus two — technically legible and
-   visually cramped: at 17 a pane of forty rows is a solid block of text with no air
-   in it, and the eye has nothing to travel along. 20 gives each row a little room
-   above and below without costing many rows on a 720-line screen (36 instead of 42).
-   Everything else derives from this rather than repeating it, so changing it again
-   is a one-line change.")
-(defparameter +bar-h+ 20 "Height of a header band / collapsed breadcrumb bar.")
+(defun char-w () "Width of one character cell, px."  (lol.canvas:font-cw *font*))
+(defun line-h () "Height of one character cell, px." (lol.canvas:font-ch *font*))
+
+(defun text-dy (band-h)
+  "How far below a band's top to draw a line of text so it sits CENTRED in a band
+   BAND-H pixels tall (draw-string takes the cell's top-left)."
+  (max 0 (floor (- band-h (line-h)) 2)))
+
+(defun row-h ()
+  "Height of one list row: the cell plus 5 px of air. With the old 6x15 font that was
+   the tuned 20 (17 — cell plus two — read as a solid block of text with nothing for
+   the eye to travel along)."
+  (+ (line-h) 5))
+(defun bar-h () "Height of a header band / collapsed breadcrumb bar." (+ (line-h) 5))
+(defun card-head-h ()
+  "Height of a card's title strip (DRAW-CARD returns its top + this): 24 at 6x15."
+  (+ (line-h) 9))
+
+(define-symbol-macro +row-h+ (row-h))
+(define-symbol-macro +bar-h+ (bar-h))
 (defparameter +scrollbar-w+ 5 "Width of a scrollbar's track.")
 
 ;;; ---- text helpers --------------------------------------------------------
@@ -142,26 +165,30 @@
   (lol.canvas:fill-rect canvas (1+ x) y (- w 2) +bar-h+ *ui-hi*)
   (lol.canvas:fill-rect canvas (1+ x) (+ y +bar-h+ -1) (- w 2) 1 *ui-rule*)  ; seam
   (when marker
-    (lol.canvas:draw-string canvas *font* marker (+ x 8) (+ y 3) tint))
+    (lol.canvas:draw-string canvas *font* marker (+ x 8) (+ y (text-dy +bar-h+)) tint))
   (when title
-    (lol.canvas:draw-string canvas *font* (princ-to-string title) (+ x 26) (+ y 3) tint))
+    (lol.canvas:draw-string canvas *font* (princ-to-string title)
+                            (+ x 8 (* 3 (char-w))) (+ y (text-dy +bar-h+)) tint))
   (when badge
     (let ((b (princ-to-string badge)))
       (lol.canvas:draw-string canvas *font* b
-                              (- (+ x w) (lol.canvas:string-px *font* b) 2) (+ y 3) *ui-dim*)))
+                              (- (+ x w) (lol.canvas:string-px *font* b) 2)
+                              (+ y (text-dy +bar-h+)) *ui-dim*)))
   (+ y +bar-h+))
 
 (defun draw-bar (canvas x y w &key marker label right (tint *ui-text*))
   "A single collapsed bar — the browser's breadcrumb, and any other one-line strip:
    a filled band, MARKER and LABEL on the left, RIGHT right-aligned in the accent."
   (lol.canvas:fill-rect canvas x y w +bar-h+ *ui-hi*)
-  (when marker (lol.canvas:draw-string canvas *font* marker (+ x 8) (+ y 3) *ui-dim*))
+  (when marker
+    (lol.canvas:draw-string canvas *font* marker (+ x 8) (+ y (text-dy +bar-h+)) *ui-dim*))
   (when label (lol.canvas:draw-string canvas *font* (princ-to-string label)
-                                      (+ x 26) (+ y 3) tint))
+                                      (+ x 8 (* 3 (char-w))) (+ y (text-dy +bar-h+)) tint))
   (when right
     (let ((r (princ-to-string right)))
       (lol.canvas:draw-string canvas *font* r
-                              (- (+ x w) (lol.canvas:string-px *font* r) 8) (+ y 3) *ui-accent*)))
+                              (- (+ x w) (lol.canvas:string-px *font* r) 8)
+                              (+ y (text-dy +bar-h+)) *ui-accent*)))
   (+ y +bar-h+))
 
 ;;; ---- scrollbar -----------------------------------------------------------
@@ -230,7 +257,7 @@
     (when selected
       (lol.canvas:fill-rect canvas x by w +row-h+ *ui-sel*)
       (lol.canvas:fill-rect canvas x by 2 +row-h+ *ui-accent*))
-    (let* ((marker-x (- (+ x w) 16))
+    (let* ((marker-x (- (+ x w) (char-w) 10))     ; room for one » (16 at 6x15)
            ;; a label longer than the row is CLIPPED: drawn whole it ran under the
            ;; marker and on into the next column (a long file name in the file
            ;; manager's left half wrote itself across the preview beside it)
@@ -365,26 +392,31 @@
   (lol.canvas:fill-rect canvas x y w 2 *ui-accent*)            ; accent top rule
   (lol.canvas:draw-rect canvas x y w h *ui-rule*)
   (when title
-    (lol.canvas:draw-string canvas *font* (princ-to-string title) (+ x 12) (+ y 8) *ui-dim*))
+    (lol.canvas:draw-string canvas *font* (princ-to-string title)
+                            (+ x 12) (+ y (- (card-head-h) (line-h) 1)) *ui-dim*))
   (when right
     (let ((r (princ-to-string right)))
       (lol.canvas:draw-string canvas *font* r
-                              (- (+ x w) (lol.canvas:string-px *font* r) 12) (+ y 8) *ui-dim*)))
-  (+ y 24))
+                              (- (+ x w) (lol.canvas:string-px *font* r) 12)
+                              (+ y (- (card-head-h) (line-h) 1)) *ui-dim*)))
+  (+ y (card-head-h)))
 
 (defun draw-query-line (canvas x y w text)
   "The Spotter's (or any finder's) input line: a sunken field with a prompt, the text
    so far, and a block cursor. There is no caret widget because there is no editing —
    a finder only ever appends and backspaces."
-  (lol.canvas:fill-rect canvas x y w 20 *ui-hi*)
-  (lol.canvas:draw-rect canvas x y w 20 *ui-rule*)
-  (lol.canvas:draw-string canvas *font* (format nil "> ~a_" text) (+ x 6) (+ y 3) *ui-accent*)
-  (+ y 20))
+  (lol.canvas:fill-rect canvas x y w +bar-h+ *ui-hi*)
+  (lol.canvas:draw-rect canvas x y w +bar-h+ *ui-rule*)
+  (lol.canvas:draw-string canvas *font* (format nil "> ~a_" text)
+                          (+ x 6) (+ y (text-dy +bar-h+)) *ui-accent*)
+  (+ y +bar-h+))
 
 ;;; ---- grid: a 2-axis matrix of counted cells ------------------------------
 
-(defparameter +cell-w+ 78 "Width of one grid cell.")
-(defparameter +cell-h+ 18 "Height of one grid row.")
+(defun cell-w () "Width of one grid cell: 13 characters (78 at 6x15)." (* 13 (char-w)))
+(defun cell-h () "Height of one grid row: the cell plus 3 (18 at 6x15)." (+ (line-h) 3))
+(define-symbol-macro +cell-w+ (cell-w))
+(define-symbol-macro +cell-h+ (cell-h))
 
 (defun label-text (label)
   "A grid axis label as the text to draw.
@@ -424,7 +456,7 @@
         (t (princ-to-string label))))
 
 (defun draw-grid (canvas x y w h row-labels col-labels counts
-                  &key (header-w 130) (empty-mark (string (code-char 183))))
+                  &key header-w (empty-mark (string (code-char 183))))
   "A 2-axis grid: COL-LABELS across the top, ROW-LABELS down the left, and COUNTS
    (a list of rows, each a list of integers) in the cells. A zero is drawn as a dim
    mark — a real gap in the coverage is the whole point of the view, so it must be
@@ -433,7 +465,8 @@
    Returns (values HITS BOTTOM-Y): a list of (cx cy cw ch ROW-LABEL COL-LABEL) for
    every cell drawn, and the Y just below the last row — so a caller can put a caption
    under the grid without knowing the cell metrics."
-  (let* ((x0 (+ x header-w))
+  (let* ((header-w (or header-w (+ 4 (* 21 (char-w)))))   ; 20 chars + air; 130 at 6x15
+         (x0 (+ x header-w))
          (ncols (max 1 (floor (- w header-w) +cell-w+)))
          (green (concept-color :generic-function))
          (hits '())
@@ -444,11 +477,11 @@
     (loop for c in col-labels for ci from 0 below ncols
           for cx = (+ x0 (* ci +cell-w+))
           do (lol.canvas:draw-string canvas *font* (clip-text (label-text c) 12)
-                                     (+ cx 2) (+ y 2) (concept-color :class)))
+                                     (+ cx 2) (+ y (text-dy +cell-h+)) (concept-color :class)))
     (when (> (length col-labels) ncols)
       (lol.canvas:draw-string canvas *font*
                               (format nil ".. +~a" (- (length col-labels) ncols))
-                              (- (+ x w) 50) (+ y 2) *ui-dim*))
+                              (- (+ x w) (* 8 (char-w))) (+ y (text-dy +cell-h+)) *ui-dim*))
     ;; How many rows fit below the header band? If they all do, draw them all; if
     ;; they do not, give up one line to say so — a grid that simply stops is
     ;; indistinguishable from a grid that is complete, which is the one thing a
@@ -461,7 +494,7 @@
             for ri from 0 below shown
             for ry = (+ y +cell-h+ (* ri +cell-h+))
             do (lol.canvas:draw-string canvas *font* (clip-text (label-text r) 20)
-                                       x (+ ry 2) (concept-color :function))
+                                       x (+ ry (text-dy +cell-h+)) (concept-color :function))
                (loop for n in cellrow for ci from 0 below ncols
                      for cx = (+ x0 (* ci +cell-w+))
                      for col in col-labels
@@ -470,14 +503,15 @@
                                                 (- +cell-h+ 1) !#1E2A22)
                           (lol.canvas:fill-rect canvas (1+ cx) (1+ ry) 2 (- +cell-h+ 1) green))
                         (lol.canvas:draw-rect canvas cx ry +cell-w+ +cell-h+ *ui-rule*)
-                        (lol.canvas:draw-string canvas *font*
-                          (if (zerop n) empty-mark (format nil "~c~d" (code-char 215) n))
-                          (+ cx (floor +cell-w+ 2) (if (zerop n) -3 -9)) (+ ry 2)
-                          (if (zerop n) *ui-dim* green))
+                        (let ((s (if (zerop n) empty-mark (format nil "~c~d" (code-char 215) n))))
+                          (lol.canvas:draw-string canvas *font* s   ; centred in the cell
+                            (+ cx (floor (- +cell-w+ (lol.canvas:string-px *font* s)) 2))
+                            (+ ry (text-dy +cell-h+))
+                            (if (zerop n) *ui-dim* green)))
                         (push (list cx ry +cell-w+ +cell-h+ r col) hits)))
       (when (< shown nrows)
         (lol.canvas:draw-string canvas *font* (format nil ".. +~a" (- nrows shown))
-                                x (+ y +cell-h+ (* shown +cell-h+) 2) *ui-dim*))
+                                x (+ y +cell-h+ (* shown +cell-h+) (text-dy +cell-h+)) *ui-dim*))
       (setf bottom (+ y +cell-h+ (* shown +cell-h+) (if (< shown nrows) +cell-h+ 0))))
     (values hits bottom)))
 

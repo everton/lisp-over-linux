@@ -25,7 +25,7 @@
       (load (f "../initramfs/registry.lisp"))          ; defines load-recording (plain load)
       ;; everything else is loaded AND source-captured, so it is all browsable:
       (dolist (m '("../initramfs/model.lisp" "../initramfs/present.lisp"
-                   "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp"
+                   "ttf.lisp" "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp"
                    "clipboard.lisp" "../initramfs/sysinfo.lisp"
                    "inflate.lisp" "image.lisp"
                    "../initramfs/files.lisp" "../initramfs/file-views.lisp"
@@ -33,10 +33,14 @@
                    "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"))
         (load-recording (f m))))))
 
+;; the font: $LOL_FONT, else the host's DejaVu Sans Mono, else the committed bitmap —
+;; resizable at run time with SuperL-= / SuperL-- / SuperL-0 (doc/fonts.org)
 (set-browser-font
- (lol.canvas:load-font
-  (merge-pathnames "cozette.lolf"
-                   (make-pathname :directory (pathname-directory *load-truename*)))))
+ (open-browser-font (list (sb-ext:posix-getenv "LOL_FONT")
+                          "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+                    (merge-pathnames "cozette.lolf"
+                                     (make-pathname :directory
+                                                    (pathname-directory *load-truename*)))))
 
 (let* ((w 1000) (h 720)
        (canvas (lol.canvas:make-canvas w h))
