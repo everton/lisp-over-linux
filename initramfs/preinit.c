@@ -122,6 +122,20 @@ static void read_config(void) {
             *eq = 0;
             set_key(line + 4, eq + 1);
         }
+    /* QEMU cannot pass a cmdline to an EFISTUB kernel booted from OVMF (ours is
+     * built in), but it CAN hand the guest named blobs through its fw_cfg device:
+     * -fw_cfg name=opt/lol/disk,string=9p:hostroot shows up, with
+     * CONFIG_FW_CFG_SYSFS (tag #26), as a file under /sys/firmware/qemu_fw_cfg.
+     * Real hardware has no fw_cfg, so these are test-only switches by construction. */
+    {
+        static const char *keys[] = { "user", "disk" };
+        for (unsigned i = 0; i < sizeof keys / sizeof *keys; i++) {
+            char path[128];
+            snprintf(path, sizeof path, "/sys/firmware/qemu_fw_cfg/by_name/opt/lol/%s/raw", keys[i]);
+            int n = slurp(path, buf, sizeof buf);
+            if (n > 0) { buf[strcspn(buf, "\n")] = 0; set_key(keys[i], buf); }
+        }
+    }
 }
 
 /* ---- finding the disk: read ext4 superblocks ourselves ------------------ */
@@ -212,10 +226,48 @@ static int find_disk(char *out, size_t size) {
     return 0;
 }
 
+/* ---- QEMU only: the build host's REAL root over 9p ---------------------- */
+/*
+ * test-disk.img (make-test-disk.sh) has a passwd and a /home but no Debian, so
+ * anything that runs the host's programs — a container (doc/containers.org),
+ * Chrome (doc/web-browser.org), wpa_supplicant — cannot be tried against it.
+ * For those, QEMU shares the build host's whole / READ-ONLY with
+ *   -virtfs local,path=/,mount_tag=hostroot,security_model=none,readonly=on
+ *   -fw_cfg name=opt/lol/disk,string=9p:hostroot
+ * and we mount it where the laptop's disk would go. virtio-9p is a file-sharing
+ * protocol over a virtio queue (CONFIG_NET_9P_VIRTIO + CONFIG_9P_FS, tag #26).
+ * The host's /home must not be written from a test, so /home becomes an
+ * OVERLAY: the host's /home as the read-only lower layer, a tmpfs as the upper
+ * one that takes every write and vanishes at power-off. If overlay refuses the
+ * 9p lower layer, an empty tmpfs /home is the fallback.
+ */
+static int mount_storage_9p(const char *tag) {
+    mkdir("/mnt", 0755);
+    mkdir("/mnt/host", 0755);
+    if (mount(tag, "/mnt/host", "9p", MS_RDONLY | MS_NOSUID | MS_NODEV,
+              "trans=virtio,version=9p2000.L,access=any,cache=loose,msize=262144") != 0) {
+        say("storage: 9p mount of tag '%s' failed: %s", tag, strerror(errno));
+        return 0;
+    }
+    mkdir("/run", 0755);
+    mount("tmpfs", "/run", "tmpfs", 0, "size=256m,mode=0755");
+    mkdir("/run/home-upper", 0755);
+    mkdir("/run/home-work", 0755);
+    if (mount("overlay", "/home", "overlay", 0,
+              "lowerdir=/mnt/host/home,upperdir=/run/home-upper,workdir=/run/home-work") == 0)
+        say("storage: 9p '%s' -> /mnt/host (ro); /home = host /home + tmpfs overlay", tag);
+    else {
+        say("storage: overlay on /home failed (%s) — empty tmpfs /home instead", strerror(errno));
+        mount("tmpfs", "/home", "tmpfs", 0, "size=256m,mode=0755");
+    }
+    return 1;
+}
+
 /* ---- mounting: the host's / stays apart; only /home is shared ----------- */
 static int mount_storage(void) {
     char dev[300];
     if (!cfg_disk[0] || !strcmp(cfg_disk, "none")) { say("storage: off (no disk configured)"); return 0; }
+    if (!strncmp(cfg_disk, "9p:", 3)) return mount_storage_9p(cfg_disk + 3);
     if (!find_disk(dev, sizeof dev)) { say("storage: %s not found — running without a disk", cfg_disk); return 0; }
 
     mkdir("/mnt", 0755);
@@ -412,6 +464,16 @@ int main(void) {
     /* A real, size-limited scratch filesystem on /tmp (needs CONFIG_TMPFS=y).
      * The 5th arg is tmpfs-specific options: cap it at 64 MB, mode 1777. */
     mount("tmpfs",    "/tmp",  "tmpfs",    0, "size=64m,mode=1777");
+
+    /* Pseudo-terminals (tag #26 onward): a terminal pane, a container's shell,
+     * anything that opens /dev/ptmx gets its slave end under /dev/pts — which
+     * exists only once devpts is mounted. ptmxmode=666 so the user can open it. */
+    mkdir("/dev/pts", 0755);
+    mount("devpts",   "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC, "mode=620,ptmxmode=666");
+    /* POSIX shared memory (shm_open) lives in a tmpfs at /dev/shm; Chrome and
+     * PostgreSQL both need it. */
+    mkdir("/dev/shm", 01777);
+    mount("tmpfs",    "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777");
 
     /* SBCL's generational GC uses write-protected pages + a SIGSEGV handler as
      * its write barrier; it handles each fault and resumes. Otherwise the kernel
