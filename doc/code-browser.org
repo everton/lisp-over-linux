@@ -788,8 +788,9 @@ This is the condition system used the way it is meant to be: the code that knows
 the recovery options ARE is the code that establishes them. =define-method= drops a
 =defmethod= template into the Workspace with the specialisers already filled from the
 two arguments — you never retype what the debugger already knew. Nothing special was
-needed to make the debugger appear: the signal travels through =*debugger-hook*= into
-=run-debugger-fb= exactly as one from the Workspace does, which is the best evidence
+needed to make the debugger appear: the stage's tick arms a =handler-bind= that hands
+the condition to =run-debugger-fb= exactly as the Workspace's Debug it does (not
+=*debugger-hook*=, which nothing in the image sets), which is the best evidence
 that the stage belongs in this browser rather than beside it.
 
 [[file:../media/screenshots/stage-debugger-2026-09-20.png]]

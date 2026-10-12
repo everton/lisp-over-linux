@@ -702,9 +702,10 @@
 
 ;;; ---- the loop -----------------------------------------------------------
 
-;; The live I/O the running browser owns, published so the debugger (entered from
-;; *debugger-hook*, mid-loop) can draw to the same screen and read the same input
-;; without threading them through every call.
+;; The live I/O the running browser owns, published so the debugger (entered from a
+;; HANDLER-BIND handler, mid-loop — see WORKSPACE-DEBUG-IT; nothing here sets
+;; *DEBUGGER-HOOK*) can draw to the same screen and read the same input without
+;; threading them through every call.
 (defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
 (defvar *fb-mouse* nil
   ":POINTERS while at least one pointer is open, else NIL. It was a single fd until
@@ -1170,8 +1171,8 @@
    +STAGE-FRAME-MS+ regardless of what the renderer manages.
 
    A contact here can signal — that is the point of the whole view — and the signal
-   travels through *debugger-hook* into RUN-DEBUGGER-FB exactly as one from the
-   Workspace does, with the stack still standing and the stage's own restarts on the
+   reaches RUN-DEBUGGER-FB through the HANDLER-BIND below exactly as one from the
+   Workspace does (WORKSPACE-DEBUG-IT), with the stack still standing and the stage's own restarts on the
    rail. Nothing special is needed to make that work, which is the best evidence that
    the stage belongs in this browser rather than beside it."
   (let ((st (current-stage)))
@@ -1356,7 +1357,8 @@
          (or (eq key :escape) (and (logbitp 2 state) (member key '(#\g #\G)))))))
 
 ;;; ---- the debugger: a condition made interactive (§3) ---------------------
-;;; Entered from *debugger-hook* with the stack STILL STANDING, so the restarts are
+;;; Entered from a HANDLER-BIND handler (WORKSPACE-DEBUG-IT, TICK-LIVE-STAGE) — not
+;;; from *DEBUGGER-HOOK*, which nothing sets — with the stack STILL STANDING, so the restarts are
 ;;; live and invoking one actually transfers control. It is a nested modal loop over
 ;;; the same framebuffer + input the browser owns; it never returns without invoking
 ;;; a restart (there is no standard debugger to fall through to as PID 1).
