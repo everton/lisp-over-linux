@@ -163,6 +163,7 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:doc/agent.org][agent.org]]         | An LLM client native to the image — HTTP/JSON/SSE in Lisp, the introspection layer as its tool surface, and (later) TLS 1.3 from scratch. PLAN. |
 | [[file:doc/processes.org][processes.org]]     | Concurrent components sharing the screen: why only one process may write =/dev/fb0=, sending a *view* vs sending *pixels*, two processes and one mouse, fork/exec vs COW — plus the =sb-posix= audit (§6, DONE). |
 | [[file:doc/containers.org][containers.org]]    | Running a real distro's projects (a Rails app) without growing the image: a user-namespace container over the host's own Debian at =/mnt/host=, per-directory overlays, prototype verified on the host. PLAN. |
+| [[file:doc/steps.org][steps.org]]         | *Inspiration.* VPRI's STEPS and Piumarta & Warth's /Open, Extensible Object Models/ (2008): the paper summarised, what LoL shares and doesn't, and the =loc.sh= split of our code into /ours/ vs /conformance/. |
 | [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |
 
 * Layout
@@ -172,7 +173,7 @@ Nothing in the project needs editing — only the symlink moves.
   deps.sh                  fetch/link/update the ./linux and ./sbcl trees
   check-links.sh           verify every [[file:...]] link in the .org docs resolves
   refresh-screenshot.sh    re-capture the screenshots (headless QEMU, driven over QMP)
-  loc.sh                   lines of code/prose, by language
+  loc.sh                   lines of code/prose, by language and by origin (ours vs conformance)
   kernel/                  pinned .config snapshots (config-<version>)
   initramfs/               preinit.c, the Lisp modules (*.lisp), the cpio list, alien assets
   poc/                     the code browser's pixel toolkit — canvas, text view, X11 client,

@@ -1,0 +1,193 @@
+#+TITLE: Inspiration — VPRI's STEPS and the open, extensible object model
+#+STARTUP: showall
+
+Sibling docs: [[file:code-browser.org][code-browser.org]] (the environment that answers this paper's
+hardest objection) · [[file:background/learn-clos.org][learn-clos.org]] (the object model we use instead
+of building one) · [[file:processes.org][processes.org]] (the composition question STEPS left open) ·
+[[file:web-browser.org][web-browser.org]] (where we stopped on purpose).
+
+LoL is not an attempt to reproduce STEPS, and nothing here was designed from
+it. But the two share a premise, and this file writes the link down: what the
+paper says, which of its ideas LoL ends up using, where we differ, and a
+measurement STEPS never published that =loc.sh= now makes.
+
+* 1. The paper
+
+#+begin_quote
+Ian Piumarta and Alessandro Warth, *"Open, Extensible Object Models"*. In
+R. Hirschfeld and K. Rose (eds.), /Self-Sustaining Systems/ (S3 2008), LNCS 5146,
+pp. 1–30. Springer, 2008. doi:10.1007/978-3-540-89275-5_1.
+Public copy: http://piumarta.com/software/cola/objmodel2.pdf
+#+end_quote
+
+It came out of *STEPS* ("STEPS Toward the Reproduction of Personal Computing"),
+Alan Kay's project at Viewpoints Research Institute (VPRI), which ran from 2006 to
+2012. STEPS set out to build a whole personal computing system, from the metal to
+the applications, in about *20,000 lines of code*, small enough to be read like a
+book. VPRI's annual reports are the primary record:
+http://www.vpri.org/pdf/tr2007008_steps.pdf (2007) and
+http://www.vpri.org/pdf/tr2010004_steps10.pdf (2010). The paper describes the
+bottom of that stack: the object model that Piumarta's COLA system (the
+id/Pepsi/Coke languages) is built on.
+
+** The problem it states
+
+Each language fixes certain decisions for you: single or multiple inheritance,
+mixins or Traits, dynamic dispatch or static case analysis. When one of them is
+wrong for your program, you cannot repair it, because it lives in the language
+implementation and not in your code.
+
+** The model, in five lines
+
+- An *object* is just its state. One word *before* the object (offset −1) points
+  to its *vtable*.
+- A *vtable* maps message names to method implementations and has a =parent=
+  it delegates to. *A vtable is itself an object.*
+- To send a message, you send =lookup= to the receiver's vtable and call what it
+  returns. So *lookup is a method too*, and redefining it changes what sending
+  a message means.
+- The "vtable vtable" provides =lookup= for every vtable, including itself. To
+  stop the regress, the send short-circuits when the message is =lookup= sent to
+  the vtable vtable.
+- That is all that is needed. The paper's Table 1 lists *three object types*
+  (object, symbol, vtable) and *five essential methods*: =symbol intern=,
+  =vtable addMethod=, =vtable lookup=, =vtable allocate=, =vtable delegated=.
+
+The paper builds on this model to show multiple inheritance (a =ParentList= with
+its own =lookup:=), JavaScript-style objects (§5.1) and Traits (§5.2). Its sample
+C implementation is "approximately 140 lines of code" with optional inline and
+global method caches. The essential objects and methods compile to 1,453 bytes,
+or 1,822 bytes with the caches (§5.3).
+
+* 2. What LoL shares with it
+
+** We did not build the object model, because Common Lisp already has one
+
+The paper derives a minimal *meta-object protocol*: an object system whose own
+rules are objects you can send messages to. Common Lisp has one already. CLOS
+and its MOP (Kiczales, des Rivières and Bobrow, /The Art of the Metaobject
+Protocol/, 1991) came seventeen years before the paper, and they go further:
+dispatch on every argument, not only the receiver, plus method combination.
+
+LoL *reads* the MOP but does not *change* it.
+[[file:../initramfs/model.lisp][model.lisp]] calls =sb-mop:compute-applicable-methods-using-classes= and its
+neighbours to *show* dispatch, and no file in the tree defines its own
+generic-function class or redefines =compute-discriminating-function=. The
+openness the paper argues for is present in our image, and so far nothing uses
+it.
+
+** The strongest link: making an open model understandable
+
+The usual objection to an open lookup is that /if any code can redefine what a
+send means, you can no longer tell what will run/. The paper only partly
+answers it. The code browser is our answer, in the form of instruments:
+
+- the generic-function panel, which shows *coverage* (where methods live across
+  the class space) and *combination* (what actually runs, in which order). See
+  [[file:code-browser.org][code-browser.org]] §3, "The hard one: classes vs generic functions";
+- the *Stage* (§3b), where you watch =COLLIDE='s two-argument dispatch happen;
+- the live source: every definition shown, edited and recompiled in place
+  ([[file:../initramfs/registry.lisp][registry.lisp]]).
+
+STEPS bet on *late binding everywhere*. LoL accepts that bet and adds the tools
+that let you see the bindings.
+
+** Small by implementing only what is needed
+
+STEPS's best-known numbers are of this kind: TCP/IP in about 200 lines, because
+it implemented the part of the spec it needed. LoL makes the same move in
+[[file:../poc/x11.lisp][x11.lisp]]: an X11 client in 309 lines, because "X is a protocol on a
+socket" ([[file:x11.org][x11.org]]). Ours has the same limits theirs did. It is a development
+backend that speaks only the messages we send, and it never ships in the image.
+
+** Composition is the open question
+
+The most pointed criticism of STEPS (Jonathan Edwards, "Steps Toward the
+Reinvention of Programming", https://alarmingdevelopment.org/?p=229) was that its
+small DSLs were impressive one at a time, but the project never showed how to
+build a large system out of them. That boundary is where real systems keep their
+size. [[file:processes.org][processes.org]] is LoL's own version of that question: two components
+share a screen by passing a /view/ (about 350 lines), not pixels (a compositor).
+The =present= protocol is the contract that lets the parts compose.
+
+** The part that cannot shrink stays outside
+
+STEPS's demos ran on a host operating system, while its 20k-line goal implied
+a whole stack. LoL says what it reuses. Linux supplies the drivers and SBCL
+supplies the compiler: both are the long tail of conformance to the outside
+world (hardware, instruction sets). When we needed a web engine,
+[[file:web-browser.org][web-browser.org]] chose WPE WebKit and did not write one. You cannot make an
+implementation smaller than the spec it must obey, and HTML/CSS/JS is a very
+large spec.
+
+* 3. Where LoL differs
+
+| STEPS | LoL |
+|-------+-----|
+| Density from *metalanguages*: OMeta for parsers, Nile for graphics, one DSL per domain | Plain Lisp and CLOS. Macros could do OMeta's job, but we have not used them that way |
+| Rewrote its foundations (COLA compiles itself) | Trusts SBCL and Linux. The one exception, [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]], is a patch, not a rewrite |
+| Measured by the line count | Measured by readability: the =.org= docs come with the code (see the prose subtotal in =loc.sh=) |
+| A research demo that was never released as a buildable system | =build.sh= produces a bootable image from the repo |
+| The reader of the system is a human | [[file:agent.org][agent.org]] plans a second reader: an LLM using the same introspection layer as its tools |
+
+* 4. The measurement: ours vs conformance
+
+The lesson from STEPS is the split, not the 20k target. Some code is /ours/: we
+designed it, and how small it is depends on us. Other code is /conformance/: it
+implements someone else's spec, and the spec sets its minimum size. =loc.sh=
+counts both. Its second table classifies every tracked code file by origin, and
+the rule list is at the top of the script:
+
+| origin | what goes there |
+|--------+-----------------|
+| ours | the system we designed: supervisor, toolkit, browser, model, file manager, … |
+| conformance | protocol and format implementations: DEFLATE, the image decoders, X11, DHCP, BDF, ANSI SGR, PNG writing, QMP, the stb_image shim, and the SBCL machine-code patch |
+| tests | =check-*.lisp=, =*-test.lisp=, the guest harness |
+| tooling | shell scripts, =host-client/=, the headless frame renderer |
+| vendored | =poc/vendor/= (=stb_image.h=), which we did not write |
+
+Snapshot taken *2026-10-12*:
+
+#+begin_example
+  code by origin     files     lines
+  ----------------   ----- ---------
+  ours                  31     15613
+  conformance           10      3407
+                        41     19020   <- the system we wrote
+  tests                 13      2424
+  tooling               13      2051
+  vendored               1      7988
+#+end_example
+
+So the system we wrote is about 19k lines, on the same scale as STEPS's target.
+The difference is that it counts what it stands on and does not try to replace
+it.
+
+*A known blur.* [[file:../initramfs/file-views.lisp][file-views.lisp]] contains tar, zip and ELF readers, which are
+conformance code inside a file that is mostly views. It is counted as "ours",
+and the comment in =loc.sh= says so. File granularity is precise enough for a
+trend.
+
+** What to watch
+
+A prediction, written down now so that it can be checked later:
+
+- *ours* grows slowly and stays near 20k, because each new piece reuses
+  =present=, the toolkit and the registry;
+- *conformance* has no ceiling. TLS 1.3 ([[file:agent.org][agent.org]]), more storage formats and
+  anything on the web will each cost more than the closed-world code did.
+
+If "ours" grows as fast as "conformance", the premise that the code we design
+can stay small is failing here, and this file should say so.
+
+* 5. Further reading
+
+- Piumarta, *"Accessible Language-Based Environments of Recursive Theories"*
+  (VPRI, 2006). The COLA white paper that this object model sits under.
+- Warth and Piumarta, *"OMeta: an Object-Oriented Language for Pattern
+  Matching"* (DLS 2007). The parser metalanguage STEPS used for its DSLs.
+- Warth, Ohshima, Kaehler and Kay, *"Worlds: Controlling the Scope of Side
+  Effects"* (ECOOP 2011). From the same group; it relates to
+  [[file:session-persistence.org][session-persistence.org]].
+- Kiczales, des Rivières and Bobrow, /The Art of the Metaobject Protocol/ (MIT
+  Press, 1991). The ancestor that LoL actually runs on.

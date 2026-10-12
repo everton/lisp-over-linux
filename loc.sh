@@ -7,6 +7,13 @@
 # not line-counted. Lines are counted with awk's NR so a missing trailing
 # newline still counts its last line (wc -l would drop it).
 #
+# A second table splits the CODE by ORIGIN instead of language — the
+# measurement STEPS never published (doc/steps.org):
+#   ours         what we designed: its size is ours to win or lose
+#   conformance  what implements someone else's spec (a wire protocol, a file
+#                format, SBCL's own machine code): its floor is set by the spec
+#   tests, tooling, vendored — counted, but outside that comparison
+#
 # Usage: ./loc.sh
 set -euo pipefail
 set -f                        # no pathname expansion: `for g in $2` must keep
@@ -25,7 +32,20 @@ CATS=(
   "Manifests/misc|*.list *.gitignore LICENSE"
 )
 
-declare -A CAT_FILES CAT_LINES
+# origin|matcher — matcher is a case-glob tested against the FULL path (in a
+# case pattern * also matches /). First match wins, so the order matters.
+# file-views.lisp stays in "ours" although it carries tar/zip/ELF readers: they
+# are a minority of a file that is otherwise views.
+ORIGINS=(
+  "vendored|poc/vendor/*"
+  "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp"
+  "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp host-client/png.lisp host-client/qmp.lisp"
+  "tooling|*.sh host-client/* poc/render-frame.lisp"
+  "ours|*"
+)
+ORIGIN_ORDER=(ours conformance tests tooling vendored)
+
+declare -A CAT_FILES CAT_LINES ORIG_FILES ORIG_LINES
 BIN_FILES=0 BIN_BYTES=0
 OTHER_FILES=0 OTHER_LINES=0
 
@@ -44,15 +64,27 @@ while IFS= read -r f; do
       BIN_BYTES=$((BIN_BYTES + $(wc -c < "$f")))
       continue ;;
   esac
-  placed=0
+  placed=0 n=$(awk 'END{print NR}' "$f")
   for entry in "${CATS[@]}"; do
     label=${entry%%|*}; globs=${entry#*|}
     if match "$base" "$globs"; then
       CAT_FILES[$label]=$(( ${CAT_FILES[$label]:-0} + 1 ))
-      CAT_LINES[$label]=$(( ${CAT_LINES[$label]:-0} + $(awk 'END{print NR}' "$f") ))
+      CAT_LINES[$label]=$(( ${CAT_LINES[$label]:-0} + n ))
       placed=1; break
     fi
   done
+  case "$label" in Lisp|C|"C header"|Shell)   # code only, never prose
+    if [ "$placed" -eq 1 ]; then
+      for entry in "${ORIGINS[@]}"; do
+        o=${entry%%|*}
+        if match "$f" "${entry#*|}"; then
+          ORIG_FILES[$o]=$(( ${ORIG_FILES[$o]:-0} + 1 ))
+          ORIG_LINES[$o]=$(( ${ORIG_LINES[$o]:-0} + n ))
+          break
+        fi
+      done
+    fi ;;
+  esac
   if [ "$placed" -eq 0 ]; then
     OTHER_FILES=$((OTHER_FILES + 1))
     OTHER_LINES=$((OTHER_LINES + $(awk 'END{print NR}' "$f")))
@@ -94,3 +126,16 @@ total_files=$((code_files + prose_files + ${CAT_FILES["Kernel config"]:-0} \
 total_lines=$((code_lines + prose_lines + ${CAT_LINES["Kernel config"]:-0} \
   + ${CAT_LINES["Manifests/misc"]:-0} + OTHER_LINES))
 printf '  text total     : %d files, %d lines\n\n' "$total_files" "$total_lines"
+
+# --- code by origin (doc/steps.org) -----------------------------------------
+printf '  %-16s %7s %9s\n' "code by origin" "files" "lines"
+printf '  %-16s %7s %9s\n' "----------------" "-----" "---------"
+for o in "${ORIGIN_ORDER[@]}"; do
+  printf '  %-16s %7d %9d\n' "$o" "${ORIG_FILES[$o]:-0}" "${ORIG_LINES[$o]:-0}"
+  if [ "$o" = conformance ]; then
+    printf '  %-16s %7d %9d   <- the system we wrote\n' "" \
+      "$(( ${ORIG_FILES[ours]:-0} + ${ORIG_FILES[conformance]:-0} ))" \
+      "$(( ${ORIG_LINES[ours]:-0} + ${ORIG_LINES[conformance]:-0} ))"
+  fi
+done
+echo
