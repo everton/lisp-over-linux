@@ -1971,6 +1971,12 @@
 
 (defvar *fb-xres-for-sheet* 1280 "The width CHEATSHEET-COLUMNS lays out for (set on draw).")
 
+(defun cheatsheet-col-w ()
+  "One cheatsheet column: a 21-character key, about 28 of description, and air — 334 px
+   at 6x15 (three columns at 1280), 584 at 18 px (two). A longer description is
+   clipped with '..' rather than costing a column."
+  (+ 34 (* 50 (char-w))))
+
 (defun cheatsheet-columns (h)
   "*cheatsheet*'s groups poured into columns for a screen H tall -> a list of columns,
    each a list of groups. A group is never split. When everything fits on one screen the
@@ -1980,7 +1986,7 @@
   (let* ((lines (+ (* 2 (length *cheatsheet*))           ; title + gap per group
                    (loop for g in *cheatsheet* sum (length (cdr g)))))
          (fit (max 4 (floor (- h (* 2 (line-h)) 30) (line-h))))  ; lines one column holds
-         (ncols (max 1 (floor (- *fb-xres-for-sheet* 40) (* 68 (char-w)))))
+         (ncols (max 1 (floor (- *fb-xres-for-sheet* 40) (cheatsheet-col-w))))
          (per-col (min fit (max 4 (ceiling lines ncols))))
          (cols '()) (col '()) (used 0))
     (dolist (g *cheatsheet*)
@@ -1999,13 +2005,13 @@
    what does not fit goes onto further pages. Returns the number of pages."
   (setf *fb-xres-for-sheet* w)
   (let* ((cols (cheatsheet-columns h))
-         (ncols (max 1 (floor (- w 40) (* 68 (char-w)))))   ; 410 px a column at 6x15
+         (ncols (max 1 (floor (- w 40) (cheatsheet-col-w))))
          (pages (max 1 (ceiling (length cols) ncols)))
          (page (mod page pages))
          (band (+ (line-h) 7))
          (top (+ band 12))
          (colw (floor (- w 40) ncols))
-         (keyw (+ 12 (* 23 (char-w))))                       ; 150 at 6x15
+         (keyw (+ 12 (* 21 (char-w))))                       ; 138 at 6x15
          (maxc (max 8 (floor (- colw keyw 24) (char-w)))))
     (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
     (lol.canvas:fill-rect canvas 0 0 w band *ui-hi*)
