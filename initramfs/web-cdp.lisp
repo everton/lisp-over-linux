@@ -251,8 +251,12 @@
   from-fd            ; we READ responses + events here (Chrome's fd 4)
   (buf (make-array 65536 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
   (next-id 1)
-  (replies (make-hash-table))   ; id -> the response, parked until CDP-CALL collects it
-  (callbacks (make-hash-table)) ; id -> a function of the response, or :PARK for CDP-CALL.
+  ;; Both tables are SYNCHRONIZED, and writes go through LOCK, because a second
+  ;; thread may send: the net REPL, from which the guest checks ask the page
+  ;; questions (WEB-JS) while the browser's own loop reads the replies.
+  (lock (sb-thread:make-mutex :name "chrome pipe"))
+  (replies (make-hash-table :synchronized t))   ; id -> a response parked for CDP-CALL
+  (callbacks (make-hash-table :synchronized t)) ; id -> a function of the response, or :PARK.
                                 ; A reply with neither is DROPPED: most commands (an
                                 ; input event, a frame ack) are fire-and-forget, and
                                 ; parking every answer would grow the table forever.
@@ -327,16 +331,17 @@
   "Send METHOD with PARAMS (a JOBJ, or NIL) — to the tab SESSION when given, else to
    the browser itself. -> the message id. CALLBACK, if given, is called with the
    response (an alist with \"result\" or \"error\") when it arrives."
-  (let* ((id (shiftf (chrome-next-id c) (1+ (chrome-next-id c))))
-         (msg (apply #'jobj "id" id "method" method "params" params
-                     (and session (list "sessionId" session))))
-         (octets (sb-ext:string-to-octets (json-string msg) :external-format :utf-8))
-         (framed (make-array (1+ (length octets)) :element-type '(unsigned-byte 8)
-                                                  :initial-element 0)))
-    (replace framed octets)                ; ... and the last byte stays 0: the NUL frame end
-    (when callback (setf (gethash id (chrome-callbacks c)) callback))   ; a function or :PARK
-    (cdp-write-octets c framed)
-    id))
+  (sb-thread:with-recursive-lock ((chrome-lock c))
+    (let* ((id (shiftf (chrome-next-id c) (1+ (chrome-next-id c))))
+           (msg (apply #'jobj "id" id "method" method "params" params
+                       (and session (list "sessionId" session))))
+           (octets (sb-ext:string-to-octets (json-string msg) :external-format :utf-8))
+           (framed (make-array (1+ (length octets)) :element-type '(unsigned-byte 8)
+                                                    :initial-element 0)))
+      (replace framed octets)              ; ... and the last byte stays 0: the NUL frame end
+      (when callback (setf (gethash id (chrome-callbacks c)) callback))   ; a function or :PARK
+      (cdp-write-octets c framed)
+      id)))
 
 ;;; ---- reading ------------------------------------------------------------------
 
@@ -462,9 +467,12 @@
     (ignore-errors (cdp-send c "Browser.close"))
     (let ((p (chrome-process c)))
       (when p
+        ;; only WAIT here, never read the pipe: this may run on another thread
+        ;; than the one that reads it (a REPL, a test), and its few last words fit
+        ;; in the pipe's buffer anyway
         (loop repeat (* grace 10)
               while (chrome-alive-p c)
-              do (ignore-errors (cdp-pump c)) (sleep 0.1))
+              do (sleep 0.1))
         (when (chrome-alive-p c) (ignore-errors (sb-ext:process-kill p 15)) (sleep 0.5))
         (when (chrome-alive-p c) (ignore-errors (sb-ext:process-kill p 9)))
         (ignore-errors (sb-ext:process-wait p))

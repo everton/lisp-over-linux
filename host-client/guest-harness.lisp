@@ -89,7 +89,10 @@
   (setf *qemu*
         (sb-ext:run-program
          "qemu-system-x86_64"
-         (list* "-machine" "q35,accel=kvm:tcg" "-m" "2048"
+         ;; LOL_QEMU_MEM=4096 gives a guest more RAM (MB) — check-web.lisp, whose
+         ;; Chrome is the one thing in the image that is not small
+         (list* "-machine" "q35,accel=kvm:tcg"
+                "-m" (let ((m (sb-posix:getenv "LOL_QEMU_MEM"))) (if (and m (plusp (length m))) m "2048"))
                (append
                 (let ((cpu (sb-posix:getenv "LOL_QEMU_CPU"))) (and cpu (list "-cpu" cpu)))
                 ;; LOL_GUEST_DISK=test-disk.img attaches the stand-in for the laptop's

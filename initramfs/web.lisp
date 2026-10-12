@@ -101,6 +101,8 @@
   open-url                ; a URL waiting to be loaded once the tab is attached
   (frames 0)              ; frames received, for the doc's measurements
   (cast-at 0)             ; internal-real-time the screencast was (re)started
+  input-at                ; when the last input was sent, until a frame answers it
+  (latencies '())         ; ms from an input to the frame after it, newest first (≤ 32)
   capturing               ; a Page.captureScreenshot is in flight (WEB-NUDGE)
   (last-frame-ms nil))    ; ms the last JPEG took to decode + convert
 
@@ -206,8 +208,14 @@
    fonts, fontconfig, /proc/self/exe), which only a container can hand it."
   (cond (*web-launcher*)
         ((not (web-in-guest-p)) #'identity)
+        ;; its own container, "web", so Chrome's writes to / (none expected: its
+        ;; profile is in /home, its scratch in /tmp and /dev/shm) never mix with the
+        ;; ones a project's container keeps. lol-ct builds the program's environment
+        ;; afresh, so what Chrome needs from ours travels as -e arguments.
         ((fboundp 'container-command-line)
-         (lambda (argv) (funcall 'container-command-line argv :name "web")))
+         (lambda (argv)
+           (funcall 'container-command-line argv :name "web"
+                                                 :env (list "LANG=C.UTF-8"))))
         (t nil)))
 
 (defun web-sandbox-p ()
@@ -446,12 +454,23 @@
     (and h (< -1 (+ (cdr h) delta) (length (car h))))))
 
 (defun web-go (tab delta)
-  "Back (DELTA -1) or forward (+1) through TAB's session history."
-  (let ((h (web-tab-history tab)))
-    (if (web-can-go-p tab delta)
-        (web-send tab "Page.navigateToHistoryEntry"
-                  (jobj "entryId" (jget (aref (car h) (+ (cdr h) delta)) "id")))
-        (setf *browser-status* (if (minusp delta) "nothing to go back to" "nothing to go forward to")))))
+  "Back (DELTA -1) or forward (+1) through TAB's session history. The history is
+   asked for afresh rather than taken from the copy the toolbar draws from: that copy
+   is refreshed when a load settles, and a key pressed before then would step from
+   the page BEFORE the one on screen."
+  (unless (web-send tab "Page.getNavigationHistory" nil
+                    (lambda (r)
+                      (let* ((entries (jget r "result" "entries"))
+                             (i (jget r "result" "currentIndex")))
+                        (when entries
+                          (setf (web-tab-history tab) (cons entries i)))
+                        (if (and entries i (< -1 (+ i delta) (length entries)))
+                            (web-send tab "Page.navigateToHistoryEntry"
+                                      (jobj "entryId" (jget (aref entries (+ i delta)) "id")))
+                            (setf *browser-status* (if (minusp delta) "nothing to go back to"
+                                                       "nothing to go forward to")
+                                  *web-changed* t)))))
+    (setf *browser-status* "this tab is not open in Chrome")))
 
 (defun web-reload (tab)
   (setf (web-tab-loading tab) t *web-changed* t)
@@ -484,7 +503,15 @@
          (web-send tab "Page.screencastFrameAck" (jobj "sessionId" (jget params "sessionId")))
          (setf (web-tab-pending tab) (jget params "data")
                (web-tab-meta tab) (jget params "metadata"))
-         (incf (web-tab-frames tab))))
+         (incf (web-tab-frames tab))
+         ;; FRAME LATENCY: input sent -> the first frame after it arrives. What the
+         ;; doc's measurements report (plus the decode, WEB-TAB-LAST-FRAME-MS).
+         (let ((t0 (shiftf (web-tab-input-at tab) nil)))
+           (when t0
+             (push (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)
+                   (web-tab-latencies tab))
+             (when (> (length (web-tab-latencies tab)) 32)
+               (setf (web-tab-latencies tab) (subseq (web-tab-latencies tab) 0 32)))))))
       ;; titles and URLs, for every page — Target.setDiscoverTargets turned these on
       ((string= method "Target.targetInfoChanged")
        (let* ((ti (jget params "targetInfo")) (tb (web-tab-by-target (jget ti "targetId"))))
@@ -673,6 +700,7 @@
   "One turn: talk to Chrome, keep the visible tab streaming, decode its new frame.
    -> :REDRAW when the pane's chrome changed (redraw the browser), :FRAME when only
    the page's pixels did (WEB-PRESENT-FRAME can send just that rectangle), else NIL."
+  (setf *web-pump-thread* sb-thread:*current-thread*)
   (let ((c *web-chrome*) (frame nil))
     (when c
       (when (or (eq (ignore-errors (cdp-pump c)) :eof) (not (chrome-alive-p c)))
@@ -690,6 +718,29 @@
     (web-reap-orphans)
     (cond ((shiftf *web-changed* nil) :redraw)
           (frame :frame))))
+
+(defvar *web-pump-thread* nil
+  "The thread that runs WEB-SERVICE, i.e. the one that reads Chrome's pipe.")
+
+(defun web-js (expression &key (tab (web-visible-tab)) (timeout 10))
+  "Evaluate the JavaScript EXPRESSION in TAB's page and return its value — for tests
+   and the REPL. From the thread that reads the pipe this simply waits for the reply
+   (CDP-EVAL); from any OTHER thread (the net REPL) reading the pipe would race the
+   browser's loop, so it sends with a callback and waits for the loop to deliver it."
+  (unless (and tab (web-tab-session tab) *web-chrome*) (error "no live web tab"))
+  (if (or (null *web-pump-thread*) (eq *web-pump-thread* sb-thread:*current-thread*))
+      (cdp-eval *web-chrome* (web-tab-session tab) expression :timeout timeout)
+      (let ((box (list :waiting)))
+        (cdp-send *web-chrome* "Runtime.evaluate"
+                  (jobj "expression" expression "returnByValue" t "awaitPromise" t)
+                  :session (web-tab-session tab)
+                  :callback (lambda (r) (setf (car box) r)))
+        (loop repeat (* timeout 50) while (eq (car box) :waiting) do (sleep 0.02))
+        (when (eq (car box) :waiting) (error "no answer from the page in ~ds" timeout))
+        (let ((r (car box)))
+          (when (jget r "result" "exceptionDetails")
+            (error "page script failed: ~a" (jget r "result" "exceptionDetails" "text")))
+          (jget r "result" "result" "value")))))
 
 (defun web-wait-fd ()
   "The fd the browser's poll should watch for us (Chrome's end of the pipe), or NIL."
@@ -872,8 +923,13 @@
 (defvar *web-click-count* 1)
 (defvar *web-last-press* nil "(time x y) of the last press, for double-click counting.")
 
+(defun web-note-input (tab)
+  "Start the latency clock for TAB, unless an earlier input is still unanswered."
+  (unless (web-tab-input-at tab) (setf (web-tab-input-at tab) (get-internal-real-time))))
+
 (defun web-mouse (tab type cx cy &key (button "none") (buttons 0) (count 0) (mods 0)
                                       (dx 0) (dy 0))
+  (unless (string= type "mouseMoved") (web-note-input tab))
   (web-send tab "Input.dispatchMouseEvent"
             (apply #'jobj "type" type "x" cx "y" cy "modifiers" mods
                    "button" button "buttons" buttons "clickCount" count
@@ -1011,6 +1067,7 @@
                          ;; Ctrl-a is a COMMAND (select all), not the letter a
                          (and (not ctrl) (not alt) (string key)))))
               (t (return-from web-dispatch-key nil)))
+      (web-note-input tab)
       (web-send tab "Input.dispatchKeyEvent"
                 (apply #'jobj "type" (if text "keyDown" "rawKeyDown")
                        "modifiers" mods "key" dkey "code" code
@@ -1223,8 +1280,10 @@
   "Close Chrome cleanly: Browser.close lets it flush the profile (cookies, history)
    to disk before the disk is remounted read-only at power-off."
   (when *web-chrome*
-    (ignore-errors (chrome-close *web-chrome*))
-    (setf *web-chrome* nil *web-chrome-state* :off)
+    ;; let go of it FIRST, so the browser's loop stops reading a pipe being closed
+    (let ((c (shiftf *web-chrome* nil)))
+      (setf *web-chrome-state* :off)
+      (ignore-errors (chrome-close c)))
     (dolist (tab *web-tabs*) (setf (web-tab-state tab) :dead (web-tab-session tab) nil))
     (web-reap-orphans)))
 
