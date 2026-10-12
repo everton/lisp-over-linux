@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #26). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #27). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
@@ -28,7 +28,8 @@ it at build time (2026-10-02, userland only, still tag #24); tag #25 = storage:
 NVMe + ext4, the host's =/home= bind-mounted, the Lisp running as the user
 ([[file:storage.org][storage.org]]); tag #26 = the daily-driver set: user namespaces,
 overlayfs, Wi-Fi, IPv6, seccomp, SysV IPC, inotify, fw_cfg, virtio-9p
-([[file:kernel-config.org][kernel-config.org]] §8). Since #26 the network REPL is *off* unless the boot asks
+([[file:kernel-config.org][kernel-config.org]] §8). Tag #27 adds USB Ethernet (the RTL8153 dongle) as a wired
+fallback. Since #26 the network REPL is *off* unless the boot asks
 for it ([[file:networking.org][networking.org]]).
 Since 2026-10-12 a second static C program ships beside
 preinit: =/sbin/lol-ct=, which runs a command inside the host's own Debian as a
