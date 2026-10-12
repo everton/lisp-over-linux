@@ -792,7 +792,10 @@
                              (ash (sb-alien:deref info 18) 16) (ash (sb-alien:deref info 19) 24))))
             (when (or (zerop pid)
                       (find pid (ignore-errors (symbol-value (find-symbol "*ACTIVE-PROCESSES*" "SB-IMPL")))
-                            :key #'sb-ext:process-pid))
+                            :key #'sb-ext:process-pid)
+                      ;; a terminal's program (pty.lisp spawns those itself and waits
+                      ;; for them, to show "exited with code N"; doc/terminal.org)
+                      (and (fboundp 'pty-child-p) (funcall 'pty-child-p pid)))
               (return))                   ; nothing, or SBCL's own: its handler reaps it
             (%web-waitpid pid nil 1)
             (incf n)))))

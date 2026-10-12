@@ -581,6 +581,14 @@ int main(void) {
      * PostgreSQL both need it. */
     mkdir("/dev/shm", 01777);
     mount("tmpfs",    "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777");
+    /* The four symlinks udev would make: devtmpfs has none of them, and bash's
+     * process substitution <(cmd) hands its child a /dev/fd/N path — without
+     * /dev/fd every login shell in a terminal pane printed "bash: /dev/fd/63: No
+     * such file or directory" (doc/terminal.org). Containers bind this /dev. */
+    symlink("/proc/self/fd",   "/dev/fd");
+    symlink("/proc/self/fd/0", "/dev/stdin");
+    symlink("/proc/self/fd/1", "/dev/stdout");
+    symlink("/proc/self/fd/2", "/dev/stderr");
 
     /* SBCL's generational GC uses write-protected pages + a SIGSEGV handler as
      * its write barrier; it handles each fault and resumes. Otherwise the kernel

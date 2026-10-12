@@ -48,7 +48,7 @@ session scratchpad and were not kept. §4 gives them in full so they can be reru
   - Two kernel options (=USER_NS= and =OVERLAY_FS=, tag #26).
   - A =devpts= mount in preinit.
   - A small C helper, =lol-ct=.
-  - The real work: a *terminal pane*.
+  - The real work: a *terminal pane* — built 2026-10-12 ([[file:terminal.org][terminal.org]]).
 
 * 1. What a project like this needs
 
@@ -345,7 +345,8 @@ Not run on the host: a server inside the container reached from outside (§3.1).
 /At tag #26 (2026-10-12):/ =USER_NS= and =OVERLAY_FS= are on, preinit mounts
 =devpts= on =/dev/pts= and a tmpfs on =/dev/shm=, =lol-ct= is built (627 lines of
 C, more than the ~150 estimated: the fallbacks, the signal forwarding and the
-comments), and run-and-stream is built. The terminal pane is the open item.
+comments), and run-and-stream is built. The terminal pane is built too
+([[file:terminal.org][terminal.org]]): =SuperL-↵= opens a login shell in the default container.
 
 /Verified/ in =./linux=:
 - Our vanilla kernel has no =unprivileged_userns_clone= switch. That is a Debian
@@ -407,6 +408,13 @@ Two steps, cheapest first:
    This is a sub-project the size of the line editor ([[file:line-editing.org][line-editing.org]]) or
    bigger. It is also the piece every option in §2 needs.
 
+   /Built 2026-10-12/ — [[file:terminal.org][terminal.org]] is its whole story: a VT engine
+   ([[file:../poc/terminal.lisp][poc/terminal.lisp]], tested against recordings of less, vi and bash), ptys through
+   =posix_spawn= ([[file:../initramfs/pty.lisp][initramfs/pty.lisp]]) rather than =run-program :pty= — which gives
+   its child no controlling terminal, fine for a run pane and fatal for a shell —
+   and the pane ([[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]]). =SuperL-↵= runs
+   =(container-command-line '("bash" "-l"))=; =s= on a container calls =open-terminal=.
+
 * 6. Open questions for the user
 
 1. *Identity inside*: yourself (§3.2, recommended), or root with
@@ -425,7 +433,7 @@ Two steps, cheapest first:
 3. No. No uid range, and =lol-rootd= keeps exactly its two jobs.
 4. Run-and-stream first, and it is built (§7). The real terminal is a separate
    piece of work (=open-terminal=, a terminal pane), not part of this one;
-   =containers.lisp= calls it when it exists.
+   =containers.lisp= calls it when it exists — and it does now ([[file:terminal.org][terminal.org]]).
 
 * 7. As built: using it
 
@@ -439,8 +447,8 @@ Two steps, cheapest first:
   "run a command…" row does the same). The minibuffer offers the last command.
   It starts in the folder the focused pane shows when that folder is under
   =/home= — so *x* from the file manager runs /there/, as a shell would — and
-  otherwise in =$HOME=. *s* opens a login shell in a terminal pane once that
-  pane exists (=open-terminal=; until then it says so). *D* deletes the
+  otherwise in =$HOME=. *s* opens a login shell in a terminal pane
+  (=open-terminal=, [[file:terminal.org][terminal.org]]); =SuperL-↵= does the same for =default= from anywhere. *D* deletes the
   container, after you type =yes=. *g* refreshes.
 - The container's own view shows its runs this session, its state directory
   (drill into it: it is the file manager), and *what its last run was given*:

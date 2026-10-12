@@ -133,6 +133,11 @@
    selects Home/End/Del/Page by n1. All params and the final are consumed, so a
    modified sequence never leaks its tail into the buffer. Returns (values KEY STATE)."
   (let ((n1 0) (n2 0) (b (fbb-read-byte fd)))
+    ;; ESC [ [ A..E: the Linux console's F1..F5 (its keymap's func_buf, not xterm's)
+    (when (eql b 91)
+      (let ((c (fbb-read-byte fd)))
+        (return-from fb-read-csi
+          (values (if (and c (<= 65 c 69)) (nth (- c 65) '(:f1 :f2 :f3 :f4 :f5)) :ignore) 0))))
     (loop while (and b (<= 48 b 57)) do (setf n1 (+ (* n1 10) (- b 48)) b (fbb-read-byte fd)))
     (when (eql b 59)                         ; ';' — a modifier parameter follows
       (setf b (fbb-read-byte fd))
@@ -149,8 +154,11 @@
          ;; for Shift-F10 (it calls it F20): the keyboard's way to the context menu
          (case n1
            (34 (values :f10 (logior state 1)))
+           ;; 17..24: F6..F12 (the same numbers xterm uses; 22 is skipped by both)
            (t (values (case n1 (1 :home) (7 :home) (4 :end) (8 :end) (2 :insert)
-                               (3 :delete) (5 :page-up) (6 :page-down) (21 :f10) (t :ignore))
+                               (3 :delete) (5 :page-up) (6 :page-down) (21 :f10)
+                               (17 :f6) (18 :f7) (19 :f8) (20 :f9) (23 :f11) (24 :f12)
+                               (t :ignore))
                       state))))
         (t (values :ignore 0))))))
 
@@ -446,6 +454,12 @@
     ;; no help: it has one (Control_underscore, byte 31).
     ((and *ctrl-down* (plusp val) (member code '(11 13)))                  ; KEY_0 / KEY_EQUAL
      (cond ((= code 11) #\0) (*shift-down* #\+) (t #\=)))
+    ;; Shift-PageUp/PageDown: the console keymap binds them to ITS OWN scrollback
+    ;; (shift_map: Scroll_Backward / Scroll_Forward) and sends no byte, so this is the
+    ;; only place they can be seen. A terminal pane scrolls its history with them
+    ;; (doc/terminal.org); elsewhere they reach BROWSER-KEY as Shift-PageUp/Down.
+    ((and *shift-down* (plusp val) (= code 104)) :shift-page-up)          ; KEY_PAGEUP
+    ((and *shift-down* (plusp val) (= code 109)) :shift-page-down)        ; KEY_PAGEDOWN
     (t nil)))
 
 (defun read-keyboard-evdev (fd)
@@ -1276,6 +1290,37 @@
 (defparameter +guest-font+ "/usr/share/lol/mono.ttf"
   "Where the image keeps its outline font: build.sh copies the build host's monospace
    TrueType file there ($LOL_FONT, else DejaVu Sans Mono — doc/fonts.org §6).")
+(defun fb-service-fds ()
+  "Every service's fds, flattened: a service's :FD may return one fd or a LIST of
+   them — the terminals are one service with a pty master per open terminal."
+  (loop for v in (fb-service-call :fd)
+        if (listp v) append v else collect v))
+
+(defun show-terminal-rows (canvas)
+  "Repaint the rows a terminal's program changed and send only those rectangles to
+   the screen — a shell echoing a key costs one row, not a frame. The pointer goes
+   back on top if a row ran under it. NIL when the current pane is not a terminal
+   that can be updated this way; the caller then redraws the whole frame."
+  (let ((rects (terminal-paint-dirty canvas)))
+    (when rects
+      (dolist (r rects) (apply #'lol.fb:present-fb-rect canvas r))
+      (when (and *fb-mouse* (not *cursor-hidden*)
+                 (some (lambda (r) (destructuring-bind (x y w h) r
+                                     (and (< (- x +cursor-w+) *cursor-x* (+ x w))
+                                          (< (- y +cursor-h+) *cursor-y* (+ y h)))))
+                       rects))
+        (put-cursor canvas *cursor-x* *cursor-y*))
+      t)))
+
+;;; The terminals (doc/terminal.org) are a service: their pty masters wake the poll,
+;;; and :RUN drains every live one (non-blocking, so cheap when nothing came) and
+;;; repaints only the ROWS their programs changed — unless a full frame is coming.
+(defun terminal-service-run (canvas dirty)
+  (let ((r (terminal-service (terminal-fds))))
+    (cond ((eq r :full) :redraw)
+          ((and (eq r :rows) (not dirty)) (unless (show-terminal-rows canvas) :redraw)))))
+
+(fb-register-service :terminals :fd 'terminal-fds :run 'terminal-service-run)
 
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
@@ -1345,19 +1390,24 @@
                                             (if (fboundp 'agent-ui-timeout)
                                                 (funcall 'agent-ui-timeout) -1)
                                             (fb-service-call :timeout))
-                                     (fb-service-call :fd))
+                                     (fb-service-fds))
                          ;; refresh Ctrl/Shift/Super first; the Menu key opens the
                          ;; context menu where the caret (or selected row) is
                          (let ((ev (and kev (read-keyboard-evdev *fb-kbd*))))
                            (cond ((eq ev :menu)
                                   (keyboard-context-menu)
                                   (setf dirty t))
+                                 ;; seen only on the evdev: the console keeps them for
+                                 ;; its own scrollback (a terminal pane's history)
+                                 ((eq ev :shift-page-up) (browser-key :page-up 1) (setf dirty t))
+                                 ((eq ev :shift-page-down) (browser-key :page-down 1) (setf dirty t))
                                  ;; a Ctrl chord the console sends no byte for
                                  ((characterp ev)
                                   (setf dirty t)
                                   (when (eq :quit (browser-key ev (logior 4 (if *super-down* 64 0))))
                                     (return)))))
                          (when kb
+                          (let ((was-dirty dirty) (pane-before (current-pane)))
                            (setf dirty t)
                            (multiple-value-bind (key state) (fb-read-key 0)
                              ;; Ctrl-/ reaches the tty as DEL, Backspace's own byte
@@ -1375,7 +1425,12 @@
                                                   (if *super-down* 64 0))))
                                (when (or (eq key :eof)
                                          (eq :quit (browser-key key state)))
-                                 (return)))))
+                                 (return))
+                               ;; typed INTO a terminal: the echo will come back as
+                               ;; output, and repaint only its rows
+                               (when (and (not was-dirty)
+                                          (terminal-key-was-cheap-p pane-before state))
+                                 (setf dirty nil))))))
                          (when ms
                            (let ((ox *cursor-x*) (oy *cursor-y*)
                                  (was-down *button-down*)
@@ -1418,6 +1473,9 @@
                          ;; a run's reader thread may have collected output: copy it
                          ;; into its pane (cheap when nothing changed — a compare)
                          (when (tick-runs) (setf dirty t))
+                         ;; a closed tab or a popped pane may have taken a terminal
+                         ;; with it: hang its program up (SIGHUP, as closing a window)
+                         (when (or kb ms kev) (terminal-sweep))
                          ;; the services (a web page's frames, …): every turn, since
                          ;; they also react to what input just did (a click's page)
                          (when (member :redraw (fb-service-call :run canvas dirty))
@@ -1869,13 +1927,14 @@
      ("Super-f"            "the file manager (home)")
      ("Super-b"            "a web page (Chrome, doc/web-browser)")
      ("Super-n"            "the network: links, DNS, Wi-Fi")
+     ("Super-Enter"        "a terminal (a shell)")
      ("Super-?"            "this cheatsheet")
      ("Super-q"            "leave: console or shut down"))
     ("Tabs  (Super)"
      ("Super-1..9"         "jump to tab N")
      ("Super-S-1..9"       "move this tab to slot N")
      ("Super-Tab"          "cycle tabs (Shift: backwards)")
-     ("Super-Enter/click"  "open the selection in a NEW tab")
+     ("Super-S-Enter/click" "open the selection in a NEW tab")
      ("Super-w"            "close the current tab")
      ("Super-o"            "focus list <-> side pane")
      ("Super-Left"         "back in the trail"))
@@ -1955,6 +2014,12 @@
      ("Esc (during f)"     "stop a running find")
      ("C-x C-s"            "save a file you are editing")
      ("Spotter ~/ or /"    "type a path; Tab completes"))
+    ("Terminal"
+     ("any key"            "to the program (not Super)")
+     ("S-PgUp / wheel"     "scroll back the history")
+     ("drag / S-drag"      "select + copy (S- if it has the mouse)")
+     ("S-Insert / middle"  "paste clipboard / selection")
+     ("ret / r  (ended)"   "close / run again"))
     ("Debugger"
      ("0-9 / up-down"      "select a restart")
      ("Tab"                "focus the backtrace, walk frames")

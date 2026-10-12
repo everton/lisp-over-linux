@@ -155,10 +155,16 @@
      job NAME   compute NAME and print a VIEW to stdout (worker.lisp); the parent
                 reads it and presents it, which is how a second process puts
                 something on this screen without touching /dev/fb0 at all.
+     repl       a Lisp REPL on this process's terminal — what a terminal pane runs
+                when there is no host shell to run (doc/terminal.org). A separate
+                heap: nothing typed there can hurt the environment.
      (none)     the supervisor, i.e. PID 1"
   (let ((args (rest sb-ext:*posix-argv*)))
     (cond ((and args (string= (first args) "worker"))
            (worker-main (second args)))
           ((and args (string= (first args) "job"))
            (run-worker-job (second args)))
+          ((and args (string= (first args) "repl"))
+           (run-repl)
+           (sb-ext:exit :abort t))
           (t (supervisor-main)))))

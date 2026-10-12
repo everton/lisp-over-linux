@@ -51,6 +51,12 @@ Userland, 2026-10-12: the environment draws with a TrueType font (the build host
 DejaVu Sans Mono, copied into the cpio by =build.sh=; Cozette as the fallback) whose
 size =SuperL-= / - / 0= change at run time and =~/.config/lol/settings= remembers
 ([[file:fonts.org][fonts.org]]).
+The same day the *terminal
+pane* landed ([[file:terminal.org][terminal.org]]): =terminal.lisp=, =pty.lisp=, =terminal-pane.lisp=
+below; =SuperL-↵= opens a shell. It added a =repl= role to =init-toplevel= (the
+image re-executed as a Lisp REPL on a terminal, the shell of last resort) and made
+preinit create =/dev/fd= and =/dev/std{in,out,err}=, which devtmpfs lacks and
+bash's =<(…)= needs.
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -193,12 +199,15 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/files.lisp][=files.lisp=]]       | the file system as data: lstat/readdir/rename/symlink/… via =sb-unix= + libc, bounded =find-files=, the atomic save, the Spotter's path grammar ([[file:file-manager.org][file-manager.org]]) |
   | [[file:../initramfs/settings.lisp][=settings.lisp=]]    | =~/.config/lol/settings=: the user's preferences as a READable plist (=setting=, =save-setting=), e.g. the font size; never signals, writes nothing without a real home ([[file:fonts.org][fonts.org]] §6) |
   | [[file:../initramfs/file-views.lisp][=file-views.lisp=]]  | folders and files as SUBJECTS: =present= / =present-preview= / =commands-for=, the sniffers and archive readers ([[file:file-manager.org][file-manager.org]]) |
+  | [[file:../poc/terminal.lisp][=poc/terminal.lisp=]] | =lol.terminal=: the VT engine — UTF-8 bytes in, a cell grid out; keys, mouse and paste encoded back ([[file:terminal.org][terminal.org]]) |
+  | [[file:../initramfs/pty.lisp][=pty.lisp=]]         | pseudo-terminals: =/dev/ptmx=, =posix_spawn= with =POSIX_SPAWN_SETSID= so the child's controlling terminal is the slave ([[file:terminal.org][terminal.org]] §3) |
   | [[file:../poc/shell.lisp][=poc/shell.lisp=]]   | the drill-down accordion shell (present + canvas + textview + line-editor) |
   | [[file:../poc/file-manager.lisp][=poc/file-manager.lisp=]] | the file manager's keys, minibuffer prompts and operations; =C-x C-s= (uses shell + file-views) |
   | [[file:../initramfs/json.lisp][=json.lisp=]]        | =lol.json=: JSON in and out — objects a class, =:false= / =:null= never =nil=, key order kept ([[file:agent.org][agent.org]] §5) |
   | [[file:../initramfs/agent-wire.lisp][=agent-wire.lisp=]]  | Server-Sent Events framing for the streamed replies =http-request= hands over ([[file:agent.org][agent.org]] §3) |
   | [[file:../initramfs/agent.lisp][=agent.lisp=]]       | the agent: the conversation object, the streamed Messages client, the tool surface, gated writes as a condition with restarts, =(ask "…")= ([[file:agent.org][agent.org]]) |
   | [[file:../initramfs/agent-ui.lisp][=agent-ui.lisp=]]    | the agent in the environment: a conversation as a Workspace pane, =C-c C-a= Ask it, the frame tick, the approval chooser, tray + tab indicators, the debugger's ASK restart (uses shell) |
+  | [[file:../poc/terminal-pane.lisp][=poc/terminal-pane.lisp=]] | =subj-terminal=: the terminal as a pane — drawing, keys, mouse, =open-terminal=, =SuperL-↵= (uses shell + terminal + pty) |
   | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
