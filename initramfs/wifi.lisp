@@ -592,6 +592,40 @@
 
 (pushnew 'wifi-tick *netd-hooks*)
 
+;;; ---- the kernel's side of the story -----------------------------------------------------
+;;; When Wi-Fi does not come up on new hardware, the answer is in the kernel log: did
+;;; iwlwifi find its firmware, did cfg80211 accept the regulatory database? There is no
+;;; `dmesg' here, but /dev/kmsg IS the kernel log as a file: each read(2) returns one
+;;; record, "PRIORITY,SEQUENCE,MICROSECONDS,FLAGS;message". Opened O_NONBLOCK, the
+;;; read that would wait for a NEW record fails with EAGAIN instead — that is the end.
+;;; Readable by the user because this kernel has no DMESG_RESTRICT (tag #26 config).
+
+(defun kernel-log (&optional (pattern "") (limit 40))
+  "The kernel log's messages containing PATTERN (case-insensitive), the last LIMIT."
+  (let ((out '()) (buf (make-array 8192 :element-type '(unsigned-byte 8))))
+    ;; O_NONBLOCK is #o4000 on x86-64 (linux/include/uapi/asm-generic/fcntl.h,
+    ;; 1 << 11); sb-unix exports no name for it
+    (multiple-value-bind (fd err) (sb-unix:unix-open "/dev/kmsg" (logior sb-unix:o_rdonly #o4000) 0)
+      (unless fd (return-from kernel-log (list (format nil "/dev/kmsg: ~a" (sb-int:strerror err)))))
+      (unwind-protect
+           (loop
+             (let ((n (sb-sys:with-pinned-objects (buf)
+                        (sb-unix:unix-read fd (sb-sys:vector-sap buf) 8192))))
+               (unless n (return))                      ; EAGAIN: no more records
+               (when (plusp n)
+                 (let* ((rec (sb-ext:octets-to-string buf :end n :external-format '(:utf-8 :replacement #\?)))
+                        (msg (string-right-trim '(#\Newline) (subseq rec (1+ (or (position #\; rec) -1))))))
+                   (when (search pattern msg :test #'char-equal) (push msg out))))))
+        (sb-unix:unix-close fd)))
+    (let ((all (nreverse out)))
+      (last all limit))))
+
+(defun wifi-kernel-log ()
+  "The lines that say whether the radio's driver, firmware and regulatory db loaded."
+  (remove-if-not (lambda (m) (some (lambda (p) (search p m :test #'char-equal))
+                                   '("iwlwifi" "cfg80211" "wlan" "regulatory" "rfkill" "firmware")))
+                 (kernel-log "" 400)))
+
 ;;; ---- the systray item ----------------------------------------------------------------
 ;;; The host's mode line shows the SSID (`iwgetid -r`) or "Not connected!" (doc/systray.org).
 

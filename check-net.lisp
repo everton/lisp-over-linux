@@ -145,6 +145,8 @@
       (check "...and it stops" (equal "NIL" (probe "(wpa-running-p)")))
       (check "lol-rootd's NM import makes a user-owned /tmp/lol-nm-import"
              (= 1000 (or (probe-int "(progn (request-nm-import) (nth-value 5 (sb-unix:unix-stat \"/tmp/lol-nm-import\")))" 10) -1)))
+      (check "the user reads the kernel log (lol-rootd's nm-import line)"
+             (search "nm import" (row "kernel-log \"nm import\"" (probe "(first (kernel-log \"nm import\"))"))))
       (row "NM profiles readable through 9p" (probe "(length *nm-networks*)"))
       (check "a NetworkManager keyfile parses (both SSID spellings)"
              (equal "((\"Home\" \"secretpw1\" :WPA2) (\"Hi\" NIL :OPEN))"
