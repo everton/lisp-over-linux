@@ -77,22 +77,22 @@ has no <code>CAP_DAC_OVERRIDE</code> and no <code>CAP_SYS_ADMIN</code>. The two 
 a clean read-only disk at power-off) stay with a small helper inside preinit.</figcaption>
 </figure>
 <ul>
-  <li>Finding the disk without udev or blkid: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int find_disk&quot;" data-label="find_disk" href="../../initramfs/preinit.c"><code>find_disk</code><span class="loc">initramfs/preinit.c:201</span></a>
+  <li>Finding the disk without udev or blkid: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int find_disk&quot;" data-label="find_disk" href="../../initramfs/preinit.c"><code>find_disk</code><span class="loc">initramfs/preinit.c:204</span></a>
     reads each block device's ext4 superblock (magic <code>0xEF53</code> at offset 0x438, the UUID at 0x468) and compares it with
     <code>disk=UUID=…</code> from <code>lol.conf</code>.</li>
-  <li>Mounting: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:267</span></a>.
+  <li>Mounting: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:270</span></a>.
     The filesystem is mounted read-write, because one superblock has one rw/ro state and <code>/home</code> needs to write.
     Then the <code>/mnt/host</code> <em>view</em> is bind-remounted read-only.</li>
-  <li>Dropping privileges: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:425</span></a>.
+  <li>Dropping privileges: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:532</span></a>.
     Shrink the bounding set, <code>PR_SET_KEEPCAPS</code>, set gid then uid, <code>capset</code>, then raise each of the five as
     <em>ambient</em>. Ambient capabilities are what survive <code>execve</code> for a non-root program.</li>
-  <li>The helper: <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:373</span></a>.
+  <li>The helper: <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:469</span></a>.
     Its real uid is the user's, so the user may signal it, and its effective uid is 0, so it keeps root's powers.
     The Lisp side is <a class="ref" data-ref="initramfs/process.lisp#release-disk" href="../../initramfs/process.lisp"><code>release-disk</code><span class="loc">initramfs/process.lisp:36</span></a> and
     <a class="ref" data-ref="initramfs/process.lisp#power-off" href="../../initramfs/process.lisp"><code>power-off</code><span class="loc">initramfs/process.lisp:53</span></a>.</li>
   <li>QEMU-only alternatives (tag #26): <code>lol.disk=9p:hostroot</code> mounts the build host's whole root over virtio-9p, with
     <code>/home</code> as an overlay whose writes vanish
-    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage_9p&quot;" data-label="mount_storage_9p" href="../../initramfs/preinit.c"><code>mount_storage_9p</code><span class="loc">initramfs/preinit.c:244</span></a>).
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage_9p&quot;" data-label="mount_storage_9p" href="../../initramfs/preinit.c"><code>mount_storage_9p</code><span class="loc">initramfs/preinit.c:247</span></a>).
     Tests use <code>test-disk.img</code>, attached <code>snapshot=on</code>. Never pass the real disk to QEMU.</li>
 </ul>
 <p>The file system as data is <a class="ref" data-ref="initramfs/files.lisp#file-entry" href="../../initramfs/files.lisp"><code>file-entry</code><span class="loc">initramfs/files.lisp:224</span></a> and friends, calling libc through
@@ -116,17 +116,19 @@ why: an inlined <code>sb-posix</code> entry point cannot be recompiled in the gu
   <path class="edge" d="M430,165 H468" marker-end="url(#ar3)"/><text x="436" y="158" class="lbl">only if</text>
   <text x="730" y="150" class="lbl">Remote eval, no authentication:</text><text x="730" y="166" class="lbl">off by default since tag #26;</text><text x="730" y="182" class="lbl">the menu's 't' toggles it.</text>
 </svg>
-<figcaption>Wired IPv4 only, as of 2026-10-12. The lease's router and DNS are stored in <code>*gateway*</code> and
-<code>*dns*</code> but not yet used. DNS, a default route, Wi-Fi and HTTP/TLS are being built by another track
-(<a href="in-progress.html">Subsystems in progress</a>).</figcaption>
+<figcaption>The lease step, as first built. Since the network track (2026-10-12) the boot calls
+<a class="ref" data-ref="initramfs/dhcp.lisp#network-up" href="../../initramfs/dhcp.lisp"><code>network-up</code><span class="loc">initramfs/dhcp.lisp:393</span></a>, which does this on every wired link through
+<a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-configure" href="../../initramfs/dhcp.lisp"><code>dhcp-configure</code><span class="loc">initramfs/dhcp.lisp:307</span></a>, then installs the
+default route, writes <code>/etc/resolv.conf</code> and checks the clock through the lease's hooks, and starts the
+<code>netd</code> thread (renewals, Wi-Fi). DNS, SNTP, HTTP/HTTPS and Wi-Fi: <a href="../networking.org">networking.org</a> §2c–f, §7.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:160</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:130</span></a>,
-    <a class="ref" data-ref="initramfs/dhcp.lisp#build-dhcp" href="../../initramfs/dhcp.lisp"><code>build-dhcp</code><span class="loc">initramfs/dhcp.lisp:67</span></a> (the packet, byte by byte),
+  <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:329</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:176</span></a>,
+    <a class="ref" data-ref="initramfs/dhcp.lisp#build-dhcp" href="../../initramfs/dhcp.lisp"><code>build-dhcp</code><span class="loc">initramfs/dhcp.lisp:84</span></a> (the packet, byte by byte),
     <a class="ref" data-ref="initramfs/net.lisp#bring-up-interface" href="../../initramfs/net.lisp"><code>bring-up-interface</code><span class="loc">initramfs/net.lisp:68</span></a> (an <code>ifreq</code> built in a byte vector and
     passed to <code>ioctl</code>).</li>
-  <li>The REPL server: <a class="ref" data-ref="initramfs/net.lisp#start-net-repl" href="../../initramfs/net.lisp"><code>start-net-repl</code><span class="loc">initramfs/net.lisp:160</span></a>,
-    <a class="ref" data-ref="initramfs/net.lisp#%serve-net-repl" href="../../initramfs/net.lisp"><code>%serve-net-repl</code><span class="loc">initramfs/net.lisp:136</span></a>, <a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:218</span></a>.
+  <li>The REPL server: <a class="ref" data-ref="initramfs/net.lisp#start-net-repl" href="../../initramfs/net.lisp"><code>start-net-repl</code><span class="loc">initramfs/net.lisp:392</span></a>,
+    <a class="ref" data-ref="initramfs/net.lisp#%serve-net-repl" href="../../initramfs/net.lisp"><code>%serve-net-repl</code><span class="loc">initramfs/net.lisp:368</span></a>, <a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:450</span></a>.
     The host client is <code>host-client/lol-repl-client.c</code>. The test harness uses the same socket to read the
     guest's state (<a href="verify.html">How to verify things</a>).</li>
   <li>Tutorial from scratch: <a href="../background/learn-networking.org">learn-networking.org</a>.</li>

@@ -40,7 +40,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>EFISTUB</dt>
   <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
     <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:248</span></a>;
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:329</span></a>;
     <a href="../micro-distro.org">micro-distro.org</a>).</dd>
   <dt>initramfs, cpio</dt>
   <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
@@ -51,7 +51,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     whose docstring says "Never returns").</dd>
   <dt>devtmpfs</dt>
   <dd>A filesystem the kernel fills with <code>/dev</code> nodes for the devices it finds, so no udev is needed. Mounted first thing in
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;mount(&quot;devtmpfs&quot;&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:462</span></a>. Its nodes are root-owned,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;mount(&quot;devtmpfs&quot;&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:569</span></a>. Its nodes are root-owned,
     which is why <code>lol-rootd</code> exists.</dd>
   <dt>sysfs, /proc</dt>
   <dd>Kernel state presented as small text files. The framebuffer's geometry comes from <code>/sys/class/graphics/fb0</code>
@@ -78,7 +78,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     for <kbd>C-c C-c</kbd> to reach us (<a class="ref" data-ref="initramfs/line-editor.lisp#with-raw-mode" href="../../initramfs/line-editor.lisp"><code>with-raw-mode</code><span class="loc">initramfs/line-editor.lisp:43</span></a>).</dd>
   <dt>fw_cfg</dt>
   <dd>QEMU's firmware-configuration device, visible under <code>/sys/firmware/qemu_fw_cfg</code>. Real hardware has none, which makes
-    it a safe test-only switch for the net REPL (<a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:218</span></a>).</dd>
+    it a safe test-only switch for the net REPL (<a class="ref" data-ref="initramfs/net.lisp#net-repl-wanted-p" href="../../initramfs/net.lisp"><code>net-repl-wanted-p</code><span class="loc">initramfs/net.lisp:450</span></a>).</dd>
 </dl>
 
 <h2>Privilege and storage</h2>
@@ -86,14 +86,14 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>capabilities, ambient set</dt>
   <dd>Root's power split into about 40 pieces. A capability is normally lost across <code>execve</code> for a non-root program. The
     <em>ambient</em> set (Linux 4.3+) is how it survives. preinit keeps five
-    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:425</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:532</span></a>).</dd>
   <dt>bind mount</dt>
   <dd>The same directory made visible at a second path, possibly with different flags. Only <code>/mnt/host/home</code> is bound onto
-    <code>/home</code> (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:267</span></a>).</dd>
+    <code>/home</code> (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:270</span></a>).</dd>
   <dt>real vs effective uid</dt>
   <dd>The effective uid decides permissions; the real uid decides who may signal you. <code>lol-rootd</code> is real = user,
     effective = root, so the user's Lisp can signal it and it keeps root's powers
-    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:373</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:469</span></a>).</dd>
 </dl>
 
 <h2>SBCL and the image</h2>
@@ -168,10 +168,10 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dd>Compiling an edit into the running image, and the list of everything accepted this session
     (<a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>).</dd>
   <dt>Spotter</dt>
-  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2036</span></a>).</dd>
+  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2037</span></a>).</dd>
   <dt>halo</dt>
   <dd>Handles around whatever is under the middle button: what it is, and which code drew it. After Morphic
-    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2692</span></a>).</dd>
+    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2697</span></a>).</dd>
   <dt>stage</dt>
   <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
     (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a>).</dd>
