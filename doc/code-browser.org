@@ -1531,6 +1531,7 @@ list where the design puts it.
 | =SuperL-Tab= / =SuperL-⇧-Tab=     | cycle to next / previous trail         |
 | =SuperL-Space=                    | the Spotter                           |
 | =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])     |
+| =SuperL-b=                        | a web page, Chrome headless ([[file:web-browser.org][web-browser.org]]); on a web pane =SuperL-←/→= are the page's back / forward |
 | =SuperL-↵= / =SuperL-click=       | open the selection in a NEW trail      |
 | =↵=                              | drill in place (same trail)            |
 | =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
@@ -2351,6 +2352,16 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   [[file:file-manager.org][file-manager.org]] §5), =subject-key= / =subject-hints= (a subject's own keys on its list), and
   =present-preview= (preview = side may differ from drill = vertical). Reached by
   =SuperL-f= and by typing a path into the Spotter.
+- *Not a phase: the web pane* (2026-10-12). [DONE — [[file:web-browser.org][web-browser.org]]] A web page is a
+  subject too: =SUBJ-WEB=, a view of kind =:web= whose body is a headless Chrome tab's
+  latest frame under a toolbar (back, forward, reload/stop, the address). Each web tab
+  is a trail, so the tab strip, =SuperL-1…9= and =SuperL-w= apply; closing the trail
+  closes the Chrome page without a hook in the shell, and a popup becomes a new trail.
+  =SuperL-b= opens one; the Spotter offers "open URL", "search the web" and the open
+  tabs. The pane takes every non-=SuperL= key (=SuperL-←/→= are the page's back and
+  forward there). It added one GENERIC piece to the loop: =*FB-SERVICES*= in
+  =fb-browser.lisp=, other fds that wake the poll, with their own redraw. Tested by
+  [[file:../poc/web-test.lisp][poc/web-test.lisp]] (host) and [[file:../check-web.lisp][check-web.lisp]] (guest).
 - *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
   and becomes the first window on a Lisp window system of our own.
 

@@ -40,11 +40,13 @@ CATS=(
 # initramfs/lol-ct.c is "ours" too: it calls the kernel's namespace ABI, but which
 # mounts, in which order, with which fallbacks is a design (doc/containers.org);
 # ansi.lisp stays "conformance" with its SGR READER added, since both directions
-# implement ECMA-48's colour codes.
+# implement ECMA-48's colour codes. initramfs/web-cdp.lisp is "conformance" (the
+# DevTools protocol's framing, plus the JSON and base64 it rides on); web.lisp,
+# which decides what a web tab IS in the environment, is "ours".
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp"
-  "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp host-client/png.lisp host-client/qmp.lisp"
+  "conformance|poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/ansi.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
   "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )

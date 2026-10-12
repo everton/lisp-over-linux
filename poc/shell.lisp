@@ -1069,9 +1069,12 @@
     ((eq (view-kind (pane-view pane)) :image)
      (note-drawn x y w h (view-data (pane-view pane)) '(draw-image-body) "image")
      (draw-image-body canvas pane x y w h))
+    ;; a web page (initramfs/web.lisp): Chrome's frame under a toolbar
+    ((eq (view-kind (pane-view pane)) :web)
+     (funcall 'draw-web-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h into))))
 
-(defparameter +non-list-kinds+ '(:matrix :stage :image)
+(defparameter +non-list-kinds+ '(:matrix :stage :image :web)
   "View kinds with no textview that are NOT lists either: they draw themselves, and
    the list machinery (rows, the nav split, row hit-tests) must leave them alone.")
 
@@ -1362,7 +1365,15 @@
    in initramfs/files.lisp and doc/file-manager.org)."
   (if (path-query-p query)
       (or (ignore-errors (spotter-path-results query :cwd (spotter-cwd) :limit limit)) '())
-      (spotter-band (spotter-filter query candidates limit))))
+      (spotter-band (append
+                     ;; an address typed here opens it; any other text can be searched
+                     ;; for on the web (WEB-SPOTTER-ROWS, initramfs/web.lisp) — first
+                     ;; when it looks like a URL, else after everything local
+                     (and (fboundp 'web-url-like-p) (funcall 'web-url-like-p query)
+                          (ignore-errors (funcall 'web-spotter-rows query)))
+                     (spotter-filter query candidates limit)
+                     (and (fboundp 'web-url-like-p) (not (funcall 'web-url-like-p query))
+                          (ignore-errors (funcall 'web-spotter-rows query)))))))
 
 (defun spotter-complete (query)
   "Tab in the Spotter: a path query is completed like a shell's (COMPLETE-PATH-QUERY);
@@ -1887,6 +1898,11 @@
          (state (if meta (logior state 8) state)))
     (setf *pending-meta* nil)
     (cond
+      ;; A WEB PAGE (initramfs/web.lisp) takes every key but the SuperL layer: Esc,
+      ;; C-g, C-c, Tab all mean what they mean in a browser there, and the page — not
+      ;; the shell — is what you are typing into. WEB-KEY keeps a few browser chords.
+      ((and (eq (view-kind (pane-view p)) :web) (not (lol.canvas:super-p state)))
+       (funcall 'web-key p key state))
       ;; M-. — jump to the definition of the symbol at point, the keyboard twin of
       ;; Ctrl-click. Must precede the editable branch, or the "." would self-insert.
       ((and meta (eql key #\.) (pane-tv p)) (jump-at-point (pane-tv p)))
@@ -1925,6 +1941,11 @@
       ((lol.canvas:super-p state)
        (setf *pending-prefix* nil)
        (cond
+         ;; on a web page, SuperL-Left / -Right are the PAGE's back and forward: the
+         ;; browser's usual Alt-Left never arrives on the bare console, whose keymap
+         ;; spends Alt-Left/Right on switching virtual terminals (defkeymap.map)
+         ((and (member key '(:left :right)) (eq (view-kind (pane-view (current-pane))) :web))
+          (funcall 'web-go (view-data (pane-view (current-pane))) (if (eq key :left) -1 1)) nil)
          ((eq key :left) (trail-pop) (setf *browser-status* nil) nil)          ; back in trail
          ((eq key :tab) (cycle-trail (if (lol.canvas:shift-p state) -1 1)) nil) ; cycle tabs
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
@@ -1944,6 +1965,8 @@
           nil)
          ((member key '(#\m #\M)) (open-modules) nil)                         ; the module index
          ((member key '(#\f #\F)) (funcall 'open-files) nil)                   ; the file manager
+         ((and (member key '(#\b #\B)) (fboundp 'web-open))                   ; a web page (web.lisp)
+          (funcall 'web-open) nil)
          ((member key '(#\l #\L))                                              ; the CL-USER package
           (new-trail (find-package :cl-user)) nil)
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history
@@ -2119,10 +2142,12 @@
    PANE-FOLLOW off for that frame, so the widget does not immediately drag the view
    back to the selection. The widget clamps, so this cannot run off either end."
   (let ((p (current-pane)))
-    (if (pane-tv p)
-        (lol.textview:tv-wheel (pane-tv p) lines)
-        (setf (pane-top p) (max 0 (+ (pane-top p) lines))
-              (pane-follow p) nil))))
+    (cond
+      ;; a web page scrolls itself: the wheel is sent to Chrome (initramfs/web.lisp)
+      ((eq (view-kind (pane-view p)) :web) (funcall 'web-wheel lines))
+      ((pane-tv p) (lol.textview:tv-wheel (pane-tv p) lines))
+      (t (setf (pane-top p) (max 0 (+ (pane-top p) lines))
+               (pane-follow p) nil)))))
 
 ;;; ---- press and drag: selecting text with the pointer ------------------------
 ;;; A click that places the caret in a text view also arms a DRAG: while the button
@@ -2146,6 +2171,9 @@
   "The left button is still held and the pointer is at X,Y: extend the selection in
    the view the press landed in. Returns T when the frame changed (so the caller
    redraws), NIL when there is no drag or the pointer is still inside the slop."
+  ;; a press in a web page drags IN the page (selecting, sliding): web.lisp's
+  (when (eq (view-kind (pane-view (current-pane))) :web)
+    (return-from browser-drag (funcall 'web-drag x y)))
   (when *drag-tv*
     (when (and *drag-origin*
                (<= (abs (- x (car *drag-origin*))) +drag-slop+)
@@ -2249,6 +2277,9 @@
         (p (current-pane)))
     (cond
       (hit (trail-goto (car hit)))
+      ;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
+      ((eq (view-kind (pane-view p)) :web)
+       (when (>= y *content-top*) (funcall 'web-click p x y ctrl super)))
       ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
       ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
       ;; it is reading, not editing. The caret is simply not drawn there.
@@ -3085,6 +3116,7 @@
   "The button came up after a press in text: if the drag selected something, that
    selection becomes PRIMARY and enters the history — once, now, rather than on
    every motion event, or the history would fill with every intermediate stretch."
+  (when (fboundp 'web-release) (funcall 'web-release))   ; a press in a web page, if any
   (when *drag-tv*
     (let ((text (editor-region-text *drag-tv*)))
       (when (and text (null *drag-origin*))          ; it really was a drag

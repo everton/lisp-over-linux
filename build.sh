@@ -94,6 +94,9 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)
   "$INITRAMFS_DIR/fb-browser.lisp"   # run-browser-fb: the code browser on /dev/fb0 (uses shell+fb+line-editor)
+  "$INITRAMFS_DIR/web-cdp.lisp"      # the Chrome DevTools protocol over a pipe: JSON, base64, the process
+  "$INITRAMFS_DIR/web.lisp"          # the web pane: a headless Chrome tab as a subject (uses shell+fb-browser
+                                     #   +image; doc/web-browser.org). Chrome itself comes from the host's disk
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
   "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client + configure-eth0 (uses net + sb-bsd-sockets)
