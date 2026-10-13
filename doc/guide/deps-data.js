@@ -13,7 +13,7 @@ window.LOL_DEPS = {
   modules: [
     {file: "initramfs/agent-ui.lisp", layer: -1, role: "the agent in the environment: a conversation is a Workspace,", lines: 894, defs: 70, packages: [], load: 32},
     {file: "initramfs/agent-wire.lisp", layer: -1, role: "the agent's wire: Server-Sent Events", lines: 110, defs: 9, packages: [], load: 30},
-    {file: "initramfs/agent.lisp", layer: -1, role: "an LLM client that lives in the image: the conversation, the", lines: 1694, defs: 187, packages: [], load: 31},
+    {file: "initramfs/agent.lisp", layer: -1, role: "an LLM client that lives in the image: the conversation, the", lines: 1712, defs: 189, packages: [], load: 31},
     {file: "initramfs/ansi.lisp", layer: 1, role: "ANSI SGR color for the REPL and line editor", lines: 217, defs: 26, packages: [], load: 14},
     {file: "initramfs/containers.lisp", layer: 3, role: "the laptop's own Debian as a container, from the Lisp side", lines: 411, defs: 48, packages: [], load: 28},
     {file: "initramfs/dhcp.lisp", layer: 0, role: "get an IP from a DHCP server, in pure Lisp, and keep it", lines: 563, defs: 62, packages: [], load: 42},

@@ -372,7 +372,7 @@ and independent of the *initiative* one:
 
 | Policy       | Behaviour                                                       |
 |--------------+-----------------------------------------------------------------|
-| =:read-only= | write tools are not offered at all                              |
+| =:read-only= | write tools are not offered at all (in a conversation begun so) |
 | =:ask=       | each call becomes a pending object you approve or deny (default) |
 | =:allow=     | run it                                                          |
 
@@ -1221,7 +1221,7 @@ the tick's refresh of a turn, which these changes did not touch.
 
 ** 14.8½ After the first real use (2026-10-13, from a session inside the environment)
 
-Three changes came out of using the agent for real on the laptop:
+Four changes came out of using the agent for real on the laptop:
 
 - *Allow all writes.* Approving each write one by one became tedious in a long
   session. [[file:../initramfs/agent.lisp::defun allow-all-writes][=allow-all-writes=]] sets the authority dial (§8.9) to =:allow= for
@@ -1240,6 +1240,24 @@ Three changes came out of using the agent for real on the laptop:
   connection. =*agent-retries*= went from 5 to 6.
 - *Interrupted is not timed out* — the real cause behind many of those "timeouts".
   It is fixed in =tls.lisp=; [[file:networking.org][networking.org]] §2e explains it.
+- *A conversation's tools never change.* A long conversation suddenly failed with
+  a 400: "Invalid =signature= in =thinking= block. The block is bound to a different
+  conversation … The =tools= list differs from the one this block was created
+  with." A thinking block's signature covers the request that produced it, and the
+  tools array is part of that request. Ours was rebuilt on every request by
+  =offered-tools=, so it moved whenever its inputs did: the authority dial leaving or
+  entering =:read-only= (which hides the write tools), a tool's =AVAILABLE-P=
+  changing its answer, or =C-c C-c= on a =define-agent-tool=, which moves the tool to
+  the end of =*agent-tools*=. One changed byte and every earlier thinking block is
+  refused, so the conversation is dead. Now [[file:../initramfs/agent.lisp::defun conversation-tools][=conversation-tools=]] computes the
+  array on a conversation's first request and sends those same bytes for the rest of
+  it. What the dial says *now* is still enforced, at the moment a call runs:
+  =gated-run= declines a write under =:read-only=, and =execute-tool-call= answers a
+  tool whose =AVAILABLE-P= has turned false with an error result. A new or redefined
+  tool reaches the model in the next conversation. =poc/agent-test.lisp= starts a
+  conversation read-only, moves the dial to =:allow=, and checks the second request
+  sent the same tools. A conversation that already hit the 400 cannot be repaired;
+  start a new one.
 
 The pane's rendering changed too: markdown cleaned into plain lines, a mark for each
 tool call, and a rule between turns naming the authority in force. The prototype for

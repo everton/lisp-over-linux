@@ -285,6 +285,8 @@
    (calls :initform (make-array 0 :adjustable t :fill-pointer 0) :accessor conversation-calls)
    (authority :initarg :authority :initform nil :accessor conversation-authority
               :documentation "NIL: follow *AGENT-AUTHORITY*. Else this conversation's own.")
+   (tools :initform nil :accessor conversation-tools-json
+          :documentation "The tools array as first sent, then sent unchanged (CONVERSATION-TOOLS).")
    (usage :initform (list :input 0 :output 0 :cache-read 0 :cache-write 0 :requests 0)
           :accessor conversation-usage)
    (cost :initform 0 :accessor conversation-cost)
@@ -412,6 +414,19 @@
                (or (and (agent-tool-write-p tool) (eq (conversation-authority* conv) :read-only))
                    (and (agent-tool-available-p tool) (not (funcall (agent-tool-available-p tool))))))
              *agent-tools*))
+
+(defun conversation-tools (conv)
+  "The tools array CONV sends — computed on its FIRST request and then frozen.
+   A thinking block's signature is bound to the request that produced it, tools
+   included: send a different tools list later (the authority dial moved off
+   :READ-ONLY, a tool's AVAILABLE-P changed its mind, C-c C-c on a DEFINE-AGENT-TOOL
+   moved it to the end of *AGENT-TOOLS*) and the API refuses the whole conversation
+   with a 400, \"Invalid `signature` in `thinking` block … The `tools` list differs\".
+   So the list never changes under a conversation: what the dial and AVAILABLE-P say
+   NOW is enforced when a call runs (GATED-RUN, EXECUTE-TOOL-CALL), and a new or
+   redefined tool reaches the model in the next conversation."
+  (or (conversation-tools-json conv)
+      (setf (conversation-tools-json conv) (tools-json (offered-tools conv)))))
 
 (defun tools-json (tools)
   "The request's tools array. EAGER-INPUT-STREAMING makes a long input (a whole
@@ -834,6 +849,9 @@
                    "content" text "is_error" (if error t :false))))
       (cond
         ((null tool) (result (format nil "There is no tool named ~a." (call-name call)) t))
+        ((and (agent-tool-available-p tool) (not (funcall (agent-tool-available-p tool))))
+         ;; offered when the conversation began, gone since (CONVERSATION-TOOLS)
+         (result (format nil "The tool ~a is not available in this image right now." (call-name call)) t))
         ((null input)
          ;; eager streaming hands us the raw fragments; if they never became JSON, say
          ;; so in the form the API's guidance asks for, so the model can retry
@@ -977,7 +995,7 @@
                     "stream" t
                     "system" (vector (lol.json:jobj "type" "text" "text" *agent-system-prompt*
                                            "cache_control" (lol.json:jobj "type" "ephemeral")))
-                    "tools" (tools-json (offered-tools conv))
+                    "tools" (conversation-tools conv)
                     "messages" (messages-json conv)
                     "thinking" (lol.json:jobj "type" "adaptive" "display" *agent-thinking-display*)
                     "cache_control" (lol.json:jobj "type" "ephemeral"))))

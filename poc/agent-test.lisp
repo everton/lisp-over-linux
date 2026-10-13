@@ -166,6 +166,14 @@ line2") ("b" "no-space"))))
       (loop for tool across (lol.json:jget (last-request) "tools")
             never (member (lol.json:jget tool "name") '("lisp-eval" "lisp-accept" "file-write") :test #'string=))))
 
+(let ((c (make-conversation)))
+  ;; the 400 "Invalid `signature` in `thinking` block … The `tools` list differs":
+  ;; the dial moving mid-conversation must not change what the API is sent
+  (let ((*agent-authority* :read-only)) (run-turn c "plain question, read-only"))
+  (let ((before (lol.json:to-json (lol.json:jget (last-request) "tools"))))
+    (let ((*agent-authority* :allow)) (run-turn c "and again"))
+    (ok "the dial moved, the tools sent did not" (lol.json:to-json (lol.json:jget (last-request) "tools")) before)))
+
 (let ((c (make-conversation)) (*agent-authority* :allow))
   (run-turn c "eval allowed")
   (ok ":allow: the write ran without asking" (call-status (aref (conversation-calls c) 0)) :done))
