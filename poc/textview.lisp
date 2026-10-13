@@ -23,7 +23,7 @@
   (:export #:textview #:make-textview #:tv-draw #:tv-key #:tv-click #:tv-drag
            #:tv-wheel
            #:tv-text #:tv-set-text #:tv-lines #:tv-point-line #:tv-point-col
-           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p #:tv-syntax
+           #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p #:tv-syntax #:tv-tint
            ;; for the clipboard (shell.lisp): the region, and replacing the buffer
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
            #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span
@@ -51,6 +51,11 @@
                                    ; it as Lisp lights every apostrophe and semicolon);
                                    ; a function (line-index line) -> runs supplies the
                                    ; colours itself (a run pane's ANSI SGR)
+  (tint nil)                       ; NIL, or a function (line) -> a colour or NIL: a line
+                                   ; it names is drawn WHOLE in that colour, over the
+                                   ; syntax — how a conversation's error block reads as
+                                   ; one (initramfs/agent-ui.lisp). Decided per line from
+                                   ; the text alone, so it survives any edit.
   ;; undo — see "Undo, the Emacs way" below
   (undo-list '())                  ; states before each change, newest first
   (undo-pending nil)               ; during a run of undos: the states still to visit
@@ -629,7 +634,12 @@
                               (+ x0 pad) ly *gutter*)
                  ;; the text, run by coloured run
                  (multiple-value-bind (runs new-depth new-instr)
-                     (cond ((eq (tv-syntax tv) :lisp) (lex-line line depth instr))
+                     (cond ((and (tv-tint tv) (funcall (tv-tint tv) line))
+                            ;; a tinted line: one run, and the lexer's state carried
+                            ;; through it unchanged (a tinted line is a comment)
+                            (values (list (list* 0 (length line) (funcall (tv-tint tv) line)))
+                                    depth instr))
+                           ((eq (tv-syntax tv) :lisp) (lex-line line depth instr))
                            ;; a FUNCTION of (line-index line) -> runs: colour that
                            ;; comes from elsewhere — a run pane's ANSI colours
                            ;; (initramfs/runs.lisp), which no lexer could recover

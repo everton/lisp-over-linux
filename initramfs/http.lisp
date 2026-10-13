@@ -26,7 +26,7 @@
 ;;;; Public API (the agent track consumes it; package CL-USER):
 ;;;;
 ;;;;   (http-request url &key (method :get) headers body (want :string) on-chunk
-;;;;                          (timeout 30) (redirects 5))
+;;;;                          (timeout 30) connect-timeout (redirects 5))
 ;;;;     => (values status headers body final-url)
 ;;;;
 ;;;;   URL      "http://…" or "https://…" (TLS through tls.lisp; needs /mnt/host)
@@ -40,6 +40,8 @@
 ;;;;            (de-chunked); then BODY comes back NIL. This is the SSE hook.
 ;;;;   TIMEOUT  seconds, for the connect and for EACH read — a stream that is quiet
 ;;;;            longer than this fails with HTTP-ERROR
+;;;;   CONNECT-TIMEOUT  seconds for the connect alone, when it should be shorter
+;;;;            than TIMEOUT (the agent: 15 s to connect, 300 s between reads)
 ;;;;   => STATUS 200, HEADERS an alist with lower-case names, in arrival order.
 ;;;;
 ;;;; Redirects (301 302 303 307 308) are followed up to REDIRECTS times; a 303 — and,
@@ -108,9 +110,10 @@
 
 (defstruct conn socket fd tls host)
 
-(defun open-connection (host port tls-p timeout)
+(defun open-connection (host port tls-p timeout &optional (connect-timeout timeout))
   "Resolve HOST, connect to the first address that answers (DNS order: v4 first,
-   dns.lisp says why), and run the TLS handshake if TLS-P. Returns a CONN."
+   dns.lisp says why), and run the TLS handshake if TLS-P. Returns a CONN.
+   CONNECT-TIMEOUT bounds connect() alone; TIMEOUT every read and write after it."
   (when tls-p (ensure-openssl))                  ; fail early, before any packet
   (let ((errors '()))
     (dolist (addr (resolve-addresses host))
@@ -120,9 +123,10 @@
                               :type :stream :protocol :tcp)))
         (handler-case
             (let ((fd (sb-bsd-sockets:socket-file-descriptor s)))
-              (set-snd-timeout fd timeout)      ; bounds connect() too (dns.lisp)
+              (set-snd-timeout fd connect-timeout)   ; bounds connect() too (dns.lisp)
               (set-rcv-timeout fd timeout)
               (sb-bsd-sockets:socket-connect s addr port)
+              (unless (eql connect-timeout timeout) (set-snd-timeout fd timeout))
               (let ((c (make-conn :socket s :fd fd :host host)))
                 (when tls-p
                   (handler-bind ((error (lambda (e) (declare (ignore e))
@@ -329,10 +333,12 @@
         (unless (<= 100 status 199)
           (return (values status headers)))))))
 
-(defun http-exchange (url method headers body-octets want on-chunk timeout)
+(defun http-exchange (url method headers body-octets want on-chunk timeout
+                      &optional (connect-timeout timeout))
   "One request on a fresh connection. Returns status, headers and the body as WANT
    asks (or the open stream / NIL for :stream / ON-CHUNK)."
-  (let ((c (open-connection (url-host url) (url-port url) (eq (url-scheme url) :https) timeout))
+  (let ((c (open-connection (url-host url) (url-port url) (eq (url-scheme url) :https)
+                            timeout connect-timeout))
         (keep-open nil))
     (unwind-protect
          (progn
@@ -358,7 +364,7 @@
       (unless keep-open (conn-close c)))))
 
 (defun http-request (url &key (method :get) headers body (want :string) on-chunk
-                              (timeout 30) (redirects 5))
+                              (timeout 30) connect-timeout (redirects 5))
   "Make an HTTP(S) request; see the file header for every argument.
    => (values status headers body final-url)"
   (let ((u (if (url-p url) url (parse-url url)))
@@ -369,7 +375,8 @@
                        (vector (coerce body '(vector (unsigned-byte 8)))))))
     (loop
       (multiple-value-bind (status rheaders rbody)
-          (http-exchange u method headers body-octets want on-chunk timeout)
+          (http-exchange u method headers body-octets want on-chunk timeout
+                         (or connect-timeout timeout))
         (let ((location (header-value rheaders "location")))
           (if (and (member status '(301 302 303 307 308)) location (plusp redirects))
               (progn
