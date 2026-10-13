@@ -40,7 +40,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>EFISTUB</dt>
   <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
     <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:364</span></a>;
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:367</span></a>;
     <a href="../micro-distro.org">micro-distro.org</a>).</dd>
   <dt>initramfs, cpio</dt>
   <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
@@ -56,11 +56,11 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>sysfs, /proc</dt>
   <dd>Kernel state presented as small text files. The framebuffer's geometry comes from <code>/sys/class/graphics/fb0</code>
     (<a class="ref" data-ref="poc/fb.lisp#fb-geometry" href="../../poc/fb.lisp"><code>fb-geometry</code><span class="loc">poc/fb.lisp:18</span></a>), input devices from <code>/proc/bus/input/devices</code>
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:203</span></a>), the battery from <code>/sys/class/power_supply</code>.</dd>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:211</span></a>), the battery from <code>/sys/class/power_supply</code>.</dd>
   <dt>ioctl</dt>
   <dd>"Do this device-specific thing": a syscall taking an fd, a request number and a pointer to a struct. Used for
     <code>KDSETMODE</code> (<a class="ref" data-ref="poc/fb.lisp#with-graphics-console" href="../../poc/fb.lisp"><code>with-graphics-console</code><span class="loc">poc/fb.lisp:41</span></a>), <code>EVIOCGABS</code>
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:403</span></a>) and <code>SIOCSIFADDR</code>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:411</span></a>) and <code>SIOCSIFADDR</code>
     (<a class="ref" data-ref="initramfs/net.lisp#bring-up-interface" href="../../initramfs/net.lisp"><code>bring-up-interface</code><span class="loc">initramfs/net.lisp:68</span></a>). The struct is built byte by byte in a Lisp vector.</dd>
   <dt>framebuffer, efifb, fbcon</dt>
   <dd>A framebuffer is screen memory you can write to (<code>/dev/fb0</code>). <code>efifb</code> is the driver that exposes the one
@@ -68,11 +68,11 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     (<code>KD_GRAPHICS</code>) while we draw. <a href="../framebuffer.org">framebuffer.org</a>.</dd>
   <dt>evdev, input_event</dt>
   <dd>The kernel's generic input interface: one <code>/dev/input/eventN</code> per device, read as 24-byte records (time, type,
-    code, value). Decoded by hand in <a class="ref" data-ref="initramfs/fb-browser.lisp#read-mouse" href="../../initramfs/fb-browser.lisp"><code>read-mouse</code><span class="loc">initramfs/fb-browser.lisp:559</span></a>.
+    code, value). Decoded by hand in <a class="ref" data-ref="initramfs/fb-browser.lisp#read-mouse" href="../../initramfs/fb-browser.lisp"><code>read-mouse</code><span class="loc">initramfs/fb-browser.lisp:573</span></a>.
     <a href="../input.org">input.org</a>.</dd>
   <dt>poll(2), inotify</dt>
   <dd><code>poll</code> sleeps until one of several fds is readable. <code>inotify</code> makes a directory change readable as an fd.
-    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:973</span></a>).</dd>
+    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:987</span></a>).</dd>
   <dt>raw mode (termios)</dt>
   <dd>A tty normally buffers a line and turns Ctrl-C into a signal. Raw mode delivers each byte as it arrives, which is needed
     for <kbd>C-c C-c</kbd> to reach us (<a class="ref" data-ref="initramfs/line-editor.lisp#with-raw-mode" href="../../initramfs/line-editor.lisp"><code>with-raw-mode</code><span class="loc">initramfs/line-editor.lisp:43</span></a>).</dd>
@@ -143,7 +143,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>condition, handler, restart</dt>
   <dd>Lisp's error system separates <em>signalling</em> a condition, <em>handling</em> it, and the <em>restarts</em> (ways out)
     the code around it established. <code>handler-bind</code> runs the handler before unwinding, which is how the debugger sees a
-    live stack (<a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:557</span></a>,
+    live stack (<a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:563</span></a>,
     <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:715</span></a>).</dd>
   <dt>closure, captured variable, value cell</dt>
   <dd>A function that remembers variables from where it was made. SBCL stores a captured variable that is assigned in a boxed
@@ -159,19 +159,19 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>pane, trail, tab</dt>
   <dd>The shell's state: a presented view; a stack of them, shown as breadcrumbs; several trails, shown as tabs.</dd>
   <dt>drill</dt>
-  <dd>Opening an item's subject as a new pane at the bottom of the trail (<a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:162</span></a>).</dd>
+  <dd>Opening an item's subject as a new pane at the bottom of the trail (<a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:168</span></a>).</dd>
   <dt>nav split, preview</dt>
-  <dd>A list on the left, a live read-only view of the selected item on the right (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1125</span></a>).</dd>
+  <dd>A list on the left, a live read-only view of the selected item on the right (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1131</span></a>).</dd>
   <dt>Workspace</dt>
   <dd>A Lisp scratch buffer with Do it / Print it / Inspect it / Debug it / Accept (<a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:842</span></a>).</dd>
   <dt>Accept, change set</dt>
   <dd>Compiling an edit into the running image, and the list of everything accepted this session
     (<a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>).</dd>
   <dt>Spotter</dt>
-  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2208</span></a>).</dd>
+  <dd>The fuzzy finder, <kbd>SuperL</kbd>-<kbd>Space</kbd>, after Pharo's (<a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2273</span></a>).</dd>
   <dt>halo</dt>
   <dd>Handles around whatever is under the middle button: what it is, and which code drew it. After Morphic
-    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2869</span></a>).</dd>
+    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2901</span></a>).</dd>
   <dt>stage</dt>
   <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
     (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a>).</dd>

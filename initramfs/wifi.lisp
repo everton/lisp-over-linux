@@ -493,8 +493,29 @@
 (defvar *wifi-event-thread* nil)
 
 (defun wifi-note (fmt &rest args)
+  (network-log (format nil "wifi: ~?" fmt args))
   (push (cons (get-universal-time) (apply #'format nil fmt args)) *wifi-events*)
   (when (> (length *wifi-events*) 50) (setf *wifi-events* (subseq *wifi-events* 0 50))))
+
+(defvar *wifi-dhcp-busy* nil "True while a DHCP exchange for the Wi-Fi link runs.")
+(defvar *wifi-dhcp-last* 0 "When WIFI-DHCP last ran (universal time).")
+
+(defun wifi-dhcp (iface)
+  "Ask DHCP for an address on the associated IFACE and say how it went. Called on
+   association (the event thread) and again by WIFI-TICK while associated without
+   a lease — one round of DISCOVERs is not enough on every network, and the first
+   one can go out before the access point forwards our frames."
+  (unless *wifi-dhcp-busy*
+    (setf *wifi-dhcp-busy* t *wifi-dhcp-last* (get-universal-time))
+    (unwind-protect
+         (progn
+           (setf *wifi-message* "associated — asking DHCP for an address…")
+           (let ((lease (dhcp-configure iface :verbose nil)))
+             (setf *wifi-message*
+                   (if lease (format nil "connected: ~a" (describe-lease lease))
+                       (format nil "associated, but no DHCP answer yet — retrying; ~
+                                    the network view's log says what was seen")))))
+      (setf *wifi-dhcp-busy* nil))))
 
 (defun on-wifi-event (text iface)
   "React to one event line (its \"<3>\" priority already stripped)."
@@ -502,11 +523,7 @@
   (cond
     ((search "CTRL-EVENT-CONNECTED" text)
      (let ((pending *wifi-pending*))
-       (setf *wifi-message* "associated — asking DHCP for an address…")
-       (let ((lease (dhcp-configure iface :verbose nil)))
-         (setf *wifi-message*
-               (if lease (format nil "connected: ~a" (describe-lease lease))
-                   "associated, but no DHCP answer")))
+       (wifi-dhcp iface)
        (when pending
          ;; it WORKED: now the passphrase is worth keeping, and the other networks
          ;; may be offered again for roaming
@@ -573,7 +590,12 @@
       ((not *wifi-enabled*) (setf *wifi-state* (list :iface iface :state "OFF")))
       ((wpa-running-p)
        (handler-case (refresh-wifi-state iface)
-         (error () (setf *wifi-state* (list :iface iface :state "UNKNOWN")))))
+         (error () (setf *wifi-state* (list :iface iface :state "UNKNOWN"))))
+       ;; associated but no address: keep asking, every 20 s
+       (when (and (equal (getf *wifi-state* :state) "COMPLETED")
+                  (not (lease-for iface))
+                  (> (- (get-universal-time) *wifi-dhcp-last*) 20))
+         (wifi-dhcp iface)))
       ((> (- (get-universal-time) *wifi-last-start*) 30)
        (setf *wifi-state* (list :iface iface :state "STARTING"))
        (when (eq (wifi-blocked) :soft) (rfkill-unblock-wifi) (sleep 0.5))

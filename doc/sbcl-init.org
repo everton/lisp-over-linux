@@ -463,6 +463,13 @@ cmdline); and =disk=9p:<tag>=, which mounts the *build host's real* =/= over vir
 read-only at =/mnt/host= with =/home= as an overlay on a tmpfs — the QEMU-only path
 that lets tests run the host's programs ([[file:storage.org][storage.org]] §8).
 
+Since 2026-10-12 preinit also writes =0 2147483647= to
+=/proc/sys/net/ipv4/ping_group_range=, the value Debian's systemd writes. An
+unprivileged =ping= uses an ICMP "datagram" socket, which the kernel allows only for
+groups inside that range, and the default range =1 0= is empty. So =ping= failed in
+every container (no =CAP_NET_RAW= there) even when the network worked.
+=check-containers.lisp= pings SLIRP's gateway to prove it.
+
 Every step is non-fatal; with no disk it is exactly the old shim and the Lisp runs
 as root. The full story — why each mount flag, why capabilities, why in C and not
 in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skeleton, unchanged:

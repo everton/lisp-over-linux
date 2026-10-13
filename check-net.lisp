@@ -54,6 +54,8 @@
     (check "default route via 10.0.2.2 on eth0"
            (equal (row "default route" (probe "(let ((r (ipv4-default-route))) (list (getf r :iface) (getf r :gateway)))"))
                   "(\"eth0\" \"10.0.2.2\")"))
+    (check "the lease came through the PACKET socket (CAP_NET_RAW reached it)"
+           (search "leased" (or (probe "(format nil \"~{~a~^|~}\" (mapcar #'cdr (remove-if-not (lambda (e) (search \"packet socket\" (cdr e))) *netd-log*)))") "")))
     (check "netd (the renewal thread) is running"
            (equal "T" (probe "(and (sb-thread:thread-alive-p *netd-thread*) t)")))
     (when hostroot

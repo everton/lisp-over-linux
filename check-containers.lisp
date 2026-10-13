@@ -88,6 +88,11 @@
     (check "a write to /etc works inside" (has r "=etc=wrote="))
     (check "/etc/apt (root-owned on the host) is refused" (has r "=apt=refused=")))
 
+  ;; ping needs no capability once preinit opens net.ipv4.ping_group_range; before
+  ;; 2026-10-12 it failed in every container. SLIRP answers its gateway itself.
+  (let ((r (row "ping the gateway" (ct "ping -c 1 -W 3 10.0.2.2 >/dev/null 2>&1 && echo =ping=ok= || echo =ping=failed=" 30))))
+    (check "ping works without capabilities (ping_group_range)" (has r "=ping=ok=")))
+
   (format t "~&~%== the host's toolchain ==~%")
   (let ((r (row "ruby openssl" (ct "ruby -e 'require \"openssl\"; puts \"=ssl=#{OpenSSL::VERSION}=\"'" 60))))
     (check "ruby loads openssl" (and (eql 0 (code-of r)) (has r "=ssl="))))

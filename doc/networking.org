@@ -15,7 +15,7 @@ else (§2c), checks the *clock* over SNTP and has =lol-rootd= step it (§2d), sp
 *HTTP/1.1* and *HTTPS* — TLS from the host's own OpenSSL, loaded at runtime (§2e) —
 and runs *Wi-Fi* through the host's =wpa_supplicant= with the AX201's firmware in the
 cpio (§7), with a network view on =SuperL-n= and the SSID in the systray.
-[[file:../check-net.lisp][=check-net.lisp=]] asserts it in the guest — 33 checks, all passing with
+[[file:../check-net.lisp][=check-net.lisp=]] asserts it in the guest — 34 checks, all passing with
 =LOL_GUEST_HOSTROOT=1= (§8); [[file:../poc/http-test.lisp][=poc/http-test.lisp=]] and [[file:../poc/wifi-test.lisp][=poc/wifi-test.lisp=]] test the
 same code on the host. agent.org's network track (N1–N4) is done.
 
@@ -124,12 +124,10 @@ A NIC with no address can't talk.
   [[file:../linux/net/socket.c][=net/socket.c=]] and IPv4 is registered in [[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]].
 - *DHCP* ([[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]): a real *DISCOVER → OFFER → REQUEST → ACK* conversation,
   ~a hundred lines of pure Lisp on a =sb-bsd-sockets= UDP socket. The BOOTP packet
-  and option parsing are built/parsed by hand. Two tricks make it work with NO IP
-  yet, over an ordinary socket (no =AF_PACKET=): *SO_BINDTODEVICE* ties the socket
-  to =eth0= so the broadcast leaves the right NIC with no routing entry, and we set
-  the DHCP *broadcast flag* so the server broadcasts its replies to
-  =255.255.255.255:68= (receivable) instead of unicasting to an address we do not
-  have. The pieces by name: [[file:../initramfs/dhcp.lisp::defun build-dhcp][=build-dhcp=]] / [[file:../initramfs/dhcp.lisp::defun parse-dhcp][=parse-dhcp=]] (the BOOTP packet and
+  and option parsing are built/parsed by hand. *Sending* with NO IP yet works over
+  an ordinary socket: *SO_BINDTODEVICE* ties it to the interface so the broadcast
+  leaves the right NIC with no routing entry. *Receiving* is the hard half — see
+  "Why a packet socket" just below. The pieces by name: [[file:../initramfs/dhcp.lisp::defun build-dhcp][=build-dhcp=]] / [[file:../initramfs/dhcp.lisp::defun parse-dhcp][=parse-dhcp=]] (the BOOTP packet and
   its options, by hand), [[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]] (one send/await-reply round with retries),
   [[file:../initramfs/dhcp.lisp::defun dhcp-acquire][=dhcp-acquire=]] (the four-message conversation), and [[file:../initramfs/dhcp.lisp::defun interface-mac][=interface-mac=]] (our own
   hardware address, via =SIOCGIFHWADDR=).
@@ -139,6 +137,56 @@ A NIC with no address can't talk.
   the boot runs [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]] instead, and the code is no longer eth0-only:
   [[file:../initramfs/dhcp.lisp::defun dhcp-configure][=dhcp-configure=]] leases on any interface, which is how =wlan0= gets its
   address.)
+
+*** Why a packet socket receives the replies (found on the laptop, 2026-10-12)
+Until 2026-10-12 the replies came in on the same UDP socket. We set the DHCP
+*broadcast flag* (bit 15 of the =flags= field), which asks the server to broadcast
+its OFFER and ACK to =255.255.255.255:68=, and a UDP socket bound to port 68 does
+receive a broadcast. QEMU's server obeys the flag, so every guest test passed. On the
+laptop, Wi-Fi associated with the home network and *no address ever came*. That
+router — a mesh access point; its DHCP replies carry a =MULTIAP_MASTER= option —
+treats the flag as a hint. It *unicasts* the OFFER to the address it is offering, at
+our MAC. The frame does reach =wlan0=. But the IP layer asks "is 192.168.1.x one of
+mine?", gets "not yet", and, with forwarding off, drops the packet before any UDP
+socket can see it. That is why real DHCP clients (=dhclient=, NetworkManager's,
+=udhcpc=) all read replies from a *packet socket*.
+
+A packet socket (=AF_PACKET=, [[file:../linux/net/packet/af_packet.c][=net/packet/af_packet.c=]]) receives frames at the
+device, before the IP layer decides anything. We open it as
+=socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_IP))=. =SOCK_DGRAM= means the kernel strips
+the link header and hands us the IP packet. =ETH_P_IP= means IPv4 only. We bind it to
+the interface with a =struct sockaddr_ll= that carries the interface index
+([[file:../initramfs/dhcp.lisp::defun open-dhcp-packet-socket][=open-dhcp-packet-socket=]]). Every IPv4 packet arriving on the link then reaches
+us. [[file:../initramfs/dhcp.lisp::defun dhcp-reply-from-ip-packet][=dhcp-reply-from-ip-packet=]] reads the IP header's length nibble, keeps
+protocol 17 (UDP) with destination port 68, and returns where the DHCP part starts.
+
+A packet socket needs =CAP_NET_RAW=, which PID 1 keeps ([[file:storage.org][storage.org]]). Without it,
+the code falls back to the UDP socket and says so in netd's log. The UDP socket
+stays open in either case: it sends, and holding port 68 stops the kernel answering
+the server's broadcasts with "port unreachable". The interface index comes from the
+=SIOCGIFINDEX= ioctl, not =/sys/class/net/IF/ifindex=: sysfs shows the network
+namespace it was *mounted* in, which is wrong inside the host test's namespace.
+
+Two smaller fixes came with it:
+- *One attempt is a deadline, not one packet* ([[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]]). The packet socket
+  sees every IP packet, and a busy Wi-Fi carries other clients' DHCP replies. Each
+  attempt now keeps reading until its timeout and skips what is not ours. Before,
+  any stray packet used up the attempt.
+- *Associated without a lease, keep asking.* [[file:../initramfs/wifi.lisp::defun wifi-dhcp][=wifi-dhcp=]] runs on association,
+  and =netd='s Wi-Fi tick runs it again every 20 s while =wpa_state= is =COMPLETED=
+  and there is no lease.
+
+*Evidence that survives the machine.* Every exchange leaves a line in netd's log:
+=wlan0: DHCP no offer — sent 4, 37 packets seen, 0 DHCP replies (packet socket)=.
+The counts tell the failures apart: nothing seen means the link is dead; packets
+but no DHCP means no server answered; DHCP replies that were not ours mean another
+client's traffic. Those lines, and every Wi-Fi event, are also appended to
+=~/.lol/log/network.log= ([[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]). That file is on the laptop's =/home=, so
+Debian can read it after a failed boot; =/tmp/lol-wifi= is gone by then. It rotates
+to =.old= at 256 KB, and a diskless boot writes nothing.
+
+The test that reproduces the laptop's failure is [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] (§8): a fake
+router that unicasts, one veth cable, no root needed.
 
 ** (c) the default route, the lease, and names — *DONE* (2026-10-12)
 
@@ -644,7 +692,9 @@ see; the first one that differs is the one to report.
    =(http-get "https://example.com/")= — the page's HTML. And
    =(describe-clock)= — =clock: 0.0xx s …=.
    - A message =wrong passphrase for …= → retype; nothing is saved until it works.
-   - Connected but no lease row → DHCP got no answer: send the =recent= rows.
+   - Connected but no lease row → DHCP got no answer (it retries every 20 s).
+     Send the =recent= rows, or, from Debian afterwards, =~/.lol/log/network.log=:
+     its =DHCP … sent N, M packets seen, K DHCP replies= lines say which half failed.
 5. *If something failed*, the view shows a *kernel log* section while Wi-Fi is not
    connected. Send back: those rows (or, from the Workspace,
    =(wifi-kernel-log)=), plus =(rfkill-radios)=, =(wireless-interfaces)=,
@@ -682,7 +732,7 @@ Checked against the #26 config; none blocks §7.1–7.4:
 
 * 8. Testing it
 
-- [[file:../check-net.lisp][=check-net.lisp=]] — =LOL_GUEST_HOSTROOT=1 sbcl --script check-net.lisp=. 33
+- [[file:../check-net.lisp][=check-net.lisp=]] — =LOL_GUEST_HOSTROOT=1 sbcl --script check-net.lisp=. 34
   checks in the guest, all passing on 2026-10-12: the lease and default route,
   =netd= alive, PID 1 as uid 1000, =/etc/resolv.conf= written and owned by the
   user, DNS (A, CNAME, NXDOMAIN, cache), plain HTTP to a server on the host
@@ -701,6 +751,19 @@ Checked against the #26 config; none blocks §7.1–7.4:
 - [[file:../poc/http-test.lisp][=poc/http-test.lisp=]] — the same network modules on the host: every body
   framing against the loopback test server, DNS, HTTPS, and three badssl
   certificates (wrong host, expired, self-signed) each refused *with its reason*.
+- [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] — =dhcp.lisp= against a real kernel, without root. It
+  re-runs itself under =unshare -rn= (a user namespace that owns a private network
+  namespace) and builds a veth pair. Its far end goes into a *second* namespace,
+  where a child copy of the script plays a router that answers by broadcast or by
+  unicast. 10 checks, all passing on 2026-10-12. The decisive pair: a unicasting
+  router with the UDP socket alone gives *no lease* (the laptop's failure,
+  reproduced), and with the packet socket gives a lease. Two setup traps are
+  recorded in the file. With both veth ends in *one* namespace, the kernel gives
+  the DISCOVER the router's own address as its source and the router drops it.
+  And a new namespace copies Debian's =rp_filter=2=, which drops every reply before
+  the lease; the image runs with the kernel default of 0, and the test sets that.
+  [[file:../check-net.lisp][=check-net.lisp=]] also asserts the guest's lease came through the packet socket,
+  i.e. that =CAP_NET_RAW= reaches it.
 - [[file:../poc/wifi-test.lisp][=poc/wifi-test.lisp=]] — =wifi.lisp='s pure parts: keyfiles, SSID escapes, flags,
   passphrase quoting, the tray item in each state.
 - =sbcl --script poc/render-frame.lisp network= renders the view headless (it

@@ -9,12 +9,20 @@
 ;;;; runs out (the "netd" thread at the end of this file).
 ;;;;
 ;;;; The chicken-and-egg of DHCP is that we must talk on an interface that has NO
-;;;; IP yet. Two tricks make it work over an ordinary UDP socket (no AF_PACKET):
+;;;; IP yet. SENDING is easy over an ordinary UDP socket:
 ;;;;   - SO_BINDTODEVICE ties the socket to one interface, so a broadcast goes
-;;;;     out the right NIC even with no routing table entry;
-;;;;   - we set the DHCP *broadcast flag*, so the server BROADCASTS its replies to
-;;;;     255.255.255.255:68 (which we can receive) instead of unicasting them to
-;;;;     an address we do not have yet.
+;;;;     out the right NIC even with no routing table entry.
+;;;; RECEIVING is the hard half. We set the DHCP *broadcast flag*, asking the server
+;;;; to BROADCAST its replies to 255.255.255.255:68, which a UDP socket receives.
+;;;; QEMU's server obeys it — but real routers may not (the laptop's home mesh
+;;;; router, 2026-10-12, associated fine and then never gave an address): they
+;;;; UNICAST the offer to the address being offered, at our MAC. The kernel drops
+;;;; that packet before any UDP socket sees it — the interface does not own that
+;;;; address yet. So we also open a PACKET socket (AF_PACKET), which sees every IP
+;;;; packet the NIC receives before the IP layer judges it, and pick the DHCP
+;;;; replies out ourselves (IPv4 header -> UDP header -> destination port 68). It
+;;;; needs CAP_NET_RAW, one of PID 1's five capabilities (storage.org); without it
+;;;; we fall back to the UDP socket alone and say so in the netd log.
 ;;;; Built on the sb-bsd-sockets contrib baked into the image. See networking.org.
 ;;;;
 ;;;; Nothing here is eth0-specific any more: the same code leases an address on
@@ -129,22 +137,78 @@
 
 ;;; ---- the exchange ---------------------------------------------------------
 
+(defconstant +af-packet+ 17)
+(defconstant +eth-p-ip-be+ #x0008)   ; htons(ETH_P_IP = #x0800) on little-endian x86
+
+(sb-alien:define-alien-routine ("recv" %recv) sb-alien:long
+  (fd sb-alien:int) (buf sb-sys:system-area-pointer) (len sb-alien:unsigned-long)
+  (flags sb-alien:int))
+(sb-alien:define-alien-routine ("bind" %bind) sb-alien:int
+  (fd sb-alien:int) (addr (sb-alien:* sb-alien:unsigned-char)) (len sb-alien:int))
+
+(defvar *dhcp-raw-fd* nil
+  "While CALL-WITH-DHCP-SOCKET runs: the PACKET socket replies are read from, or
+   NIL when it could not be opened (then the UDP socket is read instead).")
+(defvar *dhcp-packet-socket* t
+  "NIL reads replies from the UDP socket only — how this file worked before
+   2026-10-12; poc/dhcp-test.lisp sets it to prove a unicasting server defeats that.")
+(defvar *dhcp-timeout* 2 "Seconds each DHCP attempt waits for its reply.")
+(defvar *dhcp-stats* nil "Counts for the attempt in progress: (:sent :seen :dhcp).")
+
+(defun dhcp-reply-from-ip-packet (buf len)
+  "BUF holds one IPv4 packet (a PACKET socket of type SOCK_DGRAM strips the link
+   header). If it is UDP to port 68, return the DHCP payload's offset, else NIL.
+     IPv4: byte 0 = version<<4 | IHL (header length in 32-bit words), byte 9 = protocol
+     UDP : 8 bytes after the IP header — source port, destination port, length, checksum"
+  (when (>= len 28)
+    (let ((ihl (* 4 (logand (aref buf 0) #xf))))
+      (and (= (ash (aref buf 0) -4) 4)
+           (= (aref buf 9) 17)                                ; 17 = UDP
+           (>= len (+ ihl 8))
+           (= 68 (logior (ash (aref buf (+ ihl 2)) 8) (aref buf (+ ihl 3))))
+           (+ ihl 8)))))
+
+(defun dhcp-receive (sock buf)
+  "One packet's worth of DHCP reply, as (values VECTOR LENGTH) of the DHCP part, or
+   NIL on timeout. From the PACKET socket when there is one, else the UDP socket."
+  (if *dhcp-raw-fd*
+      (let ((n (sb-sys:with-pinned-objects (buf)
+                 (%recv *dhcp-raw-fd* (sb-sys:vector-sap buf) (length buf) 0))))
+        (when (plusp n)
+          (let ((off (dhcp-reply-from-ip-packet buf n)))
+            (if off
+                (values (subseq buf off n) (- n off))
+                (values :other 0)))))
+      (multiple-value-bind (b len) (sb-bsd-sockets:socket-receive sock buf (length buf))
+        (declare (ignore b))
+        (and len (plusp len) (values buf len)))))
+
 (defun dhcp-xchg (sock packet xid tries)
   "Broadcast PACKET and wait for a matching (same XID) DHCP reply, retrying up to
-   TRIES times. Returns the parsed reply, or NIL."
-  (let ((buf (make-array 1024 :element-type '(unsigned-byte 8))))
+   TRIES times. Each attempt keeps listening until its *DHCP-TIMEOUT* runs out: a
+   packet that is not our reply (another client's, an ARP-triggered IP packet on
+   the PACKET socket) is skipped, not counted as a failed attempt — on a busy
+   Wi-Fi network there are many. Returns the parsed reply, or NIL."
+  (let ((buf (make-array 2048 :element-type '(unsigned-byte 8))))
     (dotimes (attempt tries)
       (ignore-errors
         (sb-bsd-sockets:socket-send sock packet (length packet)
-                                    :address (list #(255 255 255 255) 67)))
-      (handler-case
-          (multiple-value-bind (b len) (sb-bsd-sockets:socket-receive sock buf 1024)
-            (declare (ignore b))
-            (when (and len (plusp len))
-              (let ((reply (parse-dhcp buf len)))
-                (when (and reply (eql (cdr (assoc :xid reply)) xid))
-                  (return-from dhcp-xchg reply)))))
-        (serious-condition () nil)))    ; timeout / transient error -> retry
+                                    :address (list #(255 255 255 255) 67))
+        (when *dhcp-stats* (incf (getf *dhcp-stats* :sent))))
+      (let ((deadline (+ (get-internal-real-time)
+                         (* *dhcp-timeout* internal-time-units-per-second))))
+        (loop while (< (get-internal-real-time) deadline) do
+          (handler-case
+              (multiple-value-bind (v len) (dhcp-receive sock buf)
+                (cond ((null v) (loop-finish))           ; the socket's own timeout
+                      ((eq v :other) (when *dhcp-stats* (incf (getf *dhcp-stats* :seen))))
+                      (t (when *dhcp-stats* (incf (getf *dhcp-stats* :seen)))
+                         (let ((reply (parse-dhcp v len)))
+                           (when reply
+                             (when *dhcp-stats* (incf (getf *dhcp-stats* :dhcp)))
+                             (when (eql (cdr (assoc :xid reply)) xid)
+                               (return-from dhcp-xchg reply)))))))
+            (serious-condition () (loop-finish))))))   ; timeout / transient error -> retry
     nil))
 
 (defun reply->plist (ack)
@@ -160,9 +224,52 @@
         :lease  (be32 (cdr (assoc 51 ack)))
         :t1     (let ((t1 (cdr (assoc 58 ack)))) (and t1 (be32 t1)))))
 
+(defconstant +siocgifindex+ #x8933)   ; linux/include/uapi/linux/sockios.h
+
+(defun interface-index (ifname)
+  "The kernel's index for IFNAME (SIOCGIFINDEX: ifr_ifindex, an int at byte 16 of
+   the ifreq), or NIL. Not /sys/class/net/IF/ifindex: sysfs shows the network
+   namespace it was MOUNTED in, which is wrong inside a test namespace."
+  (let ((fd (%socket +af-inet+ +sock-dgram+ 0)))
+    (unless (minusp fd)
+      (let ((buf (sb-alien:make-alien sb-alien:unsigned-char +ifreq-size+)))
+        (unwind-protect
+             (progn
+               (%zero-ifreq buf) (%set-ifname buf ifname)
+               (unless (minusp (%ioctl fd +siocgifindex+ buf))
+                 (loop for i below 4 sum (ash (sb-alien:deref buf (+ 16 i)) (* 8 i)))))
+          (sb-alien:free-alien buf)
+          (%close fd))))))
+
+(defun open-dhcp-packet-socket (ifname timeout)
+  "A PACKET socket (SOCK_DGRAM: link header stripped) that receives every IPv4
+   packet arriving on IFNAME, with a TIMEOUT-second receive timeout; or NIL (no
+   CAP_NET_RAW, no such interface). Bound with a struct sockaddr_ll:
+     u16 family | u16 protocol (big-endian) | i32 ifindex | u16 hatype | u8 pkttype
+     | u8 halen | u8 addr[8]      — 20 bytes; only the first three matter to bind."
+  (let ((index (interface-index ifname)))
+    (when index
+      (let ((fd (%socket +af-packet+ +sock-dgram+ +eth-p-ip-be+)))
+        (unless (minusp fd)
+          (let ((sll (sb-alien:make-alien sb-alien:unsigned-char 20)))
+            (unwind-protect
+                 (progn
+                   (dotimes (i 20) (setf (sb-alien:deref sll i) 0))
+                   (setf (sb-alien:deref sll 0) +af-packet+
+                         (sb-alien:deref sll 2) (ldb (byte 8 0) +eth-p-ip-be+)
+                         (sb-alien:deref sll 3) (ldb (byte 8 8) +eth-p-ip-be+))
+                   (dotimes (i 4) (setf (sb-alien:deref sll (+ 4 i)) (ldb (byte 8 (* 8 i)) index)))
+                   (cond ((minusp (%bind fd sll 20)) (%close fd) nil)
+                         (t (set-rcv-timeout fd timeout) fd)))
+              (sb-alien:free-alien sll))))))))
+
 (defun call-with-dhcp-socket (ifname timeout fn)
-  "Open the port-68 UDP socket bound to IFNAME (see the header), call FN with it."
-  (let ((sock (make-instance 'sb-bsd-sockets:inet-socket :type :datagram :protocol :udp)))
+  "Open the port-68 UDP socket bound to IFNAME (see the header) and, when allowed,
+   the PACKET socket replies are read from; call FN with the UDP socket. The UDP
+   socket stays even then: it SENDS, and holding port 68 keeps the kernel from
+   answering the server's broadcasts with 'port unreachable'."
+  (let ((sock (make-instance 'sb-bsd-sockets:inet-socket :type :datagram :protocol :udp))
+        (raw nil))
     (unwind-protect
          (progn
            (setf (sb-bsd-sockets:sockopt-reuse-address sock) t
@@ -170,8 +277,19 @@
                  (sb-bsd-sockets:sockopt-bind-to-device sock) ifname)
            (set-rcv-timeout (sb-bsd-sockets:socket-file-descriptor sock) timeout)
            (sb-bsd-sockets:socket-bind sock #(0 0 0 0) 68)
-           (funcall fn sock))
+           (setf raw (and *dhcp-packet-socket* (open-dhcp-packet-socket ifname 1)))   ; 1 s: DHCP-XCHG keeps the deadline
+           (let ((*dhcp-raw-fd* raw) (*dhcp-timeout* timeout))
+             (funcall fn sock)))
+      (when raw (%close raw))
       (ignore-errors (sb-bsd-sockets:socket-close sock)))))
+
+(defun dhcp-note-stats (ifname what stats)
+  "Leave a line in netd's log saying how an exchange went — the evidence needed
+   when an address never comes (wrong network? no server? replies we can't see?)."
+  (when (fboundp 'netd-note)
+    (funcall 'netd-note "~a: DHCP ~a — sent ~d, ~d packet~:p seen, ~d DHCP repl~:@p (~a)"
+             ifname what (getf stats :sent) (getf stats :seen) (getf stats :dhcp)
+             (if (getf stats :raw) "packet socket" "UDP socket only: no CAP_NET_RAW?"))))
 
 (defun dhcp-acquire (ifname &key (tries 4) (timeout 2))
   "Run a DHCP DISCOVER/REQUEST handshake on IFNAME (which must be UP). On success
@@ -180,17 +298,22 @@
   (let ((mac (interface-mac ifname))
         (xid (logand (get-internal-real-time) #xffffffff)))
     (unless mac (return-from dhcp-acquire nil))
-    (call-with-dhcp-socket
-     ifname timeout
-     (lambda (sock)
-       (let ((offer (dhcp-xchg sock (build-dhcp 1 mac xid) xid tries)))   ; DISCOVER->OFFER
-         (when offer
-           (let ((ack (dhcp-xchg sock (build-dhcp 3 mac xid           ; REQUEST->ACK
-                                                  :requested-ip (cdr (assoc :yiaddr offer))
-                                                  :server-id (cdr (assoc 54 offer)))
-                                 xid tries)))
-             (when (and ack (equal (cdr (assoc 53 ack)) '(5)))   ; 53=msg-type, 5=ACK
-               (reply->plist ack)))))))))
+    (let ((*dhcp-stats* (list :sent 0 :seen 0 :dhcp 0 :raw nil)) (result nil) (what "no offer"))
+      (call-with-dhcp-socket
+       ifname timeout
+       (lambda (sock)
+         (setf (getf *dhcp-stats* :raw) (and *dhcp-raw-fd* t))
+         (let ((offer (dhcp-xchg sock (build-dhcp 1 mac xid) xid tries)))   ; DISCOVER->OFFER
+           (when offer
+             (setf what "offer but no ACK")
+             (let ((ack (dhcp-xchg sock (build-dhcp 3 mac xid           ; REQUEST->ACK
+                                                    :requested-ip (cdr (assoc :yiaddr offer))
+                                                    :server-id (cdr (assoc 54 offer)))
+                                   xid tries)))
+               (when (and ack (equal (cdr (assoc 53 ack)) '(5)))   ; 53=msg-type, 5=ACK
+                 (setf what "leased" result (reply->plist ack))))))))
+      (dhcp-note-stats ifname what *dhcp-stats*)
+      result)))
 
 (defun dhcp-renew (ifname ip &key (tries 3) (timeout 2))
   "Ask to KEEP IP on IFNAME: one REQUEST with option 50 and no server id. Returns
@@ -345,7 +468,31 @@
 (defvar *netd-hooks* '() "Functions of no arguments netd calls on every wake-up.")
 (defvar *netd-log* '() "The last few things netd did, newest first: (universal-time . text).")
 
+(defun network-log-path ()
+  "$HOME/.lol/log/network.log, or NIL on a diskless boot (HOME unset or /)."
+  (let ((home (sb-ext:posix-getenv "HOME")))
+    (and home (string/= home "") (string/= home "/")
+         (format nil "~a/.lol/log/network.log" (string-right-trim "/" home)))))
+
+(defun network-log (text)
+  "Append one time-stamped line to NETWORK-LOG-PATH. /tmp dies with the machine; this
+   file is on the laptop's /home, so the NEXT boot (or Debian) can read what went
+   wrong. Kept under 256 KB by rotating to .old. Never signals."
+  (ignore-errors
+    (let ((path (network-log-path)))
+      (when path
+        (ensure-directories-exist path)
+        (with-open-file (o path :direction :output :if-exists :append
+                                :if-does-not-exist :create)
+          (when (> (file-length o) (* 256 1024))
+            (close o)
+            (rename-file path (concatenate 'string path ".old"))
+            (return-from network-log (network-log text)))
+          (multiple-value-bind (s m h d mo y) (decode-universal-time (get-universal-time) 0)
+            (format o "~d-~2,'0d-~2,'0d ~2,'0d:~2,'0d:~2,'0dZ ~a~%" y mo d h m s text)))))))
+
 (defun netd-note (fmt &rest args)
+  (network-log (apply #'format nil fmt args))
   (push (cons (get-universal-time) (apply #'format nil fmt args)) *netd-log*)
   (when (> (length *netd-log*) 40) (setf *netd-log* (subseq *netd-log* 0 40))))
 

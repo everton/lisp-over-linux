@@ -572,6 +572,19 @@ int main(void) {
      * The 5th arg is tmpfs-specific options: cap it at 64 MB, mode 1777. */
     mount("tmpfs",    "/tmp",  "tmpfs",    0, "size=64m,mode=1777");
 
+    /* `ping' without privilege (2026-10-12): an ICMP "datagram" socket is allowed
+     * only to groups inside net.ipv4.ping_group_range, and the kernel's default
+     * range "1 0" is empty. Debian's systemd widens it at boot; nothing did here, so
+     * ping failed in every container (which has no CAP_NET_RAW) even with a working
+     * network. Same value systemd writes: every group. */
+    {
+        int fd = open("/proc/sys/net/ipv4/ping_group_range", O_WRONLY);
+        if (fd >= 0) {
+            if (write(fd, "0 2147483647", 12) != 12) say("ping_group_range: %s", strerror(errno));
+            close(fd);
+        }
+    }
+
     /* Pseudo-terminals (tag #26 onward): a terminal pane, a container's shell,
      * anything that opens /dev/ptmx gets its slave end under /dev/pts — which
      * exists only once devpts is mounted. ptmxmode=666 so the user can open it. */
