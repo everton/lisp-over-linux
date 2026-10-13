@@ -224,6 +224,16 @@ The page title comes from =Target.targetInfoChanged=, and also directly from
 =file://= page Chrome 148 kept reporting the file name as the title (found by
 poc/web-test.lisp).
 
+*The home page is the project's guide* (2026-10-13). A tab opened without a URL
+loads =doc/guide/index.html= ([[file:../initramfs/web.lisp::defun web-home-url][=web-home-url=]]). The build freezes the guide's path into the
+image the way [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] freezes =./sbcl='s: =web.lisp= is loaded from
+=<repo>/initramfs/=. On the laptop the repo is at the same path under the mounted
+=/home=, and Chrome's container sees that =/home= too. A diskless boot has no
+=/home=, so the file is missing there and the tab gets =about:blank=. Setting
+=*web-home*= to a URL overrides both. The address prompt opens empty on the home
+page, as on =about:blank=. Before this fix it was pre-filled with the guide's URL,
+so a typed address was appended to it — which is how =check-web.lisp= caught it.
+
 ** 4.2 Copy and paste go through our clipboard
 
 Headless Chrome keeps its clipboard inside its own process, where nothing else can

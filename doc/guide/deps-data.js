@@ -46,7 +46,7 @@ window.LOL_DEPS = {
     {file: "initramfs/tls.lisp", layer: 0, role: "HTTPS's encryption, borrowed from the HOST's OpenSSL at runtime", lines: 250, defs: 55, packages: [], load: 45},
     {file: "initramfs/tour.lisp", layer: 3, role: "a guided walk through the running system, inside the system", lines: 156, defs: 10, packages: [], load: 5},
     {file: "initramfs/web-cdp.lisp", layer: -1, role: "talk to a headless Chrome over the DevTools protocol, on a pipe", lines: 481, defs: 36, packages: [], load: 38},
-    {file: "initramfs/web.lisp", layer: -1, role: "the web pane: a Chrome tab as a subject in the shell", lines: 1570, defs: 138, packages: [], load: 39},
+    {file: "initramfs/web.lisp", layer: -1, role: "the web pane: a Chrome tab as a subject in the shell", lines: 1591, defs: 140, packages: [], load: 39},
     {file: "initramfs/wifi.lisp", layer: 0, role: "Wi-Fi: the radio, the host's wpa_supplicant, and our own control of it", lines: 668, defs: 76, packages: [], load: 47},
     {file: "initramfs/worker.lisp", layer: 3, role: "a second process that contributes a VIEW, not pixels", lines: 205, defs: 16, packages: [], load: 8},
     {file: "poc/bdf2font.lisp", layer: 7, role: "convert a BDF bitmap font into the tiny .lolf blob canvas.lisp reads", lines: 176, defs: 10, packages: [], load: null},

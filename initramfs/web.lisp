@@ -59,9 +59,29 @@
   "What a non-URL typed in the address bar becomes: FORMAT with the query, percent-
    encoded, as its one argument.")
 
-(defvar *web-home* "about:blank"
-  "What a new tab shows when it is opened without a URL (the address prompt opens
-   on top of it).")
+(defvar *web-guide-index*
+  ;; Frozen at BUILD time, the way sbcl-source.lisp finds ./sbcl: this file is being
+  ;; loaded from <repo>/initramfs/web.lisp, so the guide is <repo>/doc/guide/. On the
+  ;; laptop the repo is under the mounted /home, at the same path — and Chrome's
+  ;; container sees the same /home, so a file:// URL works there too.
+  (ignore-errors
+    (namestring (merge-pathnames "../doc/guide/index.html"
+                                 (make-pathname :name nil :type nil
+                                                :defaults *load-truename*)))))
+
+(defvar *web-home* nil
+  "What a new tab shows when it is opened without a URL (the address prompt opens on
+   top of it). NIL means the project's own guide (doc/guide/index.html) when this
+   boot can see it, else about:blank — see WEB-HOME-URL. Set a URL string to override.")
+
+(defun web-home-url ()
+  "The home page: *WEB-HOME* if set, else the guide when its file exists (a diskless
+   boot has no /home, so no repo), else about:blank."
+  (or *web-home*
+      (let ((g *web-guide-index*))
+        (and g (probe-file g)
+             (concatenate 'string "file://" (namestring (truename g)))))
+      "about:blank"))
 
 (defvar *web-sandbox* :auto
   "Chrome's own sandbox (renderers in namespaces, filtered by seccomp). T keeps it,
@@ -166,7 +186,7 @@
    everything else; any other text is a search."
   (let ((s (string-trim " " text)))
     (cond
-      ((zerop (length s)) *web-home*)
+      ((zerop (length s)) (web-home-url))
       ((search "://" s) s)
       ((some (lambda (p) (and (>= (length s) (length p)) (string-equal p s :end2 (length p))))
              '("about:" "data:" "file:" "chrome:" "view-source:" "javascript:"))
@@ -373,7 +393,7 @@
 (defun web-new-tab (&optional url &key (focus t))
   "Open URL (or the home page) in a new web tab — a new trail — and start Chrome if
    this is the first. -> the WEB-TAB."
-  (let ((tab (%make-web-tab :url (or url *web-home*) :open-url url)))
+  (let ((tab (%make-web-tab :url (or url (web-home-url)) :open-url (or url (web-home-url)))))
     (push tab *web-tabs*)
     (let ((was *active*))
       (new-trail (subj-web tab))
@@ -1375,7 +1395,8 @@ window.__lolPickerApply = function(id, v){
 (defun web-prompt-address (tab)
   "C-l, or a click on the address: edit the URL in the minibuffer; Enter loads it."
   (minibuffer-read "url or search: " (lambda (text) (web-navigate tab text))
-                   :initial (if (equal (web-tab-url tab) "about:blank") "" (web-tab-url tab))
+                   :initial (if (member (web-tab-url tab) (list "about:blank" (web-home-url)) :test #'equal)
+                                 "" (web-tab-url tab))  ; a blank or home tab: an empty prompt
                    :hint "Enter loads · C-g cancels"))
 
 (defvar *web-find* "" "The last find-in-page query.")

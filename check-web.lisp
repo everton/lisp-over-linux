@@ -189,6 +189,14 @@
   (row "Chrome state" (probe "*web-chrome-state*"))
   (row "error, if any" (probe "*web-error*"))
   (row "sandbox" (probe "(web-sandbox-p)"))
+  ;; the home page is the project's own guide (LOL_GUEST_HOSTROOT: the repo is under
+  ;; the shared /home at the same path the build froze)
+  (row "home" (probe "(web-home-url)"))
+  (check "a tab with no URL opens the guide (doc/guide/index.html)"
+         (and (search "doc/guide/index.html" (or (probe "(web-home-url)") ""))
+              (progn (probe "(progn (web-new-tab) t)")
+                     (wait-until 60 (lambda () (search "Lisp-over-Linux guide" (title)))))))
+  (qmp-key "esc")
   (check "a frame arrived and was decoded"
          (wait-until 30 (lambda () (string= (probe "(and (web-tab-frame-px (web-visible-tab)) t)") "T"))))
   (check "the tab strip shows the page title"
