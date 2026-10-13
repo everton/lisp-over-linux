@@ -368,6 +368,23 @@ Verified in the guest (=LOL_GUEST_HOSTROOT=1=): =https://example.com/= → 200 w
 its page, =https://expired.badssl.com/= refused as expired; on the host
 =poc/http-test.lisp= also refuses badssl's wrong-host and self-signed certificates.
 
+*** Interrupted is not timed out (2026-10-13)
+Found in a session run inside the environment: an HTTPS read could fail with "timed
+out waiting for …" long before any timeout could have fired. The cause is how SBCL
+collects garbage. To stop
+the other threads for a GC, it sends each one a signal (=SIGUSR2=,
+=SIG_STOP_FOR_GC= in =./sbcl='s =src/runtime/linux-os.h=). A thread blocked in
+=recv= or =send= on a socket that has a timeout set (=SO_RCVTIMEO= /
+=SO_SNDTIMEO=, which we always set) is *not* restarted after the signal. The call
+returns =EINTR= (signal(7) lists these calls as never restarted). OpenSSL reports
+that as =WANT_READ= / =WANT_WRITE= — exactly the code our timeout produces. So a GC
+in any thread looked like a network timeout in the thread doing HTTPS.
+
+[[file:../initramfs/tls.lisp::defun tls-interrupted-p][=tls-interrupted-p=]] tells them apart. =errno= 4 (=EINTR=) is an interruption. So
+is a =WANT_*= that came back well before any timeout could fire (under half a
+second) without =EAGAIN= (11), which is what a real timeout leaves. =tls-connect=,
+=tls-read= and =tls-write= then make the same call again, up to 200 times.
+
 ** (f) IPv6 — on since tag #26, and nothing breaks
 
 We configure nothing: when an interface comes up the kernel gives it a link-local

@@ -181,10 +181,24 @@
 
 (defstruct (tls (:constructor %make-tls (ssl fd host))) ssl fd host)
 
+(defun tls-interrupted-p (ssl-error errno started)
+  "Did the OpenSSL call that just returned SSL-ERROR (with ERRNO) get interrupted by a
+   signal, rather than time out or fail? SBCL stops every thread with a signal for each
+   GC, and the kernel does NOT restart a recv/send on a socket with SO_RCVTIMEO /
+   SO_SNDTIMEO (signal(7)): it returns EINTR, which OpenSSL reports as WANT_READ /
+   WANT_WRITE — the same code as our timeout. A real timeout says EAGAIN (11) and takes
+   at least the timeout; EINTR (4), or a WANT_* well before any timeout could fire,
+   is an interruption, and the call is simply made again. STARTED is the
+   GET-INTERNAL-REAL-TIME before the call."
+  (or (and (member ssl-error '(2 3 5)) (eql errno 4))
+      (and (member ssl-error '(2 3)) (not (eql errno 11))
+           (< (- (get-internal-real-time) started) (floor internal-time-units-per-second 2)))))
+
 (defun tls-connect (fd host)
   "Run the TLS handshake on the connected socket FD for HOST (name checked against
    the certificate). Returns a TLS object, or signals TLS-ERROR saying WHY — a
-   certificate problem is named (\"certificate has expired\", \"hostname mismatch\")."
+   certificate problem is named (\"certificate has expired\", \"hostname mismatch\").
+   A handshake step a signal interrupted (TLS-INTERRUPTED-P) is made again."
   (let ((ssl (%ssl-new (ssl-context))))
     (when (zerop (sb-sys:sap-int ssl)) (tls-fail "SSL_new failed:~a" (openssl-errors)))
     (handler-bind ((error (lambda (c) (declare (ignore c)) (%ssl-free ssl))))
@@ -195,48 +209,62 @@
       ;; ALPN: say we speak HTTP/1.1 (some servers would otherwise offer h2 only).
       (let ((alpn (coerce #(8 104 116 116 112 47 49 46 49) '(simple-array (unsigned-byte 8) (*)))))
         (sb-sys:with-pinned-objects (alpn) (%ssl-set-alpn-protos ssl (sb-sys:vector-sap alpn) 9)))
-      (let ((r (%ssl-connect ssl)))
-        (unless (= r 1)
-          (let ((v (%ssl-get-verify-result ssl)))
-            (if (/= v 0)
-                (tls-fail "TLS handshake with ~a: certificate rejected: ~a~@[~%  (is the clock right? ~a)~]"
-                          host (%x509-verify-cert-error-string v)
-                          (and (member v '(9 10)) (fboundp 'describe-clock) (describe-clock)))
-                (tls-fail "TLS handshake with ~a failed (SSL error ~d)~a"
-                          host (%ssl-get-error ssl r) (openssl-errors))))))
+      (loop for tries from 0
+            do (let* ((t0 (get-internal-real-time))
+                      (r (%ssl-connect ssl))
+                      (errno (sb-alien:get-errno)))
+                 (when (= r 1) (return))
+                 (let ((e (%ssl-get-error ssl r)))
+                   (unless (and (< tries 200) (tls-interrupted-p e errno t0))
+                     (let ((v (%ssl-get-verify-result ssl)))
+                       (if (/= v 0)
+                           (tls-fail "TLS handshake with ~a: certificate rejected: ~a~@[~%  (is the clock right? ~a)~]"
+                                     host (%x509-verify-cert-error-string v)
+                                     (and (member v '(9 10)) (fboundp 'describe-clock) (describe-clock)))
+                           (tls-fail "TLS handshake with ~a failed (SSL error ~d)~a"
+                                     host e (openssl-errors))))))))
       (%make-tls ssl fd host))))
 
 (defun tls-read (tls buf start end)
   "Read up to END-START decrypted octets into BUF at START. Returns the count, 0 at
-   end of stream. Signals TLS-ERROR on a broken stream or a timeout."
+   end of stream. Signals TLS-ERROR on a broken stream or a timeout. A read that a
+   signal interrupted (TLS-INTERRUPTED-P — a GC, typically) is not a timeout: it is
+   made again."
   (let ((ssl (tls-ssl tls)))
     (sb-sys:with-pinned-objects (buf)
-      (let ((n (%ssl-read ssl (sb-sys:sap+ (sb-sys:vector-sap buf) start) (- end start))))
-        (if (plusp n) n
-            (let ((e (%ssl-get-error ssl n)))
-              (cond ((= e +ssl-error-zero-return+) 0)
-                    ;; a peer that just closes the TCP connection, without TLS's
-                    ;; close_notify, is common and harmless for Connection: close
-                    ((and (= e +ssl-error-syscall+) (zerop n)
-                          (not (member (sb-alien:get-errno) '(11 4)))) 0)
-                    ;; our SO_RCVTIMEO fired: the socket said EAGAIN, which OpenSSL
-                    ;; reports as WANT_READ (2) — "try again" — or as SYSCALL + errno 11
-                    ((or (member e '(2 3))
-                         (and (= e +ssl-error-syscall+) (= (sb-alien:get-errno) 11)))
-                     (tls-fail "timed out waiting for ~a" (tls-host tls)))
-                    (t (tls-fail "TLS read from ~a failed (SSL error ~d)~a"
-                                 (tls-host tls) e (openssl-errors))))))))))
+      (loop for tries from 0
+            do (let* ((t0 (get-internal-real-time))
+                      (n (%ssl-read ssl (sb-sys:sap+ (sb-sys:vector-sap buf) start) (- end start)))
+                      (errno (sb-alien:get-errno)))
+                 (when (plusp n) (return n))
+                 (let ((e (%ssl-get-error ssl n)))
+                   (cond ((= e +ssl-error-zero-return+) (return 0))
+                         ;; a peer that just closes the TCP connection, without TLS's
+                         ;; close_notify, is common and harmless for Connection: close
+                         ((and (= e +ssl-error-syscall+) (zerop n) (not (member errno '(11 4))))
+                          (return 0))
+                         ((and (< tries 200) (tls-interrupted-p e errno t0)))  ; read again
+                         ;; our SO_RCVTIMEO fired: EAGAIN, which OpenSSL reports as
+                         ;; WANT_READ (2) — "try again" — or as SYSCALL + errno 11
+                         ((or (member e '(2 3)) (and (= e +ssl-error-syscall+) (eql errno 11)))
+                          (tls-fail "timed out waiting for ~a" (tls-host tls)))
+                         (t (tls-fail "TLS read from ~a failed (SSL error ~d)~a"
+                                      (tls-host tls) e (openssl-errors))))))))))
 
 (defun tls-write (tls octets)
-  "Encrypt and send all of OCTETS."
-  (let ((ssl (tls-ssl tls)) (off 0) (len (length octets)))
+  "Encrypt and send all of OCTETS. A write a signal interrupted is made again."
+  (let ((ssl (tls-ssl tls)) (off 0) (len (length octets)) (tries 0))
     (sb-sys:with-pinned-objects (octets)
       (loop while (< off len)
-            do (let ((n (%ssl-write ssl (sb-sys:sap+ (sb-sys:vector-sap octets) off) (- len off))))
-                 (unless (plusp n)
-                   (tls-fail "TLS write to ~a failed (SSL error ~d)~a"
-                             (tls-host tls) (%ssl-get-error ssl n) (openssl-errors)))
-                 (incf off n))))
+            do (let* ((t0 (get-internal-real-time))
+                      (n (%ssl-write ssl (sb-sys:sap+ (sb-sys:vector-sap octets) off) (- len off)))
+                      (errno (sb-alien:get-errno)))
+                 (if (plusp n)
+                     (incf off n)
+                     (let ((e (%ssl-get-error ssl n)))
+                       (unless (and (< (incf tries) 200) (tls-interrupted-p e errno t0))
+                         (tls-fail "TLS write to ~a failed (SSL error ~d)~a"
+                                   (tls-host tls) e (openssl-errors))))))))
     len))
 
 (defun tls-close (tls)

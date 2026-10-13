@@ -1219,6 +1219,33 @@ after it (one with a debug dump of the turn, four full) passed, so it is not
 reproduced; the suspect is the timing between the approval chooser's modal loop and
 the tick's refresh of a turn, which these changes did not touch.
 
+** 14.8½ After the first real use (2026-10-13, from a session inside the environment)
+
+Three changes came out of using the agent for real on the laptop:
+
+- *Allow all writes.* Approving each write one by one became tedious in a long
+  session. [[file:../initramfs/agent.lisp::defun allow-all-writes][=allow-all-writes=]] sets the authority dial (§8.9) to =:allow= for
+  this session, and for the conversation if it has its own setting, which would
+  otherwise win. =:save t= also writes =:authority :allow= to
+  =~/.config/lol/agent.lisp= through [[file:../initramfs/agent.lisp::defun save-agent-setting][=save-agent-setting=]]. That function rewrites
+  the whole plist through a temporary file and a rename, so a crash leaves the old
+  file or the new one, never half of one. [[file:../initramfs/agent.lisp::defun ask-before-writes][=ask-before-writes=]] undoes it. In the
+  environment, the agent's commands offer "Allow all writes (stop asking, this
+  session)", "… always (save …)" and "Ask before writes again". At the REPL's
+  approval prompt, =a= allows this call and every later one.
+- *A timed-out or broken TLS read is retried.* [[file:../initramfs/agent.lisp::defun retryable-p][=retryable-p=]] used to treat every
+  =tls-error= as final. Now only those that cannot change in two seconds are final:
+  a certificate that does not verify, OpenSSL missing, no host system. A timeout or
+  a stream broken mid-read is the network, and is retried like a dropped
+  connection. =*agent-retries*= went from 5 to 6.
+- *Interrupted is not timed out* — the real cause behind many of those "timeouts".
+  It is fixed in =tls.lisp=; [[file:networking.org][networking.org]] §2e explains it.
+
+The pane's rendering changed too: markdown cleaned into plain lines, a mark for each
+tool call, and a rule between turns naming the authority in force. The prototype for
+where the pane goes next is =doc/design/agent-workbench.html= (a static HTML mock;
+open it locally).
+
 ** 14.9 Still owed
 
 - *The first real call*: put a key in =~/.config/lol/anthropic-api-key= (=0600=) on

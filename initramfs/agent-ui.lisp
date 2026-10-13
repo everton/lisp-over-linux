@@ -77,10 +77,26 @@
 (defun lisp-fence-p (lang)
   (member (string-downcase (string-trim " " lang)) '("" "lisp" "common-lisp" "cl" "elisp") :test #'string=))
 
+(defun clean-markdown (line)
+  "LINE of a reply with the markdown that a comment cannot show taken out: **bold**
+   and __bold__ markers dropped (backticks stay — they mark Lisp names), and a leading
+   * or - bullet drawn as •."
+  (let ((s line))
+    (dolist (m '("**" "__"))
+      (loop for p = (search m s) while p
+            do (setf s (concatenate 'string (subseq s 0 p) (subseq s (+ p 2))))))
+    (let ((indent (or (position #\Space s :test-not #'char=) 0)))
+      (if (and (< (1+ indent) (length s))
+               (member (char s indent) '(#\* #\-))
+               (char= (char s (1+ indent)) #\Space))
+          (concatenate 'string (subseq s 0 indent) "•" (subseq s (1+ indent)))
+          s))))
+
 (defun reply-lines (text)
   "A reply's markdown as buffer lines: prose wrapped and commented (;; ), a ```lisp
    block raw — live code — and any other fenced block commented with a bar (;; | ).
-   A blank line stays blank, so paragraphs read as paragraphs."
+   A blank line stays blank, so paragraphs read as paragraphs. A # heading becomes a
+   ;; ▌ line; a bullet is drawn • and its continuation lines hang under its text."
   (let ((out '()) (fence nil) (width (max 30 (- *agent-wrap* 3))))
     (dolist (line (split-lines* text))
       (let ((trimmed (string-left-trim " " line)))
@@ -90,7 +106,18 @@
           ((eq fence :lisp) (push line out))
           ((eq fence :other) (push (concatenate 'string ";; | " line) out))
           ((string= trimmed "") (push "" out))
-          (t (dolist (l (wrap-words line width)) (push (concatenate 'string ";; " l) out))))))
+          ((char= (char trimmed 0) #\#)
+           (push (concatenate 'string ";; ▌ " (clean-markdown (string-left-trim "# " trimmed))) out))
+          (t
+           (let* ((clean (clean-markdown line))
+                  (indent (or (position #\Space clean :test-not #'char=) 0))
+                  (bullet (and (< indent (length clean)) (char= (char clean indent) #\•))))
+             (if bullet
+                 (let ((hang (make-string (+ indent 2) :initial-element #\Space)))
+                   (loop for l in (wrap-words (subseq clean (+ indent 2)) (- width indent 2))
+                         for first = t then nil
+                         do (push (concatenate 'string ";; " (if first (subseq clean 0 (+ indent 2)) hang) l) out)))
+                 (dolist (l (wrap-words clean width)) (push (concatenate 'string ";; " l) out))))))))
     (nreverse out)))
 
 (defun call-status-word (call)
@@ -98,11 +125,19 @@
     (:waiting "WAITING FOR YOUR APPROVAL")
     (:running "running") (:pending "...") (:denied "declined") (:error "error") (t nil)))
 
+(defun call-mark (call)
+  "One glyph for a tool call's state, read before its name: ✓ done, ✗ declined or
+   failed, ● running, ? waiting for you, … not started."
+  (case (call-status call)
+    (:done "✓") ((:denied :error) "✗") (:running "●") (:waiting "?") (t "…")))
+
 (defun call-lines (call)
-  "A tool call as transcript lines: one ;; #N line (C-c C-o on it opens what it was
-   about, §8.6), and for a WRITE its input in full, so what you approve is on screen."
-  (cons (format nil ";; #~d ~a~@[ -> ~a~]~@[  [~a]~]" (call-number call) (call-headline call)
-                (call-summary call) (call-status-word call))
+  "A tool call as transcript lines: one ;; #N line — its state as a glyph, what it did,
+   → what came back (C-c C-o on it opens what it was about, §8.6) — and for a WRITE its
+   input in full, so what you approve is on screen."
+  (cons (format nil ";; #~d ~a ~a~@[ → ~a~]~@[  [~a]~]" (call-number call) (call-mark call)
+                (call-headline call) (call-summary call)
+                (and (not (eq (call-status call) :done)) (call-status-word call)))
         (when (write-tool-p (call-name call))
           (let ((body (and (call-input call)
                            (lol.json:jget (call-input call) (or (editable-input-key call) "")))))
@@ -112,7 +147,7 @@
 (defun thinking-lines (text)
   (let ((s (string-trim '(#\Space #\Newline) (substitute #\Space #\Newline text))))
     (when (plusp (length s))
-      (list (format nil ";; (thinking: ~a)" (lol.widgets:clip-text s (- *agent-wrap* 16)))))))
+      (list (format nil ";; ⋯ ~a" (lol.widgets:clip-text s (- *agent-wrap* 6)))))))
 
 (defun block-lines (b)
   (let ((type (block-type b)))
@@ -125,12 +160,12 @@
   (let ((type (live-block-type lb)))
     (cond ((equal type "text") (reply-lines (live-text lb)))
           ((equal type "thinking") (thinking-lines (live-text lb)))
-          ((equal type "tool_use") (list (format nil ";; > ~a ..." (lol.json:jget (live-block-json lb) "name"))))
+          ((equal type "tool_use") (list (format nil ";; ● ~a …" (lol.json:jget (live-block-json lb) "name"))))
           (t nil))))
 
 (defun usage-line (conv turn)
   (let ((u (turn-usage turn)))
-    (format nil ";; -- ~:d in, ~:d cached, ~:d written · ~:d out · ~a · this conversation ~a --"
+    (format nil ";; ── ~:d in · ~:d cached · ~:d written · ~:d out · ~a   (conversation ~a)"
             (getf u :input) (getf u :cache-read) (getf u :cache-write) (getf u :output)
             (format-cost (getf u :cost)) (format-cost (conversation-cost conv)))))
 
@@ -144,9 +179,31 @@
        (string= +error-prefix+ line :end2 (length +error-prefix+))))
 
 (defun conversation-tint (line)
-  "A conversation pane's TINT: its error blocks in the condition colour — red, the
-   colour the browser gives a condition everywhere (widgets.lisp *CONCEPT-COLORS*)."
-  (and (error-line-p line) (concept-color :condition)))
+  "A conversation pane's TINT: one colour per kind of line, so the transcript can be
+   read at a glance. The reply's prose is bright (it is the answer, not a comment to
+   skip), the question gold, tool calls teal (amber while one waits for you, red when
+   declined or failed), thinking and the meter dim, the your-turn line green, error
+   blocks red — the colour the browser gives a condition everywhere. Code lines (no
+   leading ;;) return NIL and keep the Lisp lexer's colours."
+  (flet ((starts (p) (and (>= (length line) (length p)) (string= p line :end2 (length p)))))
+    (cond
+      ((not (starts ";;")) nil)
+      ((string= line +your-turn+) (concept-color :generic-function))
+      ((error-line-p line) (concept-color :condition))
+      ((starts ";; ━") *ui-dim*)
+      ((or (starts ";; ▸ ") (starts ";; ? ")) (concept-color :package))
+      ((starts ";; ▌") (concept-color :package))
+      ((and (starts ";; #") (> (length line) 4) (digit-char-p (char line 4)))
+       (cond ((search "WAITING FOR YOUR APPROVAL" line) *ui-amber*)
+             ((or (search " ✗ " line) (search "[declined]" line) (search "[error]" line))
+              (concept-color :condition))
+             (t (concept-color :subclass))))
+      ((starts ";;   | ") (concept-color :class))
+      ((starts ";; | ") (concept-color :class))
+      ((or (starts ";; ⋯") (starts ";; (thinking")) *ui-dim*)
+      ((or (starts ";; ──") (starts ";; --") (starts ";; ·")) *ui-dim*)
+      ((or (starts ";; ●") (starts ";; ! ") (starts ";; ...") (starts ";; >")) *ui-amber*)
+      (t *ui-text*))))
 
 (defun failure-lines (turn)
   "TURN's failure as the transcript's error block: the headline, what is known, what
@@ -168,18 +225,38 @@
              for first = t then nil
              append (error-block-lines (format nil "~:[  ~;What to do: ~]~a" first a) "  "))))))
 
+(defun authority-words (authority)
+  "AUTHORITY (:read-only :ask :allow) as the transcript says it."
+  (case authority
+    (:allow "allow all — tools run without asking")
+    (:ask "asks before each write")
+    (:read-only "read-only")
+    (t (string-downcase (princ-to-string authority)))))
+
+(defun turn-rule (n authority)
+  "The heavy rule that opens turn N: its number and the authority it ran under, so a
+   long transcript reads as a list of exchanges and the scrollbar of your eye has
+   something to stop on."
+  (let ((head (format nil ";; ━━ ~d ━━ ~a " n (authority-words authority))))
+    (if (< (length head) *agent-wrap*)
+        (concatenate 'string head (make-string (- *agent-wrap* (length head)) :initial-element #\━))
+        head)))
+
 (defun turn-lines (conv turn)
-  "TURN as buffer lines: the question, every assistant block after it (and the reply
-   still streaming), the notes, a failure's error block, and — once done — the usage
-   and the your-turn line."
+  "TURN as buffer lines: a rule with its number, the question (;; ▸), every assistant
+   block after it (and the reply still streaming), the notes, a failure's error block,
+   and — once done — the usage and the your-turn line."
   (with-conversation-lock (conv)
     (let* ((ms (conversation-messages conv))
+           (n (1+ (or (position turn (conversation-turns conv)) 0)))
            (lines (append
-                   (mapcar (lambda (l) (concatenate 'string ";; ? " l))
+                   (list (turn-rule n (conversation-authority* conv)))
+                   (mapcar (lambda (l) (concatenate 'string ";; ▸ " l))
                            (loop for q in (split-lines* (if (turn-again turn)
                                                             (format nil "~a   (asked again)" (turn-question turn))
                                                             (turn-question turn)))
                                  append (wrap-words q (- *agent-wrap* 5))))
+                   (list "")
                    (loop for i from (turn-start turn) below (length ms)
                          for m = (aref ms i)
                          when (equal (message-role m) "assistant")
@@ -195,15 +272,16 @@
                   (unless (and (turn-failure turn) (zerop (or (getf (turn-usage turn) :input) 0)))
                     (list (usage-line conv turn)))
                   (list +your-turn+ ""))
-          (append lines (list (format nil ";; ... ~a   (C-g stops)" (conversation-status conv))))))))
+          (append lines (list (format nil ";; ● ~a   (C-g stops)" (conversation-status conv))))))))
 
 (defun conversation-header (conv)
-  (list (format nil ";; Agent — ~a · ~a · authority ~(~s~)" (conversation-title conv)
-                (conversation-model conv) (conversation-authority* conv))
-        ";; Type a question at the end and press C-c C-a. Code the agent proposes is live:"
-        ";; C-x C-e evaluates it, C-c C-c compiles it into the image (the change set)."
-        ";; C-c C-o on a ;; #N line opens what that tool call was about. C-g stops a turn."
-        ";; If a question fails, the reason is a red ;; !! block; C-c C-a with nothing typed asks it again."
+  (list (format nil ";; ▌ Agent · ~a · ~a" (conversation-title conv) (conversation-model conv))
+        (format nil ";; · authority: ~a   (right-click the pane to change it)"
+                (authority-words (conversation-authority* conv)))
+        ";; · Type below the last \"your turn\" line, then C-c C-a asks. C-g stops a turn."
+        ";; · Code in a reply is live: C-x C-e evaluates it, C-c C-c compiles it (change set)."
+        ";; · C-c C-o on a ;; #N line opens what that tool call read. A red ;; !! block is a"
+        ";; · failure: C-c C-a with nothing typed asks the same question again."
         ""))
 
 (defun conversation-lines (conv)
@@ -222,11 +300,20 @@
   (make-view :title (format nil "agent · ~a" (conversation-title c))
              :kind :workspace :subject c
              :text (lines-text (conversation-lines c))
-             :tint #'conversation-tint
+             ;; the symbol, not #'…: a redefined CONVERSATION-TINT reaches open panes
+             :tint 'conversation-tint
              :data (list :conversation c)))
 
 (defmethod commands-for ((c conversation))
   (list (make-command :label "Stop the turn" :action (lambda () (cancel-conversation c)) :key "C-g")
+        (if (eq (conversation-authority* c) :allow)
+            (make-command :label "Ask before writes again"
+                          :action (lambda () (ask-before-writes)
+                                    (when (conversation-authority c) (setf (conversation-authority c) :ask))))
+            (make-command :label "Allow all writes (stop asking, this session)"
+                          :action (lambda () (allow-all-writes :conversation c))))
+        (make-command :label "Allow all writes, always (save to ~/.config/lol/agent.lisp)"
+                      :action (lambda () (allow-all-writes :conversation c :save t)))
         (make-command :label "Inspect the conversation object" :target (subj-object c))
         (make-command :label "The agent's state and modes" :target (subj-agent))))
 
@@ -564,27 +651,44 @@
 
 (defun approval-entries (c)
   "The approval request's restarts as chooser entries — the restarts themselves, not
-   a parallel list: what you pick is what gets invoked."
+   a parallel list: what you pick is what gets invoked. Below them, ALLOW ALL: run this
+   call and stop asking, for the session (5) or for good (6, saved in
+   ~/.config/lol/agent.lisp) — see ALLOW-ALL-WRITES."
   (let* ((call (approval-call c))
+         (conv (approval-conversation c))
          (group (format nil "approve #~d · ~a" (call-number call) (call-name call))))
-    (loop for r in (compute-restarts c)
-          for name = (restart-name r)
-          append (case name
-                   (allow (list (menu-entry "Allow — run it" (let ((r r)) (lambda () (invoke-restart r)))
-                                            :key "1" :group group)))
-                   (deny (list (menu-entry "Deny" (let ((r r)) (lambda () (invoke-restart r nil)))
-                                           :key "2" :group group)
-                               (menu-entry "Deny, with a reason..."
-                                           (let ((r r))
-                                             (lambda () (invoke-restart r (and *value-prompt* (funcall *value-prompt* "Reason")))))
-                                           :key "3" :group group)))
-                   (edit (when (editable-input-key call)
-                           (list (menu-entry "Edit the input first..."
-                                             (let ((r r))
-                                               (lambda ()
-                                                 (let ((new (and *value-prompt* (funcall *value-prompt* (editable-input-key call)))))
-                                                   (if new (invoke-restart r new) (invoke-restart (find-restart 'deny c) "edit cancelled")))))
-                                             :key "4" :group group))))))))
+    (append
+     (loop for r in (compute-restarts c)
+           for name = (restart-name r)
+           append (case name
+                    (allow (list (menu-entry "Allow — run it" (let ((r r)) (lambda () (invoke-restart r)))
+                                             :key "1" :group group)))
+                    (deny (list (menu-entry "Deny" (let ((r r)) (lambda () (invoke-restart r nil)))
+                                            :key "2" :group group)
+                                (menu-entry "Deny, with a reason..."
+                                            (let ((r r))
+                                              (lambda () (invoke-restart r (and *value-prompt* (funcall *value-prompt* "Reason")))))
+                                            :key "3" :group group)))
+                    (edit (when (editable-input-key call)
+                            (list (menu-entry "Edit the input first..."
+                                              (let ((r r))
+                                                (lambda ()
+                                                  (let ((new (and *value-prompt* (funcall *value-prompt* (editable-input-key call)))))
+                                                    (if new (invoke-restart r new) (invoke-restart (find-restart 'deny c) "edit cancelled")))))
+                                              :key "4" :group group))))))
+     (let ((allow (find-restart 'allow c)))
+       (when allow
+         (list (menu-entry "Allow all — stop asking this session"
+                           (lambda () (allow-all-writes :conversation conv) (invoke-restart allow))
+                           :key "5" :group group)
+               (menu-entry "Allow all — always (saved to ~/.config/lol/agent.lisp)"
+                           (lambda ()
+                             ;; a settings file that cannot be written must not cost you
+                             ;; the call: fall back to this session only
+                             (unless (ignore-errors (allow-all-writes :conversation conv :save t))
+                               (allow-all-writes :conversation conv))
+                             (invoke-restart allow))
+                           :key "6" :group group)))))))
 
 (defun environment-approval (c)
   "Handle a TOOL-APPROVAL-REQUEST in the environment: offer its restarts in the chooser

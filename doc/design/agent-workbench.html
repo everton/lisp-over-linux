@@ -1,0 +1,424 @@
+<!doctype html>
+<!--
+  agent-workbench.html — a design prototype for the LoL agent beyond a plain transcript.
+
+  Not shipped, not part of the image: a throwaway to TRY layouts before writing Lisp.
+  Open it in the LoL web pane (SuperL-b, then the file:// URL) or any browser.
+  The palette is the framebuffer's own (*CONCEPT-COLORS*, *UI-…* in widgets.lisp), the
+  font is monospace, the size is the laptop's 1280x800, so what looks right here is
+  close to what the Lisp version would look like.
+
+  Three ideas under test (see the notes panel, key ?):
+    1. STEPS COLLAPSE, OUTCOMES STAND OUT. A run of tool calls is ONE dim line
+       (⋯ 6 steps · read 4 · ran 2 · ✓); findings (◆) and the turn summary are bright.
+    2. AN ACTIVITY SUBJECT beside the conversation: plan, subagents, changes, waiting.
+       In LoL it is a subject in the conversation pane's side split (pane-side,
+       SuperL-o) — drilled into, not permanent chrome — which keeps doc/agent.org §8.0.
+    3. SUBAGENTS as child conversations: each a card (goal, current step, steps, cost),
+       Enter opens its own transcript.
+  Layouts: A side rail · B mission strip over the transcript · C focus (transcript only,
+  progress pinned at the top). Detail: concise / verbose.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LoL agent — workbench prototype</title>
+<style>
+  :root {
+    --bg:#1e2228; --panel:#252a32; --rule:#2e343d; --sel:#2f3a48; --hi:#242931;
+    --text:#d6d4c8; --dim:#6b727d; --lit:#ffffff;
+    --gold:#ffcb6b; --teal:#7fdbca; --green:#a8ff78; --purple:#c792ea;
+    --blue:#89ddff; --blue-dim:#5e93ad; --red:#ff6b6b; --amber:#ff9f43;
+  }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; background:#111; }
+  body { font:13px/18px "DejaVu Sans Mono", "Menlo", monospace; color:var(--text);
+         display:flex; align-items:center; justify-content:center; }
+  #screen { width:1280px; height:800px; background:var(--bg); display:flex; flex-direction:column;
+            overflow:hidden; position:relative; }
+  /* the shell's own chrome, mocked */
+  #tabs { height:24px; display:flex; gap:2px; padding:0 6px; background:var(--panel);
+          border-bottom:1px solid var(--rule); align-items:flex-end; }
+  .tab { padding:2px 10px; color:var(--dim); border-radius:3px 3px 0 0; }
+  .tab.on { background:var(--bg); color:var(--text); }
+  .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px;
+         background:var(--green); }
+  .dot.busy { background:var(--teal); animation:pulse .8s infinite alternate; }
+  @keyframes pulse { from{opacity:1} to{opacity:.25} }
+  #main { flex:1; display:flex; min-height:0; }
+  #tray { height:22px; display:flex; gap:16px; padding:2px 10px; background:var(--panel);
+          border-top:1px solid var(--rule); color:var(--dim); }
+  #tray .warn { color:var(--amber); } #tray .ok { color:var(--green); }
+  #tray .right { margin-left:auto; }
+
+  /* ---- the conversation (a Workspace) ---- */
+  #conv { flex:1; min-width:0; display:flex; flex-direction:column; }
+  #strip { display:none; padding:6px 12px; border-bottom:1px solid var(--rule); background:var(--hi);
+           gap:8px; flex-wrap:wrap; }
+  #pinned { display:none; padding:6px 12px; border-bottom:1px solid var(--rule); background:var(--hi); }
+  #transcript { flex:1; overflow-y:auto; padding:10px 14px 40px; white-space:pre-wrap; }
+  .l { min-height:18px; }
+  .c { color:var(--dim); }                     /* the ;; itself */
+  .rule { color:var(--dim); margin-top:10px; }
+  .q { color:var(--gold); }
+  .prose { color:var(--text); }
+  .code { color:var(--blue); }
+  .code .kw { color:var(--purple); } .code .str { color:var(--green); } .code .sym { color:var(--teal); }
+  .steps { color:var(--dim); cursor:pointer; }
+  .steps:hover { background:var(--hi); }
+  .steps .n { color:var(--blue-dim); }
+  .steps.live { color:var(--teal); }
+  .steps .ok { color:var(--blue-dim); } .steps .bad { color:var(--red); }
+  .step { color:var(--dim); padding-left:4ch; }
+  .step.bad { color:var(--red); }
+  .finding { color:var(--lit); border-left:3px solid var(--teal); padding-left:8px; margin:6px 0; }
+  .finding .tag { color:var(--teal); }
+  .finding.warn { border-color:var(--amber); } .finding.warn .tag { color:var(--amber); }
+  .summary { border:1px solid var(--rule); border-left:3px solid var(--green); background:var(--hi);
+             padding:6px 10px; margin:8px 0; }
+  .summary .h { color:var(--green); }
+  .summary .ok { color:var(--green); } .summary .todo { color:var(--amber); }
+  .chip { display:inline-block; padding:0 6px; margin:1px 2px; border:1px solid var(--rule);
+          border-radius:3px; color:var(--teal); cursor:pointer; }
+  .chip.file { color:var(--gold); } .chip.img { color:var(--purple); }
+  .yourturn { color:var(--green); margin-top:6px; }
+  .waiting { color:var(--amber); }
+  .live-line { color:var(--teal); }
+  .live-line::after { content:"▌"; animation:pulse .6s infinite alternate; }
+
+  /* ---- the Activity subject ---- */
+  #activity { width:380px; border-left:1px solid var(--rule); background:var(--panel);
+              overflow-y:auto; padding:8px 10px; }
+  #activity.bottom { width:auto; }
+  .sec { margin-bottom:12px; }
+  .sec > .h { color:var(--dim); border-bottom:1px solid var(--rule); margin-bottom:4px;
+              display:flex; justify-content:space-between; }
+  .sec > .h b { color:var(--text); font-weight:normal; }
+  .task { display:flex; gap:8px; padding:1px 0; }
+  .task .m { width:1.5ch; text-align:center; }
+  .task.done { color:var(--dim); } .task.done .m { color:var(--green); }
+  .task.active { color:var(--lit); } .task.active .m { color:var(--teal); animation:pulse .8s infinite alternate; }
+  .task.pending { color:var(--dim); } .task.failed .m, .task.failed { color:var(--red); }
+  .task .t { flex:1; } .task .e { color:var(--dim); }
+  .bar { height:3px; background:var(--rule); margin:2px 0 4px 2.5ch; }
+  .bar > div { height:100%; background:var(--teal); transition:width .4s; }
+  .agent { border:1px solid var(--rule); border-radius:3px; padding:5px 7px; margin:5px 0; cursor:pointer;
+           background:var(--bg); }
+  .agent:hover { border-color:var(--blue-dim); }
+  .agent .top { display:flex; justify-content:space-between; }
+  .agent .name { color:var(--blue); } .agent .st { color:var(--teal); }
+  .agent.done .st { color:var(--green); } .agent.done .name { color:var(--dim); }
+  .agent.failed .st { color:var(--red); }
+  .agent .goal { color:var(--text); }
+  .agent .now { color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .agent .meta { color:var(--dim); display:flex; gap:10px; }
+  .spark { display:inline-flex; gap:1px; align-items:flex-end; height:10px; }
+  .spark i { display:block; width:3px; background:var(--blue-dim); }
+  .change { display:flex; gap:8px; } .change .k { width:2ch; }
+  .change .where { margin-left:auto; color:var(--dim); }
+  .where .y { color:var(--green); } .where .n { color:var(--amber); }
+  .wait { color:var(--amber); border:1px solid var(--amber); border-radius:3px; padding:4px 7px; }
+  .wait .keys { color:var(--dim); }
+  .empty { color:var(--dim); }
+
+  /* strip (layout B) */
+  .pill { padding:1px 8px; border-radius:9px; border:1px solid var(--rule); color:var(--dim); }
+  .pill.active { color:var(--lit); border-color:var(--teal); }
+  .pill.done { color:var(--green); } .pill.failed { color:var(--red); border-color:var(--red); }
+  .pill.agent-pill { color:var(--blue); }
+
+  /* controls of the PROTOTYPE itself — not part of the design */
+  #proto { position:fixed; top:8px; left:8px; background:#000c; color:#aaa; padding:6px 8px;
+           border:1px solid #333; font-size:12px; line-height:20px; z-index:10; }
+  #proto button { font:inherit; background:#222; color:#ddd; border:1px solid #444; margin:1px; cursor:pointer; }
+  #proto button.on { border-color:var(--teal); color:var(--teal); }
+  #notes { display:none; position:absolute; inset:60px 120px; background:#15181dee; border:1px solid var(--rule);
+           padding:16px 20px; overflow:auto; z-index:5; white-space:pre-wrap; }
+  #notes h3 { color:var(--gold); margin:0 0 8px; font-weight:normal; }
+  #child { display:none; position:absolute; top:24px; bottom:22px; right:0; width:620px; background:var(--bg);
+           border-left:2px solid var(--blue-dim); z-index:4; padding:10px 14px; overflow:auto; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<div id="proto">
+  <b style="color:#fff">prototype</b>
+  <button id="play">▶ play</button><button id="reset">reset</button>
+  speed <button data-speed="1" class="on">1×</button><button data-speed="3">3×</button>
+  · layout <button data-layout="A" class="on">A rail</button><button data-layout="B">B strip</button><button data-layout="C">C focus</button>
+  · detail <button data-detail="concise" class="on">concise</button><button data-detail="verbose">verbose</button>
+  · <button id="notes-btn">notes (?)</button>
+</div>
+
+<div id="screen">
+  <div id="tabs">
+    <div class="tab">1 browser</div><div class="tab">2 workspace</div>
+    <div class="tab on"><span class="dot" id="tabdot"></span>agent · fix the timeout</div>
+    <div class="tab">web</div>
+  </div>
+  <div id="main">
+    <div id="conv">
+      <div id="strip"></div>
+      <div id="pinned"></div>
+      <div id="transcript"></div>
+    </div>
+    <div id="activity"></div>
+  </div>
+  <div id="tray">
+    <span id="tray-auth" class="ok">agent allow</span>
+    <span id="tray-cost">$0.00</span>
+    <span id="tray-sub"></span>
+    <span class="right">SuperL-o activity · C-c C-o open · Enter expand · 16:43</span>
+  </div>
+  <div id="notes"></div>
+  <div id="child"></div>
+</div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- state
+const S = { layout:"A", detail:"concise", speed:1, t:0, timer:null,
+            cost:0, tasks:[], agents:[], changes:[], waiting:null, events:[], live:null };
+
+// The scenario replays this session's real work (the timeout fix, allow-all, the
+// presentation), condensed, so the prototype is judged on familiar ground.
+const SCENARIO = [
+  [0,   () => ev({k:"rule", n:3}) ],
+  [0,   () => ev({k:"q", text:"Fix the recurring TLS timeout, add allow-all, improve the presentation; save to the host code."}) ],
+  [400, () => plan([
+          ["Find why the timeout is not retried", "pending"],
+          ["Fix the retry and the TLS read", "pending"],
+          ["Allow-all approvals", "pending"],
+          ["Presentation", "pending"],
+          ["Save to host files and rebuild", "pending"]]) ],
+  [600, () => { task(0,"active"); steps("s1"); } ],
+  [900, () => step("s1","lisp-source","stream-with-retries") ],
+  [700, () => step("s1","lisp-source","retryable-p") ],
+  [700, () => step("s1","lisp-source","describe-agent-failure") ],
+  [800, () => step("s1","container-run","grep -rn 'timed out waiting' initramfs") ],
+  [800, () => step("s1","container-run","sed -n 200,240p tls.lisp") ],
+  [600, () => { endSteps("s1"); finding("Cause","retryable-p treats every tls-error as permanent, and \"timed out waiting\" is raised as a tls-error by tls-read — so it was never retried."); task(0,"done"); } ],
+  [500, () => { finding("Also likely","tls-read calls an interrupted read (EINTR from a GC signal) a timeout: with SO_RCVTIMEO set the kernel does not restart recv.", "warn"); } ],
+  // subagents fan out
+  [600, () => { task(1,"active"); task(3,"active");
+                spawn("design","Design a calmer transcript: which lines collapse, which stand out", ["read conversation-tint","read turn-lines","list glyphs in mono.ttf","draft tint table"]);
+                spawn("tls-audit","Audit every OpenSSL call for EINTR handling", ["read tls-connect","read tls-read","read tls-write","check SSL_get_error codes"]); } ],
+  [400, () => steps("s2") ],
+  [700, () => step("s2","lisp-accept","(defun retryable-p (c) …)") ],
+  [700, () => step("s2","lisp-accept","(defun tls-interrupted-p …)") ],
+  [700, () => { step("s2","lisp-accept","(defun tls-read …)"); change("λ","tls-read","img"); change("λ","retryable-p","img"); change("λ","tls-interrupted-p","img"); } ],
+  [700, () => step("s2","lisp-eval","(retryable-p (make-condition 'tls-error …))", true) ],
+  [700, () => { step("s2","lisp-eval","(retryable-p (make-condition 'tls-error :message …))"); endSteps("s2"); task(1,"done");
+                finding("Verified","timeout → retried · certificate → not retried · real HTTPS request → 404 from api.anthropic.com."); } ],
+  [500, () => { task(2,"active"); steps("s3"); step("s3","lisp-accept","(defun allow-all-writes …)"); } ],
+  [700, () => { waitFor("lisp-accept · approval-entries", "#41"); } ],
+  [1800,() => { unwait(); step("s3","lisp-accept","(defun approval-entries …)"); change("λ","allow-all-writes","img"); change("λ","approval-entries","img"); endSteps("s3"); task(2,"done"); } ],
+  [500, () => { agentDone("tls-audit","tls-connect and tls-write had the same gap; both now retry on EINTR."); } ],
+  [900, () => { agentDone("design","8 line kinds, one colour each; steps collapse to one line; findings get a bar."); task(3,"done"); } ],
+  [500, () => { task(4,"active"); steps("s4"); step("s4","container-run","python3 apply.py  (25 forms)"); } ],
+  [900, () => { step("s4","container-run","./build.sh"); ["tls-read","retryable-p","tls-interrupted-p","allow-all-writes","approval-entries"].forEach(n=>change("λ",n,"file")); } ],
+  [1200,() => { endSteps("s4"); S.changes.forEach(c=>c.where="built"); task(4,"done"); change("📄","initramfs/lisp-init","built"); } ],
+  [500, () => summary() ],
+];
+
+// ---------------------------------------------------------------- scenario verbs
+function ev(e){ S.events.push(e); }
+function plan(rows){ S.tasks = rows.map(([title,state])=>({title,state,t0:null,el:0})); }
+function task(i,state){ const t=S.tasks[i]; t.state=state; if(state==="active") t.t0=S.t; if(state==="done"&&t.t0!==null) t.el=S.t-t.t0; }
+function steps(id){ ev({k:"steps", id, items:[], live:true}); S.live=id; }
+function step(id,tool,arg,bad){ const e=S.events.find(x=>x.id===id); e.items.push({tool,arg,bad:!!bad}); }
+function endSteps(id){ const e=S.events.find(x=>x.id===id); e.live=false; S.live=null; }
+function finding(tag,text,kind){ ev({k:"finding",tag,text,kind}); }
+function change(k,name,where){ const c=S.changes.find(x=>x.name===name); if(c){c.where=where;} else S.changes.push({k,name,where}); }
+function waitFor(what,n){ S.waiting={what,n}; }
+function unwait(){ S.waiting=null; }
+function spawn(name,goal,plan){ S.agents.push({name,goal,plan,i:0,state:"running",now:plan[0],steps:0,cost:0,hist:[],result:null}); }
+function agentDone(name,result){ const a=S.agents.find(x=>x.name===name); a.state="done"; a.result=result; a.now=result; ev({k:"agent-result",name,result}); }
+function summary(){ ev({k:"summary"}); }
+
+// ---------------------------------------------------------------- rendering
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+const C = '<span class="c">;; </span>';
+function fmtT(ms){ return (ms/1000).toFixed(1)+"s"; }
+function counts(items){
+  const m={}; items.forEach(i=>{ const v = i.tool==="lisp-source"?"read":i.tool==="container-run"?"ran":i.tool==="lisp-accept"?"compiled":i.tool==="lisp-eval"?"evaluated":i.tool; m[v]=(m[v]||0)+1; });
+  return Object.entries(m).map(([k,v])=>`${k} ${v}`).join(" · ");
+}
+
+function renderTranscript(){
+  const out=[];
+  out.push(`<div class="l c">;; ▌ Agent · fix the timeout · claude-opus · authority allow all</div>`);
+  out.push(`<div class="l c">;; · C-c C-a asks · Enter on ⋯ expands · C-c C-o opens · SuperL-o activity</div>`);
+  for(const e of S.events){
+    if(e.k==="rule") out.push(`<div class="l rule">;; ━━ ${e.n} ━━ allow all ${"━".repeat(60)}</div>`);
+    else if(e.k==="q") out.push(`<div class="l q">;; ▸ ${esc(e.text)}</div><div class="l"></div>`);
+    else if(e.k==="steps"){
+      const bad=e.items.some(i=>i.bad);
+      const open = S.detail==="verbose" || e.open;
+      if(e.live){
+        const last=e.items[e.items.length-1];
+        out.push(`<div class="l steps live" data-id="${e.id}">${C}⋯ ${e.items.length} step${e.items.length===1?"":"s"}${last?` · <span class="live-line">${esc(last.tool)} ${esc(last.arg)}</span>`:' <span class="live-line"></span>'}</div>`);
+      } else {
+        out.push(`<div class="l steps" data-id="${e.id}">${C}${open?"▾":"⋯"} ${e.items.length} steps · ${counts(e.items)} ${bad?'<span class="bad">· 1 failed, recovered</span>':'<span class="ok">✓</span>'}</div>`);
+      }
+      if(open || (e.live && S.detail==="verbose"))
+        e.items.forEach((i,k)=>out.push(`<div class="l step${i.bad?" bad":""}">#${k+1} ${i.bad?"✗":"✓"} ${esc(i.tool)} ${esc(i.arg)}</div>`));
+    }
+    else if(e.k==="finding") out.push(`<div class="l finding ${e.kind||""}"><span class="tag">◆ ${esc(e.tag)}:</span> ${esc(e.text)}</div>`);
+    else if(e.k==="agent-result") out.push(`<div class="l finding"><span class="tag" style="color:var(--blue)">◇ subagent ${esc(e.name)}:</span> ${esc(e.result)}</div>`);
+    else if(e.k==="summary"){
+      out.push(`<div class="summary"><div class="h">✔ Done — ${S.tasks.filter(t=>t.state==="done").length} of ${S.tasks.length} tasks · ${S.agents.length} subagents · ${S.events.filter(x=>x.k==="steps").reduce((n,x)=>n+x.items.length,0)} steps · ${S.changes.length} changes · ${fmtT(S.t)}</div>`+
+        S.tasks.map(t=>`<div><span class="ok">✓</span> ${esc(t.title)}</div>`).join("")+
+        `<div style="margin-top:4px">${S.changes.map(c=>`<span class="chip ${c.k==="📄"?"file":""}">${esc(c.name)}</span>`).join("")}</div>`+
+        `<div style="margin-top:4px"><span class="todo">→ for you:</span> install the image (./build.sh --install-host) · (allow-all-writes :save t) to keep allow-all</div></div>`);
+      out.push(`<div class="l c">;; ── 48,210 in · 31,004 cached · 6,880 out · $0.41   (conversation $2.10)</div>`);
+      out.push(`<div class="l yourturn">;; --- your turn: type below, then C-c C-a asks ---</div>`);
+    }
+  }
+  if(S.waiting) out.push(`<div class="l waiting">;; ? ${esc(S.waiting.n)} ${esc(S.waiting.what)} — WAITING FOR YOUR APPROVAL  (1 allow · 2 deny · 5 allow all)</div>`);
+  const tr=$("transcript"); const atEnd = tr.scrollTop+tr.clientHeight >= tr.scrollHeight-30;
+  tr.innerHTML=out.join("");
+  if(atEnd) tr.scrollTop=tr.scrollHeight;
+}
+
+function taskRow(t){
+  const m={done:"✓",active:"●",pending:"○",failed:"✗"}[t.state];
+  const el = t.state==="active" ? fmtT(S.t-t.t0) : t.state==="done" ? fmtT(t.el) : "";
+  return `<div class="task ${t.state}"><span class="m">${m}</span><span class="t">${esc(t.title)}</span><span class="e">${el}</span></div>`;
+}
+function spark(h){ return `<span class="spark">${h.slice(-24).map(v=>`<i style="height:${2+v*8}px"></i>`).join("")}</span>`; }
+
+function renderActivity(){
+  const done=S.tasks.filter(t=>t.state==="done").length;
+  const running=S.agents.filter(a=>a.state==="running").length;
+  const h=[];
+  h.push(`<div class="sec"><div class="h"><b>plan</b><span>${done}/${S.tasks.length}</span></div>`);
+  if(!S.tasks.length) h.push(`<div class="empty">no plan yet — the agent writes one with update-plan</div>`);
+  S.tasks.forEach(t=>h.push(taskRow(t)));
+  if(S.tasks.length) h.push(`<div class="bar"><div style="width:${100*done/S.tasks.length}%"></div></div>`);
+  h.push(`</div>`);
+  if(S.waiting) h.push(`<div class="sec"><div class="h"><b>waiting for you</b><span>1</span></div><div class="wait">${esc(S.waiting.n)} ${esc(S.waiting.what)}<div class="keys">1 allow · 2 deny · 5 allow all · Enter shows the input</div></div></div>`);
+  h.push(`<div class="sec"><div class="h"><b>subagents</b><span>${running} running · ${S.agents.length-running} done</span></div>`);
+  if(!S.agents.length) h.push(`<div class="empty">none</div>`);
+  S.agents.forEach((a,i)=>h.push(
+    `<div class="agent ${a.state}" data-agent="${i}"><div class="top"><span class="name">◇ ${esc(a.name)}</span><span class="st">${a.state==="running"?"● running":"✓ done"}</span></div>`+
+    `<div class="goal">${esc(a.goal)}</div><div class="now">${a.state==="running"?"⋯ ":"→ "}${esc(a.now)}</div>`+
+    `<div class="meta"><span>${a.steps} steps</span><span>$${a.cost.toFixed(2)}</span>${spark(a.hist)}<span style="margin-left:auto">read-only</span></div></div>`));
+  h.push(`</div>`);
+  h.push(`<div class="sec"><div class="h"><b>changes</b><span>image · file · built</span></div>`);
+  if(!S.changes.length) h.push(`<div class="empty">nothing changed yet</div>`);
+  S.changes.forEach(c=>{
+    const lv={img:1,file:2,built:3}[c.where]||0, dot=i=>i<=lv?'<span class="y">●</span>':'<span class="n">○</span>';
+    h.push(`<div class="change"><span class="k" style="color:${c.k==="📄"?"var(--gold)":"var(--teal)"}">${c.k==="📄"?"▤":"λ"}</span><span>${esc(c.name)}</span><span class="where">${dot(1)}${dot(2)}${dot(3)}</span></div>`);
+  });
+  h.push(`</div>`);
+  $("activity").innerHTML=h.join("");
+
+  // strip (B) and pinned (C)
+  $("strip").innerHTML = S.tasks.map(t=>`<span class="pill ${t.state}">${{done:"✓",active:"●",pending:"○",failed:"✗"}[t.state]} ${esc(t.title)}</span>`).join("")+
+     S.agents.map(a=>`<span class="pill agent-pill">◇ ${esc(a.name)} ${a.state==="running"?"⋯":"✓"}</span>`).join("")+
+     (S.waiting?`<span class="pill failed">? waiting for you</span>`:"");
+  const act=S.tasks.find(t=>t.state==="active");
+  $("pinned").innerHTML = S.tasks.length ? `<span style="color:var(--green)">${done}/${S.tasks.length}</span> <span class="bar" style="display:inline-block;width:160px;vertical-align:middle;margin:0 8px"><div style="width:${100*done/S.tasks.length}%"></div></span>`+
+     (act?`<span style="color:var(--lit)">● ${esc(act.title)}</span>`:`<span class="c">idle</span>`)+
+     (running?` <span style="color:var(--blue)"> · ◇ ${running} subagent${running>1?"s":""}</span>`:"")+
+     (S.waiting?` <span style="color:var(--amber)"> · ? waiting for you</span>`:"") : `<span class="c">no plan yet</span>`;
+
+  $("tray-cost").textContent = "$"+S.cost.toFixed(2);
+  $("tray-sub").innerHTML = running?`<span style="color:var(--blue)">◇ ${running} subagents</span>`:"";
+  $("tray-sub").innerHTML += S.waiting?` <span class="warn">? 1 waiting</span>`:"";
+  $("tabdot").className = "dot"+(S.timer?" busy":"");
+}
+
+function render(){ renderTranscript(); renderActivity(); }
+
+// ---------------------------------------------------------------- the clock
+function tick(){
+  const dt=100*S.speed; S.t+=dt; S.cost+=0.0006*S.speed;
+  for(const a of S.agents){
+    if(a.state!=="running"){ a.hist.push(0); continue; }
+    const busy = Math.random()<0.5; a.hist.push(busy?Math.random():0.1);
+    if(busy && Math.random()<0.12){ a.steps++; a.cost+=0.01; a.i=(a.i+1)%a.plan.length; a.now=a.plan[a.i]; }
+  }
+  while(S.queue.length && S.t>=S.queue[0].at){ S.queue.shift().fn(); }
+  render();
+  if(!S.queue.length && !S.agents.some(a=>a.state==="running")){ clearInterval(S.timer); S.timer=null; render(); }
+}
+function reset(){
+  clearInterval(S.timer); S.timer=null;
+  Object.assign(S,{t:0,cost:0,tasks:[],agents:[],changes:[],waiting:null,events:[],live:null});
+  let at=0; S.queue=SCENARIO.map(([d,fn])=>({at:(at+=d),fn}));
+  render();
+}
+function play(){ if(S.timer) return; if(!S.queue.length) reset(); S.timer=setInterval(tick,100); }
+
+// ---------------------------------------------------------------- layouts, input
+function setLayout(L){
+  S.layout=L;
+  $("activity").style.display = L==="A" ? "block" : "none";
+  $("strip").style.display = L==="B" ? "flex" : "none";
+  $("pinned").style.display = L==="C" ? "block" : "none";
+  render();
+}
+document.querySelectorAll("[data-layout]").forEach(b=>b.onclick=()=>{ setLayout(b.dataset.layout); mark("layout",b); });
+document.querySelectorAll("[data-detail]").forEach(b=>b.onclick=()=>{ S.detail=b.dataset.detail; mark("detail",b); render(); });
+document.querySelectorAll("[data-speed]").forEach(b=>b.onclick=()=>{ S.speed=+b.dataset.speed; mark("speed",b); });
+function mark(attr,b){ document.querySelectorAll(`[data-${attr}]`).forEach(x=>x.classList.toggle("on",x===b)); }
+$("play").onclick=play; $("reset").onclick=reset;
+$("transcript").onclick=e=>{ const s=e.target.closest(".steps"); if(!s) return; const ev=S.events.find(x=>x.id===s.dataset.id); ev.open=!ev.open; render(); };
+$("activity").onclick=e=>{
+  const a=e.target.closest(".agent"); if(!a) return; const ag=S.agents[+a.dataset.agent];
+  const c=$("child"); c.style.display="block";
+  c.innerHTML=`<div class="l c">;; ▌ subagent ◇ ${esc(ag.name)} · read-only · child of "fix the timeout"   (Esc closes)</div>`+
+    `<div class="l rule">;; ━━ 1 ━━ read-only ${"━".repeat(40)}</div><div class="l q">;; ▸ ${esc(ag.goal)}</div><div class="l"></div>`+
+    `<div class="l steps">${C}⋯ ${ag.steps} steps · ${esc(ag.plan.join(" · "))}</div>`+
+    (ag.result?`<div class="summary"><div class="h">✔ Reported back to the parent</div>${esc(ag.result)}</div>`:`<div class="l live-line">;; ● ${esc(ag.now)}</div>`);
+};
+const NOTES = `<h3>What this prototype tests</h3>
+1. STEPS COLLAPSE, OUTCOMES STAND OUT
+   A run of tool calls renders as ONE dim line:  ⋯ 6 steps · read 3 · ran 2 ✓
+   While it runs, that same line shows only the CURRENT step (it is replaced, not
+   appended). Enter expands it to the #N lines (C-c C-o still opens each).
+   Findings (◆) are bright with a bar; a subagent's report is ◇; the turn ends in a
+   SUMMARY block: tasks, the changes as drillable chips, and "→ for you".
+   In Lisp: TURN-LINES groups consecutive tool_use blocks; the model marks a finding
+   by starting a paragraph with "◆ Label:" (system prompt), so no new protocol.
+
+2. THE ACTIVITY SUBJECT (layout A)
+   plan · waiting for you · subagents · changes (image ● file ● built ●).
+   It is NOT a fixed sidebar (doc/agent.org §8.10 rejects one): it is a subject,
+   SUBJ-AGENT-ACTIVITY, opened in the conversation pane's side split (pane-side,
+   SuperL-o toggles), a :list view whose rows drill — a task to its steps, a
+   subagent to its conversation, a change to its definition. §8.0 holds: drill,
+   choose, evaluate, accept. Layout B puts the same data in a strip; C pins one line.
+
+3. PLAN = a new tool, update-plan
+   The model sends the whole list each time: [{title, state}] with state
+   pending|active|done|failed. Cheap, idempotent, and the only new wire concept.
+
+4. SUBAGENTS = child conversations
+   A tool spawn-subagent {goal, tools?} makes a CONVERSATION with a parent, its own
+   thread (the turn runner already runs off the UI thread), authority :read-only by
+   default, a step budget. Its final text returns as the tool's result. The card
+   shows goal, current step, steps, cost, and an activity sparkline.
+
+5. CHANGES LEDGER
+   Every accept/eval/file-write lands as a row with three dots: in the image, in
+   the host file, in the built lisp-init — answering "will I lose it on restart?"
+   at a glance. (This session's question, made a view.)
+
+Try: ▶ play, then switch layouts while it runs; click a ⋯ line; click a subagent
+card; toggle concise/verbose. Esc closes overlays.`;
+$("notes").innerHTML=NOTES;
+$("notes-btn").onclick=()=>{ const n=$("notes"); n.style.display=n.style.display==="block"?"none":"block"; };
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"){ $("child").style.display="none"; $("notes").style.display="none"; }
+  if(e.key==="?") $("notes-btn").onclick();
+  if(e.key===" "&&e.target===document.body){ e.preventDefault(); S.timer?(clearInterval(S.timer),S.timer=null,render()):play(); }
+});
+reset(); setLayout("A");
+// #play[,B|C][,verbose] starts at 3x — for a quick look, and for headless tests
+if(location.hash.startsWith("#play")){ const o=location.hash.split(","); S.speed=3; if(o[1]) setLayout(o[1]); if(o[2]) S.detail=o[2]; play(); }
+</script>
+</body>
+</html>

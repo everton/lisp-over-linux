@@ -61,7 +61,7 @@
    classifiers decline a request, the API re-runs it on the model Anthropic
    recommends for that category instead of returning the refusal. Claude API only,
    and only for the models in +FALLBACK-MODELS+.")
-(defvar *agent-retries* 5 "How many times a 429 / 5xx / overloaded reply is retried.")
+(defvar *agent-retries* 6 "How many times a 429 / 5xx / overloaded reply, or a dropped or timed-out connection, is retried.")
 (defvar *agent-connect-timeout* 15
   "Seconds a TCP connect to the endpoint may take before it counts as failed.")
 (defvar *agent-wrap* 92 "Columns the conversation's prose is wrapped at.")
@@ -178,6 +178,47 @@
                          (t (setf (symbol-value (second entry)) value)
                             (push key set)))))))
     (nreverse set)))
+
+(defun save-agent-setting (key value)
+  "Set KEY to VALUE in ~/.config/lol/agent.lisp, keeping every other setting there, so
+   it holds on the next boot too. The file is READ (never LOADed) by
+   LOAD-AGENT-SETTINGS; it is rewritten whole through a temporary file and a rename, so
+   a crash leaves the old file or the new one, never half of one. Returns the plist."
+  (unless (assoc key +agent-setting-vars+) (error "~s is not an agent setting" key))
+  (let* ((path (native-path (agent-settings-path)))
+         (tmp (native-path (concatenate 'string (agent-settings-path) ".tmp")))
+         (plist (when (probe-file path)
+                  (with-open-file (s path)
+                    (let ((*read-eval* nil) (*package* (find-package :keyword)))
+                      (read s nil nil))))))
+    (setf (getf plist key) value)
+    (ensure-directories-exist path)
+    (with-open-file (s tmp :direction :output :if-exists :supersede)
+      (let ((*package* (find-package :keyword)) (*print-readably* nil))
+        (format s ";; The agent's settings: ONE plist, read (never loaded) at boot.~%")
+        (format s ";; Keys and their checks: +AGENT-SETTING-VARS+ in agent.lisp.~%")
+        (prin1 plist s) (terpri s)))
+    (rename-file tmp path)
+    plist))
+
+(defun allow-all-writes (&key conversation save)
+  "Stop asking: from now on every write tool runs without a TOOL-APPROVAL-REQUEST.
+   Sets *AGENT-AUTHORITY* to :ALLOW for this session (and CONVERSATION's own authority,
+   if it has one, which would otherwise win). With SAVE, also writes :AUTHORITY :ALLOW
+   to ~/.config/lol/agent.lisp, so it holds after a reboot. The way back is
+   ASK-BEFORE-WRITES (or SuperL-Space › agent › authority)."
+  (setf *agent-authority* :allow)
+  (when (and conversation (conversation-authority conversation))
+    (setf (conversation-authority conversation) :allow))
+  (when save (save-agent-setting :authority :allow))
+  :allow)
+
+(defun ask-before-writes (&key save)
+  "Undo ALLOW-ALL-WRITES: every write tool asks again. With SAVE, also in
+   ~/.config/lol/agent.lisp."
+  (setf *agent-authority* :ask)
+  (when save (save-agent-setting :authority :ask))
+  :ask)
 
 (defun ensure-agent-settings ()
   (unless *agent-settings-loaded* (ignore-errors (load-agent-settings))))
@@ -864,8 +905,9 @@
    (a FAILURE plist). Never retried — nothing will change in two seconds."))
 
 (defun retryable-p (c)
-  "Worth trying again: rate limits, server errors, overload, a dropped connection.
-   Not worth it: a 400 (our request is wrong) or a 401/403 (the key is)."
+  "Worth trying again: rate limits, server errors, overload, a dropped connection, a
+   TLS read that timed out or broke. Not worth it: a 400 (our request is wrong), a
+   401/403 (the key is), a certificate that does not verify, no OpenSSL at all."
   (cond
     ((typep c 'agent-api-error)
      (and (or (member (api-error-status c) '(408 409 429 500 502 503 504 529))
@@ -873,12 +915,16 @@
                                            "incomplete")    ; a stream cut mid-answer
                       :test #'equal))
           t))
-    ;; a certificate that does not verify will not verify in two seconds either, and a
-    ;; name that does not exist (NXDOMAIN) will not exist either
     ((typep c 'agent-not-ready) nil)
-    ((condition-of-type-p c 'tls-error) nil)
+    ;; a certificate that does not verify will not verify in two seconds either, nor
+    ;; will a missing OpenSSL appear; but "timed out waiting for …" and a read or
+    ;; write that broke mid-stream are the network, and the network comes back
+    ((condition-of-type-p c 'tls-error)
+     (let ((text (or (ignore-errors (princ-to-string c)) "")))
+       (not (some (lambda (s) (search s text))
+                  '("certificate" "OpenSSL" "HTTPS:" "no host system" "SSL_set1_host")))))
     ((and (condition-of-type-p c 'dns-error) (search "NXDOMAIN" (princ-to-string c))) nil)
-    (t t)))                                ; transport failures: connection refused, timeout
+    (t t)))
 
 (defun condition-of-type-p (c type-name)
   "(TYPEP C TYPE-NAME), for a condition class a LATER module defines (dns.lisp, tls.lisp
@@ -1571,7 +1617,8 @@ why, briefly."
 
 (defun repl-approval-handler (stream-in stream-out)
   "A HANDLER-BIND handler for TOOL-APPROVAL-REQUEST in the REPL: print the restarts —
-   the same three the environment shows — and invoke the one typed."
+   the same three the environment shows — and invoke the one typed. 'a' allows this
+   call and every later one this session (ALLOW-ALL-WRITES)."
   (lambda (c)
     (let ((restarts (remove-if-not (lambda (r) (member (restart-name r) '(allow deny edit)))
                                    (compute-restarts c))))
@@ -1580,13 +1627,17 @@ why, briefly."
         (when input (format stream-out "~a~a~a~%" (sgr 90) input (col-reset))))
       (loop for r in restarts for i from 1
             do (format stream-out "  ~d: ~a~%" i r))
+      (format stream-out "  a: Allow all — stop asking this session~%")
       (loop
-        (format stream-out "choose 1-~d: " (length restarts)) (finish-output stream-out)
-        (let* ((line (read-line stream-in nil ""))
+        (format stream-out "choose 1-~d or a: " (length restarts)) (finish-output stream-out)
+        (let* ((line (string-trim " " (read-line stream-in nil "")))
                (n (ignore-errors (parse-integer line :junk-allowed t))))
-          (when (and n (<= 1 n (length restarts)))
-            (let ((*query-io* (make-two-way-stream stream-in stream-out)))
-              (invoke-restart-interactively (nth (1- n) restarts)))))))))
+          (cond ((and (plusp (length line)) (char-equal (char line 0) #\a) (find-restart 'allow c))
+                 (allow-all-writes :conversation (approval-conversation c))
+                 (invoke-restart 'allow))
+                ((and n (<= 1 n (length restarts)))
+                 (let ((*query-io* (make-two-way-stream stream-in stream-out)))
+                   (invoke-restart-interactively (nth (1- n) restarts))))))))))
 
 (defun repl-listener (out)
   "Print a turn as it happens: text in plain, tool calls as one dim line each."
