@@ -358,6 +358,9 @@
     (cdp-send c "Page.setInterceptFileChooserDialog" (jobj "enabled" :false) :session s)
     (when *web-ua*
       (cdp-send c "Emulation.setUserAgentOverride" (jobj "userAgent" *web-ua*) :session s))
+    ;; the pickers headless Chrome draws where the screencast cannot see them
+    ;; (WEB-PICKER-SETUP, "pickers" below)
+    (web-picker-setup tab)
     (setf (web-tab-sent-w tab) 0 (web-tab-screencasting tab) nil)
     ;; an ADOPTED page (a popup) was already loading before we attached, so its
     ;; load events are gone: ask for what they would have told us
@@ -563,7 +566,15 @@
        (web-refresh-title tab)
        (web-refresh-history tab))
       ((string= method "Page.javascriptDialogOpening")
-       (web-dialog tab params)))))
+       (web-dialog tab params))
+      ;; the page script asked for a picker (a <select> was clicked): queued, and
+      ;; shown by WEB-SERVICE once this dispatch is over (WEB-PICK)
+      ((string= method "Runtime.bindingCalled")
+       (when (equal (jget params "name") +web-picker-binding+)
+         (setf *web-picks*
+               (append *web-picks*
+                       (list (list tab (jget params "payload")
+                                   (jget params "executionContextId"))))))))))
 
 (defun web-browser-event (method params)
   "Events that belong to the browser rather than to a tab: downloads."
@@ -714,7 +725,13 @@
           (when (eq (web-tab-state tab) :live)
             (web-sync-screencast tab (eq tab vis))))
         (when vis (web-nudge vis))
-        (when (and vis (web-decode-pending vis)) (setf frame t))))
+        (when (and vis (web-decode-pending vis)) (setf frame t))
+        ;; a picker the page asked for, shown now that no dispatch is running
+        (loop for (tab payload ctx) = (pop *web-picks*)
+              while tab
+              do (when (and (eq tab vis) (eq (web-tab-state tab) :live))
+                   (web-pick tab payload ctx)
+                   (setf *web-changed* t)))))
     (web-reap-orphans)
     (cond ((shiftf *web-changed* nil) :redraw)
           (frame :frame))))
@@ -903,6 +920,256 @@
   "The page's selected text: the selection inside a focused text field (which
    getSelection() does not see), else the document's.")
 
+;;; ---- pickers: the popups headless Chrome draws where we cannot see them ---------
+;;; A <select>'s list of options is not part of the PAGE. Chrome draws it as a
+;;; separate POPUP WIDGET — on a desktop, a little borderless window of its own, so it
+;;; can hang below the page's edge — with its own compositor frame. Page.startScreencast
+;;; streams the page's frames only, so in a headless Chrome the popup opens (the
+;;; <select> matches :open, and it takes the keys) and is never in a frame we get.
+;;; Measured in the guest, 2026-10-13 (Chrome 148): after a real click the select
+;;; matched :open, the screencast frame held 0 pixels of the popup's highlight blue,
+;;; and Page.captureScreenshot — which does composite popups — held 2809
+;;; (doc/web-browser.org §4.4). <input type=color> is the same; date/time inputs and <datalist> open
+;;; NOTHING headless — Chrome has no picker UI to show.
+;;;
+;;; So we draw them. A page script, installed into every document (Page.
+;;; addScriptToEvaluateOnNewDocument, and once into the one already loaded), catches
+;;; the gesture that would open a popup in the CAPTURE phase — before the page's own
+;;; handlers, before Chrome's default action — cancels it, and reports the control
+;;; through a BINDING: Runtime.addBinding puts a function on the page's window whose
+;;; every call becomes a Runtime.bindingCalled event on our pipe, carrying one string.
+;;; We show our own chooser (the right-button menu's card, fb-browser.lisp's
+;;; RUN-CHOOSER-FB with kind :SELECT) or the minibuffer, and write the answer back with
+;;; Runtime.evaluate IN THE SAME FRAME (the event names its execution context), firing
+;;; the input and change events a real choice fires.
+
+(defparameter +web-picker-binding+ "__lolPicker"
+  "The name of the binding the page script reports through.")
+
+(defparameter +web-picker-js+
+  "(function(){
+if (window.__lolPickerInstalled) return;
+window.__lolPickerInstalled = true;
+/* element <-> small integer, so Lisp can name the control it answers about */
+var ids = new WeakMap(), els = new Map(), next = 1;
+function idOf(el){ var i = ids.get(el); if (!i) { i = next++; ids.set(el, i); }
+  els.set(i, new WeakRef(el)); return i; }
+/* the control's box in TOP-LEVEL viewport CSS px: up through same-origin frames,
+   then the pinch-zoom of the visual viewport (1 here: we never pinch) */
+function where(el){
+  var r = el.getBoundingClientRect(), x = r.left, y = r.top, w = window;
+  try { while (w.frameElement) {
+    var f = w.frameElement.getBoundingClientRect(), cs = w.parent.getComputedStyle(w.frameElement);
+    x += f.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft);
+    y += f.top + parseFloat(cs.borderTopWidth) + parseFloat(cs.paddingTop);
+    w = w.parent; } } catch (e) {}
+  var vv = w.visualViewport, s = vv ? vv.scale : 1;
+  return { x: (x - (vv ? vv.offsetLeft : 0)) * s, y: (y - (vv ? vv.offsetTop : 0)) * s,
+           w: r.width * s, h: r.height * s };
+}
+function send(el, kind, extra){
+  var m = where(el); m.kind = kind; m.id = idOf(el); m.value = el.value;
+  for (var k in extra) m[k] = extra[k];
+  try { window.__lolPicker(JSON.stringify(m)); } catch (e) {}
+}
+function selectable(el){ return el && el.tagName === 'SELECT' && !el.multiple && !el.disabled && !(el.size > 1); }
+function options(el){
+  var out = [];
+  for (var i = 0; i < el.options.length; i++) {
+    var o = el.options[i], g = o.parentNode && o.parentNode.tagName === 'OPTGROUP' ? o.parentNode : null;
+    if (o.hidden) continue;
+    out.push({ i: i, label: o.label || o.text, value: o.value,
+               disabled: !!(o.disabled || (g && g.disabled)), group: g ? g.label : null });
+  }
+  return out;
+}
+function openSelect(el){ el.focus(); send(el, 'select', { sel: el.selectedIndex, options: options(el) }); }
+var DATES = { date: 'yyyy-mm-dd', time: 'hh:mm', 'datetime-local': 'yyyy-mm-ddThh:mm',
+              month: 'yyyy-mm', week: 'yyyy-Www' };
+function pickerKind(el){
+  if (!el || el.tagName !== 'INPUT' || el.disabled || el.readOnly) return null;
+  if (el.type === 'color') return 'color';
+  return DATES[el.type] ? 'date' : null;
+}
+/* A datalist's suggestions are browser UI, not page: headless they are invisible, and
+   once typing opens them they swallow the arrow keys. Chrome only offers them to a
+   FOCUSED input with a list attribute, so while one is focused the attribute is put
+   aside (and put back on blur) and our own list stands in for Chrome's. */
+function listOf(el){ return el.list || (el.__lolList ? document.getElementById(el.__lolList) : null); }
+function hasList(el){ return el && el.tagName === 'INPUT' && !el.disabled && !el.readOnly && !!listOf(el); }
+document.addEventListener('focusin', function(e){
+  var t = e.target;
+  if (t && t.tagName === 'INPUT' && t.getAttribute('list')) {
+    t.__lolList = t.getAttribute('list'); t.removeAttribute('list'); }
+}, true);
+document.addEventListener('focusout', function(e){
+  var t = e.target;
+  if (t && t.__lolList) { t.setAttribute('list', t.__lolList); t.__lolList = null; }
+}, true);
+function openList(el){
+  var v = el.value.toLowerCase(), out = [], all = listOf(el).options;
+  for (var i = 0; i < all.length; i++) {
+    var o = all[i], lab = o.label && o.label !== o.value ? o.value + '  ' + o.label : o.value;
+    if (o.disabled) continue;
+    if (!v || lab.toLowerCase().indexOf(v) >= 0) out.push({ i: i, label: lab, value: o.value, disabled: false, group: null });
+  }
+  if (!out.length) return false;
+  send(el, 'datalist', { sel: -1, options: out }); return true;
+}
+/* the little arrow / calendar icon at the right end of the box */
+function onIcon(el, e){ var r = el.getBoundingClientRect(); return e.clientX > r.right - Math.max(24, r.height); }
+window.addEventListener('mousedown', function(e){
+  if (e.button !== 0) return;
+  var t = e.target, sel = t && t.closest ? t.closest('select') : null;
+  if (selectable(sel)) { e.preventDefault(); openSelect(sel); return; }
+  var k = pickerKind(t);
+  if (k === 'color' || (k === 'date' && onIcon(t, e))) {
+    e.preventDefault(); t.focus(); send(t, k, { type: t.type, format: DATES[t.type] || '#rrggbb' }); return; }
+  if (hasList(t) && onIcon(t, e)) { t.focus(); if (openList(t)) e.preventDefault(); }
+}, true);
+/* a colour input opens its chooser on CLICK (activation), not on mousedown: that is
+   cancelled too, or the invisible chooser opens anyway and swallows every key */
+window.addEventListener('click', function(e){
+  if (pickerKind(e.target) === 'color') e.preventDefault();
+}, true);
+window.addEventListener('keydown', function(e){
+  var el = e.target, plain = !e.ctrlKey && !e.altKey && !e.metaKey;
+  var opener = (e.altKey && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) || e.key === 'F4';
+  if (selectable(el) && (opener || (plain && (e.key === ' ' || e.key === 'Enter')))) {
+    e.preventDefault(); openSelect(el); return; }
+  var k = pickerKind(el);
+  if (k && (opener || (k === 'color' && plain && (e.key === ' ' || e.key === 'Enter')))) {
+    e.preventDefault(); send(el, k, { type: el.type, format: DATES[el.type] || '#rrggbb' }); return; }
+  if (hasList(el) && (opener || (plain && e.key === 'ArrowDown')) && openList(el)) e.preventDefault();
+}, true);
+/* Lisp's answer: V is {index, value} for a list, {value} for a typed one */
+window.__lolPickerApply = function(id, v){
+  var r = els.get(id), el = r && r.deref();
+  if (!el || !el.isConnected) return 'gone';
+  if (el.tagName === 'SELECT') {
+    var i = v.index;
+    if (!(el.options[i] && el.options[i].value === v.value)) {
+      i = -1; for (var j = 0; j < el.options.length; j++) if (el.options[j].value === v.value) { i = j; break; } }
+    if (i < 0) return 'gone';
+    el.focus();
+    if (el.selectedIndex === i) return 'same';
+    el.selectedIndex = i;
+  } else {
+    var before = el.value;
+    el.value = v.value;
+    if (v.value !== '' && el.value.toLowerCase() !== String(v.value).toLowerCase()) { el.value = before; return 'invalid'; }
+    el.focus();
+    if (el.value === before) return 'same';
+  }
+  el.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+  return 'ok';
+};
+})();"
+  "The page script behind the pickers (see the section's header). Plain JavaScript in
+   the page's own world, written to be read: the capture-phase listeners on WINDOW run
+   before any of the page's, and only cancel the gestures that would open a popup.")
+
+(defvar *web-picks* '()
+  "(tab payload context-id) for every picker a page asked for, oldest first. Filled by
+   WEB-EVENT, emptied by WEB-SERVICE: the chooser is MODAL, so it must not run while
+   WEB-EVENT is still inside the dispatch loop of CDP-PUMP.")
+
+(defun web-picker-setup (tab)
+  "Give TAB's page the binding and the script — for every document it will load, and
+   for the one it already has (an adopted popup was loading before we attached)."
+  (let ((s (web-tab-session tab)) (c *web-chrome*))
+    ;; Runtime.bindingCalled is an event of the Runtime domain, and like every
+    ;; domain's events it is only sent once the domain is enabled (without this the
+    ;; script ran, cancelled the click, and its report went nowhere — the first run
+    ;; of poc/web-test.lisp's picker checks). The cost: an executionContextCreated
+    ;; per frame and a consoleAPICalled per console.log, which WEB-EVENT ignores.
+    (cdp-send c "Runtime.enable" nil :session s)
+    (cdp-send c "Runtime.addBinding" (jobj "name" +web-picker-binding+) :session s)
+    (cdp-send c "Page.addScriptToEvaluateOnNewDocument" (jobj "source" +web-picker-js+) :session s)
+    (cdp-send c "Runtime.evaluate" (jobj "expression" +web-picker-js+) :session s)))
+
+(defun web-pick-anchor (msg)
+  "The screen rectangle of the control MSG reports -> (values x y w h), from its
+   CSS-pixel box: the page's origin on screen plus CSS px times *WEB-ZOOM*, the same
+   mapping WEB-PAGE-POINT inverts."
+  (destructuring-bind (px py pw ph) (or *web-page-rect* (list 0 0 0 0))
+    (declare (ignore pw ph))
+    (flet ((n (k) (let ((v (jget msg k))) (if (realp v) v 0))))
+      (values (round (+ px (* *web-zoom* (n "x"))))
+              (round (+ py (* *web-zoom* (n "y"))))
+              (round (* *web-zoom* (n "w")))
+              (round (* *web-zoom* (n "h")))))))
+
+(defun web-pick-entries (msg)
+  "MSG's options as chooser entries: the label, the <optgroup> as the section, dim
+   and unpickable when disabled, the current one :SELECTED. The entry's :ACTION is the
+   (index . value) to write back."
+  (loop for o across (or (jget msg "options") #())
+        for i = (jget o "i")
+        for group = (jget o "group")
+        collect (list :label (let ((l (jget o "label"))) (if (stringp l) l ""))
+                      :action (cons i (jget o "value"))
+                      :group (and (stringp group) group)
+                      :disabled (eq (jget o "disabled") t)
+                      :selected (eql i (jget msg "sel")))))
+
+(defun web-pick-apply (tab ctx id answer)
+  "Write ANSWER (a JOBJ: index and value, or value alone) to control ID, in the frame
+   whose execution context is CTX. The page answers ok / same / invalid / gone."
+  (web-send tab "Runtime.evaluate"
+            (apply #'jobj "expression"
+                   (format nil "window.__lolPickerApply(~d, ~a)" id (json-string answer))
+                   "returnByValue" t
+                   (and ctx (list "contextId" ctx)))
+            (lambda (r)
+              (let ((v (jget r "result" "result" "value")))
+                (cond ((equal v "invalid")
+                       (setf *browser-status* "the page refused that value"))
+                      ((not (member v '("ok" "same") :test #'equal))
+                       (setf *browser-status* "that control has gone from the page")))
+                (setf *web-changed* t)))))
+
+(defvar *web-press*)                    ; defined with the pointer input, below
+
+(defun web-finish-press ()
+  "The press that opened a picker has not been released to the page yet (the button
+   is still down while the chooser comes up, and the chooser will eat its release):
+   send the release now, so the page does not think the button is held."
+  (when *web-press*
+    (destructuring-bind (tab cx cy count mods) (shiftf *web-press* nil)
+      (web-mouse tab "mouseReleased" cx cy :button "left" :count count :mods mods))))
+
+(defun web-pick (tab payload ctx)
+  "Show the picker the page asked for (PAYLOAD, the JSON string the script sent from
+   execution context CTX), and write back what is chosen."
+  (let* ((msg (ignore-errors (read-json (coerce payload 'simple-string))))
+         (kind (jget msg "kind"))
+         (id (jget msg "id")))
+    (when (and msg (integerp id))
+      (web-finish-press)
+      (multiple-value-bind (x y w h) (web-pick-anchor msg)
+        (cond
+          ((member kind '("select" "datalist") :test #'equal)
+           (let ((entries (web-pick-entries msg)))
+             (cond
+               ((null entries) (setf *browser-status* "that list has no options"))
+               ((null *chooser*) (setf *browser-status* "no menus on this backend"))
+               (t (let ((e (let ((*menu-width* (max w 60)))
+                             (funcall *chooser* :select entries x (+ y h)))))
+                    (when e
+                      (web-pick-apply tab ctx id (jobj "index" (car (getf e :action))
+                                                       "value" (cdr (getf e :action))))))))))
+          ;; colour, date, time: Chrome has no picker to show (date) or shows one we
+          ;; cannot see (colour); the value is a short string, so the minibuffer asks
+          ((member kind '("color" "date") :test #'equal)
+           (let ((format (or (jget msg "format") "")) (type (or (jget msg "type") kind)))
+             (minibuffer-read (format nil "~a (~a): " type format)
+                              (lambda (text)
+                                (web-pick-apply tab ctx id (jobj "value" (string-trim " " text))))
+                              :initial (let ((v (jget msg "value"))) (if (stringp v) v ""))
+                              :hint "Enter sets it · C-g leaves it"))))))))
+
 ;;; ---- input: pointer --------------------------------------------------------------
 
 (defun fb-var (name)
@@ -1041,6 +1308,9 @@
     (:right "ArrowRight" "ArrowRight" 39 nil) (:down "ArrowDown" "ArrowDown" 40 nil)
     (:home "Home" "Home" 36 nil) (:end "End" "End" 35 nil)
     (:page-up "PageUp" "PageUp" 33 nil) (:page-down "PageDown" "PageDown" 34 nil)
+    ;; F4 opens a <select> or a date's picker on Windows and Linux; the page script
+    ;; (+WEB-PICKER-JS+) listens for it
+    (:f4 "F4" "F4" 115 nil)
     (:f10 "F10" "F10" 121 nil))
   "(KEY dom-key dom-code virtual-keycode text) for the keys that are not characters.")
 

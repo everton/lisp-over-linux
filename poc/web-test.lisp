@@ -121,6 +121,15 @@
 <div style='height:3000px;background:linear-gradient(#fff,#88a)'>tall</div>
 </body>")
   (page "two.html" "<!doctype html><title>LoL page two</title><h1>Page two</h1>")
+  ;; the pickers (doc/web-browser.org §4.4): a <select> with groups and a disabled
+  ;; option whose onchange retitles the page, a datalist, a colour and a date
+  (page "pick.html" "<!doctype html><title>LoL pickers</title>
+<body style='font:20px sans-serif;margin:30px'>
+<p><select id=s style='font-size:20px' onchange='window.changes=(window.changes||0)+1;document.title=\"picked \"+this.value'>
+<optgroup label=Fruit><option value=a>Apple<option value=b>Banana</optgroup>
+<optgroup label=Roots><option value=c disabled>Carrot<option value=d>Daikon</optgroup></select></p>
+<p><input id=dl list=L style='font-size:20px'><datalist id=L><option value=one><option value=two><option value=three></datalist></p>
+<p><input id=co type=color> <input id=dt type=date style='font-size:20px'></p></body>")
   (page "three.html" "<!doctype html><title>LoL page three</title><h1>Page three</h1>"))
 
 ;;; ---- the run --------------------------------------------------------------------
@@ -231,6 +240,87 @@
                   (pump-until (lambda ()
                                 (= 1 (count "page" (jget (cdp-call *web-chrome* "Target.getTargets") "targetInfos")
                                             :key (lambda (ti) (jget ti "type")) :test #'equal))))))
+         ;; ---- the pickers: what Chrome draws where the screencast cannot see ----
+         (web-navigate (tab) (url "pick.html"))
+         (check "the picker page loads"
+                (pump-until (lambda () (equal (title) "LoL pickers"))))
+         (check "the page script is installed (window.__lolPickerApply)"
+                (pump-until (lambda () (equal (js "typeof window.__lolPickerApply") "function"))))
+         (let* ((calls '()) (answer nil)
+                (*chooser* (lambda (kind entries x y &optional layers)
+                             (declare (ignore layers))
+                             (push (list kind entries x y) calls)
+                             (and answer (find answer entries :key (lambda (e) (getf e :label))
+                                                              :test #'equal)))))
+           (setf answer "Daikon")
+           (multiple-value-bind (x y) (element-center "s") (browser-click x y))
+           (check "a click on a <select> opens OUR chooser (:select)"
+                  (pump-until (lambda () (and calls (eq (first (first calls)) :select)))))
+           (destructuring-bind (&optional kind entries cx cy) (first calls)
+             (declare (ignore kind))
+             (check "... with every option, the optgroups as sections"
+                    (and (equal (mapcar (lambda (e) (getf e :label)) entries)
+                                '("Apple" "Banana" "Carrot" "Daikon"))
+                         (equal (mapcar (lambda (e) (getf e :group)) entries)
+                                '("Fruit" "Fruit" "Roots" "Roots"))))
+             (check "... Carrot disabled, Apple the current one"
+                    (and (getf (third entries) :disabled) (getf (first entries) :selected)
+                         (notany (lambda (e) (getf e :disabled)) (list (first entries) (second entries) (fourth entries)))))
+             (multiple-value-bind (sx sy) (element-center "s")
+               (check "... placed under the control, at its left edge"
+                      (and cx cy (< (abs (- cy (+ sy 12))) 14) (< (- sx cx) 200) (> cy sy)))))
+           (check "Chrome's own popup did NOT open (the select is not :open)"
+                  (equal (js "document.getElementById('s').matches(':open')") :false))
+           (check "choosing Daikon sets the value and fires change (the title)"
+                  (pump-until (lambda () (and (equal (js "document.getElementById('s').value") "d")
+                                              (equal (title) "picked d")))))
+           (setf answer nil calls '())
+           (multiple-value-bind (x y) (element-center "s") (browser-click x y))
+           (pump-until (lambda () calls))
+           (pump-until (lambda () nil) 1)
+           (check "Esc (no choice) leaves the value and fires nothing"
+                  (and calls (equal (js "document.getElementById('s').value") "d")
+                       (eql (js "window.changes") 1)))
+           (setf answer "Banana" calls '())
+           (browser-key #\Space 0)
+           (check "Space on the focused select opens the chooser too"
+                  (pump-until (lambda () calls)))
+           (check "... and its choice lands"
+                  (pump-until (lambda () (equal (js "document.getElementById('s').value") "b"))))
+           ;; a datalist: headless Chrome shows no suggestions at all
+           (setf answer "two" calls '())
+           (multiple-value-bind (x y) (element-center "dl") (browser-click (- x 100) y))
+           (pump-until (lambda () (equal (js "document.activeElement.id") "dl")))
+           (type-string "t")
+           (browser-key :down 0)
+           (check "Down in a datalist input offers its suggestions, filtered"
+                  (pump-until (lambda () (and calls (equal (mapcar (lambda (e) (getf e :label)) (second (first calls)))
+                                                           '("two" "three"))))))
+           (check "... and the choice becomes the input's value"
+                  (pump-until (lambda () (equal (js "document.getElementById('dl').value") "two")))))
+         ;; colour and date: the minibuffer asks for the value
+         (multiple-value-bind (x y) (element-center "co") (browser-click x y))
+         (check "a click on a colour input asks in the minibuffer"
+                (pump-until (lambda () (and *minibuffer* (search "color" (mb-prompt *minibuffer*))))))
+         (browser-key #\u 4)
+         (type-string "#ff8800")
+         (browser-key :return 0)
+         (check "... and sets what was typed"
+                (pump-until (lambda () (equal (js "document.getElementById('co').value") "#ff8800"))))
+         (js "document.getElementById('dt').focus()")
+         (browser-key :down 8)                ; Alt-Down, the picker key
+         (check "Alt-Down on a date input asks in the minibuffer"
+                (pump-until (lambda () (and *minibuffer* (search "yyyy-mm-dd" (mb-prompt *minibuffer*))))))
+         (browser-key #\u 4)
+         (type-string "2026-10-13")
+         (browser-key :return 0)
+         (check "... and sets the date"
+                (pump-until (lambda () (equal (js "document.getElementById('dt').value") "2026-10-13"))))
+         (check "web-pick-anchor maps CSS px through the zoom"
+                (let ((*web-page-rect* (list 10 100 800 600)) (*web-zoom* 2))
+                  (equal (multiple-value-list
+                          (web-pick-anchor (read-json "{\"x\":5,\"y\":7.5,\"w\":40,\"h\":20}")))
+                         '(20 115 80 40))))
          ;; the address bar: C-l, type, Enter
          (setf *active* (position-if (lambda (tr) (web-tab-of (first tr))) *trails*))
          (browser-key #\l 4)
