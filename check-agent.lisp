@@ -15,6 +15,11 @@
 ;;;;   2. A question that makes the model call lisp-eval — a WRITE — pops the approval
 ;;;;      chooser; key 1 (Allow) runs it, and the result goes back to the model.
 ;;;;   3. A slow answer is stopped with C-g.
+;;;;   3b. Every failure is said IN THE PANE, as a red ;; !! block with the cause and
+;;;;      what to do (doc/agent.org §14.8): a 401, a 529 after its retries, a stream
+;;;;      cut mid-answer (its partial text kept), no route to the endpoint, no lease
+;;;;      and no resolv.conf, https on a diskless boot, an error inside the transport;
+;;;;      C-c C-a on an empty draft asks the failed question again, not twice.
 ;;;;   4. The REPL doorway: "?question" on the net REPL streams the answer as text.
 ;;;;   5. The debugger doorway: Debug it on the primer's (lol.examples:launch), pick
 ;;;;      the ASK restart, and a read-only conversation seeded with the condition, the
@@ -115,6 +120,83 @@
   (check "the transcript says it was stopped"
          (string= (row "a stopped note" (wait-until (pane-has "stopped (C-g)") :seconds 10)) "T"))
   (shot "agent-stopped")
+
+  (format t "~&~%== 3b. every failure is said in the pane, in words ==~%")
+  ;; fewer retries, so a failure that retries (529, a cut stream) ends in seconds
+  (probe "(setf *agent-retries* 2)")
+  (flet ((ask-and-fail (question want &key (seconds 40))
+           "Type QUESTION, C-c C-a, and wait for an error block containing WANT."
+           (qmp-type question) (sleep 0.3)
+           (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a")
+           (string= (row (format nil "pane: ~a" (subseq want 0 (min 40 (length want))))
+                         (wait-until (format nil "(and (not (conversation-busy-p *conversation*)) ~a)"
+                                             (pane-has want))
+                                     :seconds seconds))
+                    "T")))
+    (check "401: a red FAILED block naming the refused key"
+           (ask-and-fail "badkey please" "FAILED: The API refused the key (401"))
+    (check "401: the API's own words are shown"
+           (string= (row "invalid x-api-key in the pane" (probe (pane-has "invalid x-api-key"))) "T"))
+    (check "the block is drawn in the condition colour (the pane's tint)"
+           (string= (row "tint of a ;; !! line"
+                         (probe "(let* ((tv (pane-tv (current-pane))) (l (find-if #'error-line-p (lol.textview:tv-lines tv)))) (and l (eql (funcall (lol.textview:tv-tint tv) l) (concept-color :condition)) t))"))
+                    "T"))
+    (check "the status line says it too"
+           (string= (row "status" (probe "(and *browser-status* (search \"agent: The API refused the key\" *browser-status*) t)")) "T"))
+    (shot "agent-failed-401")
+    ;; C-c C-a with nothing typed: the same question again, not said twice
+    (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a")
+    (check "C-c C-a on an empty draft asks the failed question again"
+           (string= (row "an (asked again) turn that failed the same way"
+                         (wait-until "(let ((tu (current-turn *conversation*))) (and (turn-again tu) (turn-done tu) (turn-failure tu) (equal (turn-question tu) \"badkey please\") t))" :seconds 20))
+                    "T"))
+    (check "...and the question was not appended twice"
+           (string= (row "last user message has one text block"
+                         (probe "(let* ((ms (conversation-messages *conversation*)) (m (aref ms (1- (length ms))))) (and (equal (message-role m) \"user\") (= 1 (count \"badkey please\" (message-blocks m) :key (lambda (b) (lol.json:jget (block-json b) \"text\")) :test #'equal)) t))"))
+                    "T"))
+    (check "529 every time: 'overloaded', after the retries"
+           (ask-and-fail "busy please" "FAILED: The API is overloaded (529)"))
+    (check "a stream cut mid-answer: 'cut off'"
+           (ask-and-fail "cutoff please" "FAILED: The answer was cut off"))
+    (check "...with the text that had arrived kept above the block"
+           (string= (row "partial text in the pane" (probe (pane-has "This answer will be cut off"))) "T"))
+    (shot "agent-failed-cutoff")
+    ;; no network: take the default route away (the net REPL is on-link and survives)
+    (probe "(let ((dr (ipv4-default-route))) (and dr (delete-default-route (getf dr :gateway))))")
+    (check "the default route is gone" (string= (row "default route" (probe "(ipv4-default-route)")) "NIL"))
+    (probe "(setf *agent-endpoint* \"http://192.0.2.1:18014\")")       ; TEST-NET-1: off-link
+    (check "an endpoint with no route: 'No network', at once"
+           (ask-and-fail "hello with no route" "FAILED: No network: there is no route" :seconds 10))
+    ;; the laptop's case: DHCP got no lease at all — no lease, no resolv.conf. (SLIRP
+    ;; also advertises IPv6, so a v6 default route may remain: the check is then
+    ;; "no IPv4 connection" rather than "not connected"; both start "No network".)
+    (probe "(progn (defparameter cl-user::*saved-lease* (current-lease)) (setf *leases* nil) (write-file-in-place \"/etc/resolv.conf\" \"\") (dns-flush) t)")
+    (probe "(setf *agent-endpoint* \"http://api.example.invalid:18014\")")
+    (check "a named endpoint, no lease: 'No network', at once"
+           (ask-and-fail "hello with no lease" "FAILED: No network: this machine" :seconds 10))
+    (check "...saying DHCP got no lease"
+           (string= (row "the lease is named" (probe (pane-has "DHCP got no lease"))) "T"))
+    (check "...and what to do (the network view)"
+           (string= (row "advice in the pane" (probe (pane-has "SuperL-n opens the network view"))) "T"))
+    (shot "agent-failed-no-network")
+    (probe "(progn (push cl-user::*saved-lease* *leases*) (write-resolv-conf cl-user::*saved-lease*) (add-default-route \"10.0.2.2\"))")
+    (check "the default route is back" (string= (row "default route back" (probe "(and (ipv4-default-route) t)")) "T"))
+    ;; HTTPS on a diskless boot: no /mnt/host, so no OpenSSL to load
+    (probe (format nil "(setf *agent-endpoint* \"https://10.0.2.2:~d\")" *mock-port*))
+    (check "https with no host system: 'HTTPS is not available'"
+           (ask-and-fail "hello over tls" "FAILED: HTTPS is not available" :seconds 10))
+    ;; an error nobody planned for, on the turn's own thread
+    (probe (format nil "(setf *agent-endpoint* \"http://10.0.2.2:~d\")" *mock-port*))
+    (probe "(setf *agent-transport* (lambda (&rest args) (declare (ignore args)) (error \"boom in the transport\")))")
+    (check "an unexpected error on the turn's thread: said, not lost"
+           (ask-and-fail "hello into a bug" "FAILED: Something went wrong inside the agent"))
+    (check "...naming it" (string= (row "the error's text" (probe (pane-has "boom in the transport"))) "T"))
+    (probe "(setf *agent-transport* nil)")
+    (check "after all that, a question is answered again"
+           (progn (qmp-type "hello once more") (sleep 0.3)
+                  (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a")
+                  (string= (row "answered" (wait-until "(let ((tu (current-turn *conversation*))) (and (turn-done tu) (null (turn-failure tu)) t))" :seconds 30)) "T"))))
+  (probe "(setf *agent-retries* 5)")
 
   (format t "~&~%== 4. the REPL doorway ==~%")
   (write-line "?hello from the repl" lol.guest::*repl*) (force-output lol.guest::*repl*)

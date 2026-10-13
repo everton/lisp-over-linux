@@ -312,7 +312,7 @@ RTC is the cross-check.
 
 #+begin_src lisp
   (http-request url &key (method :get) headers body (want :string) on-chunk
-                         (timeout 30) (redirects 5))
+                         (timeout 30) connect-timeout (redirects 5))
     => (values status headers body final-url)
 #+end_src
 
@@ -329,7 +329,11 @@ caller closes. Every request says =Connection: close= — one request per
 connection, no pool — which is the right trade until something measures it.
 Redirects 301/302/303/307/308 are followed; a 303, and a 301/302 answering a POST,
 become a GET. Timeouts are =SO_SNDTIMEO= (on Linux it bounds =connect()= too) and
-=SO_RCVTIMEO= per read.
+=SO_RCVTIMEO= per read. =:connect-timeout= (2026-10-13) bounds the connect alone
+when it should be shorter than =:timeout=: the agent waits 300 s between two reads of
+a long answer, but gives a connect 15 s — with one timeout for both, an unanswered
+SYN could hold a question on "thinking..." for the kernel's whole SYN-retry budget,
+about two minutes, per attempt ([[file:agent.org::14.8 Failure reporting][agent.org §14.8]]).
 
 *HTTPS* is the one place we borrow: TLS from scratch is agent.org §9, a separate
 project. Until then [[file:../initramfs/tls.lisp][=tls.lisp=]] uses the *host's* OpenSSL 3 from =/mnt/host=. The

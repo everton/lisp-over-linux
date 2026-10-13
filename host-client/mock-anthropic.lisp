@@ -83,9 +83,13 @@
   (let ((body (sb-ext:string-to-octets
                (to-json (jobj "type" "error" "error" (jobj "type" type "message" message)))
                :external-format :utf-8)))
-    (send-text sock (format nil "HTTP/1.1 ~d Error~aContent-Type: application/json~aContent-Length: ~d~a~@[retry-after: ~a~a~]Connection: close~a~a"
+    ;; (the retry-after line is built apart: a ~@[ … ~] that consumes TWO arguments
+    ;; when given NIL skips only one, which shifted every later argument and made
+    ;; this FORMAT signal for any error without a retry-after — the 401, the 404)
+    (send-text sock (format nil "HTTP/1.1 ~d Error~aContent-Type: application/json~aContent-Length: ~d~a~aConnection: close~a~a"
                             status (crlf) (crlf) (length body) (crlf)
-                            retry-after (and retry-after (crlf)) (crlf) (crlf)))
+                            (if retry-after (format nil "retry-after: ~a~a" retry-after (crlf)) "")
+                            (crlf) (crlf)))
     (send-octets sock body)))
 
 ;;; ---- the scripted conversation ------------------------------------------------
@@ -164,6 +168,9 @@
 (defun reply-for (sock body)
   "Choose and send the reply. The words that steer it:
      overload   first time a 529 (retry-after 1), then a normal answer
+     busy       ALWAYS a 529 overloaded_error (retry-after 1): the retries run out
+     badkey     ALWAYS a 401 authentication_error, as for a wrong key
+     cutoff     ALWAYS some text, then the connection simply closes mid-stream
      midstream  first time an error EVENT after some text, then a normal answer
      eval       a lisp-eval tool call (a WRITE: gated)
      source     a lisp-source tool call (read-only)
@@ -175,6 +182,16 @@
     (cond
       ((and (search "overload" text) (= count 1))
        (send-json-error sock 529 "overloaded_error" "Overloaded" :retry-after 1))
+      ((search "busy" text)
+       (send-json-error sock 529 "overloaded_error" "Overloaded" :retry-after 1))
+      ((search "badkey" text)
+       (send-json-error sock 401 "authentication_error" "invalid x-api-key"))
+      ((search "cutoff" text)
+       ;; a dropped connection, not an error event: the chunked body just stops, with
+       ;; no terminating chunk, no message_delta and no message_stop
+       (start-stream sock)
+       (message-start sock body)
+       (text-block sock 1 "This answer will be cut off in the middle of a sen"))
       (t
        (start-stream sock)
        (message-start sock body)

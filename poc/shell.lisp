@@ -78,6 +78,7 @@
                    (let ((tv (lol.textview:make-textview
                               :font *bfont*
                               :syntax (view-syntax v)
+                              :tint (view-tint v)
                               :focus (member (view-kind v) '(:source :workspace :file)))))
                      (lol.textview:tv-set-text tv (view-text v))
                      tv)))))

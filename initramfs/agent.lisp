@@ -62,6 +62,8 @@
    recommends for that category instead of returning the refusal. Claude API only,
    and only for the models in +FALLBACK-MODELS+.")
 (defvar *agent-retries* 5 "How many times a 429 / 5xx / overloaded reply is retried.")
+(defvar *agent-connect-timeout* 15
+  "Seconds a TCP connect to the endpoint may take before it counts as failed.")
 (defvar *agent-wrap* 92 "Columns the conversation's prose is wrapped at.")
 (defvar *agent-max-rounds* 25
   "Tool rounds one turn may take before it stops and says so — a runaway loop costs
@@ -115,13 +117,24 @@
   "The key, once read — in this one variable only, never in the saved image (it is
    read at runtime, after save-lisp-and-die), never printed.")
 
+(defun last-report-line (c)
+  "The last line of condition C's report — for a file error, strerror's own words."
+  (let ((r (string-trim '(#\Space #\Newline) (or (ignore-errors (princ-to-string c)) ""))))
+    (string-trim " " (subseq r (1+ (or (position #\Newline r :from-end t) -1))))))
+
 (defun agent-api-key ()
-  "The API key from ~/.config/lol/anthropic-api-key, or NIL."
+  "The API key from ~/.config/lol/anthropic-api-key, or NIL. A file that exists but
+   may not be read (wrong owner, mode 0000) is its own failure, said in words — never
+   a bare FILE-ERROR, and never anything of the contents."
   (or *agent-api-key*
       (let ((path (agent-key-path)))
         (and path (probe-file (native-path path))
              (let ((k (string-trim '(#\Space #\Tab #\Newline #\Return)
-                                   (with-open-file (s (native-path path)) (read-line s nil "")))))
+                                   (handler-case (with-open-file (s (native-path path)) (read-line s nil ""))
+                                     (error (c)
+                                       (error 'agent-api-error :kind "key_unreadable"
+                                              :message (format nil "~a exists but cannot be read (~a)"
+                                                               path (last-report-line c))))))))
                (and (plusp (length k)) (setf *agent-api-key* k)))))))
 
 (defun forget-agent-key ()
@@ -215,7 +228,12 @@
   (notes '())         ; things worth saying that are not messages: retries, errors, 'stopped'
   (done nil)
   usage               ; the turn's usage plist, once done
-  origin)             ; who asked: a pane, :repl, :debugger … (the UI uses it)
+  origin              ; who asked: a pane, :repl, :debugger … (the UI uses it)
+  failure             ; NIL, or why the turn FAILED: (:headline :details :advice), in
+                      ; words, from DESCRIBE-AGENT-FAILURE — the transcript's error block
+  partial             ; the text the model had streamed when it failed ("" if none)
+  again               ; T when this turn re-asks a failed one (C-c C-a on an empty draft)
+  announced)          ; the UI has put the failure on the status line (agent-ui.lisp)
 
 (defclass conversation ()
   ((id :initarg :id :reader conversation-id)
@@ -839,15 +857,33 @@
              (format s "API ~@[~a ~]~@[~a: ~]~a" (api-error-status c) (api-error-kind c)
                      (api-error-message c)))))
 
+(define-condition agent-not-ready (error)
+  ((failure :initarg :failure :reader agent-not-ready-failure))
+  (:report (lambda (c s) (write-string (getf (agent-not-ready-failure c) :headline) s)))
+  (:documentation "The preflight's verdict: this request cannot work, and here is why
+   (a FAILURE plist). Never retried — nothing will change in two seconds."))
+
 (defun retryable-p (c)
   "Worth trying again: rate limits, server errors, overload, a dropped connection.
    Not worth it: a 400 (our request is wrong) or a 401/403 (the key is)."
-  (typecase c
-    (agent-api-error
-     (or (member (api-error-status c) '(408 409 429 500 502 503 504 529))
-         (member (api-error-kind c) '("overloaded_error" "api_error" "rate_limit_error")
-                 :test #'equal)))
+  (cond
+    ((typep c 'agent-api-error)
+     (and (or (member (api-error-status c) '(408 409 429 500 502 503 504 529))
+              (member (api-error-kind c) '("overloaded_error" "api_error" "rate_limit_error"
+                                           "incomplete")    ; a stream cut mid-answer
+                      :test #'equal))
+          t))
+    ;; a certificate that does not verify will not verify in two seconds either, and a
+    ;; name that does not exist (NXDOMAIN) will not exist either
+    ((typep c 'agent-not-ready) nil)
+    ((condition-of-type-p c 'tls-error) nil)
+    ((and (condition-of-type-p c 'dns-error) (search "NXDOMAIN" (princ-to-string c))) nil)
     (t t)))                                ; transport failures: connection refused, timeout
+
+(defun condition-of-type-p (c type-name)
+  "(TYPEP C TYPE-NAME), for a condition class a LATER module defines (dns.lisp, tls.lisp
+   and http.lisp load after this file) — false while that class does not exist."
+  (and (find-class type-name nil) (typep c type-name)))
 
 (defun check-cancel (conv)
   (when (conversation-cancel conv) (throw 'agent-cancel :cancelled)))
@@ -1011,7 +1047,12 @@
                              (when (< (fill-pointer raw) 65536)  ; kept only to report an error body
                                (loop for b across octets do (vector-push-extend b raw)))
                              (sse-feed parser octets))
-                 :timeout 300)
+                 ;; 300 s between two reads (a long thought streams nothing for a
+                 ;; while); but a CONNECT that has not happened in 15 s will not —
+                 ;; without this, a black-holed address held the turn on "thinking..."
+                 ;; for the kernel's two minutes of SYN retries, per attempt
+                 :timeout 300 :connect-timeout *agent-connect-timeout*)
+      (when (eql status 401) (forget-agent-key))   ; the file may be fixed before the retry
       (unless (eql status 200)
         (let* ((text (ignore-errors (sb-ext:octets-to-string raw :external-format :utf-8)))
                (err (ignore-errors (lol.json:parse-json text))))
@@ -1040,26 +1081,263 @@
     (touch conv)
     (agent-listen :note text)))
 
+;;; ===========================================================================
+;;; When it fails: say so, in words, where you asked
+;;; ===========================================================================
+;;;
+;;; A turn that fails must say WHY in the conversation itself — not in a status line
+;;; you may not be looking at, not as a condition's raw report. On the laptop, with
+;;; DHCP failed, a question once sat on "thinking..." with nothing else said: the turn
+;;; was spending a 300 s socket timeout per connect attempt, five attempts with
+;;; backoff, before its first word of explanation. So: (1) a PREFLIGHT that reads the
+;;; routing table, the lease and the key file — sending nothing — and fails at once,
+;;; in plain words, when the request cannot possibly work; (2) a short connect
+;;; timeout; (3) every failure turned into a FAILURE plist — a headline, what we know,
+;;; what to do — which agent-ui.lisp draws as a red block and the REPL prints in red.
+
+(defun failure (headline &key details advice)
+  "A FAILURE plist: HEADLINE one sentence; DETAILS and ADVICE strings or lists of them."
+  (flet ((lst (x) (remove nil (if (listp x) x (list x)))))
+    (list :headline headline :details (lst details) :advice (lst advice))))
+
+(defun endpoint-host ()
+  (or (ignore-errors (nth-value 1 (agent-parse-url *agent-endpoint*))) "the API"))
+
+(defun key-file-name ()
+  (or (agent-key-path) "~/.config/lol/anthropic-api-key (and this boot has no /home)"))
+
+(defun offline-reason ()
+  "Why this machine has no way out, from the lease table — one clause."
+  (let ((lease (and (fboundp 'current-lease) (funcall 'current-lease))))
+    (if lease
+        (format nil "~a has a DHCP lease, but no default route goes through it" (funcall 'lease-iface lease))
+        "DHCP got no lease, so there is no IPv4 address (Wi-Fi not connected, or no cable)")))
+
+(defun ipv4-route-to-p (octets)
+  "Is there an IPv4 route covering OCTETS (a vector or list of 4)? Loopback always is."
+  (let ((a (coerce octets 'list)))
+    (or (= (first a) 127)
+        (some (lambda (r)
+                (let ((dest (funcall 'ipv4-octets (getf r :dest)))
+                      (mask (funcall 'ipv4-octets (getf r :mask))))
+                  (every (lambda (x m d) (= (logand x m) d)) a mask dest)))
+              (funcall 'ipv4-routes)))))
+
+(defun network-failure (host)
+  "Why HOST cannot be reached from here — a FAILURE — or NIL when nothing obvious is
+   wrong. Cheap: reads /proc/net/route, the lease and resolv.conf; sends nothing.
+   Without net.lisp (a host test that never loaded it) it judges nothing."
+  (when (fboundp 'ipv4-routes)
+    (let* ((literal (or (and (fboundp 'parse-ip-address) (funcall 'parse-ip-address host))
+                        (first (and (fboundp 'dns-override) (funcall 'dns-override host)))
+                        (first (and (fboundp 'hosts-file-lookup) (ignore-errors (funcall 'hosts-file-lookup host))))))
+           (advice (list "Connect first: SuperL-n opens the network view (Wi-Fi networks, the lease)."
+                         "Then press C-c C-a here with nothing typed: it asks the same question again.")))
+      (cond
+        ((and literal (= (length literal) 4))
+         (unless (ipv4-route-to-p literal)
+           (failure "No network: there is no route to the API."
+                    :details (let ((dotted (format nil "~{~d~^.~}" (coerce literal 'list))))
+                               (format nil "Nothing in the routing table reaches ~a~:[ (~a)~;~*~]: ~a."
+                                       host (string= host dotted) dotted (offline-reason)))
+                    :advice advice)))
+        (literal nil)                                   ; an IPv6 literal: not judged
+        (t (hostname-network-failure host advice))))))
+
+(defun hostname-network-failure (host advice)
+  "NETWORK-FAILURE for a NAME: it needs a way out AND a DNS server we can reach. The
+   servers are IPv4 (dns.lisp asks over v4), so an IPv6 route alone — a router's
+   advertisement can give one while DHCP fails — does not make a name resolvable."
+  (let* ((v4 (funcall 'ipv4-default-route))
+         (v6 (and (fboundp 'ipv6-default-route) (funcall 'ipv6-default-route)))
+         (servers (and (fboundp 'dns-servers) (funcall 'dns-servers)))
+         (dotted (mapcar (lambda (o) (format nil "~{~d~^.~}" (coerce o 'list))) servers)))
+    (cond
+      ((not (or v4 v6))
+       (failure "No network: this machine is not connected."
+                :details (format nil "There is no default route, so ~a cannot be reached: ~a."
+                                 host (offline-reason))
+                :advice advice))
+      ((and (fboundp 'dns-servers) (null servers))
+       (if v4
+           (failure (format nil "No DNS server, so ~a cannot be looked up." host)
+                    :details "No DHCP lease named a DNS server, and /etc/resolv.conf lists none."
+                    :advice advice)
+           (failure "No network: this machine has no IPv4 connection."
+                    :details (format nil "There is no IPv4 default route: ~a. An IPv6 route exists, but no DNS server is known to look ~a up with."
+                                     (offline-reason) host)
+                    :advice advice)))
+      ((and servers (notany #'ipv4-route-to-p servers))
+       (failure "No network: the DNS server cannot be reached."
+                :details (format nil "No route leads to ~{~a~^, ~}, so ~a cannot be looked up: ~a."
+                                 dotted host (offline-reason))
+                :advice advice)))))
+
+(defun agent-preflight ()
+  "Signal AGENT-NOT-READY, with every reason found, when a request to the endpoint
+   cannot work: no key for api.anthropic.com, no network, no HTTPS library. Sends
+   nothing and costs a few file reads — run before every turn's first request."
+  (let* ((url (concatenate 'string (string-right-trim "/" *agent-endpoint*) "/v1/messages"))
+         (host (endpoint-host))
+         (problems '()))
+    (let ((net (network-failure host)))
+      (when net (push net problems)))
+    (when (anthropic-endpoint-p url)
+      (handler-case
+          (unless (agent-api-key)
+            (push (failure "No API key."
+                           :details (format nil "The agent reads its key from ~a, and that file ~:[does not exist~;is empty~]."
+                                            (key-file-name)
+                                            (and (agent-key-path) (probe-file (native-path (agent-key-path)))))
+                           :advice (list (format nil "Put your key on one line in that file (chmod 600) — a key comes from console.anthropic.com.")
+                                         "Then press C-c C-a here with nothing typed: it asks the same question again."))
+                  problems))
+        (agent-api-error (c)
+          (push (failure "The API key file cannot be read."
+                         :details (api-error-message c)
+                         :advice "Check the file's owner and mode: it must be yours, readable (chmod 600).")
+                problems))))
+    (when (and (string-equal (or (ignore-errors (agent-parse-url url)) "") "https") (fboundp 'ensure-openssl))
+      (handler-case (funcall 'ensure-openssl)
+        (error (c) (push (describe-agent-failure c) problems))))
+    (when problems
+      (setf problems (nreverse problems))
+      ;; the first is the headline; the others ride along as details, so fixing the
+      ;; network does not merely uncover the missing key one attempt later
+      (error 'agent-not-ready
+             :failure (if (rest problems)
+                          (list :headline (getf (first problems) :headline)
+                                :details (append (getf (first problems) :details)
+                                                 (loop for p in (rest problems)
+                                                       append (cons (format nil "Also: ~a" (getf p :headline))
+                                                                    (getf p :details))))
+                                ;; every fix first, how to ask again last
+                                :advice (stable-sort (remove-duplicates (loop for p in problems append (getf p :advice))
+                                                                        :test #'string= :from-end t)
+                                                     #'< :key (lambda (a) (if (search "C-c C-a" a) 1 0))))
+                          (first problems))))))
+
+(defun api-failure (c host)
+  "An AGENT-API-ERROR — an HTTP status from the API, an error event, a stream that
+   stopped — as a FAILURE."
+  (let* ((status (api-error-status c))
+         (kind (api-error-kind c))
+         (said (let ((m (api-error-message c)))
+                 (and m (plusp (length m)) (format nil "The API said: ~a" m))))
+         (again "Press C-c C-a here with nothing typed to ask the same question again."))
+    (cond
+      ((equal kind "no_api_key")
+       (failure "No API key." :details (api-error-message c)
+                              :advice (list "Put your key on one line in that file (chmod 600)." again)))
+      ((equal kind "key_unreadable")
+       (failure "The API key file cannot be read." :details (api-error-message c)
+                :advice "Check the file's owner and mode: it must be yours, readable (chmod 600)."))
+      ((equal kind "no_transport")
+       (failure "This image has no HTTP client." :details (api-error-message c)))
+      ((equal kind "incomplete")
+       (failure "The answer was cut off: the stream stopped before the message ended."
+                :details (format nil "The connection to ~a dropped mid-answer (Wi-Fi?), and the retries did not get through either." host)
+                :advice again))
+      ((eql status 401)
+       (failure "The API refused the key (401 authentication error)."
+                :details (list said (format nil "The key was read from ~a." (key-file-name)))
+                :advice (list "Check the key in that file: a typo, a revoked key, or a key from another account. It is re-read on the next try."
+                              again)))
+      ((eql status 403)
+       (failure "The API refused this request (403 permission error)." :details said
+                :advice "The key is valid but not allowed this — the model, or the account's limits."))
+      ((eql status 404)
+       (failure "The API does not know this model or endpoint (404)."
+                :details (list said (format nil "Model ~s, endpoint ~a." *agent-model* *agent-endpoint*))
+                :advice "Check the model and endpoint: SuperL-Space › agent shows both, C-c C-c on a row sets it."))
+      ((eql status 413)
+       (failure "The conversation is too large for one request (413)." :details said
+                :advice "Start a new conversation: SuperL-Space › agent › New conversation."))
+      ((eql status 400)
+       (failure "The API rejected the request (400)." :details said
+                :advice (list "A setting (model, max tokens, effort) or the conversation's state is something the API will not take."
+                              "A new conversation gets past the second (SuperL-Space › agent › New conversation); if it repeats there, it is a bug here.")))
+      ((or (eql status 429) (equal kind "rate_limit_error"))
+       (failure "Rate limited (429): too many requests or tokens for now." :details said
+                :advice (list (format nil "Retried ~d times already. Wait a minute." *agent-retries*) again)))
+      ((or (eql status 529) (equal kind "overloaded_error"))
+       (failure (if (eql status 200)
+                    "The API is overloaded: it broke off the answer."
+                    "The API is overloaded (529).")
+                :details (list said "Nothing is wrong here: Anthropic's servers are busy.")
+                :advice (list (format nil "Retried ~d times already. Try again in a minute or two." *agent-retries*) again)))
+      ((and status (<= 500 status 599))
+       (failure (format nil "The API had a server error (~d)." status) :details said
+                :advice (list "Nothing is wrong here. Try again in a little while." again)))
+      ((eql status 200)
+       (failure (format nil "The API broke off the answer with an error~@[ (~a)~]." kind) :details said
+                :advice again))
+      (t
+       (failure (format nil "The API answered with an error~@[ (HTTP ~d)~]~@[: ~a~]." status kind)
+                :details said :advice again)))))
+
+(defun describe-agent-failure (c)
+  "Condition C, from anywhere under a turn, as a FAILURE: (:headline :details :advice),
+   in words a person can act on. The one place the agent's failures are explained."
+  (let ((host (endpoint-host))
+        (text (or (ignore-errors (princ-to-string c)) (string (type-of c))))
+        (again "Press C-c C-a here with nothing typed to ask the same question again."))
+    (cond
+      ((typep c 'agent-not-ready) (agent-not-ready-failure c))
+      ((typep c 'agent-api-error) (api-failure c host))
+      ((condition-of-type-p c 'dns-error)
+       (failure (format nil "Could not look up ~a (DNS)." host)
+                :details text
+                :advice (list (if (search "NXDOMAIN" text)
+                                  "The name does not exist: check the endpoint (SuperL-Space › agent)."
+                                  "The DNS server did not answer: the network may be down or half up (SuperL-n shows it).")
+                              again)))
+      ((condition-of-type-p c 'tls-error)
+       (cond ((or (search "OpenSSL" text) (search "HTTPS:" text) (search "no host system" text))
+              (failure "HTTPS is not available on this boot." :details text
+                       :advice "HTTPS uses the laptop's own OpenSSL from /mnt/host, which this boot does not have (doc/storage.org)."))
+             ((search "certificate" text)
+              (failure (format nil "The secure connection to ~a was refused: its certificate did not verify." host)
+                       :details text
+                       :advice (list "If the clock is wrong, certificates look expired or not yet valid: the network view (SuperL-n) can set it by SNTP."
+                                     again)))
+             (t (failure (format nil "The secure connection to ~a failed." host) :details text :advice again))))
+      ((condition-of-type-p c 'http-error)
+       (cond ((search "cannot connect" text)
+              (failure (format nil "Could not connect to ~a." host) :details text
+                       :advice (list "The network may be down, or something between here and there refuses the connection (SuperL-n shows the network)."
+                                     again)))
+             ((search "timed out" text)
+              (failure (format nil "~a stopped answering (timeout)." host) :details text :advice again))
+             ((or (search "closed" text) (search "chunk" text))
+              (failure "The answer was cut off: the connection closed mid-answer." :details text :advice again))
+             (t (failure (format nil "The HTTP exchange with ~a failed." host) :details text :advice again))))
+      ((typep c 'stream-error)
+       (failure (format nil "The connection to ~a broke." host) :details text :advice again))
+      ((and (find-package "SB-BSD-SOCKETS")
+            (condition-of-type-p c (find-symbol "SOCKET-ERROR" "SB-BSD-SOCKETS")))
+       (failure (format nil "The network refused the connection to ~a." host) :details text
+                :advice (list "SuperL-n shows the network's state." again)))
+      (t
+       (failure "Something went wrong inside the agent."
+                :details (format nil "~(~s~): ~a" (type-of c) text)
+                :advice (list "This is a bug in the agent's code, not your network or your key; the line above is what to report."
+                              again))))))
+
 (defun stream-with-retries (conv)
   "STREAM-MESSAGE, retried with exponential backoff (or the server's retry-after)
-   on anything RETRYABLE-P. Each retry is a note in the transcript, because waiting
-   silently on a remote oracle is indistinguishable from being stuck."
+   on anything RETRYABLE-P. Each retry is a note in the transcript, in words, because
+   waiting silently on a remote oracle is indistinguishable from being stuck."
   (loop for attempt from 1
         do (handler-case (return (stream-message conv))
-             (agent-api-error (c)
-               (if (and (retryable-p c) (< attempt *agent-retries*))
-                   (let ((wait (or (api-error-retry-after c) (min 32 (expt 2 attempt)))))
-                     (note conv (format nil "~a — retrying in ~ds (~d/~d)" c wait attempt *agent-retries*))
-                     (interruptible-sleep conv wait))
-                   (error c)))
-             ;; the transport's own failures: HTTP-ERROR, DNS-ERROR, a socket or a stream
-             ;; dying, a timeout. All worth another try — except TLS-ERROR (tls.lisp): a
-             ;; certificate that does not verify will not verify in two seconds either.
+             ;; the transport's own failures too: HTTP-ERROR, DNS-ERROR, a socket or a
+             ;; stream dying, a timeout — RETRYABLE-P sorts them
              (error (c)
-               (if (and (< attempt *agent-retries*)
-                        (not (and (find-class 'tls-error nil) (typep c 'tls-error))))
-                   (let ((wait (min 32 (expt 2 attempt))))
-                     (note conv (format nil "connection: ~a — retrying in ~ds (~d/~d)" c wait attempt *agent-retries*))
+               (if (and (retryable-p c) (< attempt *agent-retries*))
+                   (let ((wait (or (and (typep c 'agent-api-error) (api-error-retry-after c))
+                                   (min 32 (expt 2 attempt)))))
+                     (note conv (format nil "~a — trying again in ~ds (~d/~d)"
+                                        (getf (describe-agent-failure c) :headline) wait attempt *agent-retries*))
                      (interruptible-sleep conv wait))
                    (error c))))))
 
@@ -1109,72 +1387,122 @@
                 (append (message-blocks (aref ms (1- (length ms)))) (list text-block))))
         (append-message conv "user" (append closers (list text-block))))))
 
-(defun run-turn (conv prompt &key (question prompt) origin)
+(defun live-partial-text (conv)
+  "The text the reply being streamed had shown so far — kept when a turn fails, so
+   what had arrived is not lost with the connection."
+  (with-conversation-lock (conv)
+    (let ((live (conversation-live conv)))
+      (if live
+          (format nil "~{~a~}" (loop for lb in (live-reply-blocks live)
+                                     when (equal (live-block-type lb) "text") collect (live-text lb)))
+          ""))))
+
+(defun fail-turn (conv condition &key turn question)
+  "Record CONDITION as the failure of TURN (default: CONV's current one), in words.
+   With no turn in progress — the failure came before one began — a turn is made
+   for QUESTION, so the failure still has a place in the transcript. Returns it.
+   A TURN passed in is RUN-TURN's own, still running: its cleanup marks it done (and
+   counts its usage) after this; any other is marked done here."
+  (let* ((f (describe-agent-failure condition))
+         (running turn)
+         (turn (or turn
+                  (let ((cur (current-turn conv)))
+                    (and cur (not (turn-done cur)) cur))
+                  (let ((new (make-turn :question (or question "(the question)")
+                                        :start (length (conversation-messages conv)))))
+                    (with-conversation-lock (conv) (vector-push-extend new (conversation-turns conv)))
+                    new))))
+    (with-conversation-lock (conv)
+      (unless (turn-failure turn)
+        (setf (turn-failure turn) f
+              (turn-partial turn) (live-partial-text conv)))
+      (unless running
+        (unless (turn-usage turn) (setf (turn-usage turn) (list :input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0)))
+        (setf (turn-done turn) t)))
+    (touch conv (getf f :headline))
+    (agent-listen :failure f)
+    turn))
+
+(defun failed-turn (conv)
+  "CONV's last turn, when it ended in a failure (what a retry asks again), else NIL."
+  (let ((turn (current-turn conv)))
+    (and turn (turn-done turn) (turn-failure turn) turn)))
+
+(defun run-turn (conv prompt &key (question prompt) origin again)
   "Ask PROMPT in CONV and drive the tool loop until the model is done. Blocking: the
    REPL calls it directly, the environment on a thread of its own (agent-ui.lisp).
    QUESTION is what the transcript shows; PROMPT may carry more (the context Ask it
-   gathered). Returns the conversation."
+   gathered). AGAIN re-asks a failed turn: when the history already ends in the
+   user's unanswered message, that is sent as it is rather than said twice. Returns
+   the conversation. A failure never escapes once the turn exists: it is the turn's
+   FAILURE, which the transcript shows (FAIL-TURN)."
   (ensure-agent-settings)
   (when (eq *agent-initiative* :off)
     (error "The agent is off (*agent-initiative* is :OFF). (setf *agent-initiative* :reacting) wakes it."))
-  (let ((turn (make-turn :question question :prompt prompt
+  (let ((turn (make-turn :question question :prompt prompt :again again
                          :start (length (conversation-messages conv)) :origin origin)))
     (with-conversation-lock (conv)
       (vector-push-extend turn (conversation-turns conv))
       (setf (conversation-state conv) :working (conversation-cancel conv) nil))
-    (when (equal (conversation-title conv) (format nil "conversation ~d" (conversation-id conv)))
-      (setf (conversation-title conv) (lol.widgets:clip-text (first-line question) 40)))
-    (add-user-text conv prompt)
-    (touch conv "thinking...")
     (let ((turn-usage (list :input 0 :output 0 :cache-read 0 :cache-write 0)) (turn-cost 0))
       (unwind-protect
            (let ((outcome
                    (catch 'agent-cancel
                      (handler-case
-                         (loop for round from 1
-                               do (multiple-value-bind (blocks stop usage details) (stream-with-retries conv)
-                                    (with-conversation-lock (conv) (setf (conversation-live conv) nil))
-                                    (append-message conv "assistant" blocks)
-                                    (dolist (b blocks)
-                                      (when (equal (block-type b) "text")
-                                        (agent-listen :text (lol.json:jget (block-json b) "text"))))
-                                    (multiple-value-bind (u cost) (add-usage conv usage)
-                                      (loop for (k v) on u by #'cddr do (incf (getf turn-usage k) v))
-                                      (when (and cost turn-cost) (incf turn-cost cost))
-                                      (unless cost (setf turn-cost nil)))
-                                    (let ((uses (remove-if-not (lambda (b) (equal (block-type b) "tool_use")) blocks)))
-                                      (cond
-                                        ((equal stop "refusal")
-                                         (note conv (format nil "the model declined~@[ (~a)~]"
-                                                            (lol.json:jget details "category")))
-                                         (return :refused))
-                                        ((and uses (equal stop "max_tokens"))
-                                         (note conv "stopped at max_tokens in the middle of a tool call; not run")
-                                         (return :max-tokens))
-                                        ((equal stop "pause_turn") nil)   ; the server paused: just continue
-                                        ((null uses) (return :done))
-                                        ((> round *agent-max-rounds*)
-                                         (note conv (format nil "stopped after ~d tool rounds (*agent-max-rounds*)" round))
-                                         (return :too-many-rounds))
-                                        (t
-                                         ;; ALL results go back in ONE user message, in order
-                                         (let ((results
-                                                 (loop for b in uses
-                                                       for call = (block-call b)
-                                                       do (touch conv (format nil "running ~a" (call-headline call)))
-                                                          (agent-listen :tool call)
-                                                       collect (let ((r (if *tool-executor*
-                                                                            (funcall *tool-executor* conv call
-                                                                                     (lambda () (execute-tool-call conv call)))
-                                                                            (execute-tool-call conv call))))
-                                                                 (agent-listen :tool-done call)
-                                                                 (make-instance 'content-block :json r)))))
-                                           (append-message conv "user" results)
-                                           (touch conv "thinking...")))))))
-                       (agent-api-error (c)
-                         (note conv (format nil "~a" c)) :error)
+                         (progn
+                           (when (equal (conversation-title conv) (format nil "conversation ~d" (conversation-id conv)))
+                             (setf (conversation-title conv) (lol.widgets:clip-text (first-line question) 40)))
+                           (let ((ms (conversation-messages conv)))
+                             (unless (and again (plusp (length ms))
+                                          (equal (message-role (aref ms (1- (length ms)))) "user"))
+                               (add-user-text conv prompt)))
+                           (touch conv "checking the network...")
+                           (agent-preflight)
+                           (touch conv "thinking...")
+                           (loop for round from 1
+                                 do (multiple-value-bind (blocks stop usage details) (stream-with-retries conv)
+                                      (with-conversation-lock (conv) (setf (conversation-live conv) nil))
+                                      (append-message conv "assistant" blocks)
+                                      (dolist (b blocks)
+                                        (when (equal (block-type b) "text")
+                                          (agent-listen :text (lol.json:jget (block-json b) "text"))))
+                                      (multiple-value-bind (u cost) (add-usage conv usage)
+                                        (loop for (k v) on u by #'cddr do (incf (getf turn-usage k) v))
+                                        (when (and cost turn-cost) (incf turn-cost cost))
+                                        (unless cost (setf turn-cost nil)))
+                                      (let ((uses (remove-if-not (lambda (b) (equal (block-type b) "tool_use")) blocks)))
+                                        (cond
+                                          ((equal stop "refusal")
+                                           (note conv (format nil "the model declined~@[ (~a)~]"
+                                                              (lol.json:jget details "category")))
+                                           (return :refused))
+                                          ((and uses (equal stop "max_tokens"))
+                                           (note conv "stopped at max_tokens in the middle of a tool call; not run")
+                                           (return :max-tokens))
+                                          ((equal stop "pause_turn") nil)   ; the server paused: just continue
+                                          ((null uses) (return :done))
+                                          ((> round *agent-max-rounds*)
+                                           (note conv (format nil "stopped after ~d tool rounds (*agent-max-rounds*)" round))
+                                           (return :too-many-rounds))
+                                          (t
+                                           ;; ALL results go back in ONE user message, in order
+                                           (let ((results
+                                                   (loop for b in uses
+                                                         for call = (block-call b)
+                                                         do (touch conv (format nil "running ~a" (call-headline call)))
+                                                            (agent-listen :tool call)
+                                                         collect (let ((r (if *tool-executor*
+                                                                              (funcall *tool-executor* conv call
+                                                                                       (lambda () (execute-tool-call conv call)))
+                                                                              (execute-tool-call conv call))))
+                                                                   (agent-listen :tool-done call)
+                                                                   (make-instance 'content-block :json r)))))
+                                             (append-message conv "user" results)
+                                             (touch conv "thinking..."))))))))
+                       ;; EVERY failure becomes the turn's FAILURE — said in the
+                       ;; transcript in words, never only in a status line or a log
                        (serious-condition (c)
-                         (note conv (format nil "error: ~a" c)) :error)))))
+                         (fail-turn conv c :turn turn) :error)))))
              (when (eq outcome :cancelled) (note conv "stopped (C-g)")))
         (with-conversation-lock (conv)
           (setf (conversation-live conv) nil
@@ -1183,7 +1511,9 @@
                 (conversation-jobs conv) '()
                 (turn-usage turn) (append turn-usage (list :cost turn-cost))
                 (turn-done turn) t))
-        (touch conv (format nil "done · ~a" (format-cost (conversation-cost conv))))
+        (touch conv (if (turn-failure turn)
+                        (format nil "failed: ~a" (getf (turn-failure turn) :headline))
+                        (format nil "done · ~a" (format-cost (conversation-cost conv)))))
         (agent-listen :done turn)))
     conv))
 
@@ -1267,6 +1597,14 @@ why, briefly."
       (:tool-done (let ((c (first args)))
                     (format out "~&~a    ~(~a~)~@[ · ~a~]~a~%" (sgr 90) (call-status c) (call-summary c) (col-reset))))
       (:note (format out "~&~a  ! ~a~a~%" (sgr 93) (first args) (col-reset)))
+      (:failure (let ((f (first args)))
+                  (format out "~&~aFAILED: ~a~a~%" (col-error) (getf f :headline) (col-reset))
+                  (dolist (d (getf f :details)) (format out "  ~a~%" d))
+                  ;; the advice is written for the pane; here, asking again is a ? line
+                  (dolist (a (getf f :advice))
+                    (format out "  ~a~a~a~%" (sgr 93)
+                            (if (search "C-c C-a" a) "Ask again with the same ?question line." a)
+                            (col-reset)))))
       (:done (let ((u (turn-usage (first args))))
                (format out "~&~a  ~d in (~d cached, ~d written) · ~d out · ~a · session ~a~a~%"
                        (sgr 90) (getf u :input) (getf u :cache-read) (getf u :cache-write)

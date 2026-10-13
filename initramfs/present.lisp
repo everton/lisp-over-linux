@@ -49,6 +49,8 @@
   (syntax :lisp)         ; how a text body is coloured: :lisp (the source lexer) or
                          ; :plain (one colour). A file manager shows text that is not
                          ; Lisp, and a README lexed as Lisp lights every apostrophe.
+  tint                   ; NIL or (line) -> colour/NIL: lines drawn whole in a colour
+                         ; over the syntax (a conversation's error block, agent-ui.lisp)
   subject)               ; back-reference to the presented subject
 
 (defstruct command

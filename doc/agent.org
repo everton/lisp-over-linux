@@ -908,12 +908,13 @@ The agent track, A0 to A2, in four files loaded after the shell (=LISP_SOURCES=,
 |------+-------+------------|
 | [[file:../initramfs/json.lisp][json.lisp]] | 341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
 | [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?) |
-| [[file:../initramfs/agent.lisp][agent.lisp]] | 1304 | settings, the conversation object, the tools, the gate, the streamed Messages client, the turn loop, the system prompt, the REPL doorway |
-| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 720 | =present= on conversations / tool calls / the agent, Ask it, the frame tick, the approval chooser, the indicators, the debugger doorway |
+| [[file:../initramfs/agent.lisp][agent.lisp]] | 1642 | settings, the conversation object, the tools, the gate, the streamed Messages client, the preflight and the failure descriptions (§14.8), the turn loop, the system prompt, the REPL doorway |
+| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 789 | =present= on conversations / tool calls / the agent, Ask it, the error block and asking again (§14.8), the frame tick, the approval chooser, the indicators, the debugger doorway |
 
-Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (54 checks, the whole
-client against the mock on loopback, with =HOME= pointed at a scratch directory), and
-the guest check [[file:../check-agent.lisp][check-agent.lisp]] (22 assertions). The mock is
+Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (79 checks since
+§14.8, the whole client against the mock on loopback, with =HOME= pointed at a scratch
+directory), and the guest check [[file:../check-agent.lisp][check-agent.lisp]] (41 assertions since §14.8; 22
+before). The mock is
 [[file:../host-client/mock-anthropic.lisp][host-client/mock-anthropic.lisp]]: a host-side stand-in for the Messages API that
 streams the way the real one does (chunked, in 7-byte pieces, thinking signatures,
 tool input as =input_json_delta= fragments cut inside strings) and *refuses with a 400*
@@ -975,7 +976,10 @@ didactic sub-project it always was.
 - *Retries*: 408/409/429/5xx/529, the =overloaded_error= / =api_error= /
   =rate_limit_error= *events* that can arrive mid-stream, and dropped connections —
   exponential backoff or the server's =retry-after=, five attempts, *each one a
-  visible note in the transcript*. A partial reply is never kept.
+  visible note in the transcript*. A partial reply is never kept in the history (the
+  text that had arrived is still shown above a failure, §14.8). Not retried: a
+  400/401/403/404, an unverifiable certificate, a name that does not exist, and
+  whatever the preflight refuses (§14.8).
 - *Cancellation*: =C-g= sets a flag the stream checks between chunks *and* interrupts
   the turn's thread with a =throw=, because a turn can be blocked in a read with no
   chunk coming. The conversation goes on afterwards (tested).
@@ -1100,8 +1104,122 @@ its two URL/header helpers are =agent-parse-url= / =agent-header-value=.
 - *A stale last frame* was real and is fixed: the turn's final =touch= can land just
   after the tick that saw the conversation go idle, and the loop then slept until a
   key. The poll deadline now also wakes for a revision not yet drawn.
+- *"The mock's 401 is a dropped connection"* (2026-10-13) — the mock, again. Its
+  =send-json-error= built the header block with =~@[retry-after: ~a~a~]=, a clause
+  that consumes /two/ arguments when its first is true but skips only /one/ when it
+  is =NIL=. So every error /without/ a =retry-after= — the 401, the 404, the mock's
+  own 400 refusals — shifted the later arguments, printed =NIL= into the
+  =Connection= line and never ended the header block; the client read the JSON body
+  as headers and saw "connection closed with 86 octets of the body missing". It
+  looked like the client retrying a 401 four times. Only the 529 (which has a
+  =retry-after=) was ever served correctly. Fixed in the mock; the client was right
+  to call that response a dropped connection.
 
-** 14.7 Still owed
+** 14.8 Failure reporting (2026-10-13)
+
+*The report.* On the laptop, with no IPv4 address (DHCP had failed), a question asked
+with =SuperL-a=, typed, =C-c C-a= produced /nothing/ in the conversation pane — no
+word that anything was wrong.
+
+*What was found*, reproducing it in QEMU (default route deleted over the net REPL,
+=*leases*= cleared, =resolv.conf= emptied, a key file present under the tmpfs-backed
+=/home= of =LOL_GUEST_HOSTROOT=1=):
+
+- *The explanation came late, and looked like a retry.* The failure did reach the
+  pane in that setup — but as =;; != lines identical in style to the retry notes,
+  after the turn had spent its five attempts (2 + 4 + 8 + 16 s of backoff) on a
+  failure that could not change: "no DNS server" was retried like a 503.
+- *A connect could take minutes before the first word.* The request's one timeout,
+  300 s, was set with =SO_SNDTIMEO=, which on Linux also bounds =connect()= — so a
+  connect to an address that never answers ran for the kernel's whole SYN-retry
+  budget (=TCP_SYN_RETRIES= is 6: 1 + 2 + … + 64 s, about two minutes) /per attempt/,
+  with only "... thinking..." on screen. Which address the laptop's attempt was
+  waiting on is not known (a v6 route from a router advertisement with DHCP failed,
+  or a leftover DNS server, would both do it); the fix does not depend on knowing.
+- *A real silent path.* =start-turn-async= wrapped =run-turn= in a =handler-case=
+  whose only action was to set =conversation-status= — and the transcript draws that
+  status /only while a turn is in progress/. An error escaping =run-turn= (it did its
+  title, =add-user-text= and first =touch= /outside/ its own handler, and anything in
+  the =unwind-protect= cleanup escaped too) left the pane exactly as it was. The
+  thread then ended, quietly.
+- Nothing in the environment swallowed it otherwise: no =ignore-errors= around the
+  turn, the tick refreshes panes whether or not they are focused (the failure was
+  shown in the QEMU run above, unfocused or not).
+
+*What changed.*
+
+- *A preflight* (=agent-preflight=, run once per turn before any request, sending
+  nothing): for a literal endpoint address, is there a route that covers it
+  (=/proc/net/route=, loopback always); for a name, is there a default route (v4 or
+  v6), a DNS server, and a route to that server; for =api.anthropic.com=, is there a
+  key and can it be read; for https, does the host's OpenSSL load. It signals
+  =agent-not-ready= with /every/ reason found — the first is the headline, the
+  others ride along as "Also: …", so fixing the network does not merely uncover the
+  missing key one attempt later. Never retried.
+- *A short connect.* =http-request= gained =:connect-timeout=; the agent uses 15 s
+  (=*agent-connect-timeout*=) for the connect and keeps 300 s between reads.
+- *Every failure becomes the turn's =failure=*, a plist =(:headline :details
+  :advice)= written by one function, =describe-agent-failure=: the preflight's
+  reasons; 400 (the API's own message), 401 (the key file named, never the key —
+  and the cached key is dropped so the next try re-reads the file), 403, 404 (model
+  and endpoint named), 413, 429, 529/overloaded, other 5xx, an error /event/
+  mid-stream, a stream cut short (http's "connection closed…" or our "incomplete");
+  DNS (NXDOMAIN vs no answer), TLS (no OpenSSL on this boot vs a certificate — with
+  the clock as the usual suspect), connect refused or timed out; and anything else,
+  named by type as /a bug in the agent's code/, not the network or the key.
+  =run-turn= now does all its work inside its handler; =start-turn-async='s outer
+  handler calls =fail-turn= too, which makes a turn for the question if none was in
+  progress — so even a failure before the turn began has a place in the transcript.
+- *The error block.* =turn-lines= draws a failure as =;; !! FAILED: <headline>=, the
+  details indented under it, then =What to do:=. Whatever had streamed before the
+  failure stays above it as reply text with =(the answer broke off here)=; it is
+  never sent back as a message. The block is still Lisp comments, so the buffer
+  still evaluates. A failed turn that spent nothing shows no meter line.
+- *Red, and decided by the text.* The textview gained a =tint= slot — a function
+  =(line) → colour or NIL= that draws a line whole in one colour over the syntax —
+  and =present= on a conversation passes =conversation-tint=, which colours every
+  line starting =;; !!= in =(concept-color :condition)=, the red a condition has
+  everywhere in the browser. Because it reads the line, it holds after any edit; the
+  debugger's ASK viewer uses it too. (=view= gained the matching =tint= slot;
+  =open-pane= passes it through.)
+- *Asking again* is =C-c C-a= with nothing typed after the failure — the existing
+  verb on an empty draft, which used to only say "type your question". It starts a
+  turn marked =(asked again)= with =run-turn='s =:again=: when the history already
+  ends in the user's unanswered message it is sent as it is, not said twice
+  (=add-user-text= folds new text into a trailing user message, so re-adding the
+  question would put it there twice). A /new/ question typed instead is folded into that unanswered
+  message as before — the model then sees both.
+- *The status line too*, once per failure, set by the frame tick on the UI thread
+  (never from the turn's thread): =agent: <headline> — C-c C-a with nothing typed
+  asks again=, or =— SuperL-a shows why= when the conversation is not on screen.
+- *The REPL doorway* prints the same failure in red, its advice adapted (asking again
+  there is another =?= line).
+- *A key file that cannot be read* (wrong owner, mode =0000=) is its own failure,
+  =key_unreadable=, quoting strerror's words — never the bare =FILE-ERROR=, never
+  any of the contents.
+
+*Tested.* [[file:../poc/agent-test.lisp][poc/agent-test.lisp]], against the mock's new steering words — =badkey=
+(always 401), =busy= (always 529), =cutoff= (some text, then the connection closes
+mid-chunk): the headline and the API's words, 401 not retried, asking again not
+doubling the question, a 529 after its retries, a cut stream keeping its partial
+text, the preflight with the routing table stubbed empty (a literal address, then a
+name with the missing key as an "Also:"), sending nothing; an error inside the
+transport; a failure with no turn; an unreadable key. [[file:../check-agent.lisp][check-agent.lisp]] §3b drives
+the same through the real pane over QMP — 401 (and its tint, and the status line),
+=C-c C-a= on an empty draft, 529, a cut stream, no route to =192.0.2.1=, no lease
+and no =resolv.conf= with a named endpoint, https on a diskless boot ("HTTPS is not
+available"), an error in the transport — and then a question answered normally.
+
+*Not explained (kept so it is recognised if it comes back).* The first full
+=check-agent.lisp= run after these changes failed in §2, before any failure test: the
+approved =lisp-eval= ran, but the pane never showed the model's follow-up, and the
+next =C-c C-a= took the half-rendered turn's lines as its draft (=;; ? ;; ? please eval
+this=); the chooser that question then raised blocked every later check. Five runs
+after it (one with a debug dump of the turn, four full) passed, so it is not
+reproduced; the suspect is the timing between the approval chooser's modal loop and
+the tick's refresh of a turn, which these changes did not touch.
+
+** 14.9 Still owed
 
 - *The first real call*: put a key in =~/.config/lol/anthropic-api-key= (=0600=) on
   the laptop and ask. Nothing in the image has spoken to =api.anthropic.com= yet.
