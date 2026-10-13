@@ -76,9 +76,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     an alist of the screen y of each painted row and its index. A click is resolved against that map
     (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:360</span></a>). The map is needed because section headers make "row N
     on screen" differ from "item N".</li>
-  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:584</span></a> colours Lisp with a small line lexer
-    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:512</span></a>). The editing keys are in
-    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:661</span></a>. The buffer is a vector of line strings that is
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:589</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:517</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:671</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
     (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
@@ -86,8 +86,8 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
   <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:242</span></a> is the host twin: the X11 wire protocol over a Unix socket,
     written in Lisp. It is deliberately <em>not</em> in the image.</li>
-  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1086</span></a> composites
-    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1106</span></a> repairs only the old and new
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1100</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1120</span></a> repairs only the old and new
     rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
 </ul>
 
@@ -126,24 +126,24 @@ touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry 
 (<code>poc/run-browser.lisp</code>).</figcaption>
 </figure>
 <ul>
-  <li>Finding devices without udev: <a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:203</span></a> reads
-    <code>/proc/bus/input/devices</code>, and <a class="ref" data-ref="initramfs/fb-browser.lisp#input-device-kind" href="../../initramfs/fb-browser.lisp"><code>input-device-kind</code><span class="loc">initramfs/fb-browser.lisp:369</span></a> classifies
+  <li>Finding devices without udev: <a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:211</span></a> reads
+    <code>/proc/bus/input/devices</code>, and <a class="ref" data-ref="initramfs/fb-browser.lisp#input-device-kind" href="../../initramfs/fb-browser.lisp"><code>input-device-kind</code><span class="loc">initramfs/fb-browser.lisp:377</span></a> classifies
     each one by its bitmasks: <code>:mouse</code> (REL_X), <code>:pad</code> or <code>:tablet</code> (ABS_X, with PROP deciding),
     <code>:keyboard</code> (EV_KEY + EV_REP, which rules out the power button).</li>
-  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:927</span></a> opens everything and starts
-    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:875</span></a>
-    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:973</span></a>
+  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:941</span></a> opens everything and starts
+    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:889</span></a>
+    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:987</span></a>
     drops a device that reports <code>POLLHUP</code> (unplugged) before anyone reads it.</li>
-  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:825</span></a> rebinds the decoder's
+  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:839</span></a> rebinds the decoder's
     special variables to one device's saved values (<code>progv</code>) for one drain. <code>read-mouse</code> does not know there
     is more than one device.</li>
   <li><code>*fb-mouse*</code> / <code>*fb-kbd*</code> are now the markers <code>:pointers</code> / <code>:keyboards</code>, not fds.
-    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1024</span></a>),
+    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1038</span></a>),
     so the older loops (debugger, Spotter) did not change.</li>
   <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:403</span></a>). A touchpad's motion is integrated as relative
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:499</span></a>), and a tap is a click.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2386</span></a> decides what was under the pointer from the hit maps of the
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:411</span></a>). A touchpad's motion is integrated as relative
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:513</span></a>), and a tap is a click.</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2417</span></a> decides what was under the pointer from the hit maps of the
     <em>last drawn frame</em>: tabs, crumbs, list rows, text, matrix cells.</li>
 </ul>
 
