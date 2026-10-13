@@ -144,7 +144,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2004</span></a></span>
     <kbd>SuperL</kbd>-<kbd>Space</kbd>: the Super branch calls <code>run-spotter-fb</code> through <code>funcall</code> and
     <code>fboundp</code>, because the shell loads before <code>fb-browser.lisp</code> and also runs without it.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2273</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2337</span></a></span>
     A modal loop over the same canvas and the same input. It collects candidates once and re-filters on each keystroke.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#spotter-candidates" href="../../initramfs/present.lisp"><code>spotter-candidates</code><span class="loc">initramfs/present.lisp:219</span></a></span>
     Surfaces, every module, every package, every registry name (a generic function opens its own view), plus whatever the
@@ -165,14 +165,14 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     While drawing, each drawing function records what it drew where: <code>(x y w h object drawers label)</code> in
     <code>*drawn*</code>. Morphic gets this for free because every on-screen thing is an object. Here drawing is plain
     functions, so they report it themselves.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3109</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3120</span></a></span>
     A middle click (or Alt-click) in text you can edit pastes PRIMARY. Anywhere else it opens the halo.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#drawn-layers" href="../../poc/shell.lisp"><code>drawn-layers</code><span class="loc">poc/shell.lisp:2880</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#drawn-layers" href="../../poc/shell.lisp"><code>drawn-layers</code><span class="loc">poc/shell.lisp:2891</span></a></span>
     Every recorded rectangle under the point, smallest first, so you can walk outward from a word to its row, its pane
     and the screen.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2902</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:2913</span></a></span>
     The handles: Inspect the object, Code (the function that drew it), Source, and so on. Each one is a command.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2134</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2139</span></a></span>
     The framebuffer's chooser draws the halo and runs the chosen handle. Try it on the host with
     <code>render-frame.lisp modules --halo 300,200</code>.</li>
 </ol>

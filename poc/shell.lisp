@@ -2768,14 +2768,20 @@
    (environment-menu-entries)))
 
 (defun entry-rows (entries)
-  "Menu entries -> widget rows (label, key hint as the detail, group as a section)."
+  "Menu entries -> widget rows (label, key hint as the detail, group as a section).
+   An entry marked :DISABLED (a web page's disabled <option>) is drawn dim."
   (map 'vector (lambda (e)
                  (lol.widgets:make-row (getf e :label) :detail (getf e :key)
-                                       :group (getf e :group) :tint *ui-text*))
+                                       :group (getf e :group)
+                                       :tint (if (getf e :disabled) *ui-dim* *ui-text*)))
        entries))
 
 (defvar *menu-rect* nil "The context menu card (x0 y0 x1 y1), for click routing.")
 (defvar *menu-hits* '() "The context menu's painted rows — see HIT-ROW.")
+(defvar *menu-width* nil
+  "NIL: the menu card's usual width (fifty cells). A number of pixels instead sizes
+   the card to its content — what a web page's <select> wants, whose list should be
+   at least as wide as the control it drops from (web.lisp, WEB-PICK-OPTION).")
 
 (defun draw-context-menu (canvas w h entries sel x y)
   "The browser, then the right-button menu as a card whose corner is at X,Y — moved
@@ -2785,7 +2791,12 @@
          (nslots (+ (length rows)
                     (length (remove-duplicates (map 'list #'lol.widgets:row-group rows)
                                                :test #'equal))))
-         (cw (+ 20 (* 50 (char-w))))          ; 320 at 6x15
+         (cw (if *menu-width*
+                 (min (- w 16) (max *menu-width*
+                                    (+ 40 (* (char-w)
+                                             (reduce #'max entries :initial-value 4
+                                                     :key (lambda (e) (length (getf e :label))))))))
+                 (+ 20 (* 50 (char-w)))))     ; 320 at 6x15
          (ch (min (- h 40) (+ 32 (* nslots +row-h+))))
          (cx (max 4 (min x (- w cw 8))))
          (cy (max (+ +bar-h+ 2) (min y (- h ch 8)))))

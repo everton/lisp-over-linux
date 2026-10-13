@@ -15,6 +15,9 @@
 ;;;;     switches virtual terminals on the console, so it never reaches us);
 ;;;;   - keys typed into a focused input reach it (read back with Runtime.evaluate);
 ;;;;   - the wheel scrolls the page;
+;;;;   - a real click on a <select> opens OUR chooser (Chrome's own popup is drawn
+;;;;     where the screencast cannot see it, §4.4), arrows skip a disabled option,
+;;;;     Enter changes the value and runs onchange, Esc changes nothing;
 ;;;;   - a public HTTPS page loads, when the guest has a resolver (it is skipped and
 ;;;;     says so when /etc/resolv.conf is missing — DNS is another track's);
 ;;;;   - power-off's WEB-SHUTDOWN ends every Chrome process and leaves no zombie.
@@ -53,7 +56,15 @@
 <p><a id=go href='/two.html' style='font-size:40px'>go to page two</a></p>
 <p><input id=q style='font-size:20px;width:300px'></p>
 <div style='height:3000px;background:linear-gradient(#fff,#88a)'>tall</div></body>")
-    ("/two.html" . "<!doctype html><title>LoL page two</title><h1>Page two</h1>")))
+    ("/two.html" . "<!doctype html><title>LoL page two</title><h1>Page two</h1>")
+    ;; doc/web-browser.org §4.4: a <select> whose options Chrome would draw in a popup
+    ;; the screencast never shows — with optgroups, a disabled option, and an onchange
+    ;; that writes the title and counts
+    ("/pick.html" . "<!doctype html><title>LoL pickers</title>
+<body style='font:20px sans-serif;margin:30px'>
+<p><select id=s style='font-size:20px' onchange='window.changes=(window.changes||0)+1;document.title=\"picked \"+this.value'>
+<optgroup label=Fruit><option value=a>Apple<option value=b>Banana</optgroup>
+<optgroup label=Roots><option value=c disabled>Carrot<option value=d>Daikon</optgroup></select></p></body>")))
 
 (defun serve-one (stream)
   (let* ((line (read-line stream nil ""))
@@ -132,6 +143,19 @@
                       15)))
     (ignore-errors (let ((*read-eval* nil)) (read-from-string s)))))
 
+(defun screen-octets ()
+  "The guest's screen as QEMU sees it (a screendump into this run's scratch dir)."
+  (let ((f (path "screen-now.ppm")))
+    (ignore-errors (delete-file f))
+    (qmp (format nil "{\"execute\":\"screendump\",\"arguments\":{\"filename\":\"~a\"}}" f))
+    (sleep 0.5)
+    (with-open-file (s f :element-type '(unsigned-byte 8) :if-does-not-exist nil)
+      (and s (let ((v (make-array (file-length s) :element-type '(unsigned-byte 8))))
+               (read-sequence v s) v)))))
+
+(defun chooser () (probe "(getf *chooser-state* :kind)"))
+(defun chooser-label () (probe "(getf *chooser-state* :label)"))
+
 (defun chrome-pss-mb ()
   (probe "(let ((total 0)) (dolist (d (directory \"/proc/*/\")) (ignore-errors (let ((cmd (with-open-file (s (merge-pathnames \"cmdline\" d)) (read-line s nil \"\")))) (when (search \"chrome\" cmd) (with-open-file (s (merge-pathnames \"smaps_rollup\" d)) (loop for l = (read-line s nil) while l when (and (> (length l) 4) (string= \"Pss:\" l :end2 4)) do (incf total (parse-integer l :start 4 :junk-allowed t)))))))) (round total 1024))" 30))
 
@@ -199,6 +223,55 @@
   (row "frames received" (probe "(web-tab-frames (web-visible-tab))"))
   (row "Chrome PSS, all its processes (MB)" (chrome-pss-mb))
   (row "MemAvailable with one page (MB)" (mem-available-mb))
+
+  (format t "~&~%== a <select>: the popup headless Chrome draws where we cannot see ==~%")
+  (probe (format nil "(web-navigate (web-visible-tab) \"http://10.0.2.2:~d/pick.html\")" *http-port*))
+  (check "the picker page loads"
+         (wait-until 30 (lambda () (search "LoL pickers" (js "document.title")))))
+  (wait-until 15 (lambda () (string= (js "typeof window.__lolPickerApply") "\"function\"")))
+  (sleep 2)
+  (let ((before (screen-octets))
+        (xy (element-center "s")))
+    (row "select 's' at" xy)
+    (when xy (glide-to (first xy) (second xy)) (click))
+    (check "a real click on the <select> opens OUR chooser"
+           (wait-until 15 (lambda () (string= (chooser) ":SELECT"))))
+    (check "... on the current option (Apple)" (search "Apple" (chooser-label)))
+    (shot "web-select-open")
+    (check "... and it is on the screen (the screendump changed)"
+           (let ((after (screen-octets))) (and before after (not (equalp before after)))))
+    ;; (Not asked here whether Chrome's own popup stayed shut: WEB-JS from this REPL
+    ;; thread waits for the browser's loop to deliver the answer, and the loop is
+    ;; inside the modal chooser — so the question times out. poc/web-test.lisp, with
+    ;; no modal loop, asserts the select is not :open.)
+    )
+  (qmp-key "down") (sleep 0.6)
+  (row "after Down" (chooser-label))
+  (qmp-key "down") (sleep 0.6)
+  (check "Down skips the disabled Carrot (Banana -> Daikon)" (search "Daikon" (chooser-label)))
+  (qmp-key "ret")
+  (check "Enter chooses: the chooser closes"
+         (wait-until 10 (lambda () (string= (chooser) "NIL"))))
+  (check "... the page's value is d and its onchange ran (the title)"
+         (wait-until 15 (lambda () (and (search "picked d" (js "document.title"))
+                                        (search "d" (js "document.getElementById('s').value"))))))
+  (sleep 1)
+  (let ((xy (element-center "s")))
+    (when xy (glide-to (first xy) (second xy)) (click)))
+  (wait-until 15 (lambda () (string= (chooser) ":SELECT")))
+  (check "the chooser reopens on the current value (Daikon)" (search "Daikon" (chooser-label)))
+  (qmp-key "up") (sleep 0.4)
+  (qmp-key "esc")
+  (check "Esc closes it ..." (wait-until 10 (lambda () (string= (chooser) "NIL"))))
+  (sleep 1)
+  (check "... and changes nothing (still d, one change event)"
+         (and (search "d" (js "document.getElementById('s').value"))
+              (string= (js "window.changes") "1")))
+  (qmp-key "spc")
+  (check "Space on the focused select opens it from the keyboard"
+         (wait-until 10 (lambda () (string= (chooser) ":SELECT"))))
+  (qmp-key "esc")
+  (wait-until 10 (lambda () (string= (chooser) "NIL")))
 
   (format t "~&~%== the public web, and the sandbox ==~%")
   ;; No precondition on OUR /etc/resolv.conf: lol-ct gives the container one (ours,

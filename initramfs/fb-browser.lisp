@@ -2131,6 +2131,11 @@
 ;;; (draw-context-menu, draw-halo); this loop only reads input, the same way the
 ;;; Spotter's does. It is installed as the shell's *CHOOSER* hook.
 
+(defvar *chooser-state* nil
+  "While a chooser is up: (:kind K :sel I :label L :count N), refreshed on every draw;
+   NIL otherwise. Only for looking at from outside — the guest checks read it over the
+   net REPL (check-web.lisp), since the chooser's loop owns the screen and the input.")
+
 (defun run-chooser-fb (kind entries x y &optional layers)
   "Show ENTRIES as a :MENU card at X,Y or a :HALO round it, and return the entry
    picked, or NIL. Keys: up/down move (left/right for the ring), Return picks, 1-9
@@ -2141,12 +2146,47 @@
    A halo is about one of LAYERS (shell.lisp's HALO-LAYERS: the word, the element
    holding it, the pane, the screen). Up, Tab and the middle button walk OUT to the
    thing around the current one, Down walks back IN — Morphic's repeated middle-click
-   — and each step rebuilds the handles for the new layer."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (sel 0) (n (length entries))
-        (depth 0))
+   — and each step rebuilds the handles for the new layer.
+
+   A :SELECT is the menu card standing in for a web page's <select> popup
+   (doc/web-browser.org §4.4): it opens on the entry marked :SELECTED, never lands on
+   or picks one marked :DISABLED, and TYPING jumps to the next entry whose label
+   starts with what was typed (within a second, letters accumulate: \"ba\" finds
+   Banana past Apple), the way every desktop's list box behaves — so digits are
+   text here, not the 1-9 shortcuts of a menu. Home/End and PageUp/PageDown move
+   too, and Space picks when nothing is being typed."
+  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (n (length entries))
+        (sel 0) (depth 0) (typed "") (typed-at 0))
     (when (and canvas entries)
       (labels ((halo-p () (eq kind :halo))
+               (select-p () (eq kind :select))
+               (enabled-p (i) (and (< -1 i n) (not (getf (nth i entries) :disabled))))
+               (step-to (from delta)        ; the next ENABLED entry from FROM, or FROM
+                 (loop for i = (+ from delta) then (+ i delta)
+                       while (< -1 i n)
+                       when (enabled-p i) return i
+                       finally (return from)))
+               (pick (i) (and (enabled-p i) (nth i entries)))
+               (type-ahead (ch)
+                 (let ((now (get-internal-real-time)))
+                   (setf typed (if (< (- now typed-at) internal-time-units-per-second)
+                                   (concatenate 'string typed (string ch))
+                                   (string ch))
+                         typed-at now)
+                   ;; a fresh first letter searches from the entry AFTER the current
+                   ;; one, so pressing b again walks Banana -> Blueberry; a longer
+                   ;; prefix keeps the current entry if it still matches
+                   (let ((start (if (= 1 (length typed)) (1+ sel) sel)))
+                     (loop for k below n
+                           for i = (mod (+ start k) n)
+                           when (and (enabled-p i)
+                                     (let ((l (string-left-trim " " (getf (nth i entries) :label))))
+                                       (and (>= (length l) (length typed))
+                                            (string-equal typed l :end2 (length typed)))))
+                             do (setf sel i) (return)))))
                (draw ()
+                 (setf *chooser-state* (list :kind kind :sel sel :count n
+                                             :label (getf (nth sel entries) :label)))
                  (if (halo-p)
                      (draw-halo canvas w h layers depth entries sel x y)
                      (draw-context-menu canvas w h entries sel x y)))
@@ -2156,6 +2196,9 @@
                  (setf depth (mod (+ depth delta) (length layers))
                        entries (halo-entries (nth depth layers))
                        n (length entries) sel 0)))
+        (setf sel (or (position-if (lambda (e) (getf e :selected)) entries) 0))
+        (unless (enabled-p sel) (setf sel (step-to sel 1)))
+        (unwind-protect
         (loop with dirty = t do
           (when dirty (draw) (show-frame canvas) (setf dirty nil))
           (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
@@ -2170,7 +2213,24 @@
                     (setf key (if (halo-p) (if (eq k :up) :left :right) k))))
                 (cond
                   ((member key '(:escape :eof)) (return nil))
-                  ((member key '(:return #\Return)) (return (nth sel entries)))
+                  ((and (select-p) (logbitp 2 state) (member key '(#\g #\G))) (return nil))
+                  ((member key '(:return #\Return)) (return (if (select-p) (pick sel) (nth sel entries))))
+                  ((select-p)
+                   (case key
+                     ((:up :left) (setf sel (step-to sel -1)))
+                     ((:down :right) (setf sel (step-to sel 1)))
+                     (:home (setf sel (step-to -1 1)))
+                     (:end (setf sel (step-to n -1)))
+                     (:page-up (setf sel (step-to (max -1 (- sel 10)) 1)))
+                     (:page-down (setf sel (step-to (min n (+ sel 10)) -1)))
+                     (:tab (return (pick sel)))
+                     (t (cond ((and (eql key #\Space)
+                                    (> (- (get-internal-real-time) typed-at)
+                                       internal-time-units-per-second))
+                               (return (pick sel)))
+                              ((and (characterp key) (graphic-char-p key)
+                                    (not (logbitp 2 state)))
+                               (type-ahead key))))))
                   ((and (halo-p) (eq key :tab)) (walk (if (logbitp 0 state) -1 1)))
                   ((and (halo-p) (eq key :up)) (walk 1))
                   ((and (halo-p) (eq key :down)) (walk -1))
@@ -2190,13 +2250,17 @@
                     ((or clicked button)
                      (let ((i (hit *cursor-x* *cursor-y*)))
                        (cond ((eq i :outside) (return nil))
+                             ;; a disabled option is not a choice: the card stays up
+                             ((and (integerp i) (select-p))
+                              (when (pick i) (return (pick i))))
                              ((integerp i) (return (nth i entries))))))
                     ((or (/= ox *cursor-x*) (/= oy *cursor-y*))
                      ;; hovering a menu row selects it, the way every menu behaves
                      (let ((i (hit *cursor-x* *cursor-y*)))
-                       (if (and (integerp i) (/= i sel))
+                       (if (and (integerp i) (/= i sel) (or (not (select-p)) (enabled-p i)))
                            (setf sel i dirty t)
-                           (move-cursor canvas ox oy))))))))))))))
+                           (move-cursor canvas ox oy))))))))))
+          (setf *chooser-state* nil))))))
 
 ;;; ---- the clipboard manager: SuperL-h (doc/clipboard.org) -------------------
 ;;; Parcellite's history window as a palette, the Spotter's shape: type to filter,
