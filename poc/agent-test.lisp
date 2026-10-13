@@ -26,7 +26,7 @@
 (let ((*load-verbose* nil))
   (handler-bind ((warning #'muffle-warning))
     (load (merge-pathnames "initramfs/registry.lisp" *root*))
-    (dolist (m '("initramfs/model.lisp" "initramfs/present.lisp" "poc/canvas.lisp" "poc/textview.lisp"
+    (dolist (m '("initramfs/model.lisp" "initramfs/present.lisp" "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp"
                  "poc/widgets.lisp" "initramfs/ansi.lisp" "initramfs/sysinfo.lisp" "poc/inflate.lisp"
                  "initramfs/files.lisp" "initramfs/file-views.lisp" "initramfs/framebuffer.lisp"
                  "initramfs/json.lisp" "initramfs/agent-wire.lisp" "initramfs/agent.lisp"))
@@ -175,7 +175,7 @@ line2") ("b" "no-space"))))
   (run-turn c "overload please")
   (ok "a 529 was retried and the answer came" (and (search "Hello from the mock" (texts c)) t))
   (ok "the retry is a note in the transcript"
-      (and (find-if (lambda (n) (search "retrying" n)) (turn-notes (current-turn c))) t)))
+      (and (find-if (lambda (n) (search "trying again" n)) (turn-notes (current-turn c))) t)))
 
 (let ((c (make-conversation)))
   (run-turn c "midstream break")
@@ -196,6 +196,99 @@ line2") ("b" "no-space"))))
   (run-turn c "hello after the cancel")
   (ok "the conversation goes on after a cancel" (and (search "hello after the cancel" (texts c)) t))
   (ok "...and its history was still valid" lol.mock:*problems* nil))
+
+(format t "~&== failures are said in words, and can be asked again ==~%")
+(defun headline (turn) (getf (turn-failure turn) :headline))
+(defun requests-now () (length lol.mock:*requests*))
+
+(let ((c (make-conversation)) (n (requests-now)))
+  (run-turn c "badkey please")
+  (let ((turn (current-turn c)))
+    (ok "401: the turn failed, with a headline" (and (search "refused the key (401" (headline turn)) t))
+    (ok "401: the API's own words are in the details"
+        (and (find-if (lambda (d) (search "invalid x-api-key" d)) (getf (turn-failure turn) :details)) t))
+    (ok "401: advice says how to retry" (and (find-if (lambda (a) (search "C-c C-a" a)) (getf (turn-failure turn) :advice)) t))
+    (ok "401: not retried (one request)" (- (requests-now) n) 1)
+    (ok "401: idle again, turn done" (list (conversation-state c) (turn-done turn)) '(:idle t))
+    (ok "401: the question is still the last message" (message-role (aref (conversation-messages c) 0)) "user")
+    (run-turn c "badkey please" :again t)
+    (ok "asked again: the question was not said twice"
+        (list (length (conversation-messages c)) (length (message-blocks (aref (conversation-messages c) 0))))
+        '(1 1))
+    (ok "asked again: the new turn is marked as such" (turn-again (current-turn c)) t)))
+
+(let ((c (make-conversation)) (*agent-retries* 2))
+  (run-turn c "busy please")
+  (ok "529 every time: a failure once the retries run out"
+      (and (search "overloaded (529)" (headline (current-turn c))) t))
+  (ok "...after a retry note in words"
+      (and (find-if (lambda (n) (search "overloaded" n)) (turn-notes (current-turn c))) t)))
+
+(let ((c (make-conversation)) (*agent-retries* 2))
+  (run-turn c "cutoff please")
+  (ok "a stream cut mid-answer: a failure that says so"
+      (and (search "cut off" (headline (current-turn c))) t))
+  (ok "...and the text that had arrived is kept"
+      (and (search "This answer will be cut off" (turn-partial (current-turn c))) t))
+  (ok "...but not sent back as a message" (length (conversation-messages c)) 1))
+
+(let ((c (make-conversation)) (*agent-retries* 1))
+  (run-turn c "overload please, once more")             ; the mock: 529 the first time only
+  (ok "a 529 with no retries left: failed" (and (turn-failure (current-turn c)) t))
+  (run-turn c "overload please, once more" :again t)
+  (ok "asked again, it is answered" (and (search "Hello from the mock" (texts c)) t))
+  (ok "...and the API accepted the history" lol.mock:*problems* nil))
+
+(let ((c (make-conversation)) (n (requests-now))
+      (saved (fdefinition 'ipv4-routes)) (saved6 (fdefinition 'ipv6-default-route)))
+  (unwind-protect
+       (progn
+         ;; a machine with no routes at all: DHCP got no lease, no router advertised v6
+         (setf (fdefinition 'ipv4-routes) (lambda () '())
+               (fdefinition 'ipv6-default-route) (lambda () nil))
+         (let ((*agent-endpoint* "http://192.0.2.1:18014"))
+           (run-turn c "hello with no network"))
+         (ok "no route: the preflight says 'No network' at once"
+             (and (search "No network" (headline (current-turn c))) t))
+         (ok "...and why" (and (find-if (lambda (d) (search "DHCP got no lease" d))
+                                        (getf (turn-failure (current-turn c)) :details))
+                               t))
+         (let ((*agent-endpoint* "https://api.anthropic.com"))
+           (forget-agent-key)
+           (run-turn c "hello with no network and no key"))
+         (ok "a hostname with no default route: No network"
+             (and (search "not connected" (headline (current-turn c))) t))
+         (ok "...and the missing key rides along as an 'Also:'"
+             (and (find-if (lambda (d) (search "Also: No API key" d)) (getf (turn-failure (current-turn c)) :details)) t))
+         (ok "the preflight sent nothing" (- (requests-now) n) 0))
+    (setf (fdefinition 'ipv4-routes) saved (fdefinition 'ipv6-default-route) saved6)))
+
+(let ((c (make-conversation)) (*agent-retries* 1)
+      (*agent-transport* (lambda (&rest args) (declare (ignore args)) (error "boom inside the transport"))))
+  (run-turn c "hello")
+  (ok "an unexpected error: a failure, not a silent thread"
+      (and (search "inside the agent" (headline (current-turn c))) t))
+  (ok "...naming the error" (and (find-if (lambda (d) (search "boom" d)) (getf (turn-failure (current-turn c)) :details)) t)))
+
+(let ((c (make-conversation)))
+  (fail-turn c (make-condition 'simple-error :format-control "early" :format-arguments '()) :question "q?")
+  (ok "a failure before any turn still gets a turn of its own"
+      (list (turn-question (current-turn c)) (turn-done (current-turn c)) (and (turn-failure (current-turn c)) t))
+      '("q?" t t)))
+
+(ok "an unreadable key file is its own failure, not a bare FILE-ERROR"
+    (let ((path (merge-pathnames ".config/lol/anthropic-api-key" *scratch*)))
+      (with-open-file (s path :direction :output :if-exists :supersede) (write-line "sk-test-unreadable" s))
+      (sb-posix:chmod (namestring path) 0)
+      (forget-agent-key)
+      (prog1 (if (zerop (sb-posix:getuid))
+                 "key_unreadable"             ; root reads anything: nothing to test
+                 (handler-case (progn (agent-api-key) :read)
+                   (agent-api-error (c) (and (not (search "sk-test" (princ-to-string c))) (api-error-kind c)))))
+        (sb-posix:chmod (namestring path) #o600)
+        (delete-file path)
+        (forget-agent-key)))
+    "key_unreadable")
 
 (format t "~&== the key and the settings ==~%")
 (let ((*agent-endpoint* "https://api.anthropic.com"))

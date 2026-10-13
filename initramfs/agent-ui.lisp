@@ -134,14 +134,51 @@
             (getf u :input) (getf u :cache-read) (getf u :cache-write) (getf u :output)
             (format-cost (getf u :cost)) (format-cost (conversation-cost conv)))))
 
+(defparameter +error-prefix+ ";; !! "
+  "What starts every line of a failure's block. The pane's TINT draws a line that
+   starts with it in the error colour — decided from the text, so it holds after any
+   edit — and the block stays a Lisp comment, so the buffer still evaluates.")
+
+(defun error-line-p (line)
+  (and (>= (length line) (length +error-prefix+))
+       (string= +error-prefix+ line :end2 (length +error-prefix+))))
+
+(defun conversation-tint (line)
+  "A conversation pane's TINT: its error blocks in the condition colour — red, the
+   colour the browser gives a condition everywhere (widgets.lisp *CONCEPT-COLORS*)."
+  (and (error-line-p line) (concept-color :condition)))
+
+(defun failure-lines (turn)
+  "TURN's failure as the transcript's error block: the headline, what is known, what
+   to do — every line ;; !! so it reads as one red block — and below it how to retry.
+   Whatever had streamed before the failure is kept above it, as reply text."
+  (let ((f (turn-failure turn))
+        (width (max 30 (- *agent-wrap* (length +error-prefix+) 2))))
+    (flet ((error-block-lines (text indent)
+             (loop for l in (split-lines* text)
+                   append (mapcar (lambda (w) (concatenate 'string +error-prefix+ indent w))
+                                  (wrap-words (string-trim " " l) width)))))
+      (append
+       (let ((p (turn-partial turn)))
+         (when (and p (plusp (length (string-trim '(#\Space #\Newline) p))))
+           (append (reply-lines p) (list ";; (the answer broke off here)"))))
+       (error-block-lines (format nil "FAILED: ~a" (getf f :headline)) "")
+       (loop for d in (getf f :details) append (error-block-lines d "  "))
+       (loop for a in (getf f :advice)
+             for first = t then nil
+             append (error-block-lines (format nil "~:[  ~;What to do: ~]~a" first a) "  "))))))
+
 (defun turn-lines (conv turn)
   "TURN as buffer lines: the question, every assistant block after it (and the reply
-   still streaming), the notes, and — once done — the usage and the your-turn line."
+   still streaming), the notes, a failure's error block, and — once done — the usage
+   and the your-turn line."
   (with-conversation-lock (conv)
     (let* ((ms (conversation-messages conv))
            (lines (append
                    (mapcar (lambda (l) (concatenate 'string ";; ? " l))
-                           (loop for q in (split-lines* (turn-question turn))
+                           (loop for q in (split-lines* (if (turn-again turn)
+                                                            (format nil "~a   (asked again)" (turn-question turn))
+                                                            (turn-question turn)))
                                  append (wrap-words q (- *agent-wrap* 5))))
                    (loop for i from (turn-start turn) below (length ms)
                          for m = (aref ms i)
@@ -150,9 +187,14 @@
                    (when (and (not (turn-done turn)) (conversation-live conv))
                      (loop for lb in (live-reply-blocks (conversation-live conv))
                            append (live-block-lines lb)))
-                   (mapcar (lambda (n) (concatenate 'string ";; ! " n)) (turn-notes turn)))))
+                   (mapcar (lambda (n) (concatenate 'string ";; ! " n)) (turn-notes turn))
+                   (when (turn-failure turn) (failure-lines turn)))))
       (if (turn-done turn)
-          (append lines (list (usage-line conv turn) +your-turn+ ""))
+          (append lines
+                  ;; a failed turn that never got an answer spent nothing: no meter line
+                  (unless (and (turn-failure turn) (zerop (or (getf (turn-usage turn) :input) 0)))
+                    (list (usage-line conv turn)))
+                  (list +your-turn+ ""))
           (append lines (list (format nil ";; ... ~a   (C-g stops)" (conversation-status conv))))))))
 
 (defun conversation-header (conv)
@@ -161,6 +203,7 @@
         ";; Type a question at the end and press C-c C-a. Code the agent proposes is live:"
         ";; C-x C-e evaluates it, C-c C-c compiles it into the image (the change set)."
         ";; C-c C-o on a ;; #N line opens what that tool call was about. C-g stops a turn."
+        ";; If a question fails, the reason is a red ;; !! block; C-c C-a with nothing typed asks it again."
         ""))
 
 (defun conversation-lines (conv)
@@ -179,6 +222,7 @@
   (make-view :title (format nil "agent · ~a" (conversation-title c))
              :kind :workspace :subject c
              :text (lines-text (conversation-lines c))
+             :tint #'conversation-tint
              :data (list :conversation c)))
 
 (defmethod commands-for ((c conversation))
@@ -323,9 +367,13 @@
 ;;; Asking: from a conversation, from any pane, from a subject
 ;;; ===========================================================================
 
-(defun start-turn-async (conv prompt question origin &key (executor #'post-job-and-wait))
+(defun start-turn-async (conv prompt question origin &key (executor #'post-job-and-wait) again)
   "Run a turn on its own thread, so the environment keeps drawing (§8.7). Tool calls
-   come back to the environment's thread as jobs (POST-JOB-AND-WAIT)."
+   come back to the environment's thread as jobs (POST-JOB-AND-WAIT). AGAIN re-asks a
+   failed turn (RUN-TURN). Nothing that goes wrong on the thread is lost: RUN-TURN
+   makes any failure the turn's, and anything that escapes even that is still made a
+   failed turn here, in the transcript — a thread that dies silently is the one
+   outcome this must never have."
   (when (conversation-busy-p conv)
     (return-from start-turn-async (setf *browser-status* "the agent is still answering — C-g stops it")))
   (when (eq *agent-initiative* :off)
@@ -336,10 +384,12 @@
         (sb-thread:make-thread
          (lambda ()
            (let ((*tool-executor* executor))
-             (handler-case (run-turn conv prompt :question question :origin origin)
+             (handler-case (run-turn conv prompt :question question :origin origin :again again)
                (serious-condition (c)
-                 (setf (conversation-state conv) :idle)
-                 (touch conv (format nil "error: ~a" c))))))
+                 (ignore-errors (fail-turn conv c :question question))
+                 (with-conversation-lock (conv)
+                   (setf (conversation-state conv) :idle (conversation-thread conv) nil))
+                 (touch conv)))))
          :name (format nil "agent turn ~d" (conversation-id conv))))
   conv)
 
@@ -367,6 +417,14 @@
    The draft is taken out of the buffer; the turn renders it back as ;; ? lines."
   (multiple-value-bind (draft start) (conversation-draft (pane-tv pane))
     (cond
+      ;; nothing typed after a failed turn: ask that question again (its own message
+      ;; is still the last one in the history — RUN-TURN's AGAIN sends it as it is)
+      ((and (zerop (length draft)) (failed-turn conv))
+       (let ((failed (failed-turn conv)))
+         (setf *conversation* conv
+               *browser-status* "asking again...")
+         (start-turn-async conv (or (turn-prompt failed) (turn-question failed)) (turn-question failed) pane
+                           :again t)))
       ((zerop (length draft))
        (setf *browser-status* "type your question below the last ;; --- your turn line, then C-c C-a"))
       (t
@@ -581,7 +639,15 @@
           (setf (gethash conv *agent-seen-revisions*) rev)
           (dolist (p (conversation-panes conv))
             (when (refresh-conversation-pane p conv) (setf dirty t)))
-          (setf dirty t))))
+          (setf dirty t)))
+      ;; a failure is said on the status line too, once — set HERE, on the UI thread
+      ;; that owns *BROWSER-STATUS*, never from the turn's thread
+      (let ((failed (failed-turn conv)))
+        (when (and failed (not (turn-announced failed)))
+          (setf (turn-announced failed) t
+                *browser-status* (format nil "agent: ~a ~:[— SuperL-a shows why~;— C-c C-a with nothing typed asks again~]"
+                                         (getf (turn-failure failed) :headline) (conversation-visible-p conv))
+                dirty t))))
     (when (run-agent-jobs) (setf dirty t))
     ;; the working dot pulses: redraw on the frame deadline while anything works
     (or dirty (and (some #'conversation-busy-p *conversations*) t))))
@@ -676,7 +742,7 @@
    at the frame budget while the turn runs), arrows and PageUp/Down move the caret,
    C-c C-c accepts the form before it, C-g stops the turn, Esc returns to the rail."
   (let* ((canvas (symbol-value '*fb-canvas*)) (w (symbol-value '*fb-xres*)) (h (symbol-value '*fb-yres*))
-         (tv (lol.textview:make-textview :font *bfont* :focus t))
+         (tv (lol.textview:make-textview :font *bfont* :focus t :tint #'conversation-tint))
          (seen -1) (prefix nil) (note nil)
          ;; the title band and the note line follow the current font (doc/fonts.org §6):
          ;; 24 and 20 px under the old 6x15 font
