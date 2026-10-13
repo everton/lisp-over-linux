@@ -92,6 +92,11 @@
   ;; 2026-10-12 it failed in every container. SLIRP answers its gateway itself.
   (let ((r (row "ping the gateway" (ct "ping -c 1 -W 3 10.0.2.2 >/dev/null 2>&1 && echo =ping=ok= || echo =ping=failed=" 30))))
     (check "ping works without capabilities (ping_group_range)" (has r "=ping=ok=")))
+  ;; localhost: lo was never brought up before 2026-10-12, so 127.0.0.1 did not
+  ;; exist — a dev server could not be reached (nor even listen) on it
+  (let ((r (row "a server on 127.0.0.1:3999, reached by curl"
+                (ct "ip -br addr show lo; python3 -m http.server 3999 --bind 127.0.0.1 -d /tmp >/dev/null 2>&1 & for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3999/) && break; done; echo =local=$c=; kill %1" 40))))
+    (check "localhost works (lo is up)" (has r "=local=200=")))
 
   (format t "~&~%== the host's toolchain ==~%")
   (let ((r (row "ruby openssl" (ct "ruby -e 'require \"openssl\"; puts \"=ssl=#{OpenSSL::VERSION}=\"'" 60))))

@@ -200,6 +200,18 @@ shipped:
 | N3    | SNTP, ~60 lines          | drift report + stepping through =lol-rootd= ([[file:../initramfs/sntp.lisp][sntp.lisp]], 164 lines; §2d) |
 | N4    | plain-HTTP =GET=         | a full HTTP/1.1 client, and HTTPS (§2e)                              |
 
+*** The loopback, =lo= (fixed 2026-10-12)
+The kernel creates =lo= *down*, and until 2026-10-12 nothing here raised it. So
+=127.0.0.1= did not exist. On the laptop, a Rails server in the terminal could not
+be reached at =localhost= from the web pane. [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]] now raises =lo= first.
+Setting =IFF_UP= is enough: when a loopback device comes up, the kernel gives it
+=127.0.0.1/8= itself ([[file:../linux/net/ipv4/devinet.c::inetdev_event][=inetdev_event=]], =NETDEV_UP=), and IPv6 adds =::1=.
+Containers and Chrome share this network namespace, so they all see the same
+=lo=. =check-containers.lisp= serves a page on =127.0.0.1:3999= and fetches it
+with =curl=. *Not a finding:* the first version of that check used Ruby's
+=-run -e httpd=, which needs =webrick=, a gem Ruby 3 no longer bundles; the
+server never started.
+
 *** The default route
 
 Giving =eth0= an address and a mask makes the kernel add *one* route by itself:

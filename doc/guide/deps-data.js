@@ -16,7 +16,7 @@ window.LOL_DEPS = {
     {file: "initramfs/agent.lisp", layer: -1, role: "an LLM client that lives in the image: the conversation, the", lines: 1643, defs: 184, packages: [], load: 31},
     {file: "initramfs/ansi.lisp", layer: 1, role: "ANSI SGR color for the REPL and line editor", lines: 217, defs: 26, packages: [], load: 14},
     {file: "initramfs/containers.lisp", layer: 3, role: "the laptop's own Debian as a container, from the Lisp side", lines: 411, defs: 48, packages: [], load: 28},
-    {file: "initramfs/dhcp.lisp", layer: 0, role: "get an IP from a DHCP server, in pure Lisp, and keep it", lines: 556, defs: 62, packages: [], load: 42},
+    {file: "initramfs/dhcp.lisp", layer: 0, role: "get an IP from a DHCP server, in pure Lisp, and keep it", lines: 563, defs: 62, packages: [], load: 42},
     {file: "initramfs/dns.lisp", layer: 0, role: "a stub resolver in pure Lisp: names -> addresses", lines: 424, defs: 44, packages: [], load: 43},
     {file: "initramfs/examples.lisp", layer: 3, role: "a tiny, self-contained gallery of CLOS specimens for the browser", lines: 216, defs: 28, packages: ["lol.examples"], load: 6},
     {file: "initramfs/fb-browser.lisp", layer: 6, role: "run the code browser on /dev/fb0 (the guest; no X)", lines: 2413, defs: 191, packages: [], load: 37},

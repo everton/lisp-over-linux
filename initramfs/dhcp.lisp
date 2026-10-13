@@ -542,6 +542,13 @@
    carrier (eth0 under QEMU; on the laptop usually none — it has no Ethernet
    port), then the netd thread, which renews leases and, through wifi.lisp's hook,
    brings Wi-Fi up in the background. Prints what it did; never signals."
+  ;; The LOOPBACK first. The kernel creates lo DOWN, and nothing else here raised
+  ;; it until 2026-10-12 — so 127.0.0.1 did not exist: a Rails server in a
+  ;; container could not listen on localhost, nor Chrome reach it. Raising IFF_UP
+  ;; is all it takes: on NETDEV_UP of a loopback device the kernel gives it
+  ;; 127.0.0.1/8 itself (net/ipv4/devinet.c, inetdev_event) and IPv6 adds ::1.
+  (unless (ignore-errors (set-interface-up "lo"))
+    (format t "~&lo: could not be brought up — 127.0.0.1 will not work~%"))
   (dolist (i (ignore-errors (interfaces)))
     (when (eq (getf i :kind) :wired)
       (let ((name (getf i :name)))
