@@ -138,9 +138,9 @@ page walks through it.</p>
 The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:2649</span></a>), builds menu
 entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:2691</span></a>) and runs the chosen one through
 <a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2628</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:3105</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3109</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3094</span></a>. That function calls whatever <code>*chooser*</code> the
+The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:3116</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3120</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3105</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser-fb</code> on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>

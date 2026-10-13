@@ -18,8 +18,11 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (21 checks, about ten
-seconds), [[file:../check-web.lisp][check-web.lisp]] in the guest (13 checks). Both pass.
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (39 checks, about a
+minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (24 checks). Both pass.
+Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
+environment itself, because headless Chrome draws their popups where the screencast
+cannot see them (§4.4).
 
 * 1. The decision: Chrome, headless, over the DevTools protocol
 
@@ -46,7 +49,7 @@ needs. WPE would have needed C code against an API nobody here has read yet
 | How frames reach us | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3) | the new platform API's headless buffers; *not investigated* (§A6) |
 | How input reaches it | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4) | an embedder API in C |
 | Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=) | to be written against the API |
-| Code we wrote | 1,776 lines of Lisp, *no C* (=web-cdp.lisp= 480, =web.lisp= 1,296) | a C shim plus Lisp; not estimated |
+| Code we wrote | 2,049 lines of Lisp (with an embedded page script), *no C* (=web-cdp.lisp= 480, =web.lisp= 1,569, at 2026-10-13) | a C shim plus Lisp; not estimated |
 | Memory, one simple page | 240–280 MB PSS on the host (§8.2), 436 MB in the guest | ~570 MB RSS for one heavy site (§A5; RSS, an upper bound) |
 | Disk | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image | ~270 MB of libraries (§A2) |
 | Licence | proprietary binary, used as installed | LGPL |
@@ -85,6 +88,8 @@ address; clicking the address edits it. Below is the page.
 | =C-+= / =C--= / =C-0= | zoom in, out, back to 100% |
 | =Shift-F10=, the Menu key, right click | the environment's menu for the page |
 | =SuperL-click= on a link | open it in a new tab (Ctrl-click opens it behind) |
+| a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4) |
+| a click on a colour input, Alt-Down on a date | the minibuffer asks for the value (§4.4) |
 | anything else | the page's |
 
 Every =SuperL= key stays the environment's. Every other key belongs to the page,
@@ -239,6 +244,106 @@ click can paste it into the Workspace.
   answered in the minibuffer at once: Enter is OK (with the typed text, for a
   prompt), =C-g= is Cancel.
 - *Find* is the page's own =window.find=, re-run as you type.
+
+** 4.4 Pickers: the popups the screencast cannot see
+
+*The symptom* (on the laptop, 2026-10-13): click a =<select>= in a web page and no
+list of options appears. The page does not seem to react at all.
+
+*Why.* A =<select>='s list is not drawn by the page. On a desktop the browser shows
+it in a little borderless window of its own, a *popup widget*, so that it can hang
+below the bottom of the page or past the window's edge. Inside Chrome a popup widget
+is a separate renderer widget with its own *compositor frame*. (A compositor frame is
+one finished picture of one surface; Chrome's compositor stacks them to make what a
+window shows.) =Page.startScreencast= sends us the *page's* compositor frames only
+(§3.3). Headless, nothing stacks the popup's frame on top, because there is no
+window. So the popup opens, takes the keyboard, and is never in any frame we
+receive.
+
+/Verified/ in the guest (Chrome 148.0.7778.215, tag #27, before the fix): after a
+real QMP click on a select, =select.matches(':open')= was =true=; the newest
+screencast frame held *0* pixels of the popup's highlight blue; a
+=Page.captureScreenshot= taken at the same moment held *2809*, because that command
+does composite popups. Arrow keys then still worked, but blind: Down and Enter
+changed the value through a list nobody could see. The host's Chrome behaves the
+same.
+
+The same probe looked at the other controls that use browser UI:
+
+| Control | Headless Chrome 148 | What we do |
+|---------+---------------------+------------|
+| =<select>= (single, size ≤ 1) | an invisible popup that takes the keys | our chooser (below) |
+| =<input type=color>= | an invisible colour chooser, opened on /click/; it took every following key | the minibuffer asks for =#rrggbb= |
+| =<input type=date>=, =time=, =datetime-local=, =month=, =week= | no picker at all: the calendar icon does nothing | the minibuffer asks for the value (=yyyy-mm-dd= …); typing digits into the field also works, and is visible, because the field itself is page |
+| =<input list=…>= with a =<datalist>= | no visible suggestions; once typing opened them, they swallowed the arrow keys (=Esc= closed them) | our chooser, on Down / Alt-Down / a click on the field's arrow |
+
+*How we draw them.* Three pieces, all in [[file:../initramfs/web.lisp::defparameter +web-picker-js+][=web.lisp='s "pickers" section]]:
+
+1. *A page script* (=+WEB-PICKER-JS+=) is installed into every document the tab
+   will load (=Page.addScriptToEvaluateOnNewDocument=) and, once, into the one it
+   already has. It listens on =window= in the *capture phase*. DOM events travel
+   from the window down to the target (capture), then back up (bubble); a capture
+   listener on =window= runs before any of the page's own handlers and before the
+   browser's default action. On a =mousedown= on a select (or Space, Enter, Alt-Down
+   or F4 on a focused one) it calls =preventDefault()=, so Chrome never opens its
+   popup, and reports the control: an id (a counter kept in a =WeakMap=, so the
+   page's elements are not marked), its box in CSS pixels, and its options (label,
+   value, disabled, the =<optgroup>= label, which one is selected). A colour input
+   also has its =click= cancelled, because that is when its chooser opens. A
+   datalist input loses its =list= attribute while it has focus (it is put back on
+   blur): Chrome offers suggestions only to a focused input that has one, so its
+   invisible list can never open.
+2. *A binding* carries the report. =Runtime.addBinding= puts a function on the
+   page's =window=; each call of it becomes a =Runtime.bindingCalled= event on our
+   pipe, with one string (here, JSON) and the *execution context* it came from
+   (each frame of a page has its own JavaScript world, its own context). The event
+   is sent only while the Runtime domain is enabled. The first host run forgot
+   =Runtime.enable=: the script cancelled the click and its report went nowhere.
+3. *Our chooser.* The event is queued and, after the pipe has been read, shown by
+   =WEB-PICK=. A list goes to the *right-button menu's card*, the same
+   =RUN-CHOOSER-FB= ([[file:../initramfs/fb-browser.lisp::defun run-chooser-fb][fb-browser.lisp]])
+   with a kind of its own, =:select=: placed under the control (CSS pixels times
+   =*web-zoom*= plus the page's origin on screen, the mapping =WEB-PAGE-POINT=
+   inverts), at least as wide as it, opening on the current option, the optgroups as
+   section headers, disabled options dim and never landed on. Up/Down, Home/End,
+   PageUp/PageDown move; typing jumps to the next option starting with what was typed
+   (letters typed within a second accumulate); Enter, Space or a click picks; Esc,
+   =C-g= or a click outside leaves it unchanged. The answer goes back with
+   =Runtime.evaluate= *in the reporting frame's context*: the script's
+   =__lolPickerApply= sets =selectedIndex= (checked against the option's value, in
+   case the list changed meanwhile) and fires =input= and =change= with
+   =bubbles: true=, which is what a real choice fires. Colour and date go to the
+   minibuffer instead, pre-filled with the current value, and the page refuses a
+   malformed one (we say so in the status line).
+
+Why queue rather than open the chooser inside =WEB-EVENT=: the chooser is *modal*.
+It runs its own input loop until you choose. =WEB-EVENT= is called from inside
+=CDP-PUMP='s loop over the messages just read, so a modal loop there would leave
+the rest of that batch undelivered until you chose. While the chooser is up the
+pipe is not read at all. That is harmless: Chrome sends the next frame only after
+the last one is acked (§3.3).
+
+The press that opened the select is released to the page (=WEB-FINISH-PRESS=)
+before the chooser comes up, because the chooser's own loop will eat the real
+release.
+
+*What is still not covered:*
+
+- A =<select>= inside a *cross-site iframe*. Chrome runs such a frame in a process of
+  its own, as a separate target we never attach to, so our script is not in it and its
+  popup is still invisible. Same-site iframes work: the box is shifted by each
+  enclosing frame's position.
+- =<select multiple>= and =size= > 1 are drawn by the page itself as a list box,
+  so they need nothing and are left alone.
+- The page's own JavaScript sees =input.list= as =null= while a datalist input has
+  focus.
+- =<input type=file>= is a different mechanism (a file chooser dialog, §9).
+
+Tests: =poc/web-test.lisp= (18 picker checks: the chooser's entries, groups, disabled
+and current option, its position, the select not =:open=, Daikon chosen and the
+=onchange= run, Esc changing nothing, Space opening it, the datalist filtered and
+chosen, colour and date through the minibuffer, the anchor maths) and
+=check-web.lisp= in the guest (§8.1).
 
 * 5. The event loop: services
 
@@ -407,7 +512,9 @@ tab closing its Chrome page, =C-l= and typed addresses, and =WEB-URL-FOR='s rule
 writes PPMs of three states to =poc/out/=. One thing it ruled out: a =file://=
 page's =download= attribute is ignored by Chrome (a file URL is an opaque origin, so
 Chrome navigates to the file instead), which is why the test's download link is a
-=data:= URL.
+=data:= URL. Since 2026-10-13 it also drives the pickers of §4.4 (18 checks), with
+=*CHOOSER*= bound to a function that records what it was offered and answers, since
+the host has no modal loop.
 
 [[file:../check-web.lisp][check-web.lisp]] (guest:
 =LOL_GUEST_HOSTROOT=1 LOL_PORT=4015 sbcl --script check-web.lisp=) boots the image
@@ -417,7 +524,13 @@ QMP input: =SuperL-b= held down, an address typed key by key, a click by relativ
 pointer motion, =SuperL-Left=, typing into a field, wheel notches. It then loads
 =https://example.com= (DNS and TLS are Chrome's own, inside the container), reads
 =chrome://sandbox=, and checks that =WEB-SHUTDOWN= leaves no Chrome process and no
-zombie. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
+zombie. Between the two it loads a page with a =<select>= (optgroups, a disabled
+option, an =onchange= that writes the title) and, with real QMP clicks and keys,
+asserts that our chooser opens (read from =*CHOOSER-STATE*=; the screendump changes)
+on the current option, that Down skips the disabled one, that Enter changes the
+value and runs =onchange=, that Esc changes nothing, and that Space opens it from
+the keyboard. Whether Chrome's own popup stayed shut is asked only on the host: the
+net REPL's =WEB-JS= waits for the browser's loop, which is inside the modal chooser. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
 
 ** 8.2 Numbers
 
@@ -441,6 +554,8 @@ decode and a rectangle blit for what the eye sees.
   reads one byte as one character, so =ç= or =ã= typed on the console arrives as two
   wrong characters. This is a shell-wide limitation, not one of the web pane's; paste
   (=C-v=) carries any text correctly.
+- *Pickers* are ours for =<select>=, colour, date/time and =<datalist>= (§4.4), but
+  not inside a cross-site iframe, where our page script never runs.
 - *No file upload dialog.* =<input type=file>= opens nothing yet. The next step is
   =Page.setInterceptFileChooserDialog= plus a file-manager prompt.
 - *No per-link right-click menu.* The right button shows the page's commands, not the

@@ -535,6 +535,11 @@ Lisp files only. Three things touch PID 1's duties:
 - *Threads.* The net REPL may ask a page a question (=WEB-JS=) while the
   browser's loop reads the pipe; sends are serialised by a mutex and replies are
   delivered by the loop. Details: [[file:web-browser.org][web-browser.org]] §5–§6.
+- *Modal choosers from a service* (2026-10-13). A page's =<select>= is answered
+  with =RUN-CHOOSER-FB= (kind =:select=), which runs its own input loop. =WEB-SERVICE=
+  opens it only after the pipe's batch has been dispatched, never from inside
+  =WEB-EVENT=; while it is up nobody reads Chrome's pipe, which Chrome's frame acks
+  make harmless. [[file:web-browser.org][web-browser.org]] §4.4.
 
 * The initramfs description (gen_init_cpio)
 
