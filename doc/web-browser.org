@@ -245,6 +245,12 @@ key is also sent on to the page, so a site with its own copy handler still sees 
 PRIMARY when the button comes up, as everywhere else in the environment, so a middle
 click can paste it into the Workspace.
 
+The address prompt (=C-l=) is our minibuffer, not the page, so it pastes from our
+clipboard too: =C-y=, =C-v= or Shift-Insert insert the newest entry with newlines and
+tabs made spaces (=minibuffer-paste-text=, so a URL copied with its line break pastes
+clean). =C-u=, or the =✕ clear= button drawn at the prompt's right while it holds
+text, empties it.
+
 ** 4.3 Downloads, dialogs, find
 
 - *Downloads* go to =~/Downloads= under their own names
@@ -354,6 +360,30 @@ and current option, its position, the select not =:open=, Daikon chosen and the
 =onchange= run, Esc changing nothing, Space opening it, the datalist filtered and
 chosen, colour and date through the minibuffer, the anchor maths) and
 =check-web.lisp= in the guest (§8.1).
+
+** 4.5 Saying we are Chrome: the user agent and its client hints
+
+Headless Chrome's user agent contains =HeadlessChrome=, and some sites refuse or
+degrade a browser that says so. Since the first version, =web-chrome-ready= removes
+the "Headless" and sends the result with =Emulation.setUserAgentOverride=.
+
+That was half the job. Google's sign-in still refused us with "This browser or app
+may not be secure". A modern Chrome describes itself twice: the =User-Agent= string,
+and the /User-Agent Client Hints/ (the =Sec-CH-UA*= request headers, and
+=navigator.userAgentData= for scripts). Overriding the string *alone* leaves the
+hints empty: no brands and no =Sec-CH-UA= header. A Chrome with no client hints is a
+known sign of an automated browser. This was found in a session run inside the
+environment, against Chrome 148.
+
+So [[file:../initramfs/web.lisp::defun web-ua-metadata][=web-ua-metadata=]] builds the =userAgentMetadata= that goes with the string,
+as a desktop Chrome on Linux sends it:
+- the brands =Chromium=, =Google Chrome= and the "GREASE" brand =Not/A)Brand= (a
+  deliberately odd name that keeps servers from hard-coding the list);
+- the full version, taken from =Browser.getVersion='s =product=
+  (="HeadlessChrome/148.0.7778.215"=) into =*web-chrome-version*=;
+- the platform: Linux, x86, 64-bit, not mobile.
+
+Every new tab gets the string and its hints together.
 
 * 5. The event loop: services
 

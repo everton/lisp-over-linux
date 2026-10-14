@@ -135,6 +135,9 @@
    :failed — it did not start (*WEB-ERROR* says why).")
 (defvar *web-error* nil "Why Chrome is :failed or a tab could not be opened, for the pane.")
 (defvar *web-ua* nil "Chrome's user agent with \"HeadlessChrome\" made plain \"Chrome\".")
+(defvar *web-chrome-version* nil
+  "Chrome's full version, \"148.0.7778.215\", from Browser.getVersion's product.")
+
 (defvar *web-changed* nil "Something the pane SHOWS changed (a title, a load state): redraw.")
 (defvar *web-adopt* '() "targetIds of pages Chrome opened on its own, to attach to.")
 (defvar *web-focus-next* t "Should the next adopted page take focus? (NIL after a Ctrl-click.)")
@@ -312,14 +315,37 @@
      :key (lambda (s) (subseq s 0 (or (position #\= s) (length s))))
      :test #'string= :from-end t)))
 
+(defun web-ua-metadata ()
+  "The User-Agent Client Hints that go WITH *WEB-UA* (Emulation.setUserAgentOverride's
+   userAgentMetadata). Overriding the UA string ALONE blanks them: navigator.userAgentData
+   .brands becomes [] and no Sec-CH-UA header is sent — measured on Chrome 148 — and a
+   Chrome that sends no client hints is an automation fingerprint. Google's sign-in
+   refuses such a browser (\"This browser or app may not be secure\"). So we send the
+   hints a desktop Chrome on Linux sends: the brands the headless Chrome itself
+   reports (Chromium, Google Chrome, and the GREASE brand), its full version, Linux, x86."
+  (let* ((full (or *web-chrome-version* "0.0.0.0"))
+         (major (subseq full 0 (or (position #\. full) (length full)))))
+    (flet ((brand (b v) (jobj "brand" b "version" v)))
+      (jobj "brands" (vector (brand "Chromium" major) (brand "Google Chrome" major)
+                             (brand "Not/A)Brand" "99"))
+            "fullVersionList" (vector (brand "Chromium" full) (brand "Google Chrome" full)
+                                      (brand "Not/A)Brand" "99.0.0.0"))
+            "fullVersion" full
+            "platform" "Linux" "platformVersion" "" "architecture" "x86" "bitness" "64"
+            "model" "" "mobile" :false "wow64" :false))))
+
 (defun web-chrome-ready (reply)
   "Chrome answered Browser.getVersion: it is up. Learn its user agent, turn on the
    events we live by, and open every tab that was waiting for it."
-  (let ((ua (jget reply "result" "userAgent")))
+  (let ((ua (jget reply "result" "userAgent"))
+        (product (jget reply "result" "product")))       ; "HeadlessChrome/148.0.7778.215"
     ;; Some sites refuse, or serve a lesser page to, a browser that says it is
-    ;; HEADLESS. It is not, from the user's side, so we say what it is: Chrome.
+    ;; HEADLESS. It is not, from the user's side, so we say what it is: Chrome — and
+    ;; send the client hints to match (WEB-UA-METADATA), or Google sign-in refuses us.
     (setf *web-ua* (and ua (let ((i (search "HeadlessChrome" ua)))
-                             (if i (concatenate 'string (subseq ua 0 i) (subseq ua (+ i 8))) ua)))))
+                             (if i (concatenate 'string (subseq ua 0 i) (subseq ua (+ i 8))) ua)))
+          *web-chrome-version* (and product (position #\/ product)
+                                    (subseq product (1+ (position #\/ product))))))
   (setf *web-chrome-state* :ready *web-changed* t)
   (let ((c *web-chrome*))
     ;; Target.* events about every tab: created (a popup), info changed (a title),
@@ -376,8 +402,11 @@
     (cdp-send c "Page.enable" nil :session s)
     ;; alert()/confirm()/prompt() pause the page until answered (WEB-EVENT)
     (cdp-send c "Page.setInterceptFileChooserDialog" (jobj "enabled" :false) :session s)
+    ;; the UA string AND its client hints: the string alone blanks Sec-CH-UA, which
+    ;; Google's sign-in reads as an automated browser (WEB-UA-METADATA)
     (when *web-ua*
-      (cdp-send c "Emulation.setUserAgentOverride" (jobj "userAgent" *web-ua*) :session s))
+      (cdp-send c "Emulation.setUserAgentOverride"
+                (jobj "userAgent" *web-ua* "userAgentMetadata" (web-ua-metadata)) :session s))
     ;; the pickers headless Chrome draws where the screencast cannot see them
     ;; (WEB-PICKER-SETUP, "pickers" below)
     (web-picker-setup tab)
@@ -1393,11 +1422,12 @@ window.__lolPickerApply = function(id, v){
       (setf *browser-status* "paste: the clipboard is empty")))
 
 (defun web-prompt-address (tab)
-  "C-l, or a click on the address: edit the URL in the minibuffer; Enter loads it."
+  "C-l, or a click on the address: edit the URL in the minibuffer; Enter loads it.
+   C-y / C-v pastes a copied URL, C-u or the ✕ clears it (MINIBUFFER-KEY)."
   (minibuffer-read "url or search: " (lambda (text) (web-navigate tab text))
                    :initial (if (member (web-tab-url tab) (list "about:blank" (web-home-url)) :test #'equal)
                                  "" (web-tab-url tab))  ; a blank or home tab: an empty prompt
-                   :hint "Enter loads · C-g cancels"))
+                   :hint "Enter loads · C-y pastes · C-u clears · C-g cancels"))
 
 (defvar *web-find* "" "The last find-in-page query.")
 

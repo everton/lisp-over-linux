@@ -1027,13 +1027,51 @@
   (lol.canvas:fill-rect canvas (+ x 2) (+ y 6) 6 1 color)
   (lol.canvas:fill-rect canvas (+ x 2) (+ y 9) 4 1 color))
 
+(defparameter +agent-icon-rows+
+  #(".XXXXXXXX."
+    ".X.XXXX.X."
+    "XXXXXXXXXX"
+    "XXXXXXXXXX"
+    ".XXXXXXXX."
+    ".X.X..X.X.")
+  "The agent's tray icon, 10x6 cells: Claude's little orange creature — a block of a
+   body with two eyes punched out, arms at its sides, four legs. X is painted.")
+
+(defparameter *agent-icon-color* !#D97757 "Claude's orange — the agent icon's body.")
+
+(defun agent-icon-scale ()
+  "Pixels per icon cell: as big as the tab strip comfortably holds (2 at 6x15)."
+  (max 1 (floor (- +bar-h+ 8) (length +agent-icon-rows+))))
+
+(defun agent-icon-width ()
+  (* (agent-icon-scale) (length (aref +agent-icon-rows+ 0))))
+
+(defun draw-agent-icon (canvas x color)
+  "Paint the agent's icon (+AGENT-ICON-ROWS+) at X, centred in the tab strip. COLOR is
+   the body's colour; the eyes are holes, so the strip shows through."
+  (let* ((s (agent-icon-scale))
+         (rows +agent-icon-rows+)
+         (y0 (floor (- +bar-h+ (* s (length rows))) 2)))
+    (loop for row across rows for r from 0
+          do (loop for ch across row for c from 0
+                   when (char= ch #\X)
+                     do (lol.canvas:fill-rect canvas (+ x (* c s)) (+ y0 (* r s)) s s color)))
+    (+ x (* s (length (aref rows 0))))))
+
+(defun tray-item-icon-width (it)
+  "Extra width an item's :ICON takes before its text (the agent's creature), or 0."
+  (if (eq (getf it :icon) :agent) (+ (agent-icon-width) 5) 0))
+
 (defun tray-width ()
   "How wide the tray will be, so the tabs can stop short of it."
   (let ((items (ignore-errors (tray-items))))
-    (+ 8 14 (loop for it in items sum (+ 16 (lol.canvas:string-px *bfont* (getf it :text)))) 8)))
+    (+ 8 14 (loop for it in items
+                  sum (+ 16 (tray-item-icon-width it) (lol.canvas:string-px *bfont* (getf it :text))))
+       8)))
 
 (defun draw-tray (canvas w)
   "Paint the tray, right-aligned in the tab strip: [clip] | BAT 87% | 2026-10-02 09:01.
+   An item with :ICON :AGENT is drawn as the agent's creature, then its text.
    Records *TRAY-RECT* and *TRAY-CLIP-RECT*. Returns the tray's left edge."
   (let* ((items (ignore-errors (tray-items)))
          (tw (tray-width))
@@ -1049,6 +1087,8 @@
     (dolist (it items)
       (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) (text-dy +bar-h+) *ui-rule*)
       (incf pen 16)
+      (when (eq (getf it :icon) :agent)
+        (setf pen (+ 5 (draw-agent-icon canvas pen (if (eq (getf it :tone) :off) *ui-dim* *agent-icon-color*)))))
       (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen (text-dy +bar-h+)
                                         (if (member (getf it :kind) '(:battery :wifi :wired :agent))   ; :agent — agent-ui.lisp
                                             (tray-tone-color (getf it :tone))
@@ -1304,6 +1344,26 @@
       (let ((is-list (and (null (pane-tv cur))
                           (not (member (view-kind (pane-view cur)) +non-list-kinds+)))))
         (cond
+          ;; A TEXT PANE with a list beside it — the agent's conversation with its
+          ;; Activity (agent-ui.lisp, layout A of doc/design/agent-workbench.html): the
+          ;; transcript keeps the larger part, the activity rail the rest; the focused
+          ;; half wears the accent rule, SuperL-o moves focus, as for the stage.
+          ((and (pane-tv cur) (pane-side cur) (null (pane-tv (pane-side cur)))
+                (>= w 900))
+           (let* ((full-w (- w 24)) (side-w (max 300 (floor (* full-w 34) 100)))
+                  (gap 12) (text-w (- full-w side-w gap)) (sx (+ 12 text-w gap))
+                  (side (pane-side cur)))
+             (setf *split-x* sx)
+             (draw-pane-body canvas cur 12 body-y text-w body-h)
+             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
+             (lol.canvas:draw-string canvas *bfont*
+               (format nil "~a~@[   ~a~]" (view-title (pane-view side))
+                       (if *editing-side* "up/dn · ret opens · SuperL-o back" "SuperL-o"))
+               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
+             (if *editing-side*
+                 (lol.canvas:fill-rect canvas sx (- body-y 2) side-w 2 *ui-accent*)
+                 (lol.canvas:fill-rect canvas 12 (- body-y 2) text-w 2 *ui-accent*))
+             (draw-pane-body canvas side sx body-y side-w body-h :side)))
           ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
           ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
           ;; but driven by 'w' rather than a selected row, and the stage keeps the
@@ -1634,14 +1694,23 @@
     (handler-case (funcall (mb-on-change mb) (mb-text mb))
       (serious-condition (c) (setf *browser-status* (princ-to-string c))))))
 
+(defun minibuffer-paste-text (text)
+  "TEXT as one minibuffer line: a prompt holds ONE line, so newlines and tabs become
+   spaces and the ends are trimmed — a URL copied with its line break pastes clean."
+  (and text
+       (string-trim " " (substitute-if #\Space (lambda (c) (member c '(#\Newline #\Return #\Tab))) text))))
+
 (defun minibuffer-key (key state)
   "A key while the minibuffer is up. Enter answers, Esc / C-g cancels, Tab completes;
-   the rest is a small line editor: Left/Right, C-a/C-e (Home/End), C-b/C-f,
-   Backspace / C-d (Delete), C-k kills to the end, C-u clears the line, M-Backspace
-   deletes a word. Returns NIL (BROWSER-KEY's 'carry on')."
+   the rest is a small line editor: Left/Right, C-a/C-e (Home/End), C-< / C-> and
+   M-< / M-> (start / end, as in every other text here), C-b/C-f, Backspace / C-d
+   (Delete), C-k kills to the end, C-u clears the line (so does the ✕ at its right),
+   M-Backspace deletes a word, C-y / C-v / Shift-Insert paste the clipboard (newest
+   entry, newlines made spaces). Returns NIL (BROWSER-KEY's 'carry on')."
   (let* ((mb *minibuffer*)
          (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
-         (ctrl (lol.canvas:ctrl-p state)) (meta (lol.canvas:meta-p state)))
+         (ctrl (lol.canvas:ctrl-p state)) (meta (lol.canvas:meta-p state))
+         (shift (lol.canvas:shift-p state)))
     (flet ((set-text (new point)
              (setf (mb-text mb) new (mb-point mb) (max 0 (min point (length new))))
              (minibuffer-edited mb)))
@@ -1655,6 +1724,12 @@
         ((and (eq key :tab) (mb-completer mb))
          (let ((new (ignore-errors (funcall (mb-completer mb) text))))
            (when (and new (string/= new text)) (set-text new (length new)))))
+        ;; paste: C-y (Emacs), C-v (everyone else), Shift-Insert (X)
+        ((or (and ctrl (member key '(#\y #\Y #\v #\V))) (and shift (eq key :insert)))
+         (let ((paste (minibuffer-paste-text (lol.clipboard:clip-yank))))
+           (if (and paste (plusp (length paste)))
+               (set-text (concatenate 'string (subseq text 0 pt) paste (subseq text pt)) (+ pt (length paste)))
+               (setf *browser-status* "paste: the clipboard is empty"))))
         ((and meta (eq key :backspace))
          (let ((start (or (position-if (lambda (c) (member c '(#\/ #\Space #\. #\- #\_)))
                                        text :end (max 0 (1- pt)) :from-end t)
@@ -1667,8 +1742,12 @@
            (set-text (concatenate 'string (subseq text 0 pt) (subseq text (1+ pt))) pt)))
         ((or (eq key :left) (and ctrl (member key '(#\b #\B)))) (setf (mb-point mb) (max 0 (1- pt))))
         ((or (eq key :right) (and ctrl (member key '(#\f #\F)))) (setf (mb-point mb) (min (length text) (1+ pt))))
-        ((or (eq key :home) (and ctrl (member key '(#\a #\A)))) (setf (mb-point mb) 0))
-        ((or (eq key :end) (and ctrl (member key '(#\e #\E)))) (setf (mb-point mb) (length text)))
+        ((or (eq key :home) (and ctrl (member key '(#\a #\A)))
+             (and (or ctrl meta) (member key '(#\< #\,))))
+         (setf (mb-point mb) 0))
+        ((or (eq key :end) (and ctrl (member key '(#\e #\E)))
+             (and (or ctrl meta) (member key '(#\> #\.))))
+         (setf (mb-point mb) (length text)))
         ((and ctrl (member key '(#\k #\K))) (set-text (subseq text 0 pt) pt))
         ((and ctrl (member key '(#\u #\U))) (set-text "" 0))
         ((and (characterp key) (graphic-char-p key) (not ctrl) (not meta))
@@ -1676,15 +1755,22 @@
         (t nil))))
   nil)
 
+(defvar *mb-clear-rect* nil
+  "(X0 X1 Y0 Y1) of the minibuffer's ✕ clear button as last drawn, or NIL.")
+
 (defun draw-minibuffer (canvas w h)
   "The minibuffer, over the status line: an amber rule, the prompt in amber, the
-   text and a caret. A long text scrolls so the caret is always on screen."
+   text and a caret, and — when there is text — a ✕ that clears it (a click, or C-u).
+   A long text scrolls so the caret is always on screen."
   (let* ((mb *minibuffer*)
          (cw (lol.canvas:font-cw *bfont*))
          (y (- h (status-h)))
          (px (+ 10 (lol.canvas:string-px *bfont* (mb-prompt mb))))
          (hint-w (if (mb-hint mb) (+ 16 (lol.canvas:string-px *bfont* (mb-hint mb))) 0))
-         (room (max 4 (floor (- w px 14 hint-w) cw)))
+         (clear (and (plusp (length (mb-text mb))) (not (mb-single-key mb))))
+         (clear-label " ✕ clear ")
+         (clear-w (if clear (+ 12 (lol.canvas:string-px *bfont* clear-label)) 0))
+         (room (max 4 (floor (- w px 14 hint-w clear-w) cw)))
          (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
          (first (max 0 (- pt (1- room))))
          (shown (subseq text first (min (length text) (+ first room))))
@@ -1695,6 +1781,13 @@
     (lol.canvas:draw-string canvas *bfont* (mb-prompt mb) 10 (status-text-y h) *ui-amber*)
     (lol.canvas:draw-string canvas *bfont* shown px (status-text-y h) *ui-text*)
     (lol.canvas:fill-rect canvas (+ px (* (- pt first) cw)) (1- (status-text-y h)) 2 (1+ (line-h)) *ui-accent*)
+    (setf *mb-clear-rect* nil)
+    (when clear
+      (let* ((bx (- w 10 hint-w clear-w -6))
+             (bw (- clear-w 6)))
+        (lol.canvas:fill-rect canvas bx (+ y 4) bw (- (status-h) 6) *ui-panel*)
+        (lol.canvas:draw-string canvas *bfont* clear-label (+ bx 3) (status-text-y h) *ui-dim*)
+        (setf *mb-clear-rect* (list bx (+ bx bw) y h))))
     (when (mb-hint mb)
       (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
                               (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))))
@@ -2001,6 +2094,22 @@
       ((and (eq key :tab) (pane-tv p)) (editor-complete p) nil)
       (t (when (pane-tv p) (lol.textview:tv-key (pane-tv p) key state)) nil))))
 
+(defun open-workspace (&optional fresh)
+  "SuperL-e: go to a Workspace. The open Workspace tab nearest after this one (so
+   pressing it again cycles through them, if you keep several), or — when none is
+   open, e.g. you closed it, or FRESH (SuperL-Shift-e) — a new one. The tab strip's +,
+   the right-click menu's New Workspace and the Spotter's \"workspace\" open one too."
+  (let* ((n (length *trails*))
+         (hit (and (not fresh)
+                   (loop for k from 1 to n
+                         for i = (mod (+ *active* k) n)
+                         when (typep (pane-subject (first (nth i *trails*))) 'subj-workspace)
+                           return i))))
+    (if hit
+        (activate-trail hit)
+        (new-trail (subj-workspace)))
+    (setf *browser-status* nil)))
+
 (defun browser-key (key state)
   "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
    Returns :quit to exit. STATE is the X modifier bitmask."
@@ -2108,6 +2217,8 @@
           (let ((it (selected-item (current-pane))))
             (when (and it (item-subject it)) (new-trail (item-subject it))))
           nil)
+         ((member key '(#\e #\E))                                              ; a Workspace (or a new one)
+          (open-workspace (or (eql key #\E) (lol.canvas:shift-p state))) nil)
          ((member key '(#\m #\M)) (open-modules) nil)                         ; the module index
          ((member key '(#\f #\F)) (funcall 'open-files) nil)                   ; the file manager
          ((and (member key '(#\b #\B)) (fboundp 'web-open))                   ; a web page (web.lisp)
@@ -2414,6 +2525,15 @@
           (lol.clipboard:clip-select text)
           (clip-status "selected" text))))))
 
+(defun minibuffer-click (x y)
+  "A click while the minibuffer is up: on its ✕, clear the text and keep the prompt
+   open (returns T); anywhere else NIL — the caller ends the prompt, as before."
+  (let ((r *mb-clear-rect*))
+    (when (and *minibuffer* r (<= (first r) x (second r)) (<= (third r) y (fourth r)))
+      (setf (mb-text *minibuffer*) "" (mb-point *minibuffer*) 0)
+      (minibuffer-edited *minibuffer*)
+      t)))
+
 (defun browser-click (x y &optional ctrl super)
   "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
    list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
@@ -2432,6 +2552,7 @@
   (setf *drag-tv* nil *drag-origin* nil *term-drag* nil) ; only a press below re-arms one
   ;; a click ends a prompt: it is a change of subject, like C-g. (The live filter
   ;; keeps what was typed — its ON-CANCEL decides that, not us.)
+  (when (minibuffer-click x y) (return-from browser-click nil))   ; its ✕ clears, keeps it open
   (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*)))
   ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
   ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
@@ -2462,7 +2583,10 @@
       ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
       ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
       ;; it is reading, not editing. The caret is simply not drawn there.
-      ((pane-tv p)
+      ;; (a text pane's own half only: one with a list beside it — the agent's
+      ;; Activity — leaves clicks in the right column to the split clause below)
+      ((and (pane-tv p) (not (and (pane-side p) *split-x* (>= x *split-x*))))
+       (setf *editing-side* nil)
        (cond
          (ctrl (jump-to-definition (pane-tv p) x y))
          ((lol.textview:tv-hit-p (pane-tv p) x y)

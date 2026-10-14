@@ -685,6 +685,17 @@
       ((and ctrl (eq key :end))   (setf (tv-point-line tv) (1- (length (tv-lines tv))))
                                   (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv))))
                                   (unless ext (collapse tv)) (ensure-visible tv) nil)
+      ;; ---- C-< / C-> and M-< / M->: the start / end of the buffer (Emacs's
+      ;;      beginning-of-buffer / end-of-buffer). On the bare console C-< and C-> send
+      ;;      no byte; fb-browser's NOTE-MODIFIER-KEY reports them from evdev. < and >
+      ;;      are SHIFTED keys, so Shift is not 'extend' here: only an active mark is. ----
+      ((and (or ctrl meta) (member key '(#\< #\,)))
+       (setf (tv-point-line tv) 0 (tv-point-col tv) 0)
+       (unless (tv-mark-active tv) (collapse tv)) (ensure-visible tv) nil)
+      ((and (or ctrl meta) (member key '(#\> #\.)))
+       (setf (tv-point-line tv) (1- (length (tv-lines tv))))
+       (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv))))
+       (unless (tv-mark-active tv) (collapse tv)) (ensure-visible tv) nil)
       ;; ---- Ctrl chords (letters) ----
       ((and ctrl (characterp key))
        (case (char-downcase key)

@@ -434,6 +434,15 @@ the keys anyway:
   =note-modifier-key= reports them from evdev as =#\== / =#\+= / =#\0=, and the
   browser's loop hands them to =browser-key= with the Ctrl bit. (=Ctrl--= needs no
   help: =Control_underscore=, byte 31.)
+- *Ctrl-, and Ctrl-.* (so also =C-<= / =C->=, start / end of the buffer in every text
+  and in the minibuffer) are worse than silent. Keycode 51 has no =control= column,
+  so Ctrl-, sends nothing, but the default keymap says =control keycode 52 = Compose=:
+  Ctrl-. starts a compose sequence that eats the next keys. Two fixes:
+  =note-modifier-key= reports both from evdev as =#\<= / =#\>= (Shift or not, since
+  =<= and =>= are shifted keys anyway), and [[file:../initramfs/fb-browser.lisp::defun unbind-console-ctrl-dot][=unbind-console-ctrl-dot=]] takes Compose off
+  that key once, when the environment starts. It does this with one =KDSKBENT= ioctl
+  (=0x4B47=, =include/uapi/linux/kd.h=): table 4 (the Ctrl map), index 52, value
+  =K_HOLE= (=K(KT_SPEC,0)= = =0x0200=, a key that sends nothing).
 - *Shift-PageUp / Shift-PageDown* are the same story: the default keymap binds them
   to the console's own scrollback (=shift_map[104]= = Scroll_Backward) and sends no
   byte, so =note-modifier-key= reports them from evdev too. The terminal pane scrolls

@@ -454,6 +454,12 @@
     ;; no help: it has one (Control_underscore, byte 31).
     ((and *ctrl-down* (plusp val) (member code '(11 13)))                  ; KEY_0 / KEY_EQUAL
      (cond ((= code 11) #\0) (*shift-down* #\+) (t #\=)))
+    ;; Ctrl with , or . (so also C-< / C->): the console keymap gives keycode 51 no
+    ;; control entry and binds control-52 to Compose — neither sends a byte. Report
+    ;; them as < and >, the start / end of the buffer in every text (TV-KEY,
+    ;; MINIBUFFER-KEY), with or without the Shift that < and > take.
+    ((and *ctrl-down* (plusp val) (member code '(51 52)))                  ; KEY_COMMA / KEY_DOT
+     (if (= code 51) #\< #\>))
     ;; Shift-PageUp/PageDown: the console keymap binds them to ITS OWN scrollback
     ;; (shift_map: Scroll_Backward / Scroll_Forward) and sends no byte, so this is the
     ;; only place they can be seen. A terminal pane scrolls its history with them
@@ -461,6 +467,23 @@
     ((and *shift-down* (plusp val) (= code 104)) :shift-page-up)          ; KEY_PAGEUP
     ((and *shift-down* (plusp val) (= code 109)) :shift-page-down)        ; KEY_PAGEDOWN
     (t nil)))
+
+(defun unbind-console-ctrl-dot (&optional (fd 0))
+  "Take Compose off Ctrl-. in the console's keymap. drivers/tty/vt/defkeymap.map binds
+   'control keycode 52 = Compose', so Ctrl-. (and Ctrl-> — the same key) starts a
+   compose sequence that swallows the next keys; the environment uses that chord for
+   end-of-buffer (NOTE-MODIFIER-KEY, TV-KEY). KDSKBENT (0x4B47) sets ONE entry: table 4
+   (the Ctrl map), index 52, value K_HOLE (0x0200, VoidSymbol: no byte). Returns T when
+   the ioctl succeeded (NIL off a console — on the host, or a serial line)."
+  (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 4)))
+    (setf (sb-alien:deref e 0) 4            ; kb_table: the control map
+          (sb-alien:deref e 1) 52           ; kb_index: KEY_DOT
+          (sb-alien:deref e 2) #x00         ; kb_value K_HOLE = 0x0200, little-endian
+          (sb-alien:deref e 3) #x02)
+    (zerop (sb-alien:alien-funcall
+            (sb-alien:extern-alien "ioctl" (function sb-alien:int sb-alien:int sb-alien:unsigned-long
+                                                     (* (sb-alien:array sb-alien:unsigned-char 4))))
+            fd #x4B47 (sb-alien:addr e)))))
 
 (defun read-keyboard-evdev (fd)
   "Drain a keyboard's evdev queue, tracking Ctrl / Shift / Super / Alt held state
@@ -1349,6 +1372,7 @@
         ;; fb-prompt-value is defined further down this same file
         (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
         (setf *chooser* 'run-chooser-fb)          ; ... and shows its menus and halos
+        (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
         (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
@@ -1921,6 +1945,7 @@
      ("q"                  "back, like Backspace (never leaves)"))
     ("Places  (Super)"
      ("Super-Space"        "the Spotter (C-n / C-p move)")
+     ("Super-e"            "a Workspace (S-e: a new one)")
      ("Super-m"            "the module index: every definition")
      ("Super-l"            "the CL-USER package, flat")
      ("Super-h"            "the clipboard history")
@@ -1946,6 +1971,7 @@
      ("  then + - 0"       "  ... repeat without C-x"))
     ("Workspace & source"
      ("Tab"                "complete the symbol (else indent)")
+     ("C-< / C->  M-< M->" "start / end of the buffer")
      ("C-c C-c"            "Accept / define the form")
      ("C-x C-e"            "Do it: value to the status line")
      ("C-c C-p"            "Print it: result woven inline")
@@ -1953,6 +1979,7 @@
      ("C-c C-d"            "Debug it: debugger armed"))
     ("Web page"
      ("C-l / Super-Left,Rt" "address / back, forward")
+     ("in the address"     "C-y / C-v paste, C-u or the ✕ clear")
      ("C-r  C-f  C-+ C--"  "reload, find, zoom")
      ("C-c / C-v"          "copy / paste via OUR clipboard"))
     ("The agent  (doc/agent.org)"
