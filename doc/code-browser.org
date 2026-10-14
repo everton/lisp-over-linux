@@ -2086,7 +2086,22 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   through =*pending-prefix*=; note =C-c C-i= arrives as C-c then Tab because Ctrl-I
   *is* Tab on a tty, so the shell accepts that. Reached from the supervisor menu
   (=p= runs =run-browser-fb= rooted at the workspace); a plain click now places the
-  caret in any editable pane. /Verified on the framebuffer via QMP: =(+ 1 2)= Print
+  caret in any editable pane. /2026-10-14: which form the verbs act on./ They used
+  to READ the buffer from the top down to the caret and take the last form. The
+  first thing above the caret that the reader choked on hid every form below it, or
+  made Do it pick one higher up. Examples: a symbol in a package that does not exist,
+  an unbalanced snippet in a conversation's prose, a =#.=. Now the form is *found* by
+  an editor's scan that never reads: [[file:../poc/shell.lisp::defun sexp-spans][=sexp-spans=]] knows strings, =|symbols|=, =#\=
+  characters, both comment kinds and the quote prefixes. Only the form found is read,
+  and one that does not read evaluates to an error saying why. The verbs take the
+  *selection* when there is one (all its forms, as a =progn=). Without one,
+  =C-x C-e= takes the s-expression just before the caret, at the caret's own depth,
+  as in Emacs: after =(* 2 3)= inside =(+ 1 (* 2 3))= it is =(* 2 3)=. The new
+  =C-c C-e= takes the top-level form around the caret (Emacs's =eval-defun=), and
+  so does =C-c C-c= Accept. =C-;= comments or uncomments the line or the region
+  (=editor-toggle-comment=), and the right-click menu offers "Do it: the form here".
+  A scan starts after the last column-0 =;= line above the caret, so prose above a
+  form cannot unbalance it. /Verified on the framebuffer via QMP: =(+ 1 2)= Print
   it -> =3= woven inline, Do it -> status line, Inspect it -> the integer 3 open in
   the inspector. =C-c C-d= *Debug it* now evals with the debugger armed (see phase
   6) — =(/ 1 0)= opens the live debugger; picking a restart flows its value back to

@@ -460,6 +460,9 @@
     ;; MINIBUFFER-KEY), with or without the Shift that < and > take.
     ((and *ctrl-down* (plusp val) (member code '(51 52)))                  ; KEY_COMMA / KEY_DOT
      (if (= code 51) #\< #\>))
+    ;; Ctrl-; : keycode 39 has no control entry either. It comments the line or the
+    ;; region (EDITOR-TOGGLE-COMMENT).
+    ((and *ctrl-down* (plusp val) (= code 39)) #\;)                       ; KEY_SEMICOLON
     ;; Shift-PageUp/PageDown: the console keymap binds them to ITS OWN scrollback
     ;; (shift_map: Scroll_Backward / Scroll_Forward) and sends no byte, so this is the
     ;; only place they can be seen. A terminal pane scrolls its history with them
@@ -1941,6 +1944,7 @@
      ("Backspace / C-g"    "back (C-g also leaves the right column)")
      ("PageUp / PageDown"  "page the list / source")
      ("mouse wheel"        "scroll; two fingers on the pad")
+     ("C-wheel"            "bigger / smaller text, everywhere")
      ("Esc"                "Meta prefix: Esc . = M-.")
      ("q"                  "back, like Backspace (never leaves)"))
     ("Places  (Super)"
@@ -1973,7 +1977,11 @@
      ("Tab"                "complete the symbol (else indent)")
      ("C-< / C->  M-< M->" "start / end of the buffer")
      ("C-c C-c"            "Accept / define the form")
-     ("C-x C-e"            "Do it: value to the status line")
+     ("C-x C-e"            "Do it: the form before the caret,")
+     (""                   "  or the selection; value to status")
+     ("C-c C-e"            "Do it: the top-level form around")
+     (""                   "  the caret (code in a conversation)")
+     ("C-;"                "comment / uncomment line or region")
      ("C-c C-p"            "Print it: result woven inline")
      ("C-c C-i"            "Inspect it: open the value")
      ("C-c C-d"            "Debug it: debugger armed"))

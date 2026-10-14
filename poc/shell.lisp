@@ -440,50 +440,163 @@
       (let ((cur (aref lines pl)))
         (write-string (subseq cur 0 (min pc (length cur))) s)))))
 
-(defun form-before-point (tv)
-  "Read successive forms from the buffer start up to the caret and return the LAST
-   complete one — the sexp before point, Emacs's C-x C-e target. Comments are
-   skipped by the reader; an incomplete trailing form is ignored.
+(defun sexp-spans (text &key (start 0) (end (length text)))
+  "Scan TEXT from START to END the way an editor does — NOT with the Lisp reader — and
+   return (values SPANS DEPTH): SPANS, every complete s-expression seen, as
+   (START END DEPTH) in the order they END, and DEPTH, how many lists are still open at
+   END. Knows strings, |symbols|, #\\chars, ; and #| |# comments, the quote prefixes
+   (' ` , ,@ #' #.) and #( vectors. Never reads a symbol, so text it cannot READ — a
+   package that does not exist, a #. somewhere, an unbalanced snippet above — cannot
+   stop it, which is why C-x C-e uses it (FORM-SPAN-BEFORE-POINT). A stray ) at the top
+   is ignored; an unterminated string ends the scan."
+  (let ((i start) (stack '()) (spans '()) (pending nil))
+    (labels ((delim-p (c) (or (member c '(#\Space #\Tab #\Newline #\Return #\Page #\( #\) #\" #\; #\' #\` #\,))))
+             (emit (s e) (push (list (or pending s) e (length stack)) spans) (setf pending nil)))
+      (loop while (< i end)
+            do (let ((c (char text i)))
+                 (cond
+                   ((member c '(#\Space #\Tab #\Newline #\Return #\Page)) (incf i))
+                   ((char= c #\;) (setf i (or (position #\Newline text :start i :end end) end)))
+                   ((and (char= c #\#) (< (1+ i) end) (char= (char text (1+ i)) #\|))
+                    (let ((j (search "|#" text :start2 (+ i 2) :end2 end)))
+                      (setf i (if j (+ j 2) end))))
+                   ((or (char= c #\") (char= c #\|))
+                    (let ((j (1+ i)))
+                      (loop while (and (< j end) (char/= (char text j) c))
+                            do (when (char= (char text j) #\\) (incf j)) (incf j))
+                      (when (>= j end) (return))                 ; unterminated: stop
+                      (emit i (1+ j)) (setf i (1+ j))))
+                   ((char= c #\()
+                    (push (or pending i) stack) (setf pending nil) (incf i))
+                   ((and (char= c #\#) (< (1+ i) end) (char= (char text (1+ i)) #\())
+                    (push (or pending i) stack) (setf pending nil) (incf i 2))
+                   ((char= c #\))
+                    (if stack
+                        (let ((s (pop stack))) (push (list s (1+ i) (length stack)) spans))
+                        nil)                                       ; stray: ignore
+                    (setf pending nil) (incf i))
+                   ((member c '(#\' #\`)) (unless pending (setf pending i)) (incf i))
+                   ((char= c #\,)
+                    (unless pending (setf pending i)) (incf i)
+                    (when (and (< i end) (char= (char text i) #\@)) (incf i)))
+                   ((and (char= c #\#) (< (1+ i) end) (member (char text (1+ i)) '(#\' #\.)))
+                    (unless pending (setf pending i)) (incf i 2))
+                   ((and (char= c #\#) (< (1+ i) end) (char= (char text (1+ i)) #\\))
+                    ;; #\x, #\Space, #\( — at least one character after the backslash
+                    (let ((j (min end (+ i 3))))
+                      (loop while (and (< j end) (not (delim-p (char text j)))) do (incf j))
+                      (emit i j) (setf i j)))
+                   (t
+                    ;; an atom: a symbol, a number, #:foo, #x1F … up to a delimiter
+                    (let ((j i))
+                      (loop while (and (< j end) (not (delim-p (char text j))))
+                            do (when (char= (char text j) #\\) (incf j)) (incf j))
+                      (emit i (min j end)) (setf i (min j end))))))))
+    (values (nreverse spans) (length stack))))
 
-   Returns (values FORM FOUNDP). FOUNDP matters because NIL is a perfectly good form:
-   the first version stopped the scan on any form that read as NIL, so a buffer
-   containing a bare =nil= or =()= anywhere made every form BELOW it invisible, and
-   Do it would silently evaluate something from higher up the buffer instead of the
-   one before the caret. A sentinel distinguishes \"read nothing more\" from \"read NIL\",
-   and a read ERROR (an incomplete trailing form, which is the normal case while you
-   are still typing) is caught separately from a legitimate NIL."
-  (let* ((text (buffer-text-to-point tv))
-         (sentinel (list :eof))               ; fresh and uninterned: nothing can be EQ to it
-         (last nil) (foundp nil) (pos 0))
+(defun scan-start-before (text point)
+  "Where to start scanning for the form before POINT: just after the last line, before
+   POINT, that starts in column 0 with a ; — prose in a conversation, the comments
+   between definitions in a file. A form's own interior is indented, so such a line
+   almost never falls inside one, and starting there keeps an unbalanced snippet or an
+   unterminated string ABOVE it from swallowing the form you are on."
+  (let ((nl (position #\Newline text :end point :from-end t)))
+    ;; the line the caret is on is the form's own; look above it
+    (loop while nl
+          do (let* ((ls (1+ (or (position #\Newline text :end nl :from-end t) -1))))
+               (when (and (< ls nl) (char= (char text ls) #\;))
+                 (return-from scan-start-before (1+ nl)))
+               (setf nl (and (> ls 0) (1- ls)))))
+    0))
+
+(defun form-span-before (text point)
+  "(values START END) of the s-expression just before POINT in TEXT, at POINT's own
+   depth — Emacs's C-x C-e target: after (+ 1 (* 2 3)) it is the whole form, with the
+   caret after (* 2 3) it is that. NIL when there is none. Scans from
+   SCAN-START-BEFORE, and from the very start if that finds nothing."
+  (flet ((pick (from)
+           (multiple-value-bind (spans depth) (sexp-spans text :start from :end point)
+             (let ((best (find depth spans :key #'third :from-end t)))
+               (and best (values (first best) (second best)))))))
+    (multiple-value-bind (s e) (pick (scan-start-before text point))
+      (if s (values s e) (pick 0)))))
+
+(defun toplevel-span-at (text point)
+  "(values START END) of the top-level form the caret is in or right after (C-c C-e,
+   Emacs's eval-defun / C-M-x), or NIL."
+  (let* ((from (scan-start-before text point))
+         (top (remove-if-not (lambda (s) (zerop (third s))) (sexp-spans text :start from)))
+         (hit (or (find-if (lambda (s) (and (<= (first s) point) (<= point (second s)))) top)
+                  (find-if (lambda (s) (<= (second s) point)) top :from-end t))))
+    (and hit (values (first hit) (second hit)))))
+
+(defun tv-text-and-point (tv)
+  "(values TEXT POINT): TV's whole buffer as one string, and the caret as an index in it."
+  (let* ((lines (lol.textview:tv-lines tv))
+         (pl (lol.textview:tv-point-line tv))
+         (pc (lol.textview:tv-point-col tv))
+         (point 0))
+    (values (with-output-to-string (s)
+              (loop for i from 0 below (length lines)
+                    for line = (aref lines i)
+                    do (when (= i pl) (setf point (+ point (min pc (length line)))))
+                       (when (< i pl) (incf point (1+ (length line))))
+                       (write-string line s)
+                       (when (< i (1- (length lines))) (write-char #\Newline s))))
+            point)))
+
+(defun read-forms-from-text (text)
+  "Every form in TEXT, read in order, as a list. Signals the reader's error."
+  (let ((sentinel (list :eof)) (pos 0) (forms '()))
     (loop
-      (multiple-value-bind (form next)
-          (handler-case (read-from-string text nil sentinel :start pos)
-            (error () (values sentinel pos)))
-        (when (eq form sentinel) (return))
-        (setf last form foundp t pos next)))
-    (values last foundp)))
+      (multiple-value-bind (form next) (read-from-string text nil sentinel :start pos)
+        (when (eq form sentinel) (return (nreverse forms)))
+        (push form forms) (setf pos next)))))
+
+(defun eval-target-text (tv &optional toplevel)
+  "The source text the eval verbs act on, and what it is: (values TEXT KIND), KIND
+   :region (the selection, when there is one — every form in it), :toplevel (the
+   top-level form around the caret, for C-c C-e), or :before (the s-expression just
+   before the caret, at its own depth — C-x C-e). NIL when there is nothing."
+  (let ((region (editor-region-text tv)))
+    (if (and region (plusp (length (string-trim '(#\Space #\Tab #\Newline) region))))
+        (values region :region)
+        (multiple-value-bind (text point) (tv-text-and-point tv)
+          (multiple-value-bind (s e) (if toplevel (toplevel-span-at text point) (form-span-before text point))
+            (and s (values (subseq text s e) (if toplevel :toplevel :before))))))))
+
+(defun form-before-point (tv &optional toplevel)
+  "The form the eval verbs (C-x C-e Do it, C-c C-p Print it, C-c C-i Inspect it,
+   C-c C-d Debug it) act on: the SELECTION when there is one (all its forms, as a
+   PROGN), else the s-expression just before the caret — Emacs's C-x C-e — or, with
+   TOPLEVEL, the top-level form around it (C-c C-e). Returns (values FORM FOUNDP).
+
+   Only that text is READ. This used to read the whole buffer from the top up to the
+   caret, and the first thing above it the reader choked on — a symbol in a package
+   that does not exist, an unbalanced snippet in a conversation, a #. — made every
+   form below it invisible, or silently picked one higher up. Now the form is FOUND
+   by an editor's scan (SEXP-SPANS, which never reads), and a form that does not read
+   is reported as itself: its value is an error saying why."
+  (multiple-value-bind (text kind) (eval-target-text tv toplevel)
+    (if (null text)
+        (values nil nil)
+        (handler-case
+            (let ((forms (read-forms-from-text text)))
+              (cond ((null forms) (values nil nil))
+                    ((and (eq kind :region) (cdr forms)) (values (cons 'progn forms) t))
+                    (t (values (first forms) t))))
+          (error (c)
+            (values `(error "can't read ~s: ~a" ,(lol.widgets:clip-text (substitute #\Space #\Newline text) 50)
+                            ,(princ-to-string c))
+                    t))))))
 
 (defun form-text-before-point (tv)
-  "The SOURCE TEXT of the form FORM-BEFORE-POINT would return, or NIL — the same scan,
-   but keeping the characters rather than the object.
-
-   Accept (C-c C-c) in the Workspace needs this. It hands ACCEPT-SOURCE a string, which
-   reads its FIRST form; given the whole buffer, it compiled whatever stood at the top
-   — the primer's (+ 1 2) — and reported \"Accepted: 3\" for a (defun greet …) under
-   the caret, and filed the entire buffer as that definition's source. The text,
-   rather than a re-printed form, is what gets recorded, so comments and layout in
-   the definition survive into the change set."
-  (let* ((text (buffer-text-to-point tv))
-         (sentinel (list :eof))
-         (last nil) (pos 0))
-    (loop
-      (multiple-value-bind (form next)
-          (handler-case (read-from-string text nil sentinel :start pos)
-            (error () (values sentinel pos)))
-        (when (eq form sentinel) (return))
-        (setf last (cons pos next) pos next)))
-    (and last
-         (string-trim '(#\Space #\Tab #\Newline) (subseq text (car last) (cdr last))))))
+  "The SOURCE TEXT C-c C-c Accept compiles: the selection when there is one, else the
+   TOP-LEVEL form the caret is in or right after — as SLIME's C-c C-c, so the caret
+   may be anywhere inside the definition — or NIL. The text, rather than a re-printed
+   form, is what gets recorded, so comments and layout survive into the change set."
+  (let ((text (eval-target-text tv t)))
+    (and text (string-trim '(#\Space #\Tab #\Newline) text))))
 
 (defun form-echo (form)
   "FORM printed short and on one line, to name it in the status line. The Workspace
@@ -518,12 +631,13 @@
   (let ((s (string-right-trim '(#\Newline) (or output ""))))
     (and (plusp (length s)) s)))
 
-(defun workspace-do-it (pane)
-  "Eval the form before point; show the value (or error), and note any printed
-   output, in the status line."
-  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
+(defun workspace-do-it (pane &optional toplevel)
+  "Eval the form before point (C-x C-e), the selection when there is one, or with
+   TOPLEVEL the top-level form around the caret (C-c C-e); show the value (or error),
+   and any printed output, in the status line."
+  (multiple-value-bind (form foundp) (form-before-point (pane-tv pane) toplevel)
     (if (not foundp)
-        (setf *browser-status* "Do it: no form before point")
+        (setf *browser-status* (if toplevel "Do it: no form here" "Do it: no form before point"))
         (multiple-value-bind (ok res out) (ws-eval form)
           (let ((printed (ws-trim-output out)))
             (setf *browser-status*
@@ -2008,6 +2122,54 @@
             (format nil "Undo  (~d more)" (lol.textview:tv-undo-count tv))
             "No further undo information")))
 
+(defun comment-toggled-lines (lines)
+  "LINES (strings) commented with ;; at their common indentation — or, when every
+   non-blank one is already a comment, uncommented (one ;-run and the space after it
+   taken off). Blank lines are left alone. -> (values NEW-LINES COMMENTED-P)."
+  (flet ((blank (l) (zerop (length (string-trim '(#\Space #\Tab) l))))
+         (indent (l) (or (position-if-not (lambda (c) (member c '(#\Space #\Tab))) l) (length l))))
+    (let ((body (remove-if #'blank lines)))
+      (if (and body (every (lambda (l) (char= (char l (indent l)) #\;)) body))
+          (values (mapcar (lambda (l)
+                            (if (blank l) l
+                                (let* ((i (indent l))
+                                       (j (or (position #\; l :start i :test-not #'char=) (length l)))
+                                       (j (if (and (< j (length l)) (char= (char l j) #\Space)) (1+ j) j)))
+                                  (concatenate 'string (subseq l 0 i) (subseq l j)))))
+                          lines)
+                  nil)
+          (let ((col (if body (reduce #'min body :key #'indent) 0)))
+            (values (mapcar (lambda (l)
+                              (if (blank l) l
+                                  (concatenate 'string (subseq l 0 col) ";; " (subseq l col))))
+                            lines)
+                    t))))))
+
+(defun editor-toggle-comment (tv)
+  "C-; — comment the region's lines with ;; (or uncomment them, when all of them are
+   comments already); with no region, the caret's line, and then the caret moves to
+   the next line, so C-; C-; C-; does three lines (Emacs's comment-line). A region
+   that ends at the start of a line does not include that line."
+  (let* ((lines (lol.textview:tv-lines tv))
+         (pl (lol.textview:tv-point-line tv)))
+    (multiple-value-bind (al ac rl rc) (lol.textview:tv-region tv)
+      (multiple-value-bind (l0 l1)
+          (if al
+              (multiple-value-bind (sl el ec)
+                  (if (or (< al rl) (and (= al rl) (<= ac rc))) (values al rl rc) (values rl al ac))
+                (values sl (if (and (zerop ec) (> el sl)) (1- el) el)))
+              (values pl pl))
+        (multiple-value-bind (new commented)
+            (comment-toggled-lines (coerce (subseq lines l0 (1+ l1)) 'list))
+          (let ((v (concatenate 'simple-vector (subseq lines 0 l0) new (subseq lines (1+ l1)))))
+            (if al
+                (lol.textview:tv-replace tv v l1 (length (aref v l1)))
+                (let ((next (min (1+ pl) (1- (length v)))))
+                  (lol.textview:tv-replace tv v next
+                                           (min (lol.textview:tv-point-col tv) (length (aref v next))))))
+            (setf *browser-status*
+                  (format nil "~:[uncommented~;commented~] ~d line~:p" commented (1+ (- l1 l0))))))))))
+
 (defun edit-pane-key (p key state)
   "An editable pane's key, recorded for undo: C-_ / C-/ / C-x u undo, a key that
    only starts a chord (C-c, C-x, C-x r) leaves a run of undos going, and anything
@@ -2018,8 +2180,16 @@
       ;; a conversation being answered is read-only until the turn ends (agent-ui.lisp);
       ;; moving about is still fine
       ((and (fboundp 'agent-pane-busy-p) (funcall 'agent-pane-busy-p p)
-            (not (member key '(:up :down :left :right :page-up :page-down :home :end))))
-       (setf *browser-status* "the agent is writing here — C-g stops it") nil)
+            (not (member key '(:up :down :left :right :page-up :page-down :home :end)))
+            ;; ... but the verbs that only READ the buffer still work: C-c / C-x, then
+            ;; C-e (Do it), C-c (Accept), C-o (open a call); and copying
+            (not (and (lol.canvas:ctrl-p state)
+                      (or (member key '(#\c #\x))
+                          (and *pending-prefix* (member key '(#\e #\o)))
+                          (and (eq *pending-prefix* :c-c) (eql key #\c))))))
+       (setf *browser-status* "the agent is writing here — C-g stops it"
+             *pending-prefix* nil)
+       nil)
       ((undo-key-p key state) (editor-undo tv) nil)
       (t (let ((before (lol.textview:tv-undo-checkpoint tv)))
            (prog1 (edit-pane-command p key state)
@@ -2086,8 +2256,14 @@
            ((and (eq prefix :c-c) c (eql key #\o) (fboundp 'agent-open-at-point))
             (funcall 'agent-open-at-point p))
            ((and (eq prefix :c-x) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
-            (workspace-do-it p)))
+            (workspace-do-it p))
+           ;; C-c C-e — Do it on the TOP-LEVEL form around the caret (Emacs's eval-defun):
+           ;; the caret may be anywhere inside it — a line of code in a conversation
+           ((and (eq prefix :c-c) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
+            (workspace-do-it p t)))
          nil))
+      ;; C-; comments the line or the region (or uncomments it)
+      ((and c (eql key #\;) tv) (editor-toggle-comment tv) nil)
       ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
       ((and c (eql key #\x)) (setf *pending-prefix* :c-x) nil)
       ((and tv (clipboard-key tv key state previous)) nil)
@@ -2423,6 +2599,12 @@
    back to the selection. The widget clamps, so this cannot run off either end."
   (let ((p (current-pane)))
     (cond
+      ;; Ctrl held: the wheel resizes the text, as SuperL-= / SuperL-- do — one step a
+      ;; notch, up bigger (every browser's Ctrl-wheel). The held Ctrl lives in the
+      ;; keyboard's evdev state (fb-browser.lisp), read by name: this file loads first.
+      ((and (boundp '*ctrl-down*) (symbol-value '*ctrl-down*))
+       (dotimes (i (min 3 (max 1 (round (abs lines) (max 1 +wheel-lines+)))))
+         (change-font-size (if (minusp lines) :bigger :smaller))))
       ;; a web page scrolls itself: the wheel is sent to Chrome (initramfs/web.lisp)
       ((eq (view-kind (pane-view p)) :web) (funcall 'web-wheel lines))
       ((terminal-pane-p p) (funcall 'terminal-wheel p lines))   ; history, or the program's
@@ -2836,6 +3018,15 @@
                    (when (and editable (plusp (lol.textview:tv-undo-count tv)))
                      (menu-entry "Undo" (lambda () (editor-undo tv)) :key "C-_" :group g))
                    (menu-entry "Select all" (lambda () (editor-select-all tv)) :key "C-x h" :group g)))
+     ;; run the code under the pointer, where code runs: the Workspace, a conversation,
+     ;; a Lisp file — the top-level form at the click, or the selection
+     (let ((p (getf target :pane)))
+       (when (and p (or (workspace-pane-p p) (lisp-file-pane-p p)))
+         (list (menu-entry (if sel "Do it: the selection" "Do it: the form here")
+                           (lambda ()
+                             (unless sel (lol.textview:tv-move-point tv (getf target :line) (getf target :col)))
+                             (workspace-do-it p t))
+                           :key "C-c C-e" :group "eval"))))
      (when (and sym (symbolp sym))
        (let ((gs (format nil "~(~a~)" sym)))
          (remove nil

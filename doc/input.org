@@ -443,6 +443,12 @@ the keys anyway:
   that key once, when the environment starts. It does this with one =KDSKBENT= ioctl
   (=0x4B47=, =include/uapi/linux/kd.h=): table 4 (the Ctrl map), index 52, value
   =K_HOLE= (=K(KT_SPEC,0)= = =0x0200=, a key that sends nothing).
+- *Ctrl-;* (comment the line or region, [[file:code-browser.org][code-browser.org]] Phase 3a) is silent for the
+  same reason as Ctrl-,: keycode 39 has no =control= column. =note-modifier-key=
+  reports it from evdev as =#\;=.
+- *Ctrl + wheel* resizes the text, one step per notch, three at most per event, as in
+  every web browser ([[file:fonts.org][fonts.org]] §6). The wheel handler in =poc/shell.lisp= reads the held
+  Ctrl from =fb-browser.lisp='s =*ctrl-down*= by name, because =shell.lisp= loads first.
 - *Shift-PageUp / Shift-PageDown* are the same story: the default keymap binds them
   to the console's own scrollback (=shift_map[104]= = Scroll_Backward) and sends no
   byte, so =note-modifier-key= reports them from evdev too. The terminal pane scrolls

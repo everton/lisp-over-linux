@@ -285,6 +285,7 @@ counted by =x-of-col= / =col-at-x= so clicks still land).
 | =SuperL-0=                                     | back to the size the font was loaded at      |
 | =C-x C-== (or =C-x C-+=), =C-x C--=, =C-x C-0= | the same, Emacs's =text-scale-adjust= keys   |
 | then a bare =+= (or ===), =-=, =0=             | repeats, without the =C-x= — as in Emacs     |
+| =Ctrl= + wheel                                 | up bigger, down smaller, as in web browsers  |
 
 Steps are 2 px below 20 and 3 px above (one pixel at 12 px is 8 %, at 30 px 3 % and
 too small to notice), clamped to 10–40 px; from 18 the sizes go 20, 23, 26, 29 … 40.

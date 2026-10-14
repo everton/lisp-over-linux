@@ -24,6 +24,10 @@ Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by th
 environment itself, because headless Chrome draws their popups where the screencast
 cannot see them (§4.4).
 
+A shorter, illustrated walk through this pane and the terminal, written for reading
+in the web pane itself (it is its own page, offline), is
+[[file:design/browser-and-terminal.html][design/browser-and-terminal.html]].
+
 * 1. The decision: Chrome, headless, over the DevTools protocol
 
 The appendix chose an architecture before it chose an engine: *headless + our own

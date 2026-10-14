@@ -1,0 +1,714 @@
+<!doctype html>
+<!--
+  browser-and-terminal.html — how the web pane and the containerized terminal work.
+  An explainer, not a spec: every claim was checked against the code on 2026-10-13
+  (initramfs/web.lisp, web-cdp.lisp, containers.lisp, lol-ct.c, pty.lisp,
+  poc/terminal.lisp, poc/terminal-pane.lisp, initramfs/fb-browser.lisp) and against
+  doc/web-browser.org, doc/terminal.org and doc/containers.org, which tell the longer
+  story. Open it in the web pane (SuperL-b) or any browser. No network needed.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LoL — how the browser and the terminal work</title>
+<style>
+  :root {
+    --bg:#1e2228; --panel:#252a32; --rule:#2e343d; --hi:#242931;
+    --text:#d6d4c8; --dim:#8a919c; --lit:#ffffff;
+    --gold:#ffcb6b; --teal:#7fdbca; --green:#a8ff78; --purple:#c792ea;
+    --blue:#89ddff; --blue-dim:#5e93ad; --red:#ff6b6b; --amber:#ff9f43; --orange:#d97757;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text);
+         font:15px/1.6 "DejaVu Sans", system-ui, sans-serif; }
+  main { max-width:980px; margin:0 auto; padding:32px 28px 80px; }
+  nav { position:sticky; top:0; background:#1e2228ee; border-bottom:1px solid var(--rule);
+        padding:8px 28px; font:13px "DejaVu Sans Mono", monospace; z-index:2; }
+  nav a { color:var(--dim); text-decoration:none; margin-right:18px; }
+  nav a:hover { color:var(--teal); }
+  h1 { font-weight:normal; color:var(--lit); font-size:30px; margin:8px 0 4px; }
+  h2 { font-weight:normal; color:var(--gold); font-size:23px; margin:56px 0 8px;
+       border-bottom:1px solid var(--rule); padding-bottom:6px; }
+  h3 { font-weight:normal; color:var(--teal); font-size:18px; margin:30px 0 6px; }
+  p { margin:10px 0; } .lede { color:var(--dim); font-size:17px; }
+  code, .mono { font-family:"DejaVu Sans Mono", monospace; font-size:13.5px; }
+  code { color:var(--blue); background:var(--hi); padding:1px 4px; border-radius:3px; }
+  .fn { color:var(--teal); }  /* a Lisp name */
+  pre { background:var(--panel); border:1px solid var(--rule); border-radius:4px;
+        padding:12px 14px; overflow-x:auto; font:13px/1.5 "DejaVu Sans Mono", monospace; }
+  .key { display:inline-block; border:1px solid var(--rule); border-bottom-width:2px; border-radius:3px;
+         padding:0 6px; font:12.5px "DejaVu Sans Mono", monospace; color:var(--lit); background:var(--hi); }
+  .note { border-left:3px solid var(--teal); background:var(--hi); padding:8px 14px; margin:16px 0; }
+  .note.warn { border-color:var(--amber); }
+  .note b { color:var(--lit); font-weight:normal; }
+  figure { margin:22px 0; background:var(--panel); border:1px solid var(--rule); border-radius:6px;
+           padding:14px 14px 8px; }
+  figcaption { color:var(--dim); font-size:13px; margin-top:6px; }
+  svg { width:100%; height:auto; display:block; }
+  svg text { font-family:"DejaVu Sans Mono", monospace; }
+  table { border-collapse:collapse; width:100%; margin:14px 0; font-size:14px; }
+  th, td { text-align:left; padding:6px 10px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  th { color:var(--dim); font-weight:normal; }
+  td:first-child { color:var(--lit); white-space:nowrap; }
+  .two { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+  @media (max-width:760px) { .two { grid-template-columns:1fr; } }
+  .card { background:var(--panel); border:1px solid var(--rule); border-radius:6px; padding:12px 16px; }
+  .card h4 { margin:0 0 6px; font-weight:normal; color:var(--lit); }
+  .tag { font:12px "DejaVu Sans Mono", monospace; padding:1px 6px; border-radius:3px; border:1px solid var(--rule); }
+  /* the step-through sequence diagram */
+  .seq-controls { display:flex; gap:8px; align-items:center; margin:8px 0 2px; font-size:13px; }
+  .seq-controls button { font:13px "DejaVu Sans Mono", monospace; background:var(--hi); color:var(--text);
+                         border:1px solid var(--rule); border-radius:3px; padding:3px 10px; cursor:pointer; }
+  .seq-controls button:hover { border-color:var(--teal); color:var(--teal); }
+  .seq-explain { min-height:3.2em; color:var(--lit); padding:6px 2px; }
+  .msg { opacity:.18; transition:opacity .25s; }
+  .msg.seen { opacity:.55; } .msg.now { opacity:1; }
+  .layer { cursor:pointer; } .layer:hover rect { stroke:var(--teal); }
+  #layer-info { min-height:2.6em; color:var(--lit); }
+</style>
+</head>
+<body>
+<nav>
+  <a href="#big">the big picture</a><a href="#container">containers</a>
+  <a href="#browser">the browser</a><a href="#terminal">the terminal</a>
+  <a href="#loop">the event loop</a><a href="#compare">side by side</a><a href="#code">where in the code</a>
+</nav>
+<main>
+
+<h1>The browser and the terminal</h1>
+<p class="lede">Two programs that are not Lisp — Google Chrome and bash — living inside an
+environment where one Lisp process draws every pixel. How they get there, how they talk to
+us, and how what they produce ends up on the framebuffer.</p>
+
+<!-- =================================================================== -->
+<h2 id="big">1. The big picture</h2>
+
+<p>Everything you see is drawn by <b>one process</b>: the SBCL image that is PID 1. It owns
+<code>/dev/fb0</code> and the keyboard and mouse devices. Chrome and bash never touch the
+screen or your input. They are <b>child processes</b> that the Lisp starts, talks to through
+<b>file descriptors</b>, and draws on their behalf.</p>
+
+<figure>
+<svg viewBox="0 0 940 430" role="img" aria-label="The Lisp image in the middle; Chrome and bash in containers; the screen and input devices owned by Lisp">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a919c"/></marker>
+    <marker id="arT" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#7fdbca"/></marker>
+    <marker id="arG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#ffcb6b"/></marker>
+  </defs>
+  <!-- hardware -->
+  <rect x="20" y="20" width="200" height="60" rx="5" fill="#242931" stroke="#2e343d"/>
+  <text x="120" y="45" fill="#d6d4c8" font-size="14" text-anchor="middle">screen</text>
+  <text x="120" y="65" fill="#8a919c" font-size="12" text-anchor="middle">/dev/fb0</text>
+  <rect x="20" y="100" width="200" height="60" rx="5" fill="#242931" stroke="#2e343d"/>
+  <text x="120" y="125" fill="#d6d4c8" font-size="14" text-anchor="middle">keyboard, mouse</text>
+  <text x="120" y="145" fill="#8a919c" font-size="12" text-anchor="middle">/dev/input/event*, tty0</text>
+  <!-- lisp -->
+  <rect x="290" y="20" width="360" height="390" rx="8" fill="#1a1e24" stroke="#7fdbca" stroke-width="1.5"/>
+  <text x="470" y="46" fill="#7fdbca" font-size="15" text-anchor="middle">SBCL image · PID 1</text>
+  <text x="470" y="64" fill="#8a919c" font-size="11.5" text-anchor="middle">one heap: the shell, its panes, the agent</text>
+  <rect x="310" y="80" width="320" height="50" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="470" y="102" fill="#d6d4c8" font-size="13" text-anchor="middle">event loop  (fb-browser.lisp)</text>
+  <text x="470" y="120" fill="#8a919c" font-size="11.5" text-anchor="middle">poll(2) on every fd · run services · draw</text>
+  <rect x="310" y="150" width="150" height="110" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="385" y="172" fill="#ffcb6b" font-size="13" text-anchor="middle">web pane</text>
+  <text x="385" y="192" fill="#8a919c" font-size="11" text-anchor="middle">web.lisp</text>
+  <text x="385" y="208" fill="#8a919c" font-size="11" text-anchor="middle">web-cdp.lisp</text>
+  <text x="385" y="230" fill="#d6d4c8" font-size="11" text-anchor="middle">JSON commands out</text>
+  <text x="385" y="246" fill="#d6d4c8" font-size="11" text-anchor="middle">JPEG frames in</text>
+  <rect x="480" y="150" width="150" height="110" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="555" y="172" fill="#a8ff78" font-size="13" text-anchor="middle">terminal pane</text>
+  <text x="555" y="192" fill="#8a919c" font-size="11" text-anchor="middle">terminal-pane.lisp</text>
+  <text x="555" y="208" fill="#8a919c" font-size="11" text-anchor="middle">terminal.lisp · pty.lisp</text>
+  <text x="555" y="230" fill="#d6d4c8" font-size="11" text-anchor="middle">key bytes out</text>
+  <text x="555" y="246" fill="#d6d4c8" font-size="11" text-anchor="middle">VT bytes in</text>
+  <rect x="310" y="280" width="320" height="50" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="470" y="302" fill="#d6d4c8" font-size="13" text-anchor="middle">containers.lisp</text>
+  <text x="470" y="320" fill="#8a919c" font-size="11.5" text-anchor="middle">container-command-line → /sbin/lol-ct …</text>
+  <rect x="310" y="350" width="320" height="44" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="470" y="377" fill="#d6d4c8" font-size="13" text-anchor="middle">canvas → only changed rectangles → fb0</text>
+  <!-- containers -->
+  <rect x="720" y="20" width="200" height="180" rx="8" fill="#1a1e24" stroke="#ffcb6b" stroke-dasharray="5 4"/>
+  <text x="820" y="44" fill="#ffcb6b" font-size="13" text-anchor="middle">container "web"</text>
+  <rect x="740" y="60" width="160" height="120" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="820" y="86" fill="#d6d4c8" font-size="14" text-anchor="middle">Google Chrome</text>
+  <text x="820" y="106" fill="#8a919c" font-size="11" text-anchor="middle">--headless=new</text>
+  <text x="820" y="122" fill="#8a919c" font-size="11" text-anchor="middle">--remote-debugging-pipe</text>
+  <text x="820" y="146" fill="#8a919c" font-size="11" text-anchor="middle">renders pages,</text>
+  <text x="820" y="162" fill="#8a919c" font-size="11" text-anchor="middle">no window, no screen</text>
+  <rect x="720" y="230" width="200" height="180" rx="8" fill="#1a1e24" stroke="#a8ff78" stroke-dasharray="5 4"/>
+  <text x="820" y="254" fill="#a8ff78" font-size="13" text-anchor="middle">container "default"</text>
+  <rect x="740" y="270" width="160" height="120" rx="4" fill="#252a32" stroke="#2e343d"/>
+  <text x="820" y="296" fill="#d6d4c8" font-size="14" text-anchor="middle">bash -l</text>
+  <text x="820" y="316" fill="#8a919c" font-size="11" text-anchor="middle">and whatever you run:</text>
+  <text x="820" y="332" fill="#8a919c" font-size="11" text-anchor="middle">vim, git, rails, psql</text>
+  <text x="820" y="356" fill="#8a919c" font-size="11" text-anchor="middle">sees a terminal:</text>
+  <text x="820" y="372" fill="#8a919c" font-size="11" text-anchor="middle">/dev/pts/N</text>
+  <!-- arrows -->
+  <line x1="290" y1="372" x2="222" y2="60" stroke="#8a919c" marker-end="url(#ar)"/>
+  <line x1="222" y1="130" x2="308" y2="105" stroke="#8a919c" marker-end="url(#ar)"/>
+  <line x1="462" y1="190" x2="736" y2="105" stroke="#ffcb6b" marker-end="url(#arG)" marker-start="url(#arG)"/>
+  <text x="600" y="128" fill="#ffcb6b" font-size="11" text-anchor="middle" transform="rotate(-17 600 128)">pipe: fd 3 in · fd 4 out</text>
+  <line x1="632" y1="220" x2="736" y2="320" stroke="#a8ff78" marker-end="url(#arT)" marker-start="url(#arT)"/>
+  <text x="700" y="250" fill="#a8ff78" font-size="11" text-anchor="middle" transform="rotate(43 700 250)">pty master ⇄ slave</text>
+</svg>
+<figcaption>Both outside programs run in containers built from the laptop's own Debian. The
+Lisp is the only process that draws; Chrome and bash only ever exchange bytes with it.</figcaption>
+</figure>
+
+<div class="two">
+  <div class="card"><h4>Why not let Chrome draw itself?</h4>
+  There is no X server or Wayland compositor here, and doc/processes.org §1 keeps one rule:
+  <b>only the Lisp writes to the framebuffer</b>. So Chrome runs <i>headless</i> and sends us
+  pictures of the page, which we blit like any image.</div>
+  <div class="card"><h4>Why containers?</h4>
+  Our root filesystem is a small initramfs: no libc programs, no fonts, no shell. Chrome needs
+  81 shared libraries, fontconfig and <code>/proc/self/exe</code>; bash needs a distribution. A container
+  lends them the laptop's own Debian, read-only, as their <code>/</code>.</div>
+</div>
+
+<!-- =================================================================== -->
+<h2 id="container">2. The shared foundation: a container</h2>
+
+<p>Both panes ask <span class="fn">container-command-line</span> (containers.lisp) for the
+command that runs a program "inside". It returns an argv for <code>/sbin/lol-ct</code>, a small
+static C program shipped in the initramfs:</p>
+
+<pre>(container-command-line '("bash" "-l") :cwd "/home/everton")
+=> ("/sbin/lol-ct" "-n" "default" "-C" "/home/everton" "--" "bash" "-l")</pre>
+
+<p>Why a separate C helper? <code>unshare(CLONE_NEWUSER)</code> refuses a process with more than
+one thread, and our Lisp has several. So the namespace work needs a fresh, single-threaded
+process. lol-ct does it in three generations:</p>
+
+<figure>
+<svg viewBox="0 0 940 300">
+  <rect x="20" y="20" width="250" height="60" rx="5" fill="#252a32" stroke="#7fdbca"/>
+  <text x="145" y="46" fill="#7fdbca" font-size="14" text-anchor="middle">the Lisp</text>
+  <text x="145" y="66" fill="#8a919c" font-size="11.5" text-anchor="middle">run-program / posix_spawn</text>
+  <rect x="20" y="115" width="250" height="80" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="145" y="139" fill="#d6d4c8" font-size="14" text-anchor="middle">lol-ct  OUTER</text>
+  <text x="145" y="159" fill="#8a919c" font-size="11" text-anchor="middle">unshare USER + MOUNT + UTS</text>
+  <text x="145" y="174" fill="#8a919c" font-size="11" text-anchor="middle">uid map 1000 → 1000 · unshare PID</text>
+  <text x="145" y="189" fill="#8a919c" font-size="11" text-anchor="middle">forwards signals, relays exit</text>
+  <rect x="330" y="115" width="280" height="160" rx="5" fill="#1a1e24" stroke="#ffcb6b" stroke-dasharray="5 4"/>
+  <text x="470" y="134" fill="#ffcb6b" font-size="12" text-anchor="middle">new PID namespace</text>
+  <rect x="350" y="145" width="240" height="56" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="470" y="167" fill="#d6d4c8" font-size="14" text-anchor="middle">lol-ct  INIT · PID 1</text>
+  <text x="470" y="187" fill="#8a919c" font-size="11" text-anchor="middle">builds the root, pivot_root, reaps</text>
+  <rect x="350" y="214" width="240" height="50" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="470" y="236" fill="#d6d4c8" font-size="14" text-anchor="middle">PROGRAM · PID 2</text>
+  <text x="470" y="254" fill="#8a919c" font-size="11" text-anchor="middle">as you (uid 1000), no capabilities</text>
+  <line x1="145" y1="80" x2="145" y2="113" stroke="#8a919c" marker-end="url(#ar)"/>
+  <path d="M270,155 L348,170" stroke="#8a919c" fill="none" marker-end="url(#ar)"/>
+  <line x1="470" y1="201" x2="470" y2="212" stroke="#8a919c" marker-end="url(#ar)"/>
+  <!-- layout -->
+  <rect x="650" y="20" width="270" height="255" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="785" y="42" fill="#d6d4c8" font-size="13" text-anchor="middle">the root it builds</text>
+  <text x="664" y="66" fill="#8a919c" font-size="11">a fresh tmpfs, then:</text>
+  <text x="664" y="88" fill="#ffcb6b" font-size="11.5">/usr /etc /var /opt</text>
+  <text x="674" y="104" fill="#8a919c" font-size="10.5">overlay: host's dir + your upper</text>
+  <text x="674" y="118" fill="#8a919c" font-size="10.5">in ~/.lol/ct/NAME/ (persists)</text>
+  <text x="664" y="140" fill="#89ddff" font-size="11.5">/bin /lib /sbin …</text>
+  <text x="674" y="156" fill="#8a919c" font-size="10.5">symlinks into usr/ (merged-/usr)</text>
+  <text x="664" y="178" fill="#a8ff78" font-size="11.5">/home  /dev</text>
+  <text x="674" y="194" fill="#8a919c" font-size="10.5">bound from ours (+ fresh devpts)</text>
+  <text x="664" y="216" fill="#c792ea" font-size="11.5">/proc  /tmp  /run</text>
+  <text x="674" y="232" fill="#8a919c" font-size="10.5">fresh, for this namespace</text>
+  <text x="664" y="258" fill="#8a919c" font-size="10.5">network: SHARED with the Lisp</text>
+</svg>
+<figcaption>lol-ct's process tree and the filesystem it assembles. pivot_root (not chroot)
+swaps the root, so nothing inside can climb back out.</figcaption>
+</figure>
+
+<p>Three consequences you can feel:</p>
+<ul>
+  <li><b>You are yourself inside.</b> The uid map is 1000 → 1000, so files you create in
+  <code>/home</code> are yours, outside as well. Host files owned by anyone else show as
+  <code>nobody</code>, which is why <code>apt-get install</code> fails inside: the container
+  can <i>run</i> the host's distribution but not administer it.</li>
+  <li><b>Changes to /usr, /etc, /var, /opt persist</b> across runs and boots, in the
+  overlay's upper layer under <code>~/.lol/ct/&lt;name&gt;/</code>. Deleting that directory
+  resets the container. Each name is its own container: Chrome gets <code>web</code>, your
+  shell gets <code>default</code>, so their writes never mix.</li>
+  <li><b>The network is shared</b> (no NET namespace). A <code>rails s</code> on :3000 inside
+  is reachable from the Lisp, and DNS works the same in and out.</li>
+</ul>
+
+<!-- =================================================================== -->
+<h2 id="browser">3. The browser</h2>
+
+<p>The web pane contains no web engine. It <b>drives</b> one: Chrome, through the
+<b>Chrome DevTools Protocol</b> (CDP), the same JSON protocol that Chrome's F12 panel,
+Puppeteer and Playwright use. Three kinds of message make up the whole grammar:</p>
+
+<pre><span style="color:#8a919c">;; a COMMAND, from us</span>
+{"id":7, "method":"Page.navigate", "params":{"url":"https://example.com"}}
+<span style="color:#8a919c">;; its RESPONSE, same id</span>
+{"id":7, "result":{"frameId":"…"}}
+<span style="color:#8a919c">;; an EVENT, whenever Chrome likes, no id</span>
+{"method":"Page.screencastFrame", "params":{"data":"/9j/4AAQ…", "sessionId":…}}</pre>
+
+<h3>3.1 The wire: a pipe on fds 3 and 4</h3>
+<p>Chrome usually serves CDP on a TCP port. Started with <code>--remote-debugging-pipe</code>,
+it reads commands from <b>fd 3</b> and writes replies and events to <b>fd 4</b>, each message
+ending with a NUL byte (which JSON text never contains). No port another program could reach,
+no WebSocket framing. SBCL's <code>run-program</code> only gives a child pipes on stdin and
+stdout, so a tiny shell moves them before becoming Chrome
+(<span class="fn">pipe-wrapper</span>, <span class="fn">start-chrome-process</span>):</p>
+
+<pre>/sbin/lol-ct -n web -e LANG=C.UTF-8 -- /bin/sh -c \
+  'exec 3&lt;&amp;0 4&gt;&amp;1 &gt;&gt;/tmp/lol-chrome-1.log 2&gt;&amp;1 &lt;/dev/null;
+   exec /usr/bin/google-chrome --headless=new --remote-debugging-pipe \
+        --user-data-dir=~/.config/lol/chrome --password-store=basic ...'</pre>
+
+<figure>
+<svg viewBox="0 0 940 170">
+  <rect x="20" y="40" width="190" height="90" rx="5" fill="#252a32" stroke="#7fdbca"/>
+  <text x="115" y="70" fill="#7fdbca" font-size="14" text-anchor="middle">web-cdp.lisp</text>
+  <text x="115" y="92" fill="#8a919c" font-size="11" text-anchor="middle">cdp-send: write + NUL</text>
+  <text x="115" y="110" fill="#8a919c" font-size="11" text-anchor="middle">non-blocking read, split on NUL</text>
+  <rect x="300" y="20" width="150" height="40" rx="4" fill="#242931" stroke="#2e343d"/>
+  <text x="375" y="45" fill="#d6d4c8" font-size="12" text-anchor="middle">child's stdin pipe</text>
+  <rect x="300" y="110" width="150" height="40" rx="4" fill="#242931" stroke="#2e343d"/>
+  <text x="375" y="135" fill="#d6d4c8" font-size="12" text-anchor="middle">child's stdout pipe</text>
+  <rect x="520" y="40" width="130" height="90" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="585" y="70" fill="#d6d4c8" font-size="13" text-anchor="middle">/bin/sh</text>
+  <text x="585" y="92" fill="#8a919c" font-size="11" text-anchor="middle">3&lt;&amp;0  4&gt;&amp;1</text>
+  <text x="585" y="110" fill="#8a919c" font-size="11" text-anchor="middle">then exec chrome</text>
+  <rect x="730" y="40" width="190" height="90" rx="5" fill="#252a32" stroke="#ffcb6b"/>
+  <text x="825" y="70" fill="#ffcb6b" font-size="14" text-anchor="middle">Chrome</text>
+  <text x="825" y="92" fill="#8a919c" font-size="11" text-anchor="middle">reads fd 3</text>
+  <text x="825" y="110" fill="#8a919c" font-size="11" text-anchor="middle">writes fd 4</text>
+  <line x1="210" y1="60" x2="298" y2="40" stroke="#ffcb6b" marker-end="url(#arG)"/>
+  <line x1="450" y1="40" x2="518" y2="60" stroke="#ffcb6b" marker-end="url(#arG)"/>
+  <line x1="650" y1="65" x2="728" y2="65" stroke="#ffcb6b" marker-end="url(#arG)"/>
+  <text x="689" y="58" fill="#ffcb6b" font-size="10.5" text-anchor="middle">fd 3</text>
+  <line x1="728" y1="110" x2="652" y2="110" stroke="#7fdbca" marker-end="url(#arT)"/>
+  <text x="689" y="126" fill="#7fdbca" font-size="10.5" text-anchor="middle">fd 4</text>
+  <line x1="518" y1="115" x2="452" y2="130" stroke="#7fdbca" marker-end="url(#arT)"/>
+  <line x1="298" y1="130" x2="212" y2="110" stroke="#7fdbca" marker-end="url(#arT)"/>
+  <text x="250" y="30" fill="#ffcb6b" font-size="10.5">commands</text>
+  <text x="230" y="152" fill="#7fdbca" font-size="10.5">replies + events</text>
+</svg>
+<figcaption>After the shell's <code>exec</code>, the shell is gone: Chrome itself holds the two
+pipe ends, on the fd numbers it expects.</figcaption>
+</figure>
+
+<h3>3.2 One conversation with Chrome, step by step</h3>
+<p>Chrome starts <b>lazily</b>, with the first web tab (<span class="key">SuperL-b</span>),
+and nothing waits for it: every exchange is a chain of callbacks run by the event loop as replies
+arrive, so the screen keeps drawing "starting Chrome…". Step through what happens when you open a
+tab and look at a page:</p>
+
+<div class="seq-controls">
+  <button id="seq-prev">◀ back</button><button id="seq-next">next ▶</button>
+  <button id="seq-all">show all</button><span id="seq-count" class="mono" style="color:var(--dim)"></span>
+</div>
+<div class="seq-explain" id="seq-explain"></div>
+<figure style="margin-top:4px">
+<svg viewBox="0 0 940 640" id="seq">
+  <!-- lifelines -->
+  <g font-size="13" text-anchor="middle">
+    <rect x="40" y="10" width="180" height="40" rx="4" fill="#252a32" stroke="#7fdbca"/>
+    <text x="130" y="35" fill="#7fdbca">web.lisp (us)</text>
+    <rect x="380" y="10" width="180" height="40" rx="4" fill="#252a32" stroke="#ffcb6b"/>
+    <text x="470" y="35" fill="#ffcb6b">Chrome · browser</text>
+    <rect x="720" y="10" width="180" height="40" rx="4" fill="#252a32" stroke="#a8ff78"/>
+    <text x="810" y="35" fill="#a8ff78">Chrome · the tab</text>
+  </g>
+  <line x1="130" y1="50" x2="130" y2="630" stroke="#2e343d" stroke-dasharray="4 4"/>
+  <line x1="470" y1="50" x2="470" y2="630" stroke="#2e343d" stroke-dasharray="4 4"/>
+  <line x1="810" y1="50" x2="810" y2="630" stroke="#2e343d" stroke-dasharray="4 4"/>
+  <g id="seq-msgs" font-size="12"></g>
+</svg>
+<figcaption>Each arrow is one JSON message on the pipe. Messages to the tab carry its
+<code>sessionId</code>: one pipe, many tabs, told apart by one string.</figcaption>
+</figure>
+
+<h3>3.3 Pixels: the screencast</h3>
+<p><code>Page.startScreencast</code> makes Chrome send a <code>Page.screencastFrame</code>
+event every time the page repaints: the frame as a <b>JPEG, base64-encoded</b> inside the JSON.
+We decode it (base64, then stb_image, the same decoder the image previews use) into the
+canvas's own pixels and blit it into the pane. Three rules keep this cheap:</p>
+<ul>
+  <li><b>Flow control by ack.</b> Each frame is answered with <code>Page.screencastFrameAck</code>,
+  and Chrome sends no new frame until it gets one. A slow reader (us, under QEMU) gets
+  <i>fewer</i> frames, never a growing backlog.</li>
+  <li><b>Only the newest frame is decoded.</b> A frame replaced before we drew it is dropped
+  undecoded. An idle page sends nothing at all, so it costs no CPU.</li>
+  <li><b>Only the visible tab streams.</b> Switching tabs sends <code>Page.stopScreencast</code>
+  to the one you left. When only the page changed, just the page rectangle goes to the screen.</li>
+</ul>
+<p>The pane's size becomes the page's: <code>Emulation.setDeviceMetricsOverride</code> lays
+the page out as if the window were exactly the pane. Zoom (<span class="key">C-+</span>) is its
+<code>deviceScaleFactor</code>, so text is re-laid-out larger, not a stretched picture.</p>
+
+<h3>3.4 Input: our events become CDP commands</h3>
+<figure>
+<svg viewBox="0 0 940 230">
+  <g font-size="12">
+  <rect x="20" y="20" width="200" height="190" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="120" y="44" fill="#d6d4c8" font-size="13" text-anchor="middle">what you do</text>
+  <text x="36" y="76" fill="#d6d4c8">click, drag</text>
+  <text x="36" y="104" fill="#d6d4c8">pointer move</text>
+  <text x="36" y="132" fill="#d6d4c8">wheel notch</text>
+  <text x="36" y="160" fill="#d6d4c8">a key</text>
+  <text x="36" y="188" fill="#d6d4c8">paste (C-v)</text>
+  <rect x="300" y="20" width="230" height="190" rx="5" fill="#252a32" stroke="#7fdbca"/>
+  <text x="415" y="44" fill="#7fdbca" font-size="13" text-anchor="middle">web.lisp</text>
+  <text x="316" y="76" fill="#8a919c">web-click / web-drag</text>
+  <text x="316" y="104" fill="#8a919c">web-hover</text>
+  <text x="316" y="132" fill="#8a919c">web-wheel</text>
+  <text x="316" y="160" fill="#8a919c">web-key</text>
+  <text x="316" y="188" fill="#8a919c">our clipboard</text>
+  <rect x="610" y="20" width="310" height="190" rx="5" fill="#252a32" stroke="#ffcb6b"/>
+  <text x="765" y="44" fill="#ffcb6b" font-size="13" text-anchor="middle">CDP, into the page</text>
+  <text x="626" y="76" fill="#d6d4c8">Input.dispatchMouseEvent</text>
+  <text x="626" y="90" fill="#8a919c" font-size="10.5">pressed / moved / released, CSS px</text>
+  <text x="626" y="104" fill="#d6d4c8">… mouseMoved (hover menus)</text>
+  <text x="626" y="132" fill="#d6d4c8">… mouseWheel, 100 px a notch</text>
+  <text x="626" y="160" fill="#d6d4c8">Input.dispatchKeyEvent</text>
+  <text x="626" y="174" fill="#8a919c" font-size="10.5">keyDown + keyUp: key, code, text</text>
+  <text x="626" y="188" fill="#d6d4c8">Input.insertText</text>
+  </g>
+  <g stroke="#8a919c">
+  <line x1="220" y1="72" x2="298" y2="72" marker-end="url(#ar)"/>
+  <line x1="220" y1="100" x2="298" y2="100" marker-end="url(#ar)"/>
+  <line x1="220" y1="128" x2="298" y2="128" marker-end="url(#ar)"/>
+  <line x1="220" y1="156" x2="298" y2="156" marker-end="url(#ar)"/>
+  <line x1="220" y1="184" x2="298" y2="184" marker-end="url(#ar)"/>
+  <line x1="530" y1="72" x2="608" y2="72" marker-end="url(#ar)"/>
+  <line x1="530" y1="100" x2="608" y2="100" marker-end="url(#ar)"/>
+  <line x1="530" y1="128" x2="608" y2="128" marker-end="url(#ar)"/>
+  <line x1="530" y1="156" x2="608" y2="156" marker-end="url(#ar)"/>
+  <line x1="530" y1="184" x2="608" y2="184" marker-end="url(#ar)"/>
+  </g>
+</svg>
+<figcaption>Copy and paste go through <b>our</b> clipboard history, not Chrome's: Chrome's
+clipboard lives in a headless process nobody else can paste from.</figcaption>
+</figure>
+
+<h3>3.5 Tabs are trails</h3>
+<p>Each web tab is a <b>trail</b> of its own, in the same tab strip as the Workspace and the
+file manager. <span class="key">SuperL-1…9</span> reach it, <span class="key">SuperL-w</span>
+closes it. Closing needs no hook: every turn, <span class="fn">web-service</span> notices a tab
+that no trail holds any more and closes its Chrome target. A link that opens a new window
+(<code>target=_blank</code>, Ctrl-click) arrives as Chrome's <code>Target.targetCreated</code>
+event and becomes a new trail.</p>
+
+<h3>3.6 The things headless Chrome cannot show us</h3>
+<div class="two">
+  <div class="card"><h4>Pickers</h4>
+  A <code>&lt;select&gt;</code>'s list, a date or colour picker are drawn by the browser's
+  UI, not the page, and the screencast only sees the page. So web.lisp injects a small script
+  (<span class="fn">web-picker-setup</span>) that reports when one opens; we draw the choices
+  ourselves and send the pick back.</div>
+  <div class="card"><h4>Being "Chrome" to websites</h4>
+  Headless Chrome says <code>HeadlessChrome</code> in its user agent, and some sites refuse it.
+  We override the UA <i>and</i>, since today, its <b>client hints</b>
+  (<span class="fn">web-ua-metadata</span>). Without them Chrome sends no <code>Sec-CH-UA</code>
+  headers, which Google's sign-in reads as an automated browser.</div>
+</div>
+
+<h3>3.7 Its life</h3>
+<p>Its profile lives in <code>~/.config/lol/chrome</code>, so logins and cookies survive reboots.
+If Chrome dies, every tab says so and <span class="key">r</span> restarts it. At power-off,
+<span class="fn">web-shutdown</span> sends <code>Browser.close</code> first, so Chrome writes its
+profile while <code>/home</code> is still writable. Measured in the guest with one simple page:
+Chrome's processes total about <b>436 MB</b> (PSS).</p>
+
+<!-- =================================================================== -->
+<h2 id="terminal">4. The terminal</h2>
+
+<p>A program like bash or vim does not write "to the screen". It writes to its standard output,
+and behaves interactively (prompt, line editing, colours, full-screen drawing) only if that
+output is a <b>terminal</b>. Give it a pipe and it becomes a batch program. So the terminal pane
+gives bash a <b>pseudo-terminal</b>: a pair of devices the kernel makes on demand, so a process
+(us) can <i>be</i> the terminal for another one.</p>
+
+<figure>
+<svg viewBox="0 0 940 260">
+  <rect x="20" y="70" width="230" height="110" rx="5" fill="#252a32" stroke="#7fdbca"/>
+  <text x="135" y="96" fill="#7fdbca" font-size="14" text-anchor="middle">terminal pane (us)</text>
+  <text x="135" y="118" fill="#8a919c" font-size="11" text-anchor="middle">writes your keys as bytes</text>
+  <text x="135" y="134" fill="#8a919c" font-size="11" text-anchor="middle">reads what bash prints</text>
+  <text x="135" y="160" fill="#d6d4c8" font-size="11.5" text-anchor="middle">master fd (/dev/ptmx)</text>
+  <rect x="320" y="40" width="300" height="170" rx="6" fill="#1a1e24" stroke="#c792ea" stroke-dasharray="5 4"/>
+  <text x="470" y="64" fill="#c792ea" font-size="13" text-anchor="middle">kernel · tty layer</text>
+  <text x="470" y="92" fill="#d6d4c8" font-size="12" text-anchor="middle">line discipline</text>
+  <text x="470" y="114" fill="#8a919c" font-size="11" text-anchor="middle">echo · ^C → SIGINT · ^Z → SIGTSTP</text>
+  <text x="470" y="132" fill="#8a919c" font-size="11" text-anchor="middle">the window size (TIOCSWINSZ)</text>
+  <text x="470" y="150" fill="#8a919c" font-size="11" text-anchor="middle">→ SIGWINCH to the program</text>
+  <text x="470" y="186" fill="#8a919c" font-size="10.5" text-anchor="middle">the same code that serves a serial line</text>
+  <rect x="690" y="70" width="230" height="110" rx="5" fill="#252a32" stroke="#a8ff78"/>
+  <text x="805" y="96" fill="#a8ff78" font-size="14" text-anchor="middle">bash (in the container)</text>
+  <text x="805" y="118" fill="#8a919c" font-size="11" text-anchor="middle">stdin, stdout, stderr</text>
+  <text x="805" y="134" fill="#8a919c" font-size="11" text-anchor="middle">= its controlling terminal</text>
+  <text x="805" y="160" fill="#d6d4c8" font-size="11.5" text-anchor="middle">slave /dev/pts/N</text>
+  <line x1="250" y1="110" x2="318" y2="110" stroke="#ffcb6b" marker-end="url(#arG)"/>
+  <line x1="620" y1="110" x2="688" y2="110" stroke="#ffcb6b" marker-end="url(#arG)"/>
+  <line x1="688" y1="150" x2="622" y2="150" stroke="#7fdbca" marker-end="url(#arT)"/>
+  <line x1="318" y1="150" x2="252" y2="150" stroke="#7fdbca" marker-end="url(#arT)"/>
+  <text x="284" y="102" fill="#ffcb6b" font-size="10.5" text-anchor="middle">keys</text>
+  <text x="284" y="168" fill="#7fdbca" font-size="10.5" text-anchor="middle">output</text>
+</svg>
+<figcaption>Because a real tty sits in between, ^C interrupts and ^Z suspends without the
+Lisp doing anything: the kernel's line discipline does it, as on a serial terminal.</figcaption>
+</figure>
+
+<h3>4.1 Starting it: SuperL-Return</h3>
+<p><span class="fn">open-default-terminal</span> asks <span class="fn">default-terminal-command</span>
+for "as good a shell as this machine offers", and takes the first that works:</p>
+<ol>
+  <li><b>bash in the container</b> <code>default</code>, when lol-ct and the host root are
+  there: <code>lol-ct -n default -C &lt;where you were&gt; -- bash -l</code>. The tab says
+  "shell in default". This is the normal case on the laptop.</li>
+  <li>the host's bash run straight from <code>/mnt/host</code> through its dynamic loader
+  ("host bash (limited)");</li>
+  <li>a Lisp REPL (<code>/sbin/lisp repl</code>);</li>
+  <li>on the development host itself, its own <code>$SHELL</code>.</li>
+</ol>
+
+<p><span class="fn">pty-spawn</span> (pty.lisp) then starts that argv on a fresh pty. The child
+must make the slave its <b>controlling terminal</b>, or bash says "no job control" and ^C kills
+nothing. That takes <code>setsid()</code> and then opening the slave. SBCL's own
+<code>run-program :pty</code> does not call <code>setsid</code>, so pty.lisp uses
+<code>posix_spawn</code> with glibc's <code>POSIX_SPAWN_SETSID</code>, plus a file action that opens
+the slave on fd 0. posix_spawn is vfork+exec done inside libc: the child runs no Lisp at all,
+which is what makes it safe from a garbage-collected image.</p>
+
+<figure>
+<svg viewBox="0 0 940 150">
+  <g font-size="12" text-anchor="middle">
+  <rect x="10" y="40" width="150" height="70" rx="5" fill="#252a32" stroke="#7fdbca"/>
+  <text x="85" y="66" fill="#7fdbca">the Lisp</text><text x="85" y="86" fill="#8a919c" font-size="10.5">open /dev/ptmx</text>
+  <rect x="200" y="40" width="160" height="70" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="280" y="62" fill="#d6d4c8">posix_spawn</text><text x="280" y="80" fill="#8a919c" font-size="10.5">SETSID, slave → 0,1,2</text>
+  <text x="280" y="96" fill="#8a919c" font-size="10.5">TERM=xterm-256color</text>
+  <rect x="400" y="40" width="150" height="70" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="475" y="66" fill="#d6d4c8">lol-ct OUTER</text><text x="475" y="86" fill="#8a919c" font-size="10.5">namespaces</text>
+  <rect x="590" y="40" width="150" height="70" rx="5" fill="#252a32" stroke="#2e343d"/>
+  <text x="665" y="66" fill="#d6d4c8">lol-ct INIT</text><text x="665" y="86" fill="#8a919c" font-size="10.5">root, pivot_root</text>
+  <rect x="780" y="40" width="150" height="70" rx="5" fill="#252a32" stroke="#a8ff78"/>
+  <text x="855" y="66" fill="#a8ff78">bash -l</text><text x="855" y="86" fill="#8a919c" font-size="10.5">PID 2, in ~/…</text>
+  </g>
+  <g stroke="#8a919c">
+  <line x1="160" y1="75" x2="198" y2="75" marker-end="url(#ar)"/>
+  <line x1="360" y1="75" x2="398" y2="75" marker-end="url(#ar)"/>
+  <line x1="550" y1="75" x2="588" y2="75" marker-end="url(#ar)"/>
+  <line x1="740" y1="75" x2="778" y2="75" marker-end="url(#ar)"/>
+  </g>
+  <text x="470" y="138" fill="#8a919c" font-size="11" text-anchor="middle">the slave fds are inherited all the way down: bash's stdin/stdout are the pty the Lisp holds the master of</text>
+</svg>
+</figure>
+
+<h3>4.2 Output: bytes → grid of cells → pixels</h3>
+<p>What bash prints is not text but a <b>stream of bytes with control sequences mixed in</b>:
+<code>ESC[1;32m</code> means "bold green", <code>ESC[2J</code> "clear the screen",
+<code>ESC[?1049h</code> "switch to the alternate screen" (vim, less). poc/terminal.lisp is a
+<b>VT engine</b>: <span class="fn">term-feed</span> takes bytes and updates a grid of cells
+(character, colours, attributes). It knows no pixels and no file descriptors, so it is tested
+on the host against output recorded from real programs.</p>
+
+<p>Its parser is Paul Williams' DEC-compatible <b>state machine</b>: every byte belongs to exactly
+one state, so a terminal never prints half an escape sequence, and CAN, SUB or ESC can always pull
+it back to the ground state. Click a state to see what it does:</p>
+
+<figure>
+<svg viewBox="0 0 940 250" id="states">
+  <g font-size="12" text-anchor="middle">
+    <g class="layer" data-info="GROUND — ordinary characters. Each one is put in the cell under the cursor, which moves right; C0 controls (CR, LF, BS, TAB, BEL) act at once."><rect x="40" y="100" width="150" height="50" rx="25" fill="#252a32" stroke="#a8ff78"/><text x="115" y="130" fill="#a8ff78">ground</text></g>
+    <g class="layer" data-info="ESCAPE — after ESC. The next byte decides: [ starts a CSI sequence, ] an OSC string (window title, current directory), P a DCS string; a few single letters act directly (ESC 7 save cursor, ESC M reverse index)."><rect x="270" y="100" width="150" height="50" rx="25" fill="#252a32" stroke="#ffcb6b"/><text x="345" y="130" fill="#ffcb6b">escape</text></g>
+    <g class="layer" data-info="CSI — Control Sequence Introducer, ESC [. Collects numeric parameters (1;32) and intermediates until a final byte names the action: m colours, H move the cursor, J/K erase, h/l set modes (?1049h the alternate screen, ?2004h bracketed paste)."><rect x="510" y="40" width="170" height="50" rx="25" fill="#252a32" stroke="#89ddff"/><text x="595" y="70" fill="#89ddff">csi param</text></g>
+    <g class="layer" data-info="OSC — Operating System Command, ESC ]. A string up to BEL or ESC \: OSC 0/2 set the title (the tab shows it), OSC 7 reports the shell's current directory."><rect x="510" y="160" width="170" height="50" rx="25" fill="#252a32" stroke="#c792ea"/><text x="595" y="190" fill="#c792ea">osc string</text></g>
+    <g class="layer" data-info="DISPATCH — the sequence is complete: perform it on the grid (colour the next cells, move the cursor, scroll a region, switch screens), then back to ground. Anything outside the xterm-256color subset is parsed, then ignored, so it can never leak onto the screen."><rect x="760" y="100" width="150" height="50" rx="6" fill="#252a32" stroke="#d6d4c8"/><text x="835" y="130" fill="#d6d4c8">dispatch</text></g>
+  </g>
+  <g stroke="#8a919c" fill="none" font-size="11">
+    <path d="M190,125 L268,125" marker-end="url(#ar)"/><text x="229" y="117" fill="#8a919c" stroke="none" text-anchor="middle">ESC</text>
+    <path d="M420,115 L508,70" marker-end="url(#ar)"/><text x="455" y="82" fill="#8a919c" stroke="none">[</text>
+    <path d="M420,135 L508,180" marker-end="url(#ar)"/><text x="455" y="176" fill="#8a919c" stroke="none">]</text>
+    <path d="M680,65 L758,115" marker-end="url(#ar)"/><text x="722" y="80" fill="#8a919c" stroke="none">final byte</text>
+    <path d="M680,185 L758,140" marker-end="url(#ar)"/><text x="722" y="178" fill="#8a919c" stroke="none">BEL / ST</text>
+    <path d="M835,150 C835,240 115,240 115,152" marker-end="url(#ar)"/><text x="470" y="236" fill="#8a919c" stroke="none" text-anchor="middle">back to ground</text>
+    <path d="M90,100 C60,60 140,60 120,98" marker-end="url(#ar)"/><text x="104" y="56" fill="#8a919c" stroke="none" text-anchor="middle">print</text>
+  </g>
+</svg>
+<div id="layer-info" class="note">Click a state.</div>
+<figcaption>A simplified view: the real machine also has CSI entry, intermediate and ignore
+states, and DCS/SOS/PM/APC strings. It runs over code points, after UTF-8 decoding.</figcaption>
+</figure>
+
+<p>Then <span class="fn">terminal-paint-dirty</span> repaints <b>only the rows that changed</b>,
+with the browser's own font (box-drawing characters are drawn as lines, so they join cell to
+cell). A shell echoing one character sends one row to <code>/dev/fb0</code>, not the frame.</p>
+
+<h3>4.3 Input: keys → the bytes a program expects</h3>
+<p><span class="fn">terminal-key</span> sends <b>everything</b> to the program, except the
+<span class="key">SuperL</span> layer (tabs, the Spotter, leaving), which stays the environment's on
+every pane. So <span class="key">C-c</span>, <span class="key">C-g</span>, <span class="key">Esc</span>
+belong to bash or vim, as in any terminal. <span class="fn">encode-key</span> turns a key into
+bytes: <span class="key">↑</span> becomes <code>ESC[A</code> (or <code>ESC O A</code> when the program
+asked for application cursor mode), <span class="key">C-c</span> becomes byte 3, which the line
+discipline turns into SIGINT.</p>
+<ul>
+  <li><span class="key">Shift-PageUp</span>/<span class="key">PageDown</span> and the wheel scroll the
+  history; <span class="key">Shift-Insert</span> pastes (bracketed, if the program asked).</li>
+  <li>Press and drag selects text into our clipboard. If the program asked for the mouse
+  (vim's <code>mouse=a</code>, htop), it gets the clicks instead, and <span class="key">Shift</span>
+  takes them back for selecting, as in xterm.</li>
+  <li>A font change re-flows the grid: the new size goes to the program by <code>TIOCSWINSZ</code>,
+  and the kernel sends it <code>SIGWINCH</code>, exactly as when an xterm window is resized.</li>
+  <li>Close the tab and <span class="fn">terminal-sweep</span> hangs the program up; dead children
+  are reaped (<span class="fn">pty-reap-orphans</span>).</li>
+</ul>
+
+<!-- =================================================================== -->
+<h2 id="loop">5. How both fit the event loop</h2>
+
+<p>The environment's loop (fb-browser.lisp) sleeps in one <code>poll(2)</code> on every file
+descriptor that can wake it, and wakes only when one has something. Chrome's reply pipe and each
+terminal's pty master are simply more fds in that poll. Each pane registers a <b>service</b>
+(<span class="fn">fb-register-service</span>): <code>:fd</code> says what to watch,
+<code>:run</code> what to do when it is ready.</p>
+
+<figure>
+<svg viewBox="0 0 940 300">
+  <g font-size="12" text-anchor="middle">
+    <rect x="20" y="20" width="170" height="40" rx="4" fill="#242931" stroke="#2e343d"/><text x="105" y="45" fill="#d6d4c8">keyboard (tty + evdev)</text>
+    <rect x="20" y="75" width="170" height="40" rx="4" fill="#242931" stroke="#2e343d"/><text x="105" y="100" fill="#d6d4c8">mouse, touchpad</text>
+    <rect x="20" y="130" width="170" height="40" rx="4" fill="#242931" stroke="#ffcb6b"/><text x="105" y="155" fill="#ffcb6b">Chrome's fd-4 pipe</text>
+    <rect x="20" y="185" width="170" height="40" rx="4" fill="#242931" stroke="#a8ff78"/><text x="105" y="210" fill="#a8ff78">pty masters</text>
+    <rect x="20" y="240" width="170" height="40" rx="4" fill="#242931" stroke="#2e343d"/><text x="105" y="265" fill="#d6d4c8">a timeout (clock, pulse)</text>
+    <rect x="290" y="110" width="160" height="80" rx="40" fill="#252a32" stroke="#7fdbca"/><text x="370" y="146" fill="#7fdbca" font-size="14">poll(2)</text><text x="370" y="166" fill="#8a919c" font-size="11">sleeps until one is ready</text>
+    <rect x="540" y="20" width="200" height="56" rx="4" fill="#252a32" stroke="#2e343d"/><text x="640" y="44" fill="#d6d4c8">browser-key / click</text><text x="640" y="62" fill="#8a919c" font-size="10.5">routed to the focused pane</text>
+    <rect x="540" y="100" width="200" height="56" rx="4" fill="#252a32" stroke="#ffcb6b"/><text x="640" y="124" fill="#ffcb6b">:web service</text><text x="640" y="142" fill="#8a919c" font-size="10.5">pump pipe · decode newest frame</text>
+    <rect x="540" y="180" width="200" height="56" rx="4" fill="#252a32" stroke="#a8ff78"/><text x="640" y="204" fill="#a8ff78">:terminals service</text><text x="640" y="222" fill="#8a919c" font-size="10.5">term-feed what bash wrote</text>
+    <rect x="800" y="95" width="125" height="110" rx="4" fill="#252a32" stroke="#2e343d"/><text x="862" y="130" fill="#d6d4c8">draw</text><text x="862" y="150" fill="#8a919c" font-size="10.5">full frame, or</text><text x="862" y="166" fill="#8a919c" font-size="10.5">just the page /</text><text x="862" y="182" fill="#8a919c" font-size="10.5">the dirty rows</text>
+  </g>
+  <g stroke="#8a919c">
+    <line x1="190" y1="40" x2="300" y2="128" marker-end="url(#ar)"/>
+    <line x1="190" y1="95" x2="292" y2="140" marker-end="url(#ar)"/>
+    <line x1="190" y1="150" x2="290" y2="150" marker-end="url(#ar)"/>
+    <line x1="190" y1="205" x2="292" y2="162" marker-end="url(#ar)"/>
+    <line x1="190" y1="260" x2="300" y2="174" marker-end="url(#ar)"/>
+    <line x1="450" y1="140" x2="538" y2="50" marker-end="url(#ar)"/>
+    <line x1="450" y1="150" x2="538" y2="128" marker-end="url(#ar)"/>
+    <line x1="450" y1="162" x2="538" y2="206" marker-end="url(#ar)"/>
+    <line x1="740" y1="48" x2="798" y2="120" marker-end="url(#ar)"/>
+    <line x1="740" y1="128" x2="798" y2="145" marker-end="url(#ar)"/>
+    <line x1="740" y1="208" x2="798" y2="180" marker-end="url(#ar)"/>
+  </g>
+</svg>
+<figcaption>Nothing polls on a timer. An idle page and an idle shell cost no CPU; when one
+changes, only its rectangle is sent to the screen.</figcaption>
+</figure>
+
+<!-- =================================================================== -->
+<h2 id="compare">6. Side by side</h2>
+<table>
+  <tr><th></th><th>the browser</th><th>the terminal</th></tr>
+  <tr><td>the program</td><td>Google Chrome, headless</td><td>bash (and what you run in it)</td></tr>
+  <tr><td>container</td><td><code>web</code></td><td><code>default</code></td></tr>
+  <tr><td>the wire</td><td>two pipes on fds 3/4, NUL-framed JSON</td><td>a pseudo-terminal: master ⇄ slave</td></tr>
+  <tr><td>what comes back</td><td>JPEG frames (base64 in JSON) + events</td><td>bytes with VT control sequences</td></tr>
+  <tr><td>turned into pixels by</td><td>stb_image decode, blit the newest frame</td><td>VT state machine → grid → dirty rows</td></tr>
+  <tr><td>your input becomes</td><td>Input.dispatch* commands</td><td>bytes written to the master</td></tr>
+  <tr><td>back-pressure</td><td>screencastFrameAck: no ack, no frame</td><td>the kernel's tty buffer</td></tr>
+  <tr><td>size</td><td>setDeviceMetricsOverride</td><td>TIOCSWINSZ → SIGWINCH</td></tr>
+  <tr><td>started</td><td>lazily, with the first web tab</td><td>per tab, SuperL-Return</td></tr>
+  <tr><td>closed</td><td>tab gone → Target.closeTarget; power-off → Browser.close</td><td>tab gone → terminal-sweep hangs up</td></tr>
+  <tr><td>keys it does NOT get</td><td>the SuperL layer</td><td>the SuperL layer</td></tr>
+</table>
+
+<!-- =================================================================== -->
+<h2 id="code">7. Where to look in the code</h2>
+<p>Every name below is a live definition: in the environment, the Spotter
+(<span class="key">SuperL-Space</span>) or <span class="key">M-.</span> opens its source.</p>
+<div class="two">
+  <div class="card"><h4 style="color:var(--gold)">browser</h4>
+  <span class="fn">web-open</span> — SuperL-b, a new tab<br>
+  <span class="fn">web-start-chrome</span>, <span class="fn">web-chrome-argv</span> — the launch<br>
+  <span class="fn">web-launch-prefix</span> — "run it in container web"<br>
+  <span class="fn">start-chrome-process</span>, <span class="fn">pipe-wrapper</span> — fds 3/4<br>
+  <span class="fn">cdp-send</span> — one command, with a callback<br>
+  <span class="fn">web-chrome-ready</span>, <span class="fn">web-tab-setup</span> — the handshake<br>
+  <span class="fn">web-service</span> — every turn: pipe, screencast, frame<br>
+  <span class="fn">draw-web-body</span> — toolbar and frame<br>
+  <span class="fn">web-key</span>, <span class="fn">web-click</span>, <span class="fn">web-wheel</span> — input<br>
+  <span class="fn">web-picker-setup</span> — the popups we draw<br>
+  doc/web-browser.org — the long version</div>
+  <div class="card"><h4 style="color:var(--green)">terminal and containers</h4>
+  <span class="fn">open-default-terminal</span> — SuperL-Return<br>
+  <span class="fn">default-terminal-command</span> — which shell<br>
+  <span class="fn">container-command-line</span> — the lol-ct argv<br>
+  initramfs/lol-ct.c — namespaces, overlays, pivot_root<br>
+  <span class="fn">pty-spawn</span> — /dev/ptmx + posix_spawn<br>
+  <span class="fn">terminal-service</span> — drain ready masters<br>
+  <span class="fn">lol.terminal:term-feed</span> — bytes → grid<br>
+  <span class="fn">terminal-paint-dirty</span> — changed rows only<br>
+  <span class="fn">terminal-key</span>, <span class="fn">lol.terminal:encode-key</span> — keys → bytes<br>
+  <span class="fn">terminal-sweep</span> — hang up closed tabs<br>
+  doc/terminal.org, doc/containers.org</div>
+</div>
+
+</main>
+<script>
+"use strict";
+// ---- the step-through CDP sequence -------------------------------------
+// [from, to, label, explanation, color]; columns: 0 us, 1 browser, 2 tab
+const X = [130, 470, 810];
+const STEPS = [
+  [0,1,"(start)  lol-ct -n web -- sh -c '…exec chrome'", "Chrome starts, in its own container. Nothing waits: the pane shows “starting Chrome…” and the loop keeps running.", "#8a919c"],
+  [0,1,"Browser.getVersion", "The first command is the handshake: when Chrome answers it, it is up.", "#ffcb6b"],
+  [1,0,"→ {product, userAgent}", "web-chrome-ready learns the version and the user agent, removes “Headless” from it, and remembers both.", "#7fdbca"],
+  [0,1,"Target.setDiscoverTargets", "Ask to hear about every tab Chrome opens or closes — a popup becomes a new trail this way.", "#ffcb6b"],
+  [0,1,"Target.createTarget {url: about:blank}", "One Chrome tab per web tab of ours. The about:blank Chrome opened with is closed first.", "#ffcb6b"],
+  [0,1,"Target.attachToTarget {flatten: true}", "Attach to the new tab…", "#ffcb6b"],
+  [1,0,"→ {sessionId: \"8F3…\"}", "…and get a session id. From now on every message for this tab carries it.", "#7fdbca"],
+  [0,2,"Emulation.setUserAgentOverride (+ client hints)", "Present ourselves as plain Chrome, with matching Sec-CH-UA hints (web-ua-metadata).", "#a8ff78"],
+  [0,2,"Page.navigate {url}", "Load the page you asked for.", "#a8ff78"],
+  [0,2,"Emulation.setDeviceMetricsOverride {w,h}", "Lay the page out at exactly the pane's size.", "#a8ff78"],
+  [0,2,"Page.startScreencast {format: jpeg}", "Start streaming pixels for the visible tab.", "#a8ff78"],
+  [2,0,"event Page.screencastFrame {data: base64 JPEG}", "A frame arrives whenever the page repaints. We decode only the newest and blit it into the pane.", "#7fdbca"],
+  [0,2,"Page.screencastFrameAck", "The ack is the flow control: no ack, no next frame. A slow reader gets fewer frames, never a backlog.", "#a8ff78"],
+  [0,2,"Input.dispatchMouseEvent {mousePressed, x, y}", "You click: the point is converted to the page's CSS pixels and sent in.", "#a8ff78"],
+  [2,0,"event Page.screencastFrame …", "The page repaints in response; the loop wakes on the pipe and draws just that rectangle.", "#7fdbca"],
+];
+const g = document.getElementById("seq-msgs");
+let cur = -1;
+STEPS.forEach((s, i) => {
+  const [a, b, label, , color] = s, y = 85 + i * 37, x1 = X[a], x2 = X[b];
+  const left = Math.min(x1, x2), dir = x2 > x1 ? 1 : -1;
+  const el = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  el.setAttribute("class", "msg");
+  el.innerHTML =
+    `<line x1="${x1}" y1="${y}" x2="${x2 - dir * 4}" y2="${y}" stroke="${color}" stroke-width="1.6" marker-end="url(#${color === "#7fdbca" ? "arT" : color === "#8a919c" ? "ar" : "arG"})"/>` +
+    `<text x="${left + Math.abs(x2 - x1) / 2}" y="${y - 6}" fill="${color}" text-anchor="middle">${label.replace(/&/g,"&amp;").replace(/</g,"&lt;")}</text>` +
+    `<text x="22" y="${y + 4}" fill="#5c636e" font-size="11">${i + 1}</text>`;
+  g.appendChild(el);
+});
+function show(n) {
+  cur = Math.max(-1, Math.min(STEPS.length - 1, n));
+  [...g.children].forEach((el, i) => el.setAttribute("class", "msg" + (i < cur ? " seen" : i === cur ? " now" : "")));
+  document.getElementById("seq-explain").textContent = cur < 0 ? "Press “next ▶” to start." : STEPS[cur][3];
+  document.getElementById("seq-count").textContent = `${cur + 1} / ${STEPS.length}`;
+}
+document.getElementById("seq-next").onclick = () => show(cur + 1);
+document.getElementById("seq-prev").onclick = () => show(cur - 1);
+document.getElementById("seq-all").onclick = () => { [...g.children].forEach(el => el.setAttribute("class", "msg now")); cur = STEPS.length - 1;
+  document.getElementById("seq-explain").textContent = "All fifteen messages. Steps 1–4 happen once per Chrome, 5–11 once per tab, and 12–15 repeat for as long as you look at the page.";
+  document.getElementById("seq-count").textContent = `${STEPS.length} / ${STEPS.length}`; };
+document.addEventListener("keydown", e => {
+  if (e.key === "ArrowRight" || e.key === "n") show(cur + 1);
+  if (e.key === "ArrowLeft" || e.key === "p") show(cur - 1);
+});
+show(-1);
+// ---- the clickable parser states ------------------------------------------
+document.querySelectorAll("#states .layer").forEach(el =>
+  el.addEventListener("click", () => { document.getElementById("layer-info").textContent = el.dataset.info; }));
+</script>
+</body>
+</html>
