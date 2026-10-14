@@ -1264,6 +1264,54 @@ tool call, and a rule between turns naming the authority in force. The prototype
 where the pane goes next is =doc/design/agent-workbench.html= (a static HTML mock;
 open it locally).
 
+** 14.8¾ The Activity panel, plans and subagents (2026-10-13, from a session inside the environment)
+
+A long conversation became hard to follow: every tool call was its own =;; #N= line,
+and nothing showed where the work stood. Three changes follow the prototype
+=doc/design/agent-workbench.html= (its layout A).
+
+- *An Activity panel beside the conversation.* A conversation pane at least 900
+  pixels wide gets a list view on its right, about a third of the width:
+  [[file:../initramfs/agent-ui.lisp::defstruct (subj-agent-activity][=subj-agent-activity=]]. It shows four groups:
+  - the plan;
+  - calls waiting for your approval;
+  - subagents;
+  - the last twelve changes (definitions accepted, files written).
+
+  It is an ordinary =present= view, so its rows drill: a subagent opens its
+  conversation, a change opens its definition. =SuperL-o= moves focus between the
+  transcript and the panel. The conversation's menu hides or shows it.
+- *Steps folded.* By default (=*agent-steps-detail*= =:concise=) each run of tool
+  calls is one dim line, such as =⋯ 6 steps · read 4 · ran 2 ✓=, and the thinking is
+  hidden. =:verbose= brings back every =#N= line and the thinking, and the
+  conversation's menu switches between the two. A call waiting for approval is
+  always shown in full. The system prompt asks the model to begin a finding with
+  =◆= and a finished piece of work with =✔ Done:=. The pane colours those lines.
+- *Three new tools.*
+  - =update-plan= takes the whole task list each time, one task per line with a
+    mark: =[x]= done, =[>]= active, =[ ]= pending, =[!]= failed ([[file:../initramfs/agent.lisp::defun parse-plan][=parse-plan=]]).
+  - =spawn-subagent= starts a *read-only* conversation on a goal, on its own thread,
+    and returns at once. At most =*subagent-max*= (4) run at a time, and a subagent
+    cannot start subagents of its own.
+  - =await-subagents= waits for them, up to a timeout, and returns each one's final
+    answer. It is the one tool that runs on the turn's own thread
+    (=*in-thread-tools*=), not on the environment's. The subagents' own tool calls
+    run on the environment's thread, so waiting there would deadlock the very calls
+    it waits for.
+
+  The tools find their conversation through =*tool-conversation*=, which
+  =execute-tool-call= binds. A conversation's plan and subagents live in a side
+  table (=*conversation-activities*=, weak on the key) rather than in a new slot.
+  That way a running image could take the change live, without redefining the
+  =conversation= class under conversations that already existed.
+
+The tray's agent item now draws a small orange creature before its text
+(=draw-agent-icon=, =poc/shell.lisp=), dimmed when its initiative is =:off=.
+
+Not yet covered by a test. =poc/agent-test.lisp= still passes with the new tools
+offered, but nothing asserts the panel, the folding, or a subagent's round trip.
+Those belong in =check-agent.lisp= (owed).
+
 ** 14.9 Still owed
 
 - *The first real call*: put a key in =~/.config/lol/anthropic-api-key= (=0600=) on

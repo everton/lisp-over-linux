@@ -200,6 +200,10 @@
              (t (concept-color :subclass))))
       ((starts ";;   | ") (concept-color :class))
       ((starts ";; | ") (concept-color :class))
+      ((starts ";; ◆") (concept-color :function))                 ; a finding: bright teal
+      ((starts ";; ✔") (concept-color :generic-function))         ; a summary / report: green
+      ((and (starts ";; ⋯") (search "✗" line)) (concept-color :condition))
+      ((and (starts ";; ⋯") (search "●" line)) *ui-amber*)      ; steps still running
       ((or (starts ";; ⋯") (starts ";; (thinking")) *ui-dim*)
       ((or (starts ";; ──") (starts ";; --") (starts ";; ·")) *ui-dim*)
       ((or (starts ";; ●") (starts ";; ! ") (starts ";; ...") (starts ";; >")) *ui-amber*)
@@ -242,13 +246,108 @@
         (concatenate 'string head (make-string (- *agent-wrap* (length head)) :initial-element #\━))
         head)))
 
+(defvar *agent-steps-detail* :concise
+  "How a conversation shows its tool calls. :CONCISE folds each run of them into one
+   dim line (⋯ 6 steps · read 4 · ran 2 ✓) and hides the thinking; :VERBOSE shows every
+   ;; #N line (C-c C-o opens one) and the thinking. A call waiting for your approval is
+   always shown in full. The conversation's menu toggles it.")
+
+(defun call-verb (name)
+  "The word a steps line counts tool NAME under."
+  (cond ((member name '("lisp-source" "lisp-senders" "lisp-describe" "lisp-describe-class"
+                        "lisp-describe-gf" "lisp-apropos" "lisp-modules" "file-read" "file-list")
+                 :test #'string=) "read")
+        ((string= name "lisp-eval") "evaluated")
+        ((string= name "lisp-accept") "compiled")
+        ((string= name "file-write") "wrote")
+        ((string= name "container-run") "ran")
+        ((string= name "update-plan") "planned")
+        ((string= name "spawn-subagent") "spawned")
+        ((string= name "await-subagents") "awaited")
+        (t name)))
+
+(defun steps-line (calls live-name)
+  "One dim line for a run of tool CALLS: ⋯ N steps · read 3 · compiled 2 ✓. LIVE-NAME,
+   when the run is still growing, is the tool being written right now: the line then
+   ends with what is happening (● name …) instead of the verdict."
+  (let* ((n (+ (length calls) (if live-name 1 0)))
+         (counts '()))
+    (dolist (c calls)
+      (let* ((v (call-verb (call-name c))) (cell (assoc v counts :test #'string=)))
+        (if cell (incf (cdr cell)) (push (cons v 1) counts))))
+    (let* ((bad (count-if (lambda (c) (member (call-status c) '(:error :denied))) calls))
+           (running (find-if (lambda (c) (member (call-status c) '(:running :pending))) calls :from-end t))
+           (now (cond (live-name (format nil "● ~a …" live-name))
+                      (running (format nil "● ~a" (lol.widgets:clip-text (call-headline running) 50)))
+                      ((plusp bad) (format nil "✗ ~d failed" bad))
+                      (t "✓"))))
+      (format nil ";; ⋯ ~d step~:p~{ · ~a~} ~a" n
+              (mapcar (lambda (c) (format nil "~a ~d" (car c) (cdr c))) (reverse counts))
+              now))))
+
+(defun turn-body-lines (conv turn)
+  "The assistant's side of TURN as lines: its text as replies, and its tool calls —
+   folded into STEPS-LINEs under *AGENT-STEPS-DETAIL* :CONCISE (a call that waits for
+   your approval is shown in full regardless), or one ;; #N line each under :VERBOSE,
+   with the thinking. Includes the reply still streaming."
+  (let ((out '()) (run '()) (verbose (eq *agent-steps-detail* :verbose)))
+    (labels ((emit (lines) (dolist (l lines) (push l out)))
+             (flush (&optional live-name)
+               (when (or run live-name)
+                 (let ((calls (reverse run)))
+                   (if verbose
+                       (dolist (c calls) (emit (call-lines c)))
+                       (progn
+                         (emit (list (steps-line calls live-name)))
+                         (dolist (c calls)
+                           (when (eq (call-status c) :waiting) (emit (call-lines c)))))))
+                 (setf run '())))
+             (block-in (b)
+               (let ((type (block-type b)))
+                 (cond ((equal type "tool_use")
+                        (when (block-call b)
+                          (if verbose (emit (call-lines (block-call b))) (push (block-call b) run))))
+                       ((equal type "text")
+                        (let ((text (lol.json:jget (block-json b) "text")))
+                          (when (plusp (length (string-trim '(#\Space #\Newline) (or text ""))))
+                            (flush) (emit (reply-lines text)))))
+                       ((and verbose (equal type "thinking"))
+                        (emit (thinking-lines (or (lol.json:jget (block-json b) "thinking") "")))))))
+             (live-in (lb)
+               (let ((type (live-block-type lb)))
+                 (cond ((equal type "text")
+                        (let ((text (live-text lb)))
+                          (when (plusp (length (string-trim '(#\Space #\Newline) (or text ""))))
+                            (flush) (emit (reply-lines text)))))
+                       ((equal type "tool_use")
+                        (let ((name (lol.json:jget (live-block-json lb) "name")))
+                          (if verbose
+                              (emit (list (format nil ";; ● ~a …" name)))
+                              (progn (flush name) (setf run '())))))
+                       ((and verbose (equal type "thinking"))
+                        (emit (thinking-lines (live-text lb))))))))
+      (let ((ms (conversation-messages conv)))
+        (loop for i from (turn-start turn) below (length ms)
+              for m = (aref ms i)
+              when (equal (message-role m) "assistant")
+                do (dolist (b (message-blocks m)) (block-in b))))
+      (let ((live (and (not (turn-done turn)) (conversation-live conv))))
+        (if live
+            (let ((blocks (live-reply-blocks live)))
+              ;; a live tool_use joins the run before it, on the same line
+              (if (and (not verbose) run blocks
+                       (every (lambda (lb) (equal (live-block-type lb) "tool_use")) blocks))
+                  (flush (lol.json:jget (live-block-json (car (last blocks))) "name"))
+                  (progn (dolist (lb blocks) (live-in lb)) (flush))))
+            (flush))))
+    (nreverse out)))
+
 (defun turn-lines (conv turn)
-  "TURN as buffer lines: a rule with its number, the question (;; ▸), every assistant
-   block after it (and the reply still streaming), the notes, a failure's error block,
-   and — once done — the usage and the your-turn line."
+  "TURN as buffer lines: a rule with its number, the question (;; ▸), the assistant's
+   replies with its tool calls folded into steps lines (TURN-BODY-LINES), the notes, a
+   failure's error block, and — once done — the usage and the your-turn line."
   (with-conversation-lock (conv)
-    (let* ((ms (conversation-messages conv))
-           (n (1+ (or (position turn (conversation-turns conv)) 0)))
+    (let* ((n (1+ (or (position turn (conversation-turns conv)) 0)))
            (lines (append
                    (list (turn-rule n (conversation-authority* conv)))
                    (mapcar (lambda (l) (concatenate 'string ";; ▸ " l))
@@ -257,13 +356,7 @@
                                                             (turn-question turn)))
                                  append (wrap-words q (- *agent-wrap* 5))))
                    (list "")
-                   (loop for i from (turn-start turn) below (length ms)
-                         for m = (aref ms i)
-                         when (equal (message-role m) "assistant")
-                           append (loop for b in (message-blocks m) append (block-lines b)))
-                   (when (and (not (turn-done turn)) (conversation-live conv))
-                     (loop for lb in (live-reply-blocks (conversation-live conv))
-                           append (live-block-lines lb)))
+                   (turn-body-lines conv turn)
                    (mapcar (lambda (n) (concatenate 'string ";; ! " n)) (turn-notes turn))
                    (when (turn-failure turn) (failure-lines turn)))))
       (if (turn-done turn)
@@ -306,6 +399,13 @@
 
 (defmethod commands-for ((c conversation))
   (list (make-command :label "Stop the turn" :action (lambda () (cancel-conversation c)) :key "C-g")
+        (if (some #'activity-side-p (conversation-panes c))
+            (make-command :label "Hide the activity panel" :action (lambda () (toggle-activity-panel c)))
+            (make-command :label "Show the activity panel" :action (lambda () (toggle-activity-panel c))))
+        (make-command :label (if (eq *agent-steps-detail* :verbose)
+                                 "Steps: concise (fold tool calls into one line)"
+                                 "Steps: verbose (every tool call, and the thinking)")
+                      :action #'toggle-steps-detail)
         (if (eq (conversation-authority* c) :allow)
             (make-command :label "Ask before writes again"
                           :action (lambda () (ask-before-writes)
@@ -398,6 +498,122 @@
 ;;; ===========================================================================
 ;;; The panes showing a conversation, kept live
 ;;; ===========================================================================
+
+(defstruct (subj-agent-activity (:constructor subj-agent-activity (conversation)))
+  "What CONVERSATION is doing, as a subject: its plan, what waits for you, its
+   subagents and what it changed. Shown in the conversation pane's side split
+   (SuperL-o focuses it; the conversation's menu hides or shows it) — layout A of
+   doc/design/agent-workbench.html. Not chrome: a list view like any other, whose rows
+   drill (a subagent to its conversation, a change to its definition, a waiting call
+   to its input), which keeps doc/agent.org §8.0's four moves."
+  conversation)
+
+(defun plan-state-mark (state)
+  (case state (:done "✓") (:active "●") (:failed "✗") (t "○")))
+
+(defun plan-state-kind (state)
+  "A plan row's colour, by the concept palette: done green, active gold, failed red,
+   pending plain."
+  (case state (:done :generic-function) (:active :package) (:failed :condition) (t nil)))
+
+(defun conversation-changes (conv)
+  "What CONV's tool calls changed, oldest first: (KIND LABEL SUBJECT) with KIND :defn
+   (a lisp-accept) or :file (a file-write). Only calls that ran."
+  (let ((seen (make-hash-table :test 'equal)) (out '()))
+    (loop for call across (conversation-calls conv)
+          when (eq (call-status call) :done)
+            do (let* ((name (call-name call))
+                      (kind (cond ((string= name "lisp-accept") :defn)
+                                  ((string= name "file-write") :file)))
+                      (summary (or (call-summary call) ""))
+                      (label (cond ((eq kind :defn)
+                                    (let ((p (search "accepted " summary)))
+                                      (if p (subseq summary (+ p 9)) summary)))
+                                   ((eq kind :file)
+                                    (or (ignore-errors (lol.json:jget (call-input call) "path")) summary)))))
+                 (when (and kind (not (gethash label seen)))
+                   (setf (gethash label seen) t)
+                   (push (list kind label (call-subject call)) out))))
+    (nreverse out)))
+
+(defun subagent-elapsed (child)
+  (let ((t0 (activity-started (conversation-activity child))))
+    (if t0 (format nil "~ds" (round (- (get-internal-real-time) t0) internal-time-units-per-second)) "")))
+
+(defmethod present ((s subj-agent-activity))
+  "The Activity view: four groups — plan, waiting for you, subagents, changes — each
+   row coloured by state (done green, active gold, waiting amber, failed red)."
+  (let* ((conv (subj-agent-activity-conversation s))
+         (act (conversation-activity conv))
+         (plan (activity-plan act))
+         (done (count :done plan :key #'cdr))
+         (kids (activity-children act))
+         (running (count-if #'conversation-busy-p kids))
+         (waiting (loop for c across (conversation-calls conv)
+                        when (eq (call-status c) :waiting) collect c))
+         (all-changes (conversation-changes conv))
+         ;; newest first, and only the last dozen: the rest are one drill away (the
+         ;; change set, SuperL-Space › change set)
+         (changes (subseq (reverse all-changes) 0 (min 12 (length all-changes))))
+         (items '()))
+    (flet ((add (&rest args) (push (apply #'make-item args) items)))
+      ;; now: one line saying what it is doing, and what it has cost
+      (add :label (format nil "~a ~a" (if (conversation-busy-p conv) "●" "○")
+                          (if (conversation-busy-p conv) (conversation-status conv) "idle"))
+           :detail (format nil "~a · ~(~a~)" (format-cost (conversation-cost conv))
+                           (conversation-authority* conv))
+           :kind (if (conversation-busy-p conv) :package nil) :group "now")
+      ;; the plan
+      (let ((g (if plan
+                   (format nil "plan · ~d/~d ~a" done (length plan)
+                           (let ((n 12))
+                             (with-output-to-string (o)
+                               (dotimes (i n)
+                                 (write-char (if (< i (round (* n done) (max 1 (length plan)))) #\━ #\─) o)))))
+                   "plan")))
+        (if plan
+            (loop for (title . state) in plan
+                  do (add :label (format nil "~a ~a" (plan-state-mark state) title)
+                          :kind (plan-state-kind state) :group g))
+            (add :label "no plan yet" :detail "the agent writes one with update-plan" :group g)))
+      ;; what waits for you
+      (when waiting
+        (dolist (c waiting)
+          (add :label (format nil "? #~d ~a" (call-number c) (call-name c))
+               :detail "1 allow · 2 deny · 5 allow all" :kind :restart
+               :subject c :group (format nil "waiting for you · ~d" (length waiting)))))
+      ;; subagents
+      (let ((g (format nil "subagents · ~d running · ~d done" running (- (length kids) running))))
+        (if kids
+            (dolist (k kids)
+              (let* ((kact (conversation-activity k))
+                     (busy (conversation-busy-p k))
+                     (failed (and (not busy) (failed-turn k)))
+                     (report (and (not busy) (not failed) (conversation-final-text k))))
+                (add :label (format nil "◇~d ~a ~a" (conversation-id k)
+                                    (cond (busy "●") (failed "✗") (t "✓"))
+                                    (lol.widgets:clip-text (first-line (or (activity-goal kact) "")) 44))
+                     :detail (format nil "~a · ~a · ~a"
+                                     (cond (busy (conversation-status k))
+                                           (failed "failed")
+                                           (report (lol.widgets:clip-text
+                                                    (string-left-trim "✔ Report:" (first-line report)) 40))
+                                           (t "done"))
+                                     (subagent-elapsed k) (format-cost (conversation-cost k)))
+                     :kind (cond (busy :class) (failed :condition) (t :subclass))
+                     :subject k :group g)))
+            (add :label "none" :detail "the agent starts them with spawn-subagent" :group g)))
+      ;; changes
+      (let ((g (format nil "changes · ~d" (length changes))))
+        (if changes
+            (loop for (kind label subject) in changes
+                  do (add :label (format nil "~a ~a" (if (eq kind :defn) "λ" "▤") label)
+                          :detail (if (eq kind :defn) "in the image" "written")
+                          :kind (if (eq kind :defn) :function :directory)
+                          :subject subject :group g))
+            (add :label "nothing changed yet" :group g))))
+    (make-view :title (format nil "activity · ~a" (conversation-title conv))
+               :kind :list :subject s :items (nreverse items))))
 
 (defun pane-conversation (pane)
   "The conversation PANE shows, or NIL."
@@ -732,15 +948,88 @@
              (setf ran t))))))
     ran))
 
+(defun activity-side-p (pane)
+  "Is PANE's side pane an Activity view?"
+  (and (pane-side pane) (subj-agent-activity-p (pane-subject (pane-side pane)))))
+
+(defun refresh-activity-side (pane)
+  "Re-present PANE's Activity side pane from the live conversation, keeping its
+   selection where it was (clamped). Returns T."
+  (let* ((side (pane-side pane))
+         (v (present (pane-subject side))))
+    (setf (pane-view side) v
+          (pane-sel side) (max 0 (min (pane-sel side) (1- (max 1 (length (view-items v)))))))
+    t))
+
+(defun ensure-activity-sides ()
+  "Give every pane showing a conversation its Activity side pane (layout A), unless
+   you hid it there (the conversation's menu: Hide the activity panel). Pinned, so C-g
+   and a click back in the transcript do not take it away. Returns T if one was added."
+  (let ((added nil))
+    (dolist (p (all-panes))
+      (let ((conv (pane-conversation p)))
+        (when (and conv (pane-tv p) (null (pane-side p))
+                   (not (getf (view-data (pane-view p)) :activity-hidden)))
+          (setf (pane-side p) (open-pane (subj-agent-activity conv))
+                (pane-side-pinned p) t
+                added t))))
+    added))
+
+(defvar *activity-refreshed-at* 0
+  "GET-INTERNAL-REAL-TIME of the last Activity refresh: while anything works the rail
+   is redrawn once a second even without a revision, so its timers move.")
+
+(defun refresh-activity-sides (&optional force)
+  "Re-present every Activity side pane: on FORCE (a conversation's revision moved — a
+   subagent's included, whose card is in its parent's rail), or once a second while
+   any conversation works. Returns T if anything was refreshed."
+  (let ((now (get-internal-real-time)))
+    (when (or force
+              (and (some #'conversation-busy-p *conversations*)
+                   (> (- now *activity-refreshed-at*) internal-time-units-per-second)))
+      (setf *activity-refreshed-at* now)
+      (let ((any nil))
+        (dolist (p (all-panes))
+          (when (activity-side-p p) (refresh-activity-side p) (setf any t)))
+        any))))
+
+(defun toggle-activity-panel (conv)
+  "Hide the Activity side pane beside CONV's panes, or show it again."
+  (dolist (p (conversation-panes conv))
+    (let ((v (pane-view p)))
+      (if (activity-side-p p)
+          (setf (getf (view-data v) :activity-hidden) t
+                (pane-side p) nil (pane-side-pinned p) nil *editing-side* nil)
+          (setf (getf (view-data v) :activity-hidden) nil))))
+  (ensure-activity-sides))
+
+(defun toggle-steps-detail ()
+  "Concise (steps folded into one line) <-> verbose (every ;; #N call and the
+   thinking). Re-renders every open conversation in place."
+  (setf *agent-steps-detail* (if (eq *agent-steps-detail* :verbose) :concise :verbose))
+  (dolist (p (all-panes))
+    (let ((conv (pane-conversation p)))
+      (when (and conv (pane-tv p))
+        (let ((lines (coerce (conversation-lines conv) 'simple-vector)))
+          (lol.textview:tv-replace (pane-tv p) lines (1- (length lines)) 0)
+          ;; the tail is re-rendered from here on by REFRESH-CONVERSATION-PANE
+          (let ((turn (current-turn conv)))
+            (setf (getf (view-data (pane-view p)) :turn) turn
+                  (getf (view-data (pane-view p)) :finished) (and turn (turn-done turn))
+                  (getf (view-data (pane-view p)) :live-start)
+                  (- (length lines) (if turn (length (turn-lines conv turn)) 0))))))))
+  (setf *browser-status* (format nil "agent steps: ~(~a~)" *agent-steps-detail*)))
+
 (defun agent-ui-tick ()
-  "Called by the environment's loop every iteration. Runs posted tool calls, and
-   refreshes every pane showing a conversation whose revision moved. T = redraw."
-  (let ((dirty nil))
+  "Called by the environment's loop every iteration. Runs posted tool calls, refreshes
+   every pane showing a conversation whose revision moved, and keeps their Activity
+   side panes attached and current (layout A). T = redraw."
+  (let ((dirty nil) (moved nil))
     ;; panes first, so an approval about to be asked shows its call on screen
     (dolist (conv *conversations*)
       (let ((rev (conversation-revision conv)))
         (unless (eql rev (gethash conv *agent-seen-revisions*))
-          (setf (gethash conv *agent-seen-revisions*) rev)
+          (setf (gethash conv *agent-seen-revisions*) rev moved t)
           (dolist (p (conversation-panes conv))
             (when (refresh-conversation-pane p conv) (setf dirty t)))
           (setf dirty t)))
@@ -752,6 +1041,8 @@
                 *browser-status* (format nil "agent: ~a ~:[— SuperL-a shows why~;— C-c C-a with nothing typed asks again~]"
                                          (getf (turn-failure failed) :headline) (conversation-visible-p conv))
                 dirty t))))
+    (when (ignore-errors (ensure-activity-sides)) (setf dirty t moved t))
+    (when (ignore-errors (refresh-activity-sides moved)) (setf dirty t))
     (when (run-agent-jobs) (setf dirty t))
     ;; the working dot pulses: redraw on the frame deadline while anything works
     (or dirty (and (some #'conversation-busy-p *conversations*) t))))
@@ -766,11 +1057,11 @@
       (ecase *agent-authority* (:read-only :safe) (:ask :warn) (:allow :low))))
 
 (defun agent-tray-item ()
-  "The tray's agent item: the authority and the session's cost, always on screen —
-   an environment that can spend money owes you a visible meter (§8.9). A trailing
-   … while a turn runs, ? while one waits for you."
-  (list :kind :agent :tone (authority-tone)
-        :text (format nil "agent ~(~a~) ~a~a"
+  "The tray's agent item: the agent's creature (DRAW-AGENT-ICON), the authority and the
+   session's cost, always on screen — an environment that can spend money owes you a
+   visible meter (§8.9). A trailing … while a turn runs, ? while one waits for you."
+  (list :kind :agent :icon :agent :tone (authority-tone)
+        :text (format nil "~(~a~) ~a~a"
                       (if (eq *agent-initiative* :off) "off" *agent-authority*)
                       (format-cost (session-cost))
                       (cond ((some (lambda (c) (conversation-jobs c)) *conversations*) " ?")

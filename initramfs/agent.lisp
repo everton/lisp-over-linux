@@ -524,6 +524,77 @@
 
 ;;; ---- read-only tools -------------------------------------------------------
 
+(defstruct (activity (:constructor make-activity ()))
+  "What a conversation is DOING, beyond its messages — the Activity subject's data
+   (agent-ui.lisp): the plan the model keeps with UPDATE-PLAN, the subagents it
+   spawned, and, for a subagent, who its parent is and the goal it was given."
+  (plan '())          ; ((TITLE . STATE) ...), STATE one of :done :active :pending :failed
+  (plan-rev 0)        ; bumped by every update-plan
+  (parent nil)        ; the CONVERSATION that spawned this one, or NIL
+  (goal nil)          ; a subagent's goal, as given
+  (children '())      ; subagent CONVERSATIONs, oldest first
+  (started nil))      ; GET-INTERNAL-REAL-TIME at spawn, for a subagent
+
+(defvar *conversation-activities* (make-hash-table :test 'eq :weakness :key :synchronized t)
+  "CONVERSATION -> its ACTIVITY. A side table rather than a slot, so conversations
+   made before this existed (and the class itself) need no change.")
+
+(defun conversation-activity (conv)
+  "CONV's ACTIVITY, made on first use."
+  (or (gethash conv *conversation-activities*)
+      (setf (gethash conv *conversation-activities*) (make-activity))))
+
+(defun split-sequence-lines (text)
+  (loop with start = 0
+        for nl = (position #\Newline text :start start)
+        collect (string-right-trim '(#\Return) (subseq text start nl))
+        while nl do (setf start (1+ nl))))
+
+(defun parse-plan (text)
+  "The update-plan tool's TASKS text — one task per line, a state mark first:
+     [x] done   [>] active   [ ] pending   [!] failed
+   (a line with no mark is pending) — as ((TITLE . STATE) ...)."
+  (loop for raw in (split-sequence-lines text)
+        for line = (string-trim '(#\Space #\Tab #\- #\*) raw)
+        when (plusp (length line))
+          collect (let ((mark (and (> (length line) 2) (char= (char line 0) #\[)
+                                   (char= (char line 2) #\]) (char-downcase (char line 1)))))
+                    (if mark
+                        (cons (string-trim " " (subseq line 3))
+                              (case mark ((#\x #\v) :done) ((#\> #\*) :active) (#\! :failed) (t :pending)))
+                        (cons line :pending)))))
+
+(defun conversation-final-text (conv)
+  "The text of CONV's last assistant message (its answer), or NIL."
+  (with-conversation-lock (conv)
+    (let ((ms (conversation-messages conv)))
+      (loop for i from (1- (length ms)) downto 0
+            for m = (aref ms i)
+            when (equal (message-role m) "assistant")
+              do (let ((text (format nil "~{~a~^~%~}"
+                                     (loop for b in (message-blocks m)
+                                           when (equal (block-type b) "text")
+                                             collect (lol.json:jget (block-json b) "text")))))
+                   (when (plusp (length (string-trim '(#\Space #\Newline) text)))
+                     (return text)))))))
+
+(defparameter *subagent-max* 4 "How many subagents one conversation may have running at once.")
+
+(defun subagent-prompt (goal context)
+  (format nil "You are a SUBAGENT working for another agent inside lisp-over-linux. You are
+read-only: inspect, read and reason, but do not try to change anything.
+
+Your goal:
+~a
+~@[
+Context from the agent that started you:
+~a
+~]
+Work efficiently (few tool calls), then answer with a concise report — at most 15
+lines — that starts with \"✔ Report:\" and gives what you found, with exact names
+(functions, files, line numbers) so the other agent can act on it without re-reading."
+          goal (and context (plusp (length context)) context)))
+
 (define-agent-tool "lisp-apropos" ()
   "Find definitions, packages and modules in this Lisp image whose names match a query
    (a fuzzy subsequence match, best first). Start here when you do not know a name."
@@ -832,12 +903,18 @@
 ;;; Running one tool call
 ;;; ===========================================================================
 
+(defvar *tool-conversation* nil
+  "While a tool call runs, the CONVERSATION it belongs to (bound by EXECUTE-TOOL-CALL),
+   for the tools that act on the conversation itself: update-plan, spawn-subagent,
+   await-subagents.")
+
 (defun execute-tool-call (conv call)
   "Do CALL: check its input, pass a write through the gate, run it, and return the
    tool_result block. Every failure becomes an is_error result the model can read and
    recover from — a tool error must never take down the turn, let alone PID 1."
   (let* ((tool (find-agent-tool (call-name call)))
-         (input (call-input call)))
+         (input (call-input call))
+         (*tool-conversation* conv))
     (flet ((result (text &optional error)
              (setf (call-result call) text
                    (call-status call) (cond (error :error)
@@ -879,8 +956,17 @@
 (defstruct agent-job conv call thunk gated
   (sem (sb-thread:make-semaphore :count 0)) result done)
 
+(defparameter *in-thread-tools* '("await-subagents")
+  "Tools POST-JOB-AND-WAIT runs on the TURN's own thread instead of handing them to the
+   environment's. await-subagents blocks until other conversations finish, and those
+   conversations' own tool calls run on the environment's thread — waiting THERE would
+   deadlock the very calls it waits for.")
+
 (defun post-job-and-wait (conv call thunk)
-  "Hand THUNK to the environment's thread and wait for it, staying cancellable."
+  "Hand THUNK to the environment's thread and wait for it, staying cancellable.
+   A tool in *IN-THREAD-TOOLS* runs right here, on the turn's thread, instead."
+  (when (member (call-name call) *in-thread-tools* :test #'string=)
+    (return-from post-job-and-wait (funcall thunk)))
   (let ((job (make-agent-job :conv conv :call call :thunk thunk
                              :gated (and (write-tool-p (call-name call))
                                          (eq (conversation-authority* conv) :ask)))))
@@ -1625,13 +1711,113 @@ about 90 columns. Mention symbols by their Lisp names, so the user can jump to t
 
 Be exact: when you claim something about this system, check it with a tool first. If
 a tool fails, say what failed. The user is here to understand the system; explain the
-why, briefly."
+why, briefly.
+
+Progress is shown beside the conversation, in an Activity panel; your tool calls are
+folded into one dim line per run, so the user reads your OUTCOMES, not your steps:
+- For work of more than two steps, keep a plan with update-plan: send the whole list
+  at the start, and again whenever a task becomes active, done or failed.
+- To investigate independent things in parallel, use spawn-subagent (read-only
+  helpers, shown as cards) and collect their reports with await-subagents.
+- Start a paragraph that states a finding with \"◆ \" and a short label, e.g.
+  \"◆ Cause: …\" or \"◆ Verified: …\" — those lines are highlighted.
+- End a piece of work with one paragraph starting \"✔ Done:\" (or \"✔ Partly done:\")
+  that says what changed and what is left for the user."
   "The system prompt: what the model is told about where it is (doc/agent.org §7.1).
    Stable text: it is the start of the cached prefix, so it must not vary per request.")
 
 ;;; ===========================================================================
 ;;; The REPL doorway (§8.2): (ask "…") and the ? prefix
 ;;; ===========================================================================
+
+(define-agent-tool "update-plan" ()
+  "Show the user your plan and its progress, in the Activity panel beside the
+   conversation. Send the WHOLE list every time (it replaces the last one): one task per
+   line, a state mark first — [x] done, [>] active (one at a time), [ ] pending,
+   [!] failed. Call it when you start work of more than two steps, and again as tasks
+   finish; keep titles short (under 50 characters)."
+  (("tasks" "string" "The full task list, one per line, each starting [x], [>], [ ] or [!]."))
+  ("tasks")
+  (input call)
+  (let* ((conv (or *tool-conversation* (error "update-plan: no conversation")))
+         (act (conversation-activity conv))
+         (plan (parse-plan (lol.json:jget input "tasks"))))
+    (setf (activity-plan act) plan)
+    (incf (activity-plan-rev act))
+    (let ((done (count :done plan :key #'cdr)))
+      (setf (call-summary call) (format nil "~d/~d done" done (length plan)))
+      (touch conv)
+      (format nil "Plan updated: ~d tasks, ~d done. The user sees it beside the conversation." (length plan) done))))
+
+(define-agent-tool "spawn-subagent" ()
+  "Start a SUBAGENT: a separate, read-only conversation that works on GOAL in parallel
+   while you continue, shown to the user as a card in the Activity panel. Use it to fan
+   out independent investigations (e.g. audit one module while you fix another). It
+   returns at once; call await-subagents to collect the reports. At most 4 running."
+  (("goal" "string" "What the subagent must find out — specific, self-contained.")
+   ("context" "string" "Optional: what you already know that it needs."))
+  ("goal")
+  (input call)
+  (let* ((parent (or *tool-conversation* (error "spawn-subagent: no conversation")))
+         (pact (conversation-activity parent))
+         (goal (lol.json:jget input "goal")))
+    (when (activity-parent pact)
+      (error "a subagent cannot start subagents of its own"))
+    (when (>= (count-if #'conversation-busy-p (activity-children pact)) *subagent-max*)
+      (error "~d subagents are already running (*subagent-max*); await-subagents first" *subagent-max*))
+    (let* ((child (let ((*conversation* *conversation*))   ; MAKE-CONVERSATION sets it: keep the user's
+                    (make-conversation :title (format nil "◇ ~a" (lol.widgets:clip-text (first-line goal) 36))
+                                       :model (conversation-model parent) :authority :read-only)))
+           (cact (conversation-activity child))
+           (prompt (subagent-prompt goal (lol.json:jget input "context"))))
+      (setf (activity-parent cact) parent (activity-goal cact) goal
+            (activity-started cact) (get-internal-real-time))
+      (setf (activity-children pact) (append (activity-children pact) (list child)))
+      (setf (conversation-state child) :working)
+      (setf (conversation-thread child)
+            (sb-thread:make-thread
+             (lambda ()
+               (let ((*tool-executor* #'post-job-and-wait))
+                 (handler-case (run-turn child prompt :question goal :origin :subagent)
+                   (serious-condition (c)
+                     (ignore-errors (fail-turn child c :question goal))
+                     (with-conversation-lock (child)
+                       (setf (conversation-state child) :idle (conversation-thread child) nil))
+                     (touch child))))
+               (touch parent))
+             :name (format nil "subagent ~d" (conversation-id child))))
+      (setf (call-summary call) (format nil "◇~d started" (conversation-id child)))
+      (touch parent)
+      (format nil "Subagent ◇~d started (read-only) on: ~a~%Call await-subagents to collect its report."
+              (conversation-id child) goal))))
+
+(define-agent-tool "await-subagents" ()
+  "Wait for your running subagents to finish (up to TIMEOUT seconds, default 300) and
+   return each one's report."
+  (("timeout" "integer" "Most seconds to wait (default 300)."))
+  ()
+  (input call)
+  (let* ((parent (or *tool-conversation* (error "await-subagents: no conversation")))
+         (kids (activity-children (conversation-activity parent)))
+         (limit (or (ignore-errors (lol.json:jget input "timeout")) 300))
+         (deadline (+ (get-internal-real-time) (* limit internal-time-units-per-second))))
+    (if (null kids)
+        "You have no subagents."
+        (progn
+          (loop while (and (some #'conversation-busy-p kids) (< (get-internal-real-time) deadline))
+                do (sleep 0.25)
+                   (check-cancel parent))
+          (setf (call-summary call)
+                (format nil "~d done~@[, ~d still running~]" (count-if-not #'conversation-busy-p kids)
+                        (let ((n (count-if #'conversation-busy-p kids))) (and (plusp n) n))))
+          (touch parent)
+          (with-output-to-string (s)
+            (dolist (k kids)
+              (let ((act (conversation-activity k)))
+                (format s "~&── subagent ◇~d — ~a~%" (conversation-id k) (activity-goal act))
+                (cond ((conversation-busy-p k) (format s "(still running: ~a)~%" (conversation-status k)))
+                      ((failed-turn k) (format s "(failed: ~a)~%" (getf (turn-failure (failed-turn k)) :headline)))
+                      (t (format s "~a~%" (or (conversation-final-text k) "(no report)")))))))))))
 
 (defun repl-approval-handler (stream-in stream-out)
   "A HANDLER-BIND handler for TOOL-APPROVAL-REQUEST in the REPL: print the restarts —
