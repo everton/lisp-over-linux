@@ -1,7 +1,7 @@
 ;;;; morph.lisp — Morphic's three objects: the MORPH, the WORLD and the HAND.
 ;;;;
 ;;;; doc/morphic.org is the design; this file is its backend-blind core (Phase 7 of
-;;;; the code browser, steps 1–2). It knows nothing about the browser, the
+;;;; the code browser, steps 1–5). It knows nothing about the browser, the
 ;;;; framebuffer or X11 — only rectangles, a canvas to draw into and events to route.
 ;;;; The browser's side (the tiled shell as one morph, trails torn off into windows)
 ;;;; is poc/morphic.lisp; the loops that feed events in and send pixels out are
@@ -16,6 +16,9 @@
 ;;;; (a window being dragged). DAMAGE: a morph that changed says which rectangle of
 ;;;; the screen is now wrong (INVALIDATE); once per cycle the world redraws only those
 ;;;; rectangles, and in each one only the morphs that overlap it (WORLD-REPAIR).
+;;;; STEPPING: a morph that changes on its own asks to be stepped every N ms; the
+;;;; world keeps the deadlines (WORLD-STEP, WORLD-STEP-TIMEOUT), and with nothing to
+;;;; step the backend's poll sleeps until input.
 ;;;;
 ;;;; Morphs are CLOS objects (STANDARD-CLASS), on purpose: the model layer, the
 ;;;; Inspector, ALL-INSTANCES and the halo already understand CLOS instances, so a
@@ -36,15 +39,15 @@
    #:morph-draws #:morph-opaque-p #:morph-name
    #:draw-morph #:handle-event #:step-morph #:morph-affordances #:drop-morph
    #:add-morph #:remove-morph #:raise-morph #:morph-world #:morph-at #:morphs-at
-   #:move-morph #:resize-morph #:morph-descendants
+   #:move-morph #:resize-morph #:set-morph-bounds #:morph-descendants #:morph-steps
    ;; damage
-   #:invalidate #:merge-damage
+   #:invalidate #:merge-damage #:note-painted
    ;; the world and the hand
    #:world #:make-world #:world-hand #:world-focus #:world-damage #:world-last-repair
    #:world-repairs #:world-damaged-p #:world-repair #:world-dispatch #:world-step
-   #:world-after-dispatch
+   #:world-step-timeout #:world-after-dispatch #:world-painted
    #:hand #:hand-x #:hand-y #:hand-capture #:hand-carrying #:hand-mode
-   #:hand-grab-dx #:hand-grab-dy #:hand-pick-up #:hand-drop
+   #:hand-grab-dx #:hand-grab-dy #:hand-pick-up #:hand-drop #:now-ms
    #:+max-damage-rects+
    ;; events
    #:event #:make-event #:event-kind #:event-key #:event-state #:event-x #:event-y
@@ -116,7 +119,12 @@
              :documentation "What the morph shows, if anything (a trail, a subject).")
    (draws    :initform 0 :accessor morph-draws
              :documentation "How many times DRAW-MORPH ran on it: the damage tests'
-   evidence that a repair drew only the morphs it had to."))
+   evidence that a repair drew only the morphs it had to.")
+   (step-due :initform nil :accessor morph-step-due
+             :documentation "Internal-real-time (ms) at which it is next stepped; NIL
+   while it does not step. Kept by WORLD-STEP.")
+   (steps    :initform 0 :accessor morph-steps
+             :documentation "How many times STEP-MORPH ran on it (the tests read it)."))
   (:documentation "Something on screen: a rectangle that can draw itself and take
    events. Subclasses override DRAW-MORPH and HANDLE-EVENT; everything else —
    z-order, hit-testing, damage, the hand — the world does for them."))
@@ -141,7 +149,9 @@
   (:method ((m morph) event) (declare (ignore event)) nil))
 
 (defgeneric step-morph (morph now-ms)
-  (:documentation "Liveness: called every MORPH-STEP-MS. INVALIDATE if you changed.")
+  (:documentation "Liveness: called every MORPH-STEP-MS. INVALIDATE if you changed.
+   MORPH-STEP-MS is read afresh every cycle, so a morph may compute it (a method on
+   the reader): NIL the moment it has nothing to animate, and the world sleeps.")
   (:method ((m morph) now) (declare (ignore now)) nil))
 
 (defgeneric morph-affordances (morph)
@@ -242,6 +252,19 @@
       (invalidate m)))
   m)
 
+(defun set-morph-bounds (m rect)
+  "Put M at RECT (x y w h) — a move then a resize, each damaging what it must. This,
+   not (SETF MORPH-BOUNDS), is how bounds are CHANGED: the accessor writes the slot
+   and nothing else, so the screen would never hear of it. The inspector's bounds
+   field calls this (poc/morphic.lisp, INSPECT-SLOT-SETTER), which is why editing a
+   window's bounds there moves the window on screen (doc/morphic.org §6)."
+  (unless (and (listp rect) (= 4 (length rect)) (every #'integerp rect))
+    (error "bounds are a list of four integers (x y w h), not ~s" rect))
+  (destructuring-bind (x y w h) rect
+    (move-morph m x y)
+    (resize-morph m (max 1 w) (max 1 h)))
+  (morph-bounds m))
+
 ;;; ---- events -----------------------------------------------------------------
 ;;; One struct, built by each backend's loop from what it already decodes:
 ;;;
@@ -329,7 +352,11 @@
    :drawn ((morph . times) …) :per-rect ((rect morph …) …)) — for the tests and for
    measuring: which morphs drew, and in which rect.")
    (repairs :initform 0 :accessor world-repairs
-            :documentation "How many repairs drew anything, ever."))
+            :documentation "How many repairs drew anything, ever.")
+   (painted :initform '() :accessor world-painted
+            :documentation "((RECT . MORPH) …): rects MORPH has already painted into the
+   canvas itself, since the last repair (NOTE-PAINTED). The repair draws only what lies
+   ABOVE that morph there, then sends them."))
   (:documentation "The root morph: the screen. Its children are the z-order."))
 
 (defun make-world (w h &rest initargs)
@@ -345,6 +372,19 @@
   nil)
 
 (defun world-damaged-p (world) (and (world-damage world) t))
+
+(defun note-painted (world rects morph)
+  "MORPH has just painted RECTS of itself straight into the screen's canvas — a fast
+   path that is cheaper than its whole DRAW-MORPH: a terminal's changed rows, a web
+   page's new frame, the systray's clock. Those pixels are right for MORPH but may now
+   lie on top of something that should cover them: a window, an overlay's scrim. The
+   next repair draws, in each rect, only the morphs ABOVE MORPH (back to front,
+   clipped), and sends the rects. So a fast path need know nothing about what is over
+   it — the world composites."
+  (dolist (r rects)
+    (let ((r (rect-intersect r (morph-bounds world))))
+      (when r (push (cons r morph) (world-painted world)))))
+  nil)
 
 (defun merge-damage (rects screen)
   "RECTS made fewer: any two that OVERLAP become their union, until none do. Two that
@@ -371,34 +411,53 @@
   "Redraw every damaged rect of WORLD into CANVAS, and only those: for each merged
    rect, clip to it and draw the morphs that overlap it, back to front — starting
    from the topmost OPAQUE morph that covers the whole rect, since nothing beneath
-   that one can show. Returns (values RECTS FULL-P): what the backend must now send
-   to the screen (all of it when FULL-P). No damage, no drawing: (values NIL NIL)."
-  (let ((damage (shiftf (world-damage world) '())))
-    (if (null damage)
+   that one can show. Before that, the rects a morph painted itself (NOTE-PAINTED)
+   get only what lies above that morph — FIRST, because a damaged rect is drawn whole
+   and anything composited over it afterwards would be composited twice (a scrim
+   dimmed twice). Returns (values RECTS FULL-P): what the backend must now send to the
+   screen (all of it when FULL-P). Nothing to do: (values NIL NIL)."
+  (let ((damage (shiftf (world-damage world) '()))
+        (painted (shiftf (world-painted world) '())))
+    (if (and (null damage) (null painted))
         (values nil nil)
-      (multiple-value-bind (rects full) (merge-damage damage (morph-bounds world))
-        (let ((t0 (get-internal-real-time)) (drawn '()) (per-rect '())
+      (multiple-value-bind (rects full)
+          (if damage (merge-damage damage (morph-bounds world)) (values '() nil))
+        (let ((t0 (get-internal-real-time)) (drawn '()) (per-rect '()) (sent '())
               (all (morph-descendants world)))
-          (dolist (r rects)
-            (let* ((over (remove-if-not (lambda (m) (rect-overlap-p (morph-bounds m) r)) all))
-                   (base (position-if (lambda (m) (and (morph-opaque-p m)
-                                                       (rect-contains-p (morph-bounds m) r)))
-                                      over :from-end t))
-                   (todo (if base (nthcdr base over) over)))
-              (push (cons r todo) per-rect)
-              (destructuring-bind (x y w h) r
-                (lol.canvas:with-clip (canvas x y w h)
-                  (dolist (m todo)
-                    (incf (morph-draws m))
-                    (let ((e (assoc m drawn))) (if e (incf (cdr e)) (push (cons m 1) drawn)))
-                    (draw-morph m canvas r))))))
-          (incf (world-repairs world))
-          (setf (world-last-repair world)
-                (list :rects rects :full full
-                      :ms (/ (round (* 10000 (- (get-internal-real-time) t0))
-                                    internal-time-units-per-second) 10.0)
-                      :drawn (nreverse drawn) :per-rect (nreverse per-rect)))
-          (values rects full))))))
+          (flet ((draw-in (r todo &optional (record t))
+                   (when record (push (cons r todo) per-rect))
+                   (destructuring-bind (x y w h) r
+                     (lol.canvas:with-clip (canvas x y w h)
+                       (dolist (m todo)
+                         (incf (morph-draws m))
+                         (let ((e (assoc m drawn))) (if e (incf (cdr e)) (push (cons m 1) drawn)))
+                         (draw-morph m canvas r)))))
+                 (from-cover (over r)
+                   (let ((base (position-if (lambda (m) (and (morph-opaque-p m)
+                                                             (rect-contains-p (morph-bounds m) r)))
+                                            over :from-end t)))
+                     (if base (nthcdr base over) over))))
+            (unless full
+              (loop for (r . below) in (reverse painted)
+                    unless (some (lambda (d) (rect-contains-p d r)) rects)
+                      do (let ((above (remove-if-not (lambda (m) (rect-overlap-p (morph-bounds m) r))
+                                                     (cdr (member below all)))))
+                           (when above (draw-in r (from-cover above r) nil))
+                           (push r sent))))
+            (dolist (r rects)
+              (draw-in r (from-cover (remove-if-not (lambda (m) (rect-overlap-p (morph-bounds m) r)) all)
+                                     r))))
+          (setf sent (nreverse sent))
+          ;; LAST-REPAIR and REPAIRS describe repairs of DAMAGE — what the tests read;
+          ;; a turn that only composited painted rects (the clock) leaves them alone
+          (when rects
+            (incf (world-repairs world))
+            (setf (world-last-repair world)
+                  (list :rects rects :full full :painted sent
+                        :ms (/ (round (* 10000 (- (get-internal-real-time) t0))
+                                      internal-time-units-per-second) 10.0)
+                        :drawn (nreverse drawn) :per-rect (nreverse per-rect))))
+          (values (append rects sent) full))))))
 
 (defun bubble (m event)
   "Offer EVENT to M, then to each owner in turn, until one consumes it."
@@ -426,6 +485,9 @@
         (cond
           ((and (hand-carrying hand) (member kind '(:drag :move)))
            (hand-follow hand) t)
+          ;; carried without a button held (the halo's Move): the press that ends the
+          ;; carry is the hand's, not the window's under it — its release drops
+          ((and (hand-carrying hand) (eq kind :down)) t)
           ((and (hand-carrying hand) (eq kind :up))
            (setf (hand-capture hand) nil)
            (hand-drop hand world) t)
@@ -441,8 +503,38 @@
                (when (eq kind :up) (setf (hand-capture hand) nil))))))
       (world-after-dispatch world event))))
 
-(defun world-step (world now-ms)
-  "Step every morph whose MORPH-STEP-MS has come round (step 5 of the plan moves the
-   stage, run panes and live workers here; nothing steps yet)."
-  (dolist (m (morph-descendants world))
-    (when (morph-step-ms m) (step-morph m now-ms))))
+;;; ---- stepping (liveness) ---------------------------------------------------------
+;;; A morph that changes on its own — a running stage, a run pane whose program is
+;;; printing — answers a period from MORPH-STEP-MS; the world keeps each one's next
+;;; deadline and calls STEP-MORPH when it comes round. The backend's poll waits until
+;;; the earliest deadline (WORLD-STEP-TIMEOUT), and when nothing steps that is -1:
+;;; sleep until input. That is the whole of "idle costs nothing".
+
+(defun now-ms ()
+  (floor (* 1000 (get-internal-real-time)) internal-time-units-per-second))
+
+(defun world-step-timeout (world &optional (now (now-ms)))
+  "Ms until the next morph is due a step, or -1 when none steps. A morph that has just
+   started stepping gets its first deadline here, one period out."
+  (let ((soonest nil))
+    (dolist (m (morph-descendants world))
+      (let ((ms (morph-step-ms m)))
+        (if (null ms)
+            (setf (morph-step-due m) nil)
+            (let ((due (or (morph-step-due m) (setf (morph-step-due m) (+ now ms)))))
+              (setf soonest (min (or soonest most-positive-fixnum) (max 0 (- due now))))))))
+    (or soonest -1)))
+
+(defun world-step (world &optional (now (now-ms)))
+  "Step every morph whose deadline has come round, and set its next one. A morph's
+   STEP-MORPH damages what it changed; nothing else is drawn. Returns how many stepped."
+  (let ((n 0))
+    (dolist (m (morph-descendants world))
+      (let ((ms (morph-step-ms m)))
+        (cond ((null ms) (setf (morph-step-due m) nil))
+              ((null (morph-step-due m)) (setf (morph-step-due m) (+ now ms)))
+              ((>= now (morph-step-due m))
+               (setf (morph-step-due m) (+ now ms))
+               (incf (morph-steps m)) (incf n)
+               (step-morph m now)))))
+    n))

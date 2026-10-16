@@ -495,6 +495,15 @@
 ;;; The Inspector — every value browsable (the (present (x t)) fallback)
 ;;; ======================================================================
 
+(defgeneric inspect-slot-setter (object slot-name)
+  (:documentation "How the inspector writes slot SLOT-NAME of OBJECT: a function of the
+   new value, or NIL when the field must not be set from the inspector. The default
+   is plain (SETF SLOT-VALUE). A class whose slot means more than its value says so
+   with a method: a morph's BOUNDS is set by SET-MORPH-BOUNDS, which tells the screen
+   (poc/morphic.lisp) — writing the slot alone would move nothing.")
+  (:method (object slot-name)
+    (lambda (new) (setf (slot-value object slot-name) new))))
+
 (defun inspect-places (obj)
   "The 'fields' of any OBJ as PLACES, not just values: a list of plists
    (:label L :value V :set FN), where FN writes a new value back, or NIL when the
@@ -553,7 +562,7 @@
                  (let ((n (sb-mop:slot-definition-name s)))
                    (list :label n
                          :value (if (slot-boundp obj n) (slot-value obj n) :unbound)
-                         :set (lambda (new) (setf (slot-value obj n) new)))))
+                         :set (inspect-slot-setter obj n))))
                (sb-mop:class-slots (class-of obj))))
       ;; The fallback shows what a thing IS, and neither field is a place: we were
       ;; handed the value, not the cell it came from. A string lands here — which is
