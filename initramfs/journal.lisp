@@ -422,7 +422,7 @@
     (dolist (e (getf *replay-report* :entries))
       (when (member (re-status e) '(:failed :pending :needs-rebuild))
         (session-log "journal #~a ~a ~(~a~): ~a" (getf (re-record e) :seq)
-                     (entry-label (re-record e)) (re-status e) (re-message e))))
+                     (journal-record-label (re-record e)) (re-status e) (re-message e))))
     (when (getf *replay-report* :stop)
       (session-log "journal read stopped at character ~d: ~a"
                    (getf (getf *replay-report* :stop) :offset)
@@ -489,7 +489,11 @@
 (defstruct (subj-journal (:constructor subj-journal ())))
 (defstruct (subj-journal-entry (:constructor subj-journal-entry (entry))) entry)
 
-(defun entry-label (record)
+(defun journal-record-label (record)
+  "A journal RECORD's name, for the journal view. (It was ENTRY-LABEL, the name
+   file-views.lisp already gives a folder entry's label; loaded later, this one
+   replaced it, and every folder listing failed with 'malformed property list' —
+   GETF on an FENTRY. Found 2026-10-16 by check-files.lisp.)"
   (string-downcase (or (getf record :name) "?")))
 
 (defparameter +replay-groups+
@@ -535,7 +539,7 @@
       (loop for (status heading) in (append +replay-groups+ '((:session "accepted this session")))
             append (loop for e in entries
                          when (eq (re-status e) status)
-                           collect (make-item :label (entry-label (re-record e))
+                           collect (make-item :label (journal-record-label (re-record e))
                                               :detail (format nil "#~a ~(~a~)~@[ - ~a~]"
                                                               (getf (re-record e) :seq)
                                                               (getf (re-record e) :package)
@@ -555,7 +559,7 @@
 (defmethod present ((s subj-journal-entry))
   (let* ((e (subj-journal-entry-entry s)) (r (re-record e)))
     (make-view
-     :title (format nil "journal #~a ~a" (getf r :seq) (entry-label r))
+     :title (format nil "journal #~a ~a" (getf r :seq) (journal-record-label r))
      :kind :reference :subject s
      :text (format nil ";; ~(~a~)~@[: ~a~]~%;; package ~a, build ~a, ~a~%~%~a~%"
                    (re-status e) (re-message e) (getf r :package) (getf r :build)
