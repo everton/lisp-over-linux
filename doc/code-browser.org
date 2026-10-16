@@ -486,7 +486,7 @@ arguments, so its coverage really is a grid — rows and columns are the
 specializer classes, each cell holds the primary-method count, and a dim =·= is a
 genuine gap where nobody wrote a rule:
 
-[[file:../media/screenshots/matrix-2026-09-20.png]]
+[[file:../media/screenshots/matrix-2026-10-16.png]]
 
 /The dispatch matrix for =collide=. Reproduce with
 =./refresh-screenshot.sh --scene matrix=./
@@ -656,7 +656,7 @@ selected frame's locals in a strip along the bottom. The stack is *still
 standing* — this is =handler-bind=, not =handler-case= — so invoking a restart
 genuinely transfers control rather than unwinding first:
 
-[[file:../media/screenshots/debugger-2026-09-20.png]]
+[[file:../media/screenshots/debugger-2026-10-16.png]]
 
 /The live debugger on =(lol.examples:launch)= — the specimen in
 [[file:../initramfs/examples.lisp][=examples.lisp=]] written for exactly this: =STEER= signals =OFF-COURSE= from inside a
@@ -711,7 +711,7 @@ for =*standard-output*= during a Do-it.
 and on a closure), plus one line pointing at the Spotter and =SuperL-?= for everything
 else. The verbs also sit in the status bar:
 
-[[file:../media/screenshots/workspace-2026-09-20.png]]
+[[file:../media/screenshots/workspace-2026-10-16.png]]
 
 /The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
@@ -1100,7 +1100,7 @@ the drill path.
 *Built.* A package view is one expanded list with the selected definition's
 source shown beside it — here =CL-USER= (=l= at the supervisor menu):
 
-[[file:../media/screenshots/package-2026-09-20.png]]
+[[file:../media/screenshots/package-2026-10-16.png]]
 
 /The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it.
 =./refresh-screenshot.sh --scene package=./
@@ -1349,7 +1349,7 @@ Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that ga
   helper that takes a predicate, so the package and module views cannot drift
   apart in look, sort order or tinting — the predicate is their only difference.
 
-[[file:../media/screenshots/modules-2026-09-20.png]]
+[[file:../media/screenshots/modules-2026-10-16.png]]
 
 /The module index — the browser's default root (=b= at the supervisor menu):
 each module with its definition count, the selected one previewed beside. Keys
@@ -1435,7 +1435,7 @@ filters the whole candidate set (every recorded definition, every package, every
 module, plus the named surfaces) by fuzzy *subsequence*, ranked exact > prefix >
 word-boundary > plain:
 
-[[file:../media/screenshots/spotter-2026-09-20.png]]
+[[file:../media/screenshots/spotter-2026-10-16.png]]
 
 /The Spotter on "coll" — =collide= ranked first, ahead of =collapse= and the
 merely-subsequence matches like =colorize-lisp=.

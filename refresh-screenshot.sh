@@ -88,11 +88,11 @@ SCENE=""
 # plus a deterministic key sequence; they are reproducible because the browser's
 # lists are alphabetical and its default selection is row 0. Keep this list and
 # the SCENES dict in the driver in step.
-SCENE_NAMES="modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace closure worker files files-archive spotter-path sbcl-source"
+SCENE_NAMES="desk modules package matrix debugger workspace spotter stage stage-debugger stage-accept stage-inspect stage-workspace closure worker files files-archive spotter-path sbcl-source"
 # These boot with the STAND-IN disk attached (test-disk.img from ./make-test-disk.sh,
 # snapshot=on so nothing persists), so the file manager shows its fake home. Never
 # the real disk — doc/storage.org says why.
-DISK_SCENES="files files-archive spotter-path sbcl-source"
+DISK_SCENES="desk files files-archive spotter-path sbcl-source"
 while [ $# -gt 0 ]; do
   case "$1" in
     --no-build) DO_BUILD=0 ;;

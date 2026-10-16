@@ -67,7 +67,18 @@
 ;;; stepping the cursor in small increments if you pick this up.
 
 (defparameter *scenes*
-  '(;; the module index (§4⅔): the table of contents, first module previewed beside
+  '(;; THE environment, as it boots on the laptop: the stand-in disk attached, so PID 1
+    ;; runs as the user with a real home — the Workspace, the tray, the outline font.
+    ;; The README's first picture (2026-10-16): what you see when you turn it on.
+    ;; It does one thing, so the picture shows the buffer as a REPL: define GREET
+    ;; live (C-c C-c on line 10) and Print (greet "lisp") under itself (C-c C-p, line 11).
+    ("desk"      "e" ((:wait 2.0)
+                      (:key "down") (:key "down") (:key "down") (:key "down") (:key "down")
+                      (:key "down") (:key "down") (:key "down") (:key "down") (:key "end")
+                      (:chord "ctrl" "c") (:chord "ctrl" "c") (:wait 1.5)
+                      (:key "down") (:key "end")
+                      (:chord "ctrl" "c") (:chord "ctrl" "p") (:wait 2.0)))
+    ;; the module index (§4⅔): the table of contents, first module previewed beside
     ("modules"   "b" ())
     ;; the flat CL-USER package view — the old default root, kept on 'l'
     ("package"   "l" ())
@@ -229,10 +240,17 @@
                    (let ((stream (sb-bsd-sockets:socket-make-stream
                                   s :input t :output t :buffering :none
                                   :element-type 'character :external-format :latin-1)))
-                     (repl-drain stream 1.0)       ; swallow the banner
-                     (write-string "(+ 1 1)" stream) (write-char #\Newline stream)
-                     (force-output stream)
-                     (if (not (search "2" (repl-drain stream 3.0)))
+                     ;; The WHOLE probe is guarded, not just the connect: QEMU's
+                     ;; hostfwd accepts before the guest has a REPL, then RESETS the
+                     ;; connection, and the write lands on that reset as EPIPE. It
+                     ;; used to win the race; since the boot does a little more
+                     ;; (session-log.lisp, 2026-10-16) it lost it every time. The
+                     ;; guest harness learned this first (repl-connect).
+                     (if (not (ignore-errors
+                               (repl-drain stream 1.0)       ; swallow the banner
+                               (write-string "(+ 1 1)" stream) (write-char #\Newline stream)
+                               (force-output stream)
+                               (search "2" (repl-drain stream 3.0))))
                          (progn (ignore-errors (close stream)) (sleep 1.5))
                          (progn
                            (write-string
