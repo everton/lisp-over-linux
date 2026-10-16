@@ -91,8 +91,9 @@
          (string= (row "last marker present" (probe (pane-has "--- your turn"))) "T"))
   (check "usage and cost were counted"
          (string= (row "session cost > 0" (probe "(and (plusp (session-cost)) t)")) "T"))
+  ;; the tray item reads "<authority> <cost>" since ad35a9e (it said "agent ask")
   (check "the tray shows the agent"
-         (string= (row "tray item" (probe "(and (search \"agent ask\" (getf (agent-tray-item) :text)) t)")) "T"))
+         (string= (row "tray item" (probe "(and (eql 0 (search (string-downcase (string *agent-authority*)) (getf (agent-tray-item) :text))) t)")) "T"))
   (shot "agent-answer")
 
   (format t "~&~%== 2. a gated write: approve it from the chooser ==~%")
@@ -107,8 +108,10 @@
          (string= (row "the call's result" (wait-until "(let ((c (find \"lisp-eval\" (conversation-calls *conversation*) :key #'call-name :test #'string=))) (and c (eq (call-status c) :done) (search \"values: 42\" (call-result c)) t))")) "T"))
   (check "the model saw the result"
          (string= (row "pane quotes the tool's answer" (wait-until (pane-has "The tool answered: values: 42"))) "T"))
-  (check "the call shows as #N in the pane"
-         (string= (row "a ;; #0 lisp-eval line" (probe (pane-has ";; #0 lisp-eval"))) "T"))
+  ;; since ad35a9e a finished call is FOLDED into one steps line ("N step(s) · <verb> N"),
+  ;; not a ;; #N line (that is *agent-steps-detail* :verbose); its verb is CALL-VERB's
+  (check "the call shows in the pane (its folded steps line)"
+         (string= (row "a steps line naming the call's verb" (probe "(let ((tx (lol.textview:tv-text (pane-tv (current-pane))))) (and (search \" step\" tx) (search (call-verb \"lisp-eval\") tx) t))")) "T"))
 
   (format t "~&~%== 3. C-g stops a slow answer ==~%")
   (qmp-type "slow answer please") (sleep 0.3)
