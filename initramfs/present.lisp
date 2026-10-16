@@ -860,9 +860,9 @@
 (lol.examples:launch)
 
 ;; C-c C-i  Inspect it: a SECOND PROCESS sends a view, not pixels -- its pid
-;; is not the supervisor's; the sweep's rows drill (doc/processes.org).
+;; is not the supervisor's. The live one keeps changing with no key pressed.
 (subj-worker :self)
-(subj-worker :signallers)
+(subj-live :ticker)
 
 ;; C-c C-i  on a closure: its captures are its FIELDS. START is INCF-d, so SBCL
 ;; boxes it in a VALUE-CELL: (settable) -- C-c C-c on that row rewrites the live

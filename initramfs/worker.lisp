@@ -24,8 +24,9 @@
 ;;;;      which is the cheapest transport that exists here and needs no AF_UNIX,
 ;;;;      no fourth pollfd, no accept loop. The cost is that this is SYNCHRONOUS:
 ;;;;      the parent waits. Liveness — a child pushing (:invalidate) as results
-;;;;      arrive — is the part §2 still owes, and it is what wants the socket.
-;;;;      Doing the easy half first keeps the claim honest.
+;;;;      arrive — is the other half, and lives in worker-live.lisp: a child that
+;;;;      stays up, a pipe PAIR in the browser's poll, handles instead of names.
+;;;;      (It turned out not to want a socket after all; that file says why.)
 ;;;;
 ;;;;   3. SUBJECTS DO NOT TRAVEL; NAMES DO. The child sends symbols, and the
 ;;;;      parent rebuilds real subjects around them. So a row computed in another
@@ -47,6 +48,29 @@
 ;;; a plist of (:label :detail :kind :name). Nothing here may be a live object —
 ;;; the whole point is that it survives PRIN1 and READ.
 
+(defun tally-signals (defn form tally)
+  "Add every condition type FORM (DEFN's captured source, read back) signals to
+   TALLY (type -> the definitions that signal it). One definition's worth of the
+   sweep — split out so the LIVE sweep (worker-live.lisp) can do the same work a
+   few definitions at a time, and push a fresh view after each batch."
+  (walk-form form
+             (lambda (sub)
+               (let ((type (form-signalled-type sub)))
+                 (when (and type (symbolp type))
+                   (pushnew (defn-name defn) (gethash type tally)))))))
+
+(defun signal-tally-rows (tally)
+  "TALLY as wire rows, one per condition type, sorted by name."
+  (let ((rows '()))
+    (maphash (lambda (type sites)
+               (push (list :label (string-downcase (symbol-name type))
+                           :detail (format nil "~d site~:p" (length sites))
+                           :kind :condition
+                           :name type)
+                     rows))
+             tally)
+    (sort rows #'string< :key (lambda (r) (getf r :label)))))
+
 (defun job-signallers ()
   "Every condition type signalled anywhere in the image, and by how many sites.
 
@@ -57,23 +81,9 @@
    genuinely useful and genuinely expensive. Exactly the shape of work you want
    off the UI's thread of control."
   (let ((tally (make-hash-table :test 'eq)))
-    (map-recorded-forms
-     (lambda (d form)
-       (walk-form form
-                  (lambda (sub)
-                    (let ((type (form-signalled-type sub)))
-                      (when (and type (symbolp type))
-                        (pushnew (defn-name d) (gethash type tally))))))))
-    (let ((rows '()))
-      (maphash (lambda (type sites)
-                 (push (list :label (string-downcase (symbol-name type))
-                             :detail (format nil "~d site~:p" (length sites))
-                             :kind :condition
-                             :name type)
-                       rows))
-               tally)
-      (list :title "conditions signalled, swept from source"
-            :rows (sort rows #'string< :key (lambda (r) (getf r :label)))))))
+    (map-recorded-forms (lambda (d form) (tally-signals d form tally)))
+    (list :title "conditions signalled, swept from source"
+          :rows (signal-tally-rows tally))))
 
 (defun job-self ()
   "What this process IS: the smoke test that the work really happened elsewhere.
