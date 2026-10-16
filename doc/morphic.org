@@ -1,0 +1,278 @@
+#+TITLE: Morphic — the browser becomes the first window of a Lisp window system
+#+STARTUP: showall
+
+*STATUS (2026-10-16): DESIGN — nothing here is built.* Written for the user to
+review before any code. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points
+here. Every claim about *our* code below was checked against the tree on that date;
+claims about Self and Squeak come from the literature (cited where used) and were
+*not* checked against a running Squeak image — there is none on this machine.
+Open questions for the user are collected in §9.
+
+* 0. What Morphic is, in one page
+
+Morphic is the user interface of Self (Maloney and Smith, /Directness and Liveness
+in the Morphic User Interface Construction Environment/, UIST 1995), carried into
+Squeak by John Maloney and still the ground Pharo stands on. Its ideas, in the
+vocabulary this doc will reuse:
+
+- *A morph* is an object that is on screen. It has *bounds* (a rectangle), an
+  *owner* and *submorphs* (a tree), and it answers two kinds of message: /draw
+  yourself/ and /here is an event/. A button, a text editor, a window and a sprite
+  are all morphs — the difference is only which methods they override.
+- *The World* is the root morph: the whole screen. Everything visible is somewhere
+  in its tree, and the order of its children is the *z-order* — later is on top.
+- *The Hand* is the pointer, as a morph. It carries what you are dragging: picking
+  a morph up moves it from its owner into the Hand, dropping it moves it into
+  whatever morph is under the Hand.
+- *Damage.* A morph that changes says which rectangle of the screen is now wrong
+  ("invalidate"); once per cycle the World redraws only those rectangles, and in
+  each one only the morphs that overlap it. This is what makes overlapping windows
+  affordable.
+- *Stepping.* A morph may ask to be stepped every N milliseconds; that is how
+  things move on their own (liveness), with no thread per morph.
+- *The halo.* A ring of handles around any morph — move, resize, inspect, delete,
+  duplicate — on any morph, including ones nobody wrote handles for. It is
+  /directness/: there is no separate "edit mode" for the UI; the running UI is the
+  thing you edit.
+
+The slogan the project already uses, from [[file:code-browser.org][code-browser.org]] §1: /Smalltalk was never an
+X application; Smalltalk was the window system./ Phase 7 is that sentence taken
+literally for this machine.
+
+* 1. Where we stand — what already exists, checked
+
+The tiled shell was designed so that this step would not be a rewrite (§4¾ of
+[[file:code-browser.org][code-browser.org]]: "a trail simply /becomes/ a draggable window if/when Morphic
+arrives — nothing above is rewritten"). What that leaves us with today:
+
+| Morphic idea          | What exists now                                                                                         | Gap                                                      |
+|-----------------------+---------------------------------------------------------------------------------------------------------+----------------------------------------------------------|
+| morph                 | plain structs drawn by plain functions: =PANE= ([[file:../poc/shell.lisp::defstruct pane][shell.lisp]]), =TEXTVIEW=, widgets that take geometry and return a hit map ([[file:../poc/widgets.lisp::defun draw-list][=draw-list=]]) | nothing on screen /is/ an object with bounds              |
+| the World / z-order   | one fixed layout: tabs, breadcrumbs, one expanded pane, maybe a side column ([[file:../poc/shell.lisp::defun draw-browser][=draw-browser=]])       | no overlap, so no z-order                                 |
+| hit-testing           | a dozen per-frame hit maps in specials: =*tab-rects*=, =*crumb-rects*=, =*list-rows*=, =*side-rows*=, =*spotter-hits*=, =*menu-hits*=, … | each click handler knows which map to read                |
+| "who drew what"       | [[file:../poc/shell.lisp::defun note-drawn][=note-drawn=]] into =*drawn*=, reset each frame; its docstring already says "Morphic gets it for free" | becomes the morph tree itself                             |
+| the halo              | built: [[file:../poc/shell.lisp::defun halo-layers][=halo-layers=]] walks from the innermost thing under the pointer outwards                     | handles act on /code/ (Inspect, Code); none move or resize |
+| the Hand              | the pointer is kept /out/ of the canvas and composited as a patch ([[file:../initramfs/fb-browser.lisp::defun put-cursor][=put-cursor=]], [[file:../initramfs/fb-browser.lisp::defun move-cursor][=move-cursor=]]; [[file:framebuffer.org][framebuffer.org]] §9.5) | carries nothing                                           |
+| damage                | partial: a pointer move sends only two small rects ([[file:../poc/fb.lisp::defun present-fb-rect][=present-fb-rect=]]); the terminal repaints only its dirty rows; everything else is a whole frame | no general "this rect is wrong"                           |
+| stepping              | the Stage's sprites tick ([[file:../initramfs/fb-browser.lisp::defun tick-live-stage][=tick-live-stage=]]); run panes tick; services wake the loop (=*fb-services*=) | each is its own special case in the loop                  |
+| one event loop        | [[file:../initramfs/fb-browser.lisp::defun run-browser-fb][=run-browser-fb=]], plus six /nested/ modal loops: =run-spotter-fb=, =run-chooser-fb=, =run-debugger-fb=, =run-clipboard-fb=, =run-cheatsheet-fb=, =run-frame-source-fb=, and the value prompt | a modal loop blocks every other thing on screen           |
+| content stays pure    | =present= returns data; =commands-for= /declares/ affordances; the shell decides                          | none — this is exactly what Morphic needs                 |
+
+And the measured budget it has to fit in ([[file:framebuffer.org][framebuffer.org]], tag #24, the laptop at
+1920×1200): a whole frame is *5.04 ms* — =draw-browser= 3.92 ms, =present-fb= 1.12
+ms — and a pointer move 6 µs. So a full redraw is already ~200 a second; damage
+repair is about keeping a /window drag/ cheap and making room for many live morphs,
+not about rescuing a slow renderer.
+
+* 2. The decision this doc proposes
+
+*Morphs are CLOS objects; the World owns the one event loop; the tiled browser
+becomes the first morph, unchanged inside.* Concretely:
+
+1. A =morph= class (=standard-class=, so the model layer, the Inspector, =all-instances=
+   and the halo already understand it) with bounds, owner, submorphs, and three
+   generic functions: =draw-morph=, =handle-event=, =step-morph=.
+2. A =world= morph that *replaces* the body of =run-browser-fb='s loop: poll, turn
+   records into events, dispatch, step, repair damage, present.
+3. The whole current shell becomes *one* morph, =shell-morph=, whose =draw-morph=
+   calls =draw-browser= into its bounds and whose =handle-event= calls
+   =browser-key= / =browser-click= / =browser-drag=. Day one, the screen is a World
+   with one full-screen child, and every =check-*.lisp= must pass unchanged.
+4. From there, windows: a trail can be /torn off/ into a =trail-window= morph that
+   draws its current pane with the same =draw-pane-body= — the "trail becomes a
+   window" promise — and overlapping windows arrive with z-order and damage.
+
+What it deliberately is *not*: a compositor for other processes' pixels
+([[file:processes.org][processes.org]] declines that, with reasons), a retained scene graph of every glyph,
+or a rewrite of =present=. =present= stays a pure =subject → view=; morphs are the
+shell's side of "content proposes, the shell disposes".
+
+* 3. The objects
+
+** 3.1 =morph=
+
+#+begin_src lisp
+;; proposal — not in the tree
+(defclass morph ()
+  ((bounds   :initarg :bounds :accessor morph-bounds)   ; (x y w h), in WORLD pixels
+   (owner    :initform nil    :accessor morph-owner)
+   (children :initform '()    :accessor morph-children) ; back to front: last is on top
+   (step-ms  :initform nil    :accessor morph-step-ms)  ; NIL = never stepped
+   (subject  :initarg :subject :initform nil :accessor morph-subject))) ; what it shows, if anything
+
+(defgeneric draw-morph (morph canvas clip))   ; paint yourself; CLIP is the damaged rect
+(defgeneric handle-event (morph event))       ; return T if consumed, NIL to let it bubble
+(defgeneric step-morph (morph now-ms))        ; liveness; call INVALIDATE if you changed
+(defgeneric morph-affordances (morph))        ; halo handles: defaults from COMMANDS-FOR
+#+end_src
+
+Two choices worth defending:
+
+- *World coordinates, not owner-relative.* Squeak's morphs keep absolute bounds
+  too; it makes hit-testing and damage a matter of comparing rectangles, with no
+  transform stack. Moving a window moves its subtree (one loop over descendants).
+- *=subject= is a slot, not a subclass.* A morph that shows a subject keeps the
+  subject and its =PANE=; the morph is the frame around it. That keeps the halo's
+  existing layers ("the pane", "what it shows", "the code that draws it") intact.
+
+** 3.2 =world= and =hand=
+
+The =world= is a morph the size of the framebuffer, plus the loop's state: the
+damage list, the keyboard focus, the stepping list, and the =hand=. The =hand= is a
+morph that is *not* drawn into the canvas — the §9.5 contract of [[file:framebuffer.org][framebuffer.org]]
+stays: the arrow is composited as a patch after the frame, so a bare pointer move
+still costs microseconds and =check-pointer.lisp= still holds. What the hand adds is
+=hand-carrying=: the morph being dragged, and its grab offset.
+
+** 3.3 Events
+
+One event struct, built from what the loop already decodes:
+
+| kind        | from                                         | carries                          |
+|-------------+----------------------------------------------+----------------------------------|
+| =:key=      | the tty / the keyboard's evdev               | key, modifier state (=super-p= …) |
+| =:down/:up= | evdev buttons, the pad's emulated ones       | button, x, y, click count         |
+| =:move=     | evdev =REL/ABS=                              | x, y, buttons held                |
+| =:wheel=    | =REL_WHEEL=                                  | notches, x, y                     |
+| =:service=  | an =*fb-services*= fd woke the poll          | which service                     |
+
+Dispatch: keys go to the *focus* morph and bubble up through owners; pointer events
+go to the *topmost morph under the point* (=morph-at=, a back-to-front walk) and
+bubble likewise. A morph that consumes nothing costs nothing. =:service= events go to
+whoever registered the service, which is how web panes and terminals keep working.
+
+* 4. Drawing and damage
+
+** 4.1 The canvas needs a clip rectangle
+
+Today every primitive in [[file:../poc/canvas.lisp][canvas.lisp]] clips *to the canvas* ("Every one of these
+clips to the canvas, so callers never have to check"). Damage repair needs it to
+clip to /a rect inside/ the canvas, or a window repainting itself would scribble over
+the window above it. Proposal: clip slots on =canvas= (default: the whole canvas) and
+a =with-clip= macro; =fill-rect=, =draw-rect=, =draw-line=, =draw-poly=, =draw-circle=,
+=blit-rgba= and the glyph blit intersect with it. It is the one change below the shell, and the only one that touches every
+pixel path — so it ships first, alone, with =poc/render-frame.lisp= frames compared
+before/after (they must be identical).
+
+** 4.2 The cycle
+
+#+begin_example
+poll → events → dispatch → step due morphs → damage list → merge rects
+     → for each rect: with-clip, draw every morph overlapping it, back to front
+     → present-fb-rect each rect → put-cursor
+#+end_example
+
+- =invalidate morph [rect]= pushes a rect (default: the morph's bounds) onto the
+  world's damage list. Moving a morph invalidates its old and its new bounds.
+- *Merging*: rects that overlap, or whose union is not much bigger than their sum,
+  merge; above a threshold (say half the screen) the cycle just repairs the whole
+  screen, which at 5 ms is never wrong, only wasteful.
+- *The legacy shell morph* can't yet say /which/ of its parts changed, so at first
+  it invalidates its whole bounds on any state change — i.e. exactly today's
+  behaviour. Finer damage inside it (the terminal's dirty rows already do this) can
+  come later, one view at a time, without changing the protocol.
+
+** 4.3 Opaque window drag, costed
+
+Dragging a 900×600 window by 10 px repairs two rects of ~900×610 ≈ 1.1 MP, against
+2.3 MP for the whole 1920×1200 screen — about half a frame, ~2.5 ms on the laptop,
+dominated by redrawing what the window uncovered. Comfortably under one 60 Hz frame
+(16.7 ms). An outline drag (draw only the frame while moving, the real window on
+release) is the fallback if a heavy view underneath — a web pane's screencast — makes
+it worse; §9 asks which the user prefers.
+
+* 5. Windows
+
+A =trail-window= is the "trail becomes a window" of §4¾:
+
+- *Contents:* one trail — its breadcrumbs and its current pane, drawn by the same
+  =draw-crumb= / =draw-pane-body= the tiled shell uses, into the window's bounds.
+  No view code changes; only the rectangle they are given.
+- *Frame:* a title bar (the trail's title, the view-kind badge and tint
+  =draw-panel= already draws), a close box like the tab strip's, a resize corner.
+- *Tearing off:* a key (§6) or dragging a tab out of the tab strip makes the trail a
+  window; dropping it back on the strip re-tiles it. The tiled shell stays the
+  /default arrangement/: until you tear something off, nothing on screen differs
+  from today.
+- *Fonts:* a window's title bar and every metric inside it ask =char-w= / =line-h= at
+  draw time ([[file:fonts.org][fonts.org]]'s rule). A resize or a font change only changes the rect.
+
+Modal overlays — the Spotter, the chooser, the halo menu, the clipboard manager,
+the cheatsheet — become morphs on top of the World instead of nested loops (§7,
+step 4). That is the change that makes them stop freezing everything under them: a
+terminal keeps scrolling behind an open Spotter.
+
+* 6. Keyboard first, still
+
+The shell is keyboard-first and Morphic must not undo that. Every window operation
+gets a key; the mouse is an accelerant. Proposed (=SuperL-g= is free today — checked
+against =browser-key='s Super branch in [[file:../poc/shell.lisp::defun browser-key][shell.lisp]]):
+
+| keys                    | does                                                          |
+|-------------------------+---------------------------------------------------------------|
+| =SuperL-g=              | "grab": tear the current trail off into a window / re-tile it |
+| =SuperL-g= then arrows  | move the focused window (Shift: by a larger step)             |
+| =SuperL-g= then =C-=arrows | resize it                                                  |
+| =SuperL-Tab= (existing) | cycles trails — and therefore windows, raising each           |
+| =SuperL-w= (existing)   | closes the trail — and its window                             |
+
+The halo gains *move* and *resize* handles on window morphs; its existing handles
+(Inspect, Code, Senders) keep working, and Inspect on a window shows the =morph=
+instance — its bounds as editable fields, so =C-c C-c= on =bounds= moves it. That is
+the Self/Squeak directness, reached through the inspector we already have.
+
+* 7. The plan, in steps that each leave a working system
+
+Each step is shippable on its own, ends with every existing =check-*.lisp= green,
+and adds its own test.
+
+0. *Clip rect in the canvas* (§4.1). Host: =poc/render-frame.lisp= frames are
+   byte-identical before/after; a new host test draws through a clip.
+1. *The World with one morph.* =morph=, =world=, =hand=, events, the cycle;
+   =shell-morph= wraps the whole browser. No visible change. Guest: every existing
+   check, plus the halo listing =SHELL-MORPH= as the outermost layer.
+2. *Windows.* =trail-window=, tear-off / re-tile, z-order, damage, raise on focus,
+   =SuperL-g=. Guest test (=check-morphic.lisp=, proposed): QMP drags a window with
+   the real pointer and asserts bounds over the net REPL, screendump shows the
+   uncovered region repaired; =draw-*= call counts prove only damaged morphs drew.
+3. *Halo handles that act on morphs:* move, resize, raise, close, and Inspect on the
+   morph instance.
+4. *Overlays as morphs.* The six =run-*-fb= modal loops and the value prompt become
+   morphs in the one loop. The largest step by line count, done one overlay at a
+   time; each keeps its keys.
+5. *Stepping.* The Stage's sprites, run panes, and worker liveness ([[file:processes.org][processes.org]])
+   move onto =step-morph= / =:service= events, replacing their special cases in the
+   loop.
+
+Steps 0–2 are the core — after them the browser /is/ the first window on a Lisp
+window system. 3–5 can come in any order.
+
+* 8. Costs and risks, honestly
+
+- *Every input path changes in step 1.* The input loop is the most tested code here
+  (=check-input=, =check-pointer=, =check-scroll=, =check-clipboard=, =check-terminal=,
+  =check-web=). That is the reason step 1 changes /nothing visible/: the suite is
+  the proof.
+- *Hit maps survive inside the shell morph.* =*list-rows*= & co. are not removed in
+  steps 1–2; they become the shell morph's private business. Replacing them with
+  submorphs is optional later work, not a precondition.
+- *Web panes are fds plus a screencast.* A web pane inside a window must clip its
+  JPEG blit to the window and to damage; the clip rect (step 0) covers it.
+- *The X11 dev backend* ([[file:x11.org][x11.org]], =poc/run-browser.lisp=) draws the same canvas, so
+  it inherits the World for free as long as the cycle stays backend-blind — the
+  same discipline =present-fb= vs =PutImage= already keeps.
+- *Session persistence.* A desk file is being built ([[file:session-persistence.org][session-persistence.org]]);
+  once windows exist, the desk should record each window's bounds and z-order. Not a
+  dependency, a follow-up.
+
+* 9. Open questions for the user
+
+1. *Default arrangement:* stay tiled until you tear something off (proposed), or
+   boot into a World of windows?
+2. *Drag:* opaque (proposed; ~half a frame per step on the laptop, §4.3) or outline?
+3. *Keys:* is =SuperL-g= for window mode acceptable, and arrows / =C-=arrows inside it?
+4. *Scope of a first session:* steps 0–2 only (proposed), or through 3 (halo handles)?
+5. *Overlays (step 4):* worth doing early, for "a terminal keeps running behind the
+   Spotter", or last?
+6. *Decorations:* a minimal title bar in the existing panel style (proposed), or no
+   chrome at all with everything on the halo?

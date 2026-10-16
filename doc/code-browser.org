@@ -5,8 +5,8 @@ Status: *IMPLEMENTED AND RUNNING.* Phases 0-6 are all done: the browser runs
 full-screen on =/dev/fb0= as PID 1 (the image boots into it; =b= at the
 supervisor menu reopens it), browses and
 *edits* its own source, scrolls, carries a live debugger, and has a widget
-toolkit under it. Phase 7 (Morphic) is the only one left, and it is open horizon
-rather than a plan. §8 tracks it per phase and is the authoritative status.
+toolkit under it. Phase 7 (Morphic) is the only one left; it is designed in
+[[file:morphic.org][morphic.org]] (2026-10-16) and not built. §8 tracks it per phase and is the authoritative status.
 
 /(This line read "PLAN ONLY — nothing implemented" until 2026-08-09, long after
 the fact. The §8 phase list was kept current throughout; the header was not.
@@ -2403,8 +2403,11 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   "terminal". It is the first view that changes on its own *without* a timer: the
   loop polls the terminals' pty masters beside the input devices and repaints only
   the rows a program changed.
-- *Phase 7 — open horizon.* Morphic: the browser stops being *the* application
-  and becomes the first window on a Lisp window system of our own.
+- *Phase 7 — DESIGNED, not built (2026-10-16).* Morphic: the browser stops being
+  *the* application and becomes the first window on a Lisp window system of our
+  own. The design — morphs as CLOS objects, one World loop, the tiled shell as the
+  first morph, tear-off trail windows, damage repair, six steps — is
+  [[file:morphic.org][morphic.org]], awaiting the user's review (its §9 lists the open questions).
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 
