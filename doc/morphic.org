@@ -1,8 +1,9 @@
 #+TITLE: Morphic — the browser becomes the first window of a Lisp window system
 #+STARTUP: showall
 
-*STATUS (2026-10-16): DESIGN — nothing here is built.* Written for the user to
-review before any code. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points
+*STATUS (2026-10-16): DESIGN, REVIEWED — nothing here is built yet.* Written for
+the user to review before any code; the user answered §9 the same day, and the
+answers are recorded there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points
 here. Every claim about *our* code below was checked against the tree on that date;
 claims about Self and Squeak come from the literature (cited where used) and were
 *not* checked against a running Squeak image — there is none on this machine.
@@ -179,7 +180,7 @@ Dragging a 900×600 window by 10 px repairs two rects of ~900×610 ≈ 1.1 MP, a
 dominated by redrawing what the window uncovered. Comfortably under one 60 Hz frame
 (16.7 ms). An outline drag (draw only the frame while moving, the real window on
 release) is the fallback if a heavy view underneath — a web pane's screencast — makes
-it worse; §9 asks which the user prefers.
+it worse. *Decided: opaque* (§9), the common choice today.
 
 * 5. Windows
 
@@ -216,6 +217,9 @@ against =browser-key='s Super branch in [[file:../poc/shell.lisp::defun browser-
 | =SuperL-Tab= (existing) | cycles trails — and therefore windows, raising each           |
 | =SuperL-w= (existing)   | closes the trail — and its window                             |
 
+Every new key goes into the =SuperL-?= cheatsheet ([[file:../initramfs/fb-browser.lisp::defun draw-cheatsheet][=*cheatsheet*=]] in fb-browser.lisp)
+in the same commit that binds it — a "Windows" group, plus the halo's new handles.
+
 The halo gains *move* and *resize* handles on window morphs; its existing handles
 (Inspect, Code, Senders) keep working, and Inspect on a window shows the =morph=
 instance — its bounds as editable fields, so =C-c C-c= on =bounds= moves it. That is
@@ -245,7 +249,8 @@ and adds its own test.
    loop.
 
 Steps 0–2 are the core — after them the browser /is/ the first window on a Lisp
-window system. 3–5 can come in any order.
+window system. *Decided (§9): all six steps are in scope, halo included*, built in
+the order above.
 
 * 8. Costs and risks, honestly
 
@@ -265,14 +270,23 @@ window system. 3–5 can come in any order.
   once windows exist, the desk should record each window's bounds and z-order. Not a
   dependency, a follow-up.
 
-* 9. Open questions for the user
+* 9. Decisions (the user's answers, 2026-10-16)
 
-1. *Default arrangement:* stay tiled until you tear something off (proposed), or
-   boot into a World of windows?
-2. *Drag:* opaque (proposed; ~half a frame per step on the laptop, §4.3) or outline?
-3. *Keys:* is =SuperL-g= for window mode acceptable, and arrows / =C-=arrows inside it?
-4. *Scope of a first session:* steps 0–2 only (proposed), or through 3 (halo handles)?
-5. *Overlays (step 4):* worth doing early, for "a terminal keeps running behind the
-   Spotter", or last?
-6. *Decorations:* a minimal title bar in the existing panel style (proposed), or no
-   chrome at all with everything on the halo?
+| # | Question                                   | Decision                                                                 |
+|---+--------------------------------------------+--------------------------------------------------------------------------|
+| 1 | Default arrangement                        | *Stay tiled* until you tear something off.                               |
+| 2 | Opaque or outline drag                     | *Opaque* — the window's contents move with the pointer (see below).      |
+| 3 | =SuperL-g= for window mode                 | *Yes* — and every window key goes into the =SuperL-?= cheatsheet (§6).   |
+| 4 | Scope                                      | *All six steps*, not only 0–2.                                           |
+| 5 | Overlays as morphs (step 4)                | *In scope*, with the rest.                                               |
+| 6 | Decorations                                | *A minimal title bar* in the existing panel style.                       |
+
+*Why opaque is "the common one".* The user asked which is more usual, so for the
+record: every mainstream desktop drags opaque by default today — macOS always has,
+Windows has shown window contents while dragging since the late 1990s (it is the
+"Show window contents while dragging" option, on by default), and the compositing
+X11/Wayland desktops (GNOME, KDE) do too. Outline dragging is what slow machines
+did — early X window managers such as twm, Windows 95 on modest hardware — because
+repainting what the window uncovered was too expensive. Squeak's Morphic drags the
+morph itself. At ~2.5 ms per step (§4.3) we are on the cheap side of that trade.
+These are general facts about those systems, not checked here against their source.

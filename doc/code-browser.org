@@ -2407,7 +2407,7 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   *the* application and becomes the first window on a Lisp window system of our
   own. The design — morphs as CLOS objects, one World loop, the tiled shell as the
   first morph, tear-off trail windows, damage repair, six steps — is
-  [[file:morphic.org][morphic.org]], awaiting the user's review (its §9 lists the open questions).
+  [[file:morphic.org][morphic.org]], reviewed by the user the same day (its §9 records the decisions).
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 
