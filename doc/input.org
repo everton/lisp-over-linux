@@ -318,7 +318,13 @@ always worked. A *tap* sends no button at all: the finger lands, lifts, and the 
 trace is =BTN_TOUCH= going =1= and then =0=. Everywhere else, =libinput= is the
 thing that decides those two events were a click. There is no =libinput= here.
 
-So =read-mouse= decides. A contact becomes a click when four things hold:
+*Tap-to-click is OFF by default* (2026-10-16, the user's choice: click only when
+you really click). =*tap-to-click*= is =NIL=, so a contact never opens a tap
+candidate and only a physical press clicks. Put =(:tap-to-click t)= in
+=~/.config/lol/settings= (read when the browser starts), or =(setf *tap-to-click* t)=
+in the Workspace, to bring back the rule below.
+
+When it is on, =read-mouse= decides. A contact becomes a click when four things hold:
 
 1. *It was brief, but not fleeting* — under =*tap-max-us*=, 180ms, which is the
    figure libinput settled on (longer and you were resting a finger, not tapping),

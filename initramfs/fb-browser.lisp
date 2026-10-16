@@ -298,6 +298,14 @@
 ;;; Tap-to-click. A clickpad's physical press arrives as BTN_LEFT and always
 ;;; worked; a TAP is a contact that sends no button at all, and libinput is what
 ;;; normally turns one into a click. There is no libinput here, so we do it.
+;;; It is OFF unless asked for (*TAP-TO-CLICK*): only a physical press clicks.
+
+(defvar *tap-to-click* nil
+  "Does a tap on the touchpad click? NIL (the default, the user's choice 2026-10-16):
+   only a PHYSICAL press of the pad clicks, and a finger merely touching it never
+   does, however firm or brief. T turns the tap rule below back on. Read from
+   ~/.config/lol/settings (:TAP-TO-CLICK T) when the browser starts; setting it in
+   the Workspace takes effect on the next contact.")
 (defvar *tap-down-us* nil "When the finger landed, in microseconds, or NIL for no contact.")
 (defvar *tap-x* nil "Where it landed, in pad units — the origin the travel test measures from.")
 (defvar *tap-y* nil)
@@ -687,7 +695,7 @@
                          (setf *tap-down-us* (evdev-time-us
                                               (sb-alien:cast e (sb-alien:* sb-alien:unsigned-char)))
                                *tap-x* nx *tap-y* ny *tap-peak-z* nil
-                               *tap-live* *pointer-pad-p*)
+                               *tap-live* (and *tap-to-click* *pointer-pad-p*))
                          ;; it left: a candidate that was deliberate enough IS the
                          ;; click — long enough not to be a brush, short enough not
                          ;; to be a rest, and pressed hard enough not to be a graze.
@@ -1376,6 +1384,8 @@
         (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
         (setf *chooser* 'run-chooser-fb)          ; ... and shows its menus and halos
         (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
+        ;; the touchpad: does a tap click? Off unless the settings say so.
+        (setf *tap-to-click* (eq (setting :tap-to-click) t))
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
         (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)

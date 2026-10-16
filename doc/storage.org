@@ -8,8 +8,8 @@ do with the disk once it is there).
 STATUS (kernel tag #25, 2026-10-03): *working in QEMU* against a stand-in disk
 image. The image mounts the laptop's ext4 root privately, shares only =/home=, and
 runs the whole Lisp environment as the user (uid 1000) with five named
-capabilities. Not yet booted on the laptop itself — see "Before the first real
-boot" at the end.
+capabilities. Since booted and used on the laptop itself (confirmed by the user,
+2026-10-16); "Before the first real boot" at the end is kept as the pre-flight notes.
 
 * 1. What we wanted, in one paragraph
 

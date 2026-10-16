@@ -1854,8 +1854,9 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
   the laptop touchpad needed kernel options "we do not currently have". That is no
   longer true — =CONFIG_MOUSE_PS2=y= and =CONFIG_I2C_HID= + =_ACPI=y= are both
   enabled (verified against =kernel/config-7.2.5=), so a PS/2 touchpad or an
-  I2C-HID one should enumerate like any other pointer. It is still *untested on
-  real hardware* — only QEMU's PS/2 mouse has actually been exercised — so keep
+  I2C-HID one should enumerate like any other pointer. The laptop's touchpad
+  works (confirmed by the user, 2026-10-16; tap-to-click is off by default,
+  [[file:input.org][input.org]] §4½) — still keep
   full keyboard accelerators for everything regardless: the mouse is an
   accelerant, never a requirement (§4¾).
 - *Resolution* is whatever the firmware set (efifb cannot modeset — [[file:framebuffer.org][framebuffer.org

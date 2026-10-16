@@ -941,7 +941,7 @@ timeout) is retried like a 5xx; a =tls-error= is not — a certificate that does
 verify will not verify on the next attempt either.
 
 The mock is plain http, so neither run exercises TLS; that, and the endpoint itself,
-wait for the first real call, which is still owed (no key on the build host).
+waited for the first real call — since made on the laptop; see §14.8½.
 
 TLS from scratch (§9) is therefore *not* on the critical path any more. It stays the
 didactic sub-project it always was.
@@ -1314,8 +1314,6 @@ Those belong in =check-agent.lisp= (owed).
 
 ** 14.9 Still owed
 
-- *The first real call*: put a key in =~/.config/lol/anthropic-api-key= (=0600=) on
-  the laptop and ask. Nothing in the image has spoken to =api.anthropic.com= yet.
 - §8.5's =browse= tool, the =lisp-inspect= / =lisp-applicable= / =lisp-backtrace=
   tools, the REPL prompt mark, the alien glyph, anything for =:interacting= to do.
 - Persistence (§12 phase 4): a conversation still dies at power-off.

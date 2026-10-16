@@ -14,7 +14,8 @@
 ;;;;   * writing never signals either, and is skipped entirely when there is no real
 ;;;;     home (a diskless boot runs with HOME=/, a tmpfs that dies at power-off).
 ;;;;
-;;;; One key so far, :FONT-SIZE (doc/fonts.org §6). Any other module may add its own:
+;;;; Keys so far: :FONT-SIZE (doc/fonts.org §6) and :TAP-TO-CLICK (doc/input.org; T
+;;;; lets a touchpad tap click, absent means off). Any other module may add its own:
 ;;;; SETTING reads one, SAVE-SETTING writes one and keeps the rest.
 
 (in-package :cl-user)

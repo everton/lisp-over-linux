@@ -7,7 +7,7 @@ Lisp side: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that opens
 from-scratch tutorial with deep code links: [[file:background/learn-networking.org][background/learn-networking.org]].
 
 *STATUS (2026-10-12, kernel tag #26): THE OUTBOUND PATH IS COMPLETE IN QEMU; Wi-Fi
-IS BUILT BUT UNTESTED ON HARDWARE until you run the checklist in §7.4.* On top of
+IS BUILT AND IN USE ON THE LAPTOP (confirmed by the user, 2026-10-16).* On top of
 the wired path below, the image now installs a *default route* from the DHCP lease
 (§2c), keeps the lease as an object and *renews* it (the =netd= thread), resolves
 names with its own *DNS stub resolver* and writes =/etc/resolv.conf= for everybody
@@ -417,9 +417,9 @@ every v4 path above passes with IPv6 on.
 5. *Outbound* — *DONE (2026-10-12).* Default route, the lease object and renewal,
    DNS, =/etc/resolv.conf=, SNTP, HTTP/1.1 and HTTPS (§2c–f) — [[file:agent.org][agent.org]]'s
    network track N1–N4. Proved by =check-net.lisp= (§8).
-6. *Wi-Fi* — *BUILT, untested on hardware* (§7): firmware in the cpio, the host's
+6. *Wi-Fi* — *BUILT, in use on the laptop* (§7): firmware in the cpio, the host's
    =wpa_supplicant=, the network view. In QEMU everything short of a radio is
-   exercised; the laptop checklist (§7.4) is the remaining proof.
+   exercised; the radio itself has been used for real on the laptop.
 7. *(open)* real-hardware Ethernet: the laptop has no port, but the user's USB
    dongle (=0bda:8153=, RTL8153) would need =CONFIG_USB_RTL8152= (§7.5).
 
@@ -530,10 +530,11 @@ Sequencing: ship (a) first (it costs nothing beyond the socket work already in
 the plan and is perfect for QEMU/dev), and only take on (b) when a real,
 untrusted network is actually in play.
 
-* 7. Wi-Fi — built (2026-10-12), untested on hardware until §7.4 is run
+* 7. Wi-Fi — built (2026-10-12), in use on the laptop
 
 *STATUS: implemented; every part QEMU can reach is tested (§8); the radio itself
-is untested until you run the checklist in §7.4 on the laptop.* The kernel half
+is in use on the laptop (confirmed by the user, 2026-10-16). §7.4's checklist is
+kept as the procedure for diagnosing a new machine or a regression.* The kernel half
 landed in tag #26 (=CFG80211=, =MAC80211=, =IWLWIFI=, =IWLMVM=, =RFKILL=). The plan
 below was written first and is kept, with its two constraints, because the
 implementation (§7.1–7.3) follows it; the =kernel/wifi-intel-ax201.config=
@@ -703,7 +704,7 @@ so no secret is ever written to it.
 
 ** 7.4 On the laptop: the checklist (run this, send back what differs)
 
-Untested on hardware until this has been run once. Each step says what you should
+Wi-Fi now works on the laptop; keep this for a new machine or a regression. Each step says what you should
 see; the first one that differs is the one to report.
 
 1. *Build on the laptop.* =./build.sh= must print
