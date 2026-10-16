@@ -638,6 +638,13 @@ the canvas, a bare move damages nothing, and =check-pointer.lisp= still holds.
 drew the whole screen behind its back (=*screen-overdrawn*=), so it repairs
 everything once they return.
 
+*With windows* (Morphic step 2) three fast paths still paint the /shell's/ pixels
+straight into the canvas and send their rect without the world: the clock's tick,
+a terminal's dirty rows and a web page's new frame. Each now calls
+[[file:../poc/morphic.lisp::defun recomposite-windows][=recomposite-windows=]] before sending, which copies back any window lying over that
+rect from the window's backing store — so a window over the tray stays on top while
+the clock ticks under it. With no windows it does nothing.
+
 | per pointer move | before (a full frame) | after      |
 |------------------+-----------------------+------------|
 | KVM              | 6.5 ms                | 12 µs      |

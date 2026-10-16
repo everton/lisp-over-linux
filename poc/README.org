@@ -32,6 +32,9 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
 | =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. Drives the real =initramfs/= registry+model+present. |
+| =morph.lisp=     | =lol.morph=: Morphic's core — =morph= / =world= / =hand=, events, damage repair (=invalidate=, =world-repair=) and routing (=world-dispatch=). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]]. |
+| =morphic.lisp=   | the *desk*: the world the environment runs in — the whole tiled shell as one morph, trail windows (=SuperL-g=, a tab dragged out), the grab mode. *Backend-blind.* |
+| =clip-test.lisp= / =morphic-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals a full repair, and the right morphs drew (44 checks). =sbcl --script poc/…=; non-zero on failure. |
 | =widgets.lisp=   | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map. |
 | =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
@@ -130,6 +133,8 @@ matrix cell's onion:
   -k "down down ret"        # drill the third row
   -k "down S-ret"           # open the selection BESIDE the list (the editable split)
   -k "click:180,92"         # click a dispatch-matrix cell -> its effective-method onion
+  -k "s-g right right esc"  # tear the tab off into a window, move it two cells (doc/morphic.org)
+  -k "drag:60,10,700,300"   # press, move held, release: here, a tab dragged out into a window
   -k "s-2"                  # SuperL-2: switch to the Workspace tab
   -k "wheel:20"             # scroll the viewport (the selection stays where it was)
   -k "s-= s-="              # SuperL-= twice: a bigger font, and the status line says so

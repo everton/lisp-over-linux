@@ -1,7 +1,7 @@
 #+TITLE: Morphic — the browser becomes the first window of a Lisp window system
 #+STARTUP: showall
 
-*STATUS (2026-10-16): steps 0 and 1 of 6 BUILT* (§10 tracks each step: what shipped, what
+*STATUS (2026-10-16): steps 0–2 of 6 BUILT* — the core; 3–5 are next (§10 tracks each step: what shipped, what
 changed against the plan, and the measured costs). Written first as a design for
 the user to review; the user answered §9 the same day, and the answers are recorded
 there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
@@ -408,3 +408,157 @@ returns =(values nil nil)=. Recorded because the symptom was "every check fails"
 with nothing on the console: the environment's =handler-case= drops to the menu,
 and a diskless guest has no session log; the condition was caught by rebinding
 =log-condition= over the net REPL and re-entering with =b=.
+
+** Step 2 — windows: BUILT (2026-10-16)
+
+The browser is now the first window of a Lisp window system. All of it is in
+[[file:../poc/morphic.lisp][poc/morphic.lisp]]; the shell gained four small hooks, each a no-op without windows
+(=*trail-windowed-p*=, =*status-pane*=, =*backdrop-fn*=, =*halo-outer-layers*=), and
+=draw-browser= was split so that its middle — breadcrumbs plus the expanded pane —
+is [[file:../poc/shell.lisp::defun draw-trail-area][=draw-trail-area=]], callable into any rect's worth of canvas. The split was proven
+byte-identical: every =render-frame.lisp= subject renders as before.
+
+*** What a window is
+
+- *A trail, still in =*trails*=.* Tearing a trail off does not take it out of the
+  list: a trail is either in the tab strip or in a window, and everything that walks
+  =*trails*= — the terminal sweep that hangs up a closed terminal, the web sweep, the
+  desk file, the "unsaved files?" question at =SuperL-q=, the agent — keeps seeing it
+  with no change. The window finds its trail by the trail's *root pane*, the one thing
+  that never changes identity (drilling replaces the list, never its first pane). The
+  tab strip simply skips windowed trails; each keeps its number, so =SuperL-N= still
+  reaches it, and the title bar shows that number.
+- *Focus is =*active*=, as it always was.* The focused trail is the focused thing:
+  when it is a window's, that window has the keyboard; when it is a tiled one, the
+  shell has. So =SuperL-Tab= and =SuperL-1..9= reach windows — and raise them — with
+  no code of their own. After every event [[file:../poc/morphic.lisp::defun desk-sync][=desk-sync=]] makes the world agree with
+  the trails: a window whose trail closed goes, the focus follows =*active*=, the
+  window that gets it is raised, a font change redraws everything, and a modal loop
+  that drew whole frames gets the whole screen repaired.
+- *A backing store, and its own hit maps.* The design said a window would draw its
+  pane with =draw-pane-body= "into the window's bounds". The shell's drawing code,
+  though, lays out from fixed offsets at 0,0 and records what it drew where in a
+  dozen specials (=*list-rows*=, =*content-top*=, =*crumb-rects*=, …) that its click
+  handlers read back. So each window draws into *a canvas of its own size*, at 0,0,
+  and keeps *its own values of those specials* ([[file:../poc/morphic.lisp::defun call-with-window-context][=call-with-window-context=]], a =progv=
+  over the list in =+window-specials+=); its events arrive in its own coordinates.
+  The browser code is called unchanged — =browser-key=, =browser-click= — and never
+  learns it is in a window. The repair then copies the backing store onto the screen
+  (=blit-canvas=, clipped). This deviates from Squeak, which draws a morph straight
+  onto the screen, and it buys the opaque drag almost for free: a window that moves is
+  /copied/, never redrawn.
+- *A minimal title bar* (decision 6), in the tab strip's own style: the trail's kind
+  stripe, its number, its title (the accent when focused), a close box =×= at the
+  right; a one-pixel outline (accent when focused) and a three-stroke resize grip in
+  the bottom-right corner. Every size in it is asked of the font (=char-w=, =line-h=,
+  =+bar-h+=), so a bigger font grows the bar and the grip ([[file:fonts.org][fonts.org]]).
+
+*** The keys — all in the =SuperL-?= cheatsheet, group "Windows"
+
+| keys                         | does                                                                                  |
+|------------------------------+---------------------------------------------------------------------------------------|
+| =SuperL-g= on a tiled trail  | tear it off into a window, focused, and enter *grab mode*                             |
+| =SuperL-g= on a window       | enter grab mode                                                                       |
+| in grab mode: arrows         | move the window one cell (=char-w= across, =line-h= down); Shift: eight              |
+| in grab mode: =C-=arrows     | resize it by a cell                                                                   |
+| in grab mode: =t= or =SuperL-g= | re-tile: the trail goes back into the tab strip, focused                           |
+| in grab mode: =Ret= / =Esc=  | done; any other key also ends the mode and then goes where keys go                   |
+| drag a tab down              | tear it off, the window carried by the pointer from there                            |
+| drag the title bar           | move (opaque); drop it on the tab strip: re-tile                                     |
+| drag the corner grip         | resize                                                                                |
+| click =×= / =SuperL-w=       | close the window's trail                                                              |
+| =SuperL-Tab=, =SuperL-1..9=  | reach windows too, raising each                                                       |
+
+Grab mode is not a nested loop: it is a slot of the desk (=desk-grab=), and the desk
+sees every key before the focus does ([[file:../poc/morphic.lisp::defun grab-key][=grab-key=]]). Nothing else stops while it is on.
+
+*** What changed against the plan, and why
+
+- *The last tiled trail stays tiled.* =SuperL-g= on the only tab refuses and says
+  so in the status line. The tiled shell always shows a trail — every one of its
+  drawing paths assumes one — and an empty desktop behind the windows is a design
+  question of its own, not a corollary of tearing off.
+- *Re-tiling from the keyboard is =SuperL-g= then =t=* (or =SuperL-g= twice), not one
+  =SuperL-g=: the first press on a window has to mean "grab it", or a window could
+  never be moved without the mouse — the keyboard-first rule of §6.
+- *Damage is still coarse where it was coarse.* The shell redraws whole when its state
+  changes, as in step 1. A window redraws whole when an event reaches it, and the
+  shell then redraws only its status line (where the focused pane's hints and
+  messages live) — unless the event changed another trail (a new tab, a closed one),
+  when the whole shell does. Things that change without an event (the agent, a run, a
+  service, the stage) redraw the shell and every window whose pane is /live/ —
+  terminal, web page, stage, run, live worker, conversation ([[file:../poc/morphic.lisp::defun pane-live-p][=pane-live-p=]]). With a
+  window focused the services are told a full redraw is coming, so none paints a fast
+  path with the shell's geometry into a pane that is not in the shell; a live window
+  is redrawn whenever a service's fd woke the poll ([[file:../poc/morphic.lisp::defun service-woke][=service-woke=]]). A web page in a
+  window gets no hover (the =:motion= service sees the shell's page rect). All of this
+  is step 5's to refine: stepping morphs will say exactly what changed.
+- *The fast paths survive.* The clock's tick, a terminal's rows and a web frame still
+  paint straight into the canvas and send one rect; each now puts back any window
+  over that rect first ([[file:../poc/morphic.lisp::defun recomposite-windows][=recomposite-windows=]], [[file:framebuffer.org][framebuffer.org]] §9.5).
+- *The desk file does not record windows yet.* A saved session reopens every trail
+  tiled ([[file:session-persistence.org][session-persistence.org]]); bounds and z-order are the follow-up §8 named.
+  Leaving to the console and coming back (=b=) likewise re-tiles: the world is made
+  fresh per entry, and its windows with it, while the trails survive.
+- *Known small gaps, found by reading the code, not fixed:* a click on the
+  minibuffer's clear box while a window has the focus is tested against window
+  coordinates (the box is the shell's); and the terminal's dirty-row fast path is the
+  tiled terminal's only — a terminal in a window repaints whole on each wake. A web
+  page /in a window/ is not exercised by a check yet (a terminal is: section C below).
+
+*** Proof
+
+- [[file:../poc/morphic-test.lisp][poc/morphic-test.lisp]] (44 checks, host, against the real shell): after /every/ step
+  of a long script — tear off, grab, arrows, Shift, resize, Esc, keys into the window,
+  title-bar drag, grip drag, a second window, raise by click, =SuperL-Tab= into and out
+  of windows, a drop on the strip, a tab dragged out, the close box, a font change —
+  the screen repaired incrementally, rect by rect, equals pixel for pixel the screen
+  a full repair draws from scratch; and the economy holds: a move draws no window
+  contents, the shell redraws only the uncovered strips, a key in a window redraws the
+  window plus the status line. The world records, per repaired rect, which morphs drew
+  in it (=:per-rect= in =world-last-repair=) — that is the instrument.
+- [[file:../check-morphic.lisp][check-morphic.lisp]] section B (25 checks, in the guest, real input): the same
+  operations through evdev — QEMU's pointer and keys — read back over the net REPL,
+  plus the screendump: after a real title-bar drag, 24 points in the uncovered strip
+  show exactly the shell drawn fresh, and 24 in the window's new bounds show its
+  backing store. Section C (4 checks): a terminal torn off into a window — keys reach
+  its program, the answer comes back through the terminal service and redraws the
+  window, =SuperL-w= closes it and the sweep hangs the program up.
+- Every regression check passes on the step-2 image (the numbers are in the commit).
+  One needed a change that is *not a finding*: =check-scroll.lisp= opened
+  =draw-browser= as "a long definition" to scroll with the wheel, and the split made
+  it a few lines long, so the wheel had nothing to scroll; it now opens
+  =draw-trail-area=, the old body.
+
+*** What it costs (measured 2026-10-16)
+
+| what                                         | guest, 1280×800, KVM | host, 1280×720 |
+|----------------------------------------------+----------------------+----------------|
+| =draw-browser= alone (the old full frame)    | 2.88 ms              |                |
+| a full repair: shell + window, drawn and sent | 3.76 ms             | 2.8 ms (drawn) |
+| a window moved 10 px, repaired and sent      | 0.64 ms              | 0.25 ms        |
+| a key in a window: window + status line      | 1.92 ms              | 3.6 ms         |
+
+The guest is QEMU with KVM on the laptop's own i7-1065G7 (=-cpu qemu64=), averaged
+over 50 runs because the guest's clock reads in 4 ms ticks; the host column is
+=poc/morphic-test.lisp= on the same machine, 30 runs, drawing only. The design
+estimated a 10 px drag of a 900×600 window at ~2.5 ms on the laptop at 1920×1200,
+"dominated by redrawing what the window uncovered"; with the occlusion rule and the
+backing store it is a strip of shell and a copy — about a sixth of a full repair. A
+key in a window costs more than its share of pixels suggests because the status
+line is drawn by laying out the whole shell under a narrow clip; that is the
+coarse-damage price above.
+
+*** What remains
+
+- *Step 3, halo handles on morphs:* move, resize, raise, close on a window's halo,
+  and Inspect on the morph instance with its bounds settable (=C-c C-c= on =bounds=
+  moves it). Today the halo already /lists/ the window and the shell morph as its
+  outermost layers, with Inspect and Code; the handles that act are still owed.
+- *Step 4, overlays as morphs:* the six =run-*-fb= loops and the value prompt. They
+  work over windows today (their backdrop is the whole world, [[file:../poc/morphic.lisp::defun draw-world-backdrop][=draw-world-backdrop=]];
+  inside a window their menus land at the window's screen position), but each still
+  blocks the world while it is up.
+- *Step 5, stepping:* the stage, run panes, live workers and the services move onto
+  =step-morph= / =:service= events; that is also where damage stops being coarse.
+- *Session persistence of windows* (bounds, z-order) in the desk file.
