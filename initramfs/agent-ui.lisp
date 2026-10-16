@@ -255,7 +255,8 @@
 (defun call-verb (name)
   "The word a steps line counts tool NAME under."
   (cond ((member name '("lisp-source" "lisp-senders" "lisp-describe" "lisp-describe-class"
-                        "lisp-describe-gf" "lisp-apropos" "lisp-modules" "file-read" "file-list")
+                        "lisp-describe-gf" "lisp-apropos" "lisp-modules" "file-read" "file-list"
+                        "lisp-inspect" "lisp-applicable" "lisp-backtrace")
                  :test #'string=) "read")
         ((string= name "lisp-eval") "evaluated")
         ((string= name "lisp-accept") "compiled")
@@ -264,6 +265,8 @@
         ((string= name "update-plan") "planned")
         ((string= name "spawn-subagent") "spawned")
         ((string= name "await-subagents") "awaited")
+        ((string= name "browse") "showed")
+        ((string= name "web-fetch") "fetched")
         (t name)))
 
 (defun steps-line (calls live-name)
@@ -1130,6 +1133,8 @@
   (let* ((frames (ignore-errors (backtrace-frame-objects 40 6)))
          (conv (make-conversation :title (format nil "debugger: ~(~a~)" (type-of condition))
                                   :authority :read-only)))
+    ;; lisp-backtrace reads this copy of the stack (agent-tools.lisp says why a copy)
+    (when (fboundp 'note-debugger-context) (funcall 'note-debugger-context conv condition frames))
     (ensure-conversation-tab conv)
     (start-turn-async conv (condition-prompt condition frames)
                       (format nil "Explain this ~(~a~) and propose a fix." (type-of condition))

@@ -470,8 +470,25 @@
                                              (t t))))
                          return (format nil "~s should be a ~a" k want)))))))
 
+(defun redact-api-key (string)
+  "STRING with every occurrence of the API key replaced by [the API key]. Every tool
+   result passes through here (CLIP-RESULT): a result is sent to the model, shown in
+   the pane and saved with the conversation (agent-store.lisp), and the key must reach
+   none of them — lisp-describe of *AGENT-API-KEY* would otherwise print it."
+  (let ((key *agent-api-key*))
+    (if (and key (>= (length key) 8) (search key string))
+        (with-output-to-string (o)
+          (loop with start = 0
+                for p = (search key string :start2 start)
+                do (write-string string o :start start :end (or p (length string)))
+                   (if p (write-string "[the API key]" o) (loop-finish))
+                   (setf start (+ p (length key)))))
+        string)))
+
 (defun clip-result (string &optional (limit 20000))
-  "A tool result capped at LIMIT characters, saying so when it was cut."
+  "A tool result capped at LIMIT characters, saying so when it was cut — and with the
+   API key taken out (REDACT-API-KEY)."
+  (setf string (redact-api-key string))
   (if (> (length string) limit)
       (format nil "~a~%… [truncated: ~d of ~d characters shown]" (subseq string 0 limit) limit (length string))
       string))
