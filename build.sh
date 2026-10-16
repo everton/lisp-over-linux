@@ -111,6 +111,9 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/web-cdp.lisp"      # the Chrome DevTools protocol over a pipe: JSON, base64, the process
   "$INITRAMFS_DIR/web.lisp"          # the web pane: a headless Chrome tab as a subject (uses shell+fb-browser
                                      #   +image; doc/web-browser.org). Chrome itself comes from the host's disk
+  "$INITRAMFS_DIR/worker-live.lisp"  # a LIVE second process: handles, (:invalidate h), a pipe in the poll
+                                     #   (uses worker + shell + fb-browser's services + web-cdp's set-nonblocking)
+  "$INITRAMFS_DIR/sandbox.lisp"      # Accept tries the definition in a child first (uses worker-live's wire)
   "$INITRAMFS_DIR/repl.lisp"         # run-repl (uses line-editor)
   "$INITRAMFS_DIR/net.lisp"          # interface ioctls + TCP REPL (uses repl + sb-bsd-sockets)
   "$INITRAMFS_DIR/dhcp.lisp"         # DHCP client, the LEASE object, default route, netd renewals (uses net)

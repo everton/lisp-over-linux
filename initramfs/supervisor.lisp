@@ -161,6 +161,10 @@
      job NAME   compute NAME and print a VIEW to stdout (worker.lisp); the parent
                 reads it and presents it, which is how a second process puts
                 something on this screen without touching /dev/fb0 at all.
+     serve NAME stay alive and SERVE live job NAME over stdin/stdout: views by
+                handle, (:invalidate h) when they change (worker-live.lisp)
+     try        read one definition on stdin, Accept it HERE, say how it went —
+                the sandbox PID 1 tries a definition in first (sandbox.lisp)
      repl       a Lisp REPL on this process's terminal — what a terminal pane runs
                 when there is no host shell to run (doc/terminal.org). A separate
                 heap: nothing typed there can hurt the environment.
@@ -173,6 +177,10 @@
            (worker-main (second args)))
           ((and args (string= (first args) "job"))
            (run-worker-job (second args)))
+          ((and args (string= (first args) "serve"))
+           (run-worker-server (second args)))
+          ((and args (string= (first args) "try"))
+           (run-accept-trial))
           ((and args (string= (first args) "repl"))
            (run-repl)
            (sb-ext:exit :abort t))

@@ -2093,7 +2093,13 @@
         (multiple-value-bind (name kind label)
             (if (or (workspace-pane-p pane) (file-pane-p pane)) (values nil nil nil) (accept-target subj))
           (let ((n (accept-source text name kind label)))
-            (setf *browser-status* (format nil "Accepted: ~(~a~)" n))))
+            ;; the Accept sandbox (sandbox.lisp) leaves the trial's pid behind:
+            ;; say it, so a definition tried elsewhere first is visibly that
+            (setf *browser-status*
+                  (let ((trial (and (boundp '*last-sandbox*) (symbol-value '*last-sandbox*))))
+                    (format nil "Accepted: ~(~a~)~@[   (tried first in pid ~a)~]" n
+                            (and (member (getf trial :outcome) '(:accepted :error))
+                                 (getf trial :pid)))))))
       (serious-condition (c)
         (setf *browser-status* (format nil "Accept failed: ~a" c))))))
 

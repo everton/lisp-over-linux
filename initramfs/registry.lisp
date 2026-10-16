@@ -180,6 +180,15 @@
     (or (and d (defn-package d) (find-package (defn-package d)))
         *package*)))
 
+;;; The Accept SANDBOX hook (sandbox.lisp, doc/processes.org §7¾). NIL here, so this
+;;; file stands alone; sandbox.lisp — loaded much later — sets it to a function of
+;;; (TEXT PACKAGE-NAME) that tries the definition in a CHILD process first and
+;;; signals when the child did not survive it. It runs before anything else in
+;;; ACCEPT-SOURCE, before even the READ: a #. in the text is code too.
+(defvar *accept-sandbox* nil
+  "NIL, or a function of (TEXT PACKAGE-NAME) called before Accept touches this image;
+   it signals to refuse. The child that does the trying binds it back to NIL.")
+
 (defun accept-source (text &optional name kind label)
   "Compile TEXT (an edited definition) into the RUNNING image and update the
    registry: eval the form (redefining it live — the Smalltalk 'accept'), and set
@@ -187,7 +196,10 @@
    KIND and LABEL (from the browser pane's subject) are fallbacks — the form is
    authoritative when it names a definition; LABEL (a method's specializer label)
    keeps Accept on the right method when the form's own head isn't enough. Returns the
-   name compiled. Signals on a read/compile error (the caller reports it)."
+   name compiled. Signals on a read/compile error (the caller reports it) — and when
+   *ACCEPT-SANDBOX* refuses TEXT because trying it killed or hung a child process."
+  (when *accept-sandbox*
+    (funcall *accept-sandbox* text (package-name (accept-package name kind))))
   (let* ((form   (let ((*package* (accept-package name kind)))
                    (read-from-string text)))
          (result (eval form)))                  ; compile/redefine in the live image
