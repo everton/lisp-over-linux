@@ -76,7 +76,9 @@
   (quiet-kernel-console)
   (wait-for-browser)                                        ; boots into the module index
 
-  (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'draw-browser 'count (lambda (f &rest args) (push t *draws*) (apply f args))) t)")
+  ;; count every repair that drew anything (the screen's morphs are drawn by
+  ;; LOL.MORPH:WORLD-REPAIR, damage by damage — doc/morphic.org §12)
+  (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'lol.morph:world-repair 'count (lambda (f &rest args) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f args) (unless (= n (lol.morph:world-repairs *world*)) (push t *draws*)))))) t)")
 
   ;; The arrow's (1,2) cell is W — white fill — so it is unmistakable on screen.
   (setf *xres* (probe-int "*fb-xres*"))
@@ -85,7 +87,7 @@
     (sleep 1.0)
     (let* ((x1 (probe-int "*cursor-x*")) (y1 (probe-int "*cursor-y*"))
            (n-move (draws)))
-      (format t "~&  pointer ~a,~a -> ~a,~a   draw-browser calls during the move: ~a~%"
+      (format t "~&  pointer ~a,~a -> ~a,~a   repairs during the move: ~a~%"
               x0 y0 x1 y1 n-move)
       (check "the pointer actually moved" (and x0 x1 (/= x0 x1)))
       (check "a bare pointer move does not redraw" (eql n-move 0))
@@ -98,10 +100,10 @@
 
   (qmp-key "down") (sleep 1.5)
   (let ((n (draws)))
-    (format t "~&  draw-browser calls after one key: ~a~%" n)
+    (format t "~&  repairs after one key: ~a~%" n)
     (check "a key still redraws" (and n (>= n 1))))
 
-  (probe "(sb-int:unencapsulate 'draw-browser 'count)")
+  (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'count)")
 
   ;; PRESS AND DRAG selects text. A source pane, reached the way check-scroll.lisp
   ;; reaches one; then QEMU's left button genuinely held across real EV_REL motion —

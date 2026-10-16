@@ -931,7 +931,6 @@
     (let* ((py (+ y bh 2)) (ph (- h bh 2)))
       (setf (web-tab-page-rect tab) (list x py w ph)
             (web-tab-want-w tab) w (web-tab-want-h tab) ph)
-      (note-drawn x py w ph tab '(draw-web-body web-blit) "web page")
       (if (web-tab-frame-px tab)
           (web-blit canvas tab)
           (progn
@@ -945,6 +944,17 @@
           (lol.canvas:fill-rect canvas x (- (+ py ph) +bar-h+) w +bar-h+ *ui-hi*)  ; font-sized strip
           (lol.canvas:draw-string canvas *bfont* (clip-text msg (max 4 (floor (- w 12) cw)))
                                   (+ x 6) (+ (- (+ py ph) +bar-h+) (text-dy +bar-h+)) *ui-amber*))))))
+
+(defmethod subject-signature ((s subj-web) pane)
+  "What a web pane draws beyond the page's frame (which the service paints itself):
+   the toolbar — back, forward, reload or stop, the address — and the placeholder or
+   the status over the page's foot. When one of these changes the desk draws the pane
+   again (poc/morphic.lisp)."
+  (declare (ignore pane))
+  (let ((tab (subj-web-tab s)))
+    (list (web-tab-url tab) (web-tab-loading tab) (web-tab-state tab) (web-tab-status tab)
+          (web-can-go-p tab -1) (web-can-go-p tab 1) *web-chrome-state* *web-error*
+          (null (web-tab-frame-px tab)))))
 
 (defun web-placeholder (tab)
   "What an empty page area says while there is no frame yet."
@@ -1325,8 +1335,9 @@ window.__lolPickerApply = function(id, v){
    puts it in PRIMARY (lol.clipboard:clip-select), for a middle-click elsewhere."
   (when *web-press*
     (destructuring-bind (tab cx cy count mods) (shiftf *web-press* nil)
-      (multiple-value-bind (rx ry) (web-page-point tab (or (fb-var "*CURSOR-X*") -1)
-                                                   (or (fb-var "*CURSOR-Y*") -1))
+      (multiple-value-bind (rx ry) (multiple-value-call #'web-page-point tab
+                                     (screen-to-pane (current-pane) (or (fb-var "*CURSOR-X*") -1)
+                                                     (or (fb-var "*CURSOR-Y*") -1)))
         (web-mouse tab "mouseReleased" (or rx cx) (or ry cy) :button "left" :count count :mods mods))
       (web-send tab "Runtime.evaluate"
                 (jobj "expression" +web-selection-js+ "returnByValue" t)
@@ -1336,11 +1347,13 @@ window.__lolPickerApply = function(id, v){
                       (lol.clipboard:clip-select s))))))))
 
 (defun web-hover (x y)
-  "A bare pointer move over the page: Chrome needs it for hover menus, tooltips and
-   cursors-that-highlight. The frame that may follow redraws; we do not."
+  "A bare pointer move to the screen point X,Y: over the page, Chrome needs it for
+   hover menus, tooltips and cursors-that-highlight — wherever the pane is, a window
+   included. The frame that may follow redraws; we do not."
   (let ((tab (web-visible-tab)))
     (when (and tab (null *web-press*))
-      (multiple-value-bind (cx cy) (web-page-point tab x y)
+      (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
+                                     (screen-to-pane (current-pane) x y))
         (when cx (web-mouse tab "mouseMoved" cx cy))))))
 
 (defun web-wheel (lines)
@@ -1349,8 +1362,9 @@ window.__lolPickerApply = function(id, v){
    One notch (+WHEEL-LINES+ lines) is 100 CSS pixels, Chrome's own step on Linux."
   (let ((tab (web-visible-tab)))
     (when tab
-      (multiple-value-bind (cx cy) (web-page-point tab (or (fb-var "*CURSOR-X*") 0)
-                                                   (or (fb-var "*CURSOR-Y*") 0))
+      (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
+                                     (screen-to-pane (current-pane) (or (fb-var "*CURSOR-X*") 0)
+                                                     (or (fb-var "*CURSOR-Y*") 0)))
         (unless cx (setf cx 10.0 cy 10.0))
         (web-mouse tab "mouseWheel" cx cy :dy (round (* lines 100) (max 1 +wheel-lines+)))))))
 
@@ -1598,29 +1612,34 @@ window.__lolPickerApply = function(id, v){
 ;;; ---- the event-loop service, for fb-browser.lisp ----------------------------------
 
 (defun web-present-frame (canvas)
-  "Only the page's pixels changed: blit the new frame and hand that rectangle to the
-   world as painted — it composites whatever lies over the page (a window, an
-   overlay's scrim) and sends just that rect (poc/morphic.lisp, SHELL-PAINTED): the
-   economy the systray and the pointer already use, so a scrolling page costs a JPEG
-   decode and one rectangle, not a whole-screen repaint. With no world (a host test),
-   it is sent straight away."
+  "Only the page's pixels changed: blit the new frame straight into the canvas its
+   pane draws into — the screen's, or a window's backing store — and hand that one
+   rectangle to the world (poc/morphic.lisp, PANE-PAINTED): on the screen it
+   composites whatever lies over the page (a window, an overlay's scrim) and sends
+   just that rect; in a window it copies just that rect. The economy the systray and
+   the pointer already use, so a scrolling page costs a JPEG decode and one rectangle,
+   not a repaint. With no world (a host test), it is sent straight away."
   (let ((tab (web-visible-tab)))
     (when (and tab (web-tab-page-rect tab) (web-tab-frame-px tab))
-      (web-blit canvas tab)
-      (if (and (fboundp 'shell-painted) (boundp '*world*) (symbol-value '*world*))
-          (funcall 'shell-painted (list (web-tab-page-rect tab)))
+      (if (and (fboundp 'pane-painted) (boundp '*world*) (symbol-value '*world*))
+          (funcall 'pane-painted (current-pane) canvas
+                   (lambda (c) (web-blit c tab) (list (web-tab-page-rect tab))))
           (destructuring-bind (x y w h) (web-tab-page-rect tab)
+            (web-blit canvas tab)
             ;; by name: lol.fb (poc/fb.lisp) exists in the image, not in a host test
             (funcall (find-symbol "PRESENT-FB-RECT" "LOL.FB") canvas x y w h)
             (when (and (fb-var "*FB-MOUSE*") (not (fb-var "*CURSOR-HIDDEN*")))
               (funcall 'put-cursor canvas (fb-var "*CURSOR-X*") (fb-var "*CURSOR-Y*"))))))))
 
 (defun web-loop-service (canvas dirty)
-  "fb-browser.lisp's per-turn hook (see *FB-SERVICES*). -> :REDRAW to redraw the
-   whole browser; a frame alone is presented here unless a redraw is coming anyway."
+  "fb-browser.lisp's per-turn hook (see *FB-SERVICES*). -> :REDRAW when what the pane
+   shows besides the page changed (a title, the address, a load state — the desk
+   finds which morph, by its signature); a frame alone is painted here, wherever the
+   pane is, and composited by the world even when other damage is pending."
+  (declare (ignore dirty))
   (case (web-service)
     (:redraw :redraw)
-    (:frame (unless dirty (web-present-frame canvas)) nil)))
+    (:frame (web-present-frame canvas) nil)))
 
 (defun web-shutdown ()
   "Close Chrome cleanly: Browser.close lets it flush the profile (cookies, history)

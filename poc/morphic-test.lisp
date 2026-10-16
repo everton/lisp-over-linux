@@ -1,15 +1,17 @@
-;;;; morphic-test.lisp — host test for the World, its windows, the halo's handles, the
-;;;; overlays and stepping (doc/morphic.org, steps 1–5), against the real shell, headless.
+;;;; morphic-test.lisp — host test for the World: its core, the shell as a tree of
+;;;; morphs, windows, the halo's handles, the overlays and stepping (doc/morphic.org,
+;;;; steps 1–5 and §12), against the real shell, headless.
 ;;;;
 ;;;;     sbcl --script poc/morphic-test.lisp        ; exits 0 if every check passes
 ;;;;
 ;;;; The one property damage repair must have, checked after every step of a long
 ;;;; script: the screen built INCREMENTALLY — each event's damage repaired alone, into
-;;;; the same canvas, as the guest's loop does — is pixel for pixel the screen a FULL
-;;;; repair would draw from scratch. A missed rect shows up as a difference at once,
-;;;; anywhere on the screen, for any event. On top of that, the economy: which morphs
-;;;; a repair drew (a window moved is copied, not redrawn; a key in a window redraws
-;;;; the window and the status line, not the shell), and how big the repaired area is.
+;;;; the same canvas, as the guest's loop does — is pixel for pixel the screen the whole
+;;;; tree draws FROM SCRATCH (every window's contents drawn again too, not copied: so a
+;;;; window whose damage was missed shows up as well). A missed rect shows up as a
+;;;; difference at once, anywhere on the screen, for any event. On top of that, the
+;;;; economy: which morphs a repair drew (a key in a pane draws that pane, not the
+;;;; shell; a window moved is copied, not redrawn), and how big the repaired area is.
 ;;;;
 ;;;; The overlays that WAIT (a menu, the value prompt) turn a scripted stand-in for the
 ;;;; backend's loop (SCRIPTED-CYCLE, below), and the screen is checked inside the wait.
@@ -45,13 +47,10 @@
 (defun repair () (lol.morph:world-repair *world* *screen*))
 
 (defun screen-right-p ()
-  "Is the incrementally repaired screen the screen a full repair draws?"
+  "Is the incrementally repaired screen the screen the whole tree draws from scratch?"
   (repair)
   (lol.canvas:fill-rect *fresh* 0 0 +w+ +h+ #x123456)          ; garbage to cover
-  (lol.morph:invalidate *world*)
-  (let ((saved (lol.morph:world-last-repair *world*)))
-    (lol.morph:world-repair *world* *fresh*)
-    (setf (lol.morph:world-last-repair *world*) saved))
+  (lol.morph:world-paint *world* *fresh* :fresh t)
   (equalp (lol.canvas:canvas-pixels *screen*) (lol.canvas:canvas-pixels *fresh*)))
 
 (defun ev (kind &rest args)
@@ -75,13 +74,26 @@
 
 (defun windows () (desk-windows *world*))
 (defun bounds (w) (copy-list (lol.morph:morph-bounds w)))
-(defun drawn () (getf (lol.morph:world-last-repair *world*) :drawn))
+(defun last-repair () (lol.morph:world-last-repair *world*))
+(defun drawn () (getf (last-repair) :drawn))
 (defun drew-p (m) (and (assoc m (drawn)) t))
+(defun shell () (desk-shell *world*))
+(defun tiled-pane () (holder-pane (shell)))
+(defun status () (shell-status (shell)))
+(defun strip () (shell-strip (shell)))
+(defun focus-holder () (morph-holder (lol.morph:world-focus *world*)))
 
 (defun shell-area-drawn ()
-  "Pixels of SHELL the last repair redrew: the area of the rects the shell drew in."
-  (loop for (r . morphs) in (getf (lol.morph:world-last-repair *world*) :per-rect)
-        when (member (desk-shell *world*) morphs) sum (lol.morph:rect-area r)))
+  "Pixels of the SHELL the last repair redrew: the area of the rects in which any of the
+   shell's morphs (the shell, its strip, tray, panes, status line) drew."
+  (loop for (r . morphs) in (getf (last-repair) :per-rect)
+        when (some (lambda (m) (eq (morph-holder m) (shell))) morphs)
+          sum (lol.morph:rect-area r)))
+
+(defun repaired-rects () (getf (last-repair) :rects))
+(defun repaired-only-p (allowed)
+  "Did the last repair draw only morphs in ALLOWED (inside windows too)?"
+  (every (lambda (e) (member (car e) allowed)) (drawn)))
 
 ;;; ---- the core alone: a surface, with plain morphs (doc/morphic.org §12.4) ---------
 
@@ -175,10 +187,17 @@
 (setf *world* (make-desk +w+ +h+))
 (repair)
 
-(format t "~&== the world with one morph ==~%")
-(check "the screen starts as one full repair of the shell"
-       (and (getf (lol.morph:world-last-repair *world*) :full)
-            (equal (mapcar #'car (drawn)) (list (desk-shell *world*)))))
+(format t "~&== the shell is a tree of morphs (doc/morphic.org §12) ==~%")
+(check "the screen starts as one full repair, every morph of the shell drawn"
+       (and (getf (last-repair) :full)
+            (every (lambda (m) (drew-p m))
+                   (list (shell) (strip) (strip-tray (strip)) (shell-area (shell)) (tiled-pane) (status)))))
+(check "the tiled trail's panes are the trail area's children, the last one expanded"
+       (let ((trail (nth (tiled-index) *trails*)))
+         (and (equal (lol.morph:morph-children (shell-area (shell))) trail)
+              (eq (pane-mode (car (last trail))) :expanded))))
+(check "the keyboard focus is the expanded pane"
+       (eq (lol.morph:world-focus *world*) (tiled-pane)))
 (check "a full repair is draw-browser, byte for byte"
        (let ((c (lol.canvas:make-canvas +w+ +h+)))
          (draw-browser c +w+ +h+)
@@ -186,17 +205,64 @@
 (let ((n (lol.morph:world-repairs *world*)))
   (ev :move :x 300 :y 300) (ev :move :x 320 :y 310) (repair)
   (check "a bare pointer move damages nothing" (= n (lol.morph:world-repairs *world*))))
-(keys "down")
-(check "a key damages the shell, and the screen is right" (screen-right-p))
+
+(format t "~&== damage per morph ==~%")
+(let ((p (tiled-pane)))
+  (keys "down")
+  (check "a key in the tiled pane repairs that pane, and nothing else"
+         (and (equal (repaired-rects) (list (lol.morph:morph-bounds p)))
+              (repaired-only-p (list p (first (lol.morph:morph-children p))))))
+  (check "... (its preview, its child, drawn with it; the tabs, the status line not)"
+         (and (not (drew-p (strip))) (not (drew-p (status))) (not (drew-p (shell)))))
+  (check "the screen is right" (screen-right-p))
+  (setf *browser-status* "a message") (repair)
+  (check "a new message in the status line repairs the status line alone"
+         (and (equal (repaired-rects) (list (lol.morph:morph-bounds (status))))
+              (repaired-only-p (list (status)))))
+  (check "the screen is right" (screen-right-p))
+  (setf *browser-status* nil) (repair)
+  (keys "ret")
+  (let ((new (tiled-pane)))
+    (check "a drill: the pane becomes a breadcrumb, the new one expands"
+           (and (not (eq new p)) (eq (pane-mode p) :collapsed) (eq (pane-mode new) :expanded)))
+    (check "... repaired below the tab strip only (the strip is unchanged)"
+           (not (drew-p (strip))))
+    (check "the screen is right" (screen-right-p))
+    (keys "C-g")
+    (check "C-g: back, the breadcrumb expands again" (eq (tiled-pane) p))
+    (check "the screen is right" (screen-right-p))))
+;; the Workspace: typing repairs the Workspace's pane
+(keys "s-2")
+(check "SuperL-2 switches the tiled trail: the strip and the trail area repaired"
+       (and (drew-p (strip)) (drew-p (tiled-pane))))
+(check "the screen is right" (screen-right-p))
+(let ((p (tiled-pane)))
+  (keys "a b")
+  (check "typing in the Workspace repairs the Workspace pane alone"
+         (and (equal (repaired-rects) (list (lol.morph:morph-bounds p)))
+              (repaired-only-p (list p))))
+  (keys "bs bs")
+  (check "the screen is right" (screen-right-p)))
+(keys "s-1")
+;; a change made behind the shell's back (the agent, a service, the REPL): found by
+;; the pane's signature, nothing else redrawn
+(let ((p (tiled-pane)))
+  (setf (pane-view p) (present (pane-subject p))) (repair)
+  (check "a pane's view replaced from outside: that pane alone is repaired"
+         (and (member (lol.morph:morph-bounds p) (repaired-rects) :test #'equal)
+              (not (drew-p (strip))) (not (drew-p (status)))))
+  (check "the screen is right" (screen-right-p)))
 
 (format t "~&== SuperL-g: tear off, grab, move, resize, re-tile ==~%")
 (keys "s-g")
 (let ((w (first (windows))))
   (check "SuperL-g tears the focused trail off into a window" (and w (= 1 (length (windows)))))
-  (check "... which holds the focus" (eq (lol.morph:world-focus *world*) w))
+  (check "... whose expanded pane holds the focus" (eq (focus-holder) w))
+  (check "... the trail's own pane morphs, moved into the window's trail area"
+         (equal (lol.morph:morph-children (window-area w)) (window-trail w)))
   (check "... is in grab mode" (eq (desk-grab *world*) w))
   (check "... and has left the tab strip (one tab, the Workspace)"
-         (and (= 1 (length *tab-rects*)) (= 1 (car (first *tab-rects*)))))
+         (let ((tabs (strip-tabs (strip)))) (and (= 1 (length tabs)) (= 1 (car (first tabs))))))
   (check "the screen is right" (screen-right-p))
   (let ((b0 (bounds w)) (r0 (window-renders w)))
     (keys "right right down")
@@ -215,15 +281,15 @@
     (check "... and the screen is right" (screen-right-p))
     (keys "esc")
     (check "Esc leaves the grab mode" (null (desk-grab *world*))))
-  ;; a key now goes to the WINDOW's pane: the window and the status line redraw
-  (let ((sel (pane-sel (car (last (window-trail w))))))
+  ;; a key now goes to the WINDOW's pane: that pane, in the window's store, and the copy
+  (let* ((p (window-pane w)) (sel (pane-sel p)) (r0 (window-renders w)))
     (keys "down")
-    (check "a key in the focused window moves ITS selection"
-           (= (pane-sel (car (last (window-trail w)))) (1+ sel)))
-    (check "... the repair drew the window"
-           (drew-p w))
-    (check "... and of the shell only the status line"
-           (= (shell-area-drawn) (* +w+ (status-h))))
+    (check "a key in the focused window moves ITS selection" (= (pane-sel p) (1+ sel)))
+    (check "... the repair redrew that pane, in the window's store, and copied it"
+           (and (drew-p p) (drew-p w) (= (1+ r0) (window-renders w))
+                (equal (repaired-rects) (list (lol.morph:morph-bounds p)))))
+    (check "... and none of the shell, nor the window's title bar"
+           (and (zerop (shell-area-drawn)) (not (drew-p (window-title w)))))
     (check "the screen is right" (screen-right-p))))
 
 (format t "~&== the pointer: drag the title bar, the grip, raise, the tab strip ==~%")
@@ -237,6 +303,8 @@
     (destructuring-bind (x y ww wh) (bounds w)
       (drag (+ x ww -4) (+ y wh -4) (+ x ww 76) (+ y wh 36))
       (check "dragging the corner grip resizes it" (equal (subseq (bounds w) 2) (list (+ ww 80) (+ wh 40))))
+      (check "... its panes laid out again to the new size"
+             (= (third (lol.morph:morph-bounds (window-pane w))) (- (+ ww 80) 16)))
       (check "... and the screen is right" (screen-right-p)))
     (list ww wh)))
 ;; a second window: the CL-USER package, torn off over the first
@@ -244,7 +312,7 @@
 (let ((w1 (first (windows))) (w2 (second (windows))))
   (check "a second window, on top and focused"
          (and w2 (eq (car (last (lol.morph:morph-children *world*))) w2)
-              (eq (lol.morph:world-focus *world*) w2)))
+              (eq (focus-holder) w2)))
   (check "the screen is right" (screen-right-p))
   ;; click the first one where the second does not cover it
   (let ((pt (loop for yy from (second (bounds w1)) below (+ (second (bounds w1)) (fourth (bounds w1))) by 7
@@ -257,17 +325,17 @@
       (ev :down :x (car pt) :y (cdr pt)) (ev :up :x (car pt) :y (cdr pt)) (repair)))
   (check "a click raises the window under it and focuses it"
          (and (eq (car (last (lol.morph:morph-children *world*))) w1)
-              (eq (lol.morph:world-focus *world*) w1)
+              (eq (focus-holder) w1)
               (eq (nth *active* *trails*) (window-trail w1))))
   (check "the screen is right" (screen-right-p))
   ;; the trails are (modules: window 1) (Workspace: tiled) (CL-USER: window 2), so
   ;; from window 1 SuperL-Tab goes to the Workspace, then to window 2
   (keys "s-tab")
   (check "SuperL-Tab from a window to a tiled trail gives the shell the focus"
-         (eq (lol.morph:world-focus *world*) (desk-shell *world*)))
+         (eq (focus-holder) (shell)))
   (keys "s-tab")
   (check "... and again, to the next window: raised and focused"
-         (and (eq (lol.morph:world-focus *world*) w2)
+         (and (eq (focus-holder) w2)
               (eq (car (last (lol.morph:morph-children *world*))) w2)))
   (check "the screen is right" (screen-right-p))
   ;; drop the second window on the tab strip: it re-tiles
@@ -276,11 +344,13 @@
     (drag (+ x 30) (+ y 5) (+ x 30) 5))
   (check "dropping a window on the tab strip re-tiles it"
          (and (= 1 (length (windows))) (null (trail-window-of (nth *active* *trails*)))
-              (eq (lol.morph:world-focus *world*) (desk-shell *world*))))
+              (eq (focus-holder) (shell))))
+  (check "... its pane morphs back in the shell's trail area"
+         (equal (lol.morph:morph-children (shell-area (shell))) (nth *active* *trails*)))
   (check "the screen is right" (screen-right-p)))
 
 (format t "~&== a tab dragged out of the strip, the close box, the halo ==~%")
-(let* ((tabs (sort (copy-list *tab-rects*) #'< :key #'car))
+(let* ((tabs (sort (copy-list (strip-tabs (strip))) #'< :key #'car))
        (tab (car (last tabs)))
        (n (length (windows))))
   (drag (+ (cadr tab) 20) 8 700 400 :steps 6)
@@ -299,11 +369,11 @@
 (let ((w (first (windows))))
   (destructuring-bind (x y ww wh) (bounds w)
     (declare (ignore ww wh))
-    (let ((last (car (last (halo-layers (+ x 60) (+ y 80))))))
-      (check "the halo's layers inside a window end on the window, then the shell"
-             (let ((ls (halo-layers (+ x 60) (+ y 80))))
-               (and (eq (getf last :object) (desk-shell *world*))
-                    (eq (getf (car (last ls 2)) :object) w)))))))
+    (let ((ls (halo-layers (+ x 60) (+ y 80))))
+      (check "the halo's layers inside a window: its pane, then its trail area, then the window"
+             (and (eq (getf (car (last ls)) :object) w)
+                  (eq (getf (car (last ls 2)) :object) (window-area w))
+                  (find (window-pane w) ls :key (lambda (l) (getf l :object))))))))
 
 (format t "~&== the font, the last tab ==~%")
 (keys "s-=")
@@ -360,7 +430,7 @@
                (equal (subseq (entry-labels entries) 0 5) '("Move" "Resize" "Raise" "Close" "Re-tile")))
         (check "... then Inspect and the code that draws it"
                (and (member "Inspect" (entry-labels entries) :test #'string=)
-                    (find-if (lambda (l) (search "draw-morph" l)) (entry-labels entries))))
+                    (find-if (lambda (l) (search "layout-window" l)) (entry-labels entries))))
         ;; Move: the hand carries the window, no button held
         (ev :move :x (+ x 60) :y (+ y 80))
         (act "Move")
@@ -407,12 +477,12 @@
   ;; bounds row is selected, C-c C-c asks for a value in the prompt overlay — a wait
   ;; the scripted loop turns — and the window moves
   (setf *active* (window-trail-index w))
-  (with-window-context (w) (trail-push (inspect-subject w)))
-  (window-changed w) (repair)
+  (trail-push (inspect-subject w))
+  (repair)                                  ; the desk lays the new pane out in the window
   (let* ((p (window-pane w))
          (row (position-if (lambda (it) (search "BOUNDS" (princ-to-string (item-label it))))
                            (view-items (pane-view p)))))
-    (set-pane-sel p row) (window-changed w) (repair)
+    (set-pane-sel p row) (repair)           ; found by the pane's signature
     (setf *script* (append (typed "(list 90 100 600 380)") (list (check-inside)) '((:key :key :return :state 0)))
           *nested-right* '())
     (keys "C-c C-c")
@@ -440,7 +510,7 @@
   (check "the screen is right" (screen-right-p))
   ;; the clock ticks behind it: painted straight into the canvas, the scrim and the
   ;; card composited over it by the world
-  (draw-tray *screen* +w+) (shell-painted (list *tray-rect*))
+  (tick-tray *screen*)
   (check "the systray's tick under the Spotter: composited, the screen is right" (screen-right-p))
   (let ((n (length *trails*)) (hit (nth 1 (spotter-hits-list o))))
     (keys "ret")
@@ -469,20 +539,20 @@
            (and inside-area (< inside-area (floor (* +w+ +h+) 4))))
     (check "... and it is gone" (and (null (top-overlay)) (null *chooser-state*))))
   (check "the screen is right" (screen-right-p)))
-;; a menu opened from INSIDE a window: the loop it turns draws the shell with the
-;; shell's hit maps, and the window keeps its own
+;; a menu opened from INSIDE a window: nothing is set aside — the window's pane and the
+;; tiled one each keep what they drew
 (let* ((w (first (windows)))
        (wtop (pane-body-top (window-pane w)))
-       (stop (pane-body-top (holder-pane (desk-shell *world*)))))
+       (stop (pane-body-top (tiled-pane))))
   (setf *active* (window-trail-index w)) (repair)
   (destructuring-bind (x y ww wh) (bounds w)
     (setf *script* (list (check-inside) '(:key :key :escape :state 0)) *nested-right* '())
     (ev :right :x (+ x (floor ww 2)) :y (+ y (floor wh 2))) (repair))
   (check "a right click in a window opens its menu, Esc closes it"
          (and (equal *nested-right* '(t)) (null (top-overlay))))
-  (check "... the window's hit maps and the shell's both kept"
+  (check "... the window's pane and the tiled pane keep their own geometry"
          (and (eql wtop (pane-body-top (window-pane w)))
-              (eql stop (pane-body-top (holder-pane (desk-shell *world*))))))
+              (eql stop (pane-body-top (tiled-pane)))))
   (check "the screen is right" (screen-right-p)))
 ;; the clipboard manager and the value prompt answer through the same wait
 (lol.clipboard:clip-copy "zz-one") (lol.clipboard:clip-copy "zz-two")
@@ -504,33 +574,35 @@
        (= -1 (lol.morph:world-step-timeout *world*)))
 (new-trail (parse-subject "stage:30"))
 (desk-sync *world*) (repair)
-(let* ((p (holder-pane (desk-shell *world*)))
+(let* ((p (tiled-pane))
        (st (view-data (pane-view p))))
   (setf (stage-running st) t)
-  (check "a running stage on screen: the shell steps every frame"
-         (= (lol.morph:morph-step-ms (desk-shell *world*)) +stage-frame-ms+))
+  (check "a running stage on screen: its pane steps every frame"
+         (= (lol.morph:morph-step-ms p) +stage-frame-ms+))
   (lol.morph:world-step-timeout *world*)
-  (let ((n (lol.morph:morph-steps (desk-shell *world*))))
+  (let ((n (lol.morph:morph-steps p)))
     (lol.morph:world-step *world* (+ (lol.morph:now-ms) 1000))
-    (check "a due step steps it" (= (1+ n) (lol.morph:morph-steps (desk-shell *world*)))))
+    (check "a due step steps it" (= (1+ n) (lol.morph:morph-steps p))))
   (repair)
-  (check "the step damaged only the stage's body, not the shell around it"
-         (let ((body (pane-stage-body p)))
-           (equal (getf (lol.morph:world-last-repair *world*) :rects) (list body))))
+  (check "the step damaged only the stage's body"
+         (equal (repaired-rects) (list (lol.morph:to-world-rect p (pane-stage-body p)))))
+  (check "... and drew only its pane (and a window over it): not the tab strip, the breadcrumbs, the status line"
+         (and (drew-p p) (repaired-only-p (cons p (windows)))))
   (check "the screen is right after a step" (screen-right-p))
   ;; the same stage in a window: only that part of its backing store is drawn again
   (keys "s-g esc")
   (let ((w (trail-window-of (nth *active* *trails*))))
-    (check "torn off, the window steps instead of the shell"
-           (and w (lol.morph:morph-step-ms w) (null (lol.morph:morph-step-ms (desk-shell *world*)))))
+    (check "torn off, the stage pane steps in the window"
+           (and w (eq (window-pane w) p) (lol.morph:morph-step-ms p)))
     (lol.morph:world-step-timeout *world*)
     (lol.morph:world-step *world* (+ (lol.morph:now-ms) 2000))
     (repair)
     (check "a step damages the window's stage body only"
-           (let ((rects (getf (lol.morph:world-last-repair *world*) :rects))
-                 (b (pane-stage-body (window-pane w))))
+           (let ((rects (repaired-rects)) (b (pane-stage-body p)))
              (and (= 1 (length rects)) b
-                  (= (lol.morph:rect-area (first rects)) (lol.morph:rect-area b)))))
+                  (= (lol.morph:rect-area (first rects)) (lol.morph:rect-area b))
+                  ;; (the window copies it out, and its frame is drawn over it)
+                  (drew-p p) (repaired-only-p (list* p w (window-frame w) (windows))))))
     (check "the screen is right" (screen-right-p))
     (setf (stage-running st) nil)
     (check "a paused stage steps nothing: back to -1"
@@ -549,7 +621,7 @@
       (repair)
       (check "a terminal in a window: new rows reach it without drawing it again"
              (and w (= r0 (window-renders w))
-                  (let ((rects (getf (lol.morph:world-last-repair *world*) :rects)))
+                  (let ((rects (repaired-rects)))
                     (and rects (every (lambda (r) (< (fourth r) (* 3 (line-h)))) rects))))))
     (check "the screen is right" (screen-right-p))
     (keys "s-w")))
@@ -563,6 +635,8 @@
   (check "a new world tears the same trails off again: same bounds, same z-order"
          (and (>= n 2)
               (equal (desk-window-layout) layout)))
+  (check "... the panes are the new world's morphs now"
+         (every (lambda (w) (eq (lol.morph:morph-world (window-pane w)) *world*)) (windows)))
   (check "the screen is right" (screen-right-p)))
 
 (format t "~&== what it costs, on this host ==~%")
@@ -579,9 +653,12 @@
                              (lol.morph:move-morph w (+ x 10) y) (repair)
                              (lol.morph:move-morph w x y) (repair)))))
     (format t "~&  (that is two moves per sample: there and back)~%")
-    (format t "~&  key in a window (window + status):  ~a ms~%"
+    (format t "~&  key in a window (its pane):         ~a ms~%"
             (ms (lambda () (setf *active* (window-trail-index w))
-                  (ev :key :key :down :state 0) (repair))))))
+                  (ev :key :key :down :state 0) (repair))))
+    (setf *active* (tiled-index)) (repair)
+    (format t "~&  key in the tiled pane (the pane):   ~a ms~%"
+            (ms (lambda () (ev :key :key :down :state 0) (repair))))))
 
 (format t "~&~d checks, ~d failed~%" *checks* *fails*)
 (sb-ext:exit :code (if (zerop *fails*) 0 1))

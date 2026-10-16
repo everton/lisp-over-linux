@@ -64,7 +64,9 @@
     ("3 · present: subjects become views"
      ("CL-USER" "TRAIL-PUSH")             "drilling = pushing a pane onto the trail")
     ("4 · pixels: a view becomes a frame"
-     ("CL-USER" "DRAW-BROWSER")           "the whole frame: tabs, breadcrumbs, the pane, the status line")
+     ("LOL.MORPH" "WORLD-REPAIR")         "the screen is a tree of morphs: each damaged rect redrawn by those over it")
+    ("4 · pixels: a view becomes a frame"
+     ("CL-USER" "DRAW-PANE-EXPANDED")     "a pane draws itself: its panel, its body, the column beside it")
     ("4 · pixels: a view becomes a frame"
      ("LOL.WIDGETS" "DRAW-LIST")          "rows, sections, selection, scrollbar; returns a hit map")
     ("4 · pixels: a view becomes a frame"

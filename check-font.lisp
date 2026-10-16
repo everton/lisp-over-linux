@@ -55,7 +55,8 @@
          (string= "T" (probe "(lol.canvas:font-outline-p *bfont*)")))
   (format t "~&  font: ~a~%" (probe "(lol.canvas:font-description *bfont*)"))
   ;; count every frame from here on
-  (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'draw-browser 'count (lambda (f &rest args) (push t *draws*) (apply f args))) t)")
+  ;; (a frame is a repair that drew: the screen's morphs, damage by damage)
+  (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'lol.morph:world-repair 'count (lambda (f &rest args) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f args) (unless (= n (lol.morph:world-repairs *world*)) (push t *draws*)))))) t)")
   (let* ((disk (string= "T" (probe "(and (settings-path) t)")))
          (s0 (font-state "at boot"))
          (shot0 (screen-bytes)))
@@ -71,7 +72,7 @@
       (check "...and the cell with it" (and (second s1) (> (second s1) (second s0))
                                             (> (third s1) (third s0))))
       (check "...and the layout's row height follows" (eql (fourth s1) (+ (third s1) 5)))
-      (check "...and the screen was redrawn (draw-browser ran)"
+      (check "...and the screen was redrawn (the world repaired it)"
              (and (fifth s1) (fifth s0) (> (fifth s1) (fifth s0))))
       (check "...and the pixels changed (screendump differs)"
              (and shot0 shot1 (not (equalp shot0 shot1))))
@@ -118,7 +119,7 @@
           (check "diskless: no settings file is written (HOME is /)"
                  (string= "NIL" (probe "(settings-path)")))))
     (super "0"))
-  (probe "(sb-int:unencapsulate 'draw-browser 'count)")
+  (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'count)")
   t)
 
 (run-guest-checks "check-font" #'checks)

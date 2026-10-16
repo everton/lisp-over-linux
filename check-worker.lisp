@@ -131,12 +131,13 @@
 ;;; Everything below is asked over the net REPL and NO KEY IS EVER SENT — this
 ;;; script does not even open the QMP channel. A pane opened from the REPL thread
 ;;; joins the loop's poll at its next wake (the systray's clock wakes it once a
-;;; second); after that, the only thing that can make DRAW-BROWSER run is the
-;;; child writing down its pipe. Counting DRAW-BROWSER calls (sb-int:encapsulate,
-;;; as check-pointer.lisp does) is how "the screen changed" is measured.
+;;; second); after that, the only thing that can make the world repair anything is
+;;; the child writing down its pipe. Counting the repairs that drew (wrapping
+;;; LOL.MORPH:WORLD-REPAIR with sb-int:encapsulate, as check-pointer.lisp does — the
+;;; clock's tick paints without one) is how "the screen changed" is measured.
 
 (defun guest-helpers ()
-  (probe "(progn (defvar *zz-frames* 0) (setf *zz-frames* 0) (sb-int:encapsulate 'draw-browser 'zz-count (lambda (f &rest a) (incf *zz-frames*) (apply f a))) t)")
+  (probe "(progn (defvar *zz-frames* 0) (setf *zz-frames* 0) (sb-int:encapsulate 'lol.morph:world-repair 'zz-count (lambda (f &rest a) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f a) (unless (= n (lol.morph:world-repairs *world*)) (incf *zz-frames*)))))) t)")
   (probe "(progn (defun zz-row (label) (let ((it (find label (view-items (pane-view (current-pane))) :key (function item-label) :test (function equal)))) (and it (item-detail it)))) t)")
   (probe "(progn (defun zz-conn () (let ((s (pane-subject (current-pane)))) (and (subj-remote-p s) (subj-remote-conn s)))) t)")
   (probe "(progn (defun zz-group (g) (find g (view-items (pane-view (current-pane))) :key (function item-group) :test (function equal))) t)")
@@ -164,7 +165,7 @@
     (let ((t1 (report-row "ticks after 4 s, no key" (probe-int "(parse-integer (zz-row \"ticks\"))")))
           (f1 (frames)))
       (report-row "ticks before" t0)
-      (report-row "draw-browser calls in those 4 s" (and f0 f1 (- f1 f0)))
+      (report-row "repairs in those 4 s" (and f0 f1 (- f1 f0)))
       (check "the view changed with no key pressed (ticks advanced)" (and t0 t1 (>= (- t1 t0) 2)))
       (check "... and the browser redrew for it (>= 2 frames)" (and f0 f1 (>= (- f1 f0) 2)))))
   (check "the pane is the same pane, its subject the interned one"

@@ -564,12 +564,18 @@
             (lol.canvas:fill-rect canvas x (- (+ y h) ch 4) w (+ ch 4) *ui-hi*)
             (lol.canvas:draw-string canvas *bfont* s (+ x 6) (- (+ y h) ch 2) *ui-amber*)))))))
 
-(defun terminal-paint-dirty (canvas)
-  "If the current pane is a terminal, repaint just the rows its program changed since
-   the last frame. Returns the list of rectangles (x y w h) to send to the screen, or
-   NIL when there is nothing to do this way (then the caller redraws the frame)."
-  (let* ((pane (ignore-errors (current-pane)))
-         (session (and (terminal-pane-p pane) (pane-session pane))))
+(defmethod subject-signature ((s subj-terminal) pane)
+  "What a terminal pane draws beyond its rows (which the service paints itself): the
+   program's fate, the line under the grid once it has ended."
+  (declare (ignore pane))
+  (let ((ss (subj-terminal-session s)))
+    (and ss (list (session-live-p ss) (term-session-message ss)))))
+
+(defun terminal-paint-dirty (pane canvas)
+  "If PANE is a terminal, repaint into CANVAS just the rows its program changed since
+   it was last drawn. Returns the list of rectangles (x y w h) painted, or NIL when
+   there is nothing to do this way (then the caller draws the pane again whole)."
+  (let* ((session (and (terminal-pane-p pane) (pane-session pane))))
     (when (and session (term-session-geometry session) (null (pane-side pane)))
       (let ((term (term-session-term session)))
         (destructuring-bind (gx gy cols rows cw ch) (term-session-geometry session)

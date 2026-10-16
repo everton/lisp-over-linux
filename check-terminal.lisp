@@ -90,11 +90,12 @@
     (wait-until (term-form "(plusp (length (lol.terminal:term-row-text ~a 0)))"))
 
     (format t "~&~%== typing: echo hi ==~%")
-    ;; count full frames while typing: a key into a terminal should repaint rows only
-    (probe "(progn (defvar *frames* 0) (setf *frames* 0) (sb-int:encapsulate 'draw-browser 'count (lambda (f &rest a) (incf *frames*) (apply f a))) t)")
+    ;; count whole draws of the terminal's pane while typing: a key into a terminal
+    ;; should repaint rows only (painted straight in, not drawn by the pane morph)
+    (probe "(progn (defvar *frames* 0) (setf *frames* (lol.morph:morph-draws (current-pane))) t)")
     (qmp-type "echo hi") (qmp-key "ret") (sleep 2)
-    (let ((frames (row "full frames while typing 8 keys" (probe-int "*frames*"))))
-      (probe "(progn (sb-int:unencapsulate 'draw-browser 'count) t)")
+    (let ((frames (row "whole draws of the terminal while typing 8 keys"
+                       (probe-int "(- (lol.morph:morph-draws (current-pane)) *frames*)"))))
       (check "typing repaints rows, not frames (fewer than 3 frames for 8 keys)"
              (and frames (< frames 3))))
     (check "the grid shows the row \"hi\"" (row "a row reads hi" (screen-has "hi")))

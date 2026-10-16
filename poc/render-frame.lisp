@@ -9,8 +9,9 @@
 ;;;; It loads the real stack in the real order (registry -> model -> present ->
 ;;;; canvas -> textview -> shell — the same list build.sh uses, minus the parts that
 ;;;; touch hardware), seeds the environment on a subject named on the command line,
-;;;; optionally replays a script of keystrokes and clicks, calls the real
-;;;; DRAW-BROWSER into a canvas, and dumps the pixels as a PPM.
+;;;; optionally replays a script of keystrokes and clicks, has the real world repair
+;;;; itself into a canvas — every morph drawing itself, as in the guest — and dumps
+;;;; the pixels as a PPM.
 ;;;;
 ;;;; It is pixel-identical to /dev/fb0 by construction rather than by luck: the guest
 ;;;; runs THIS canvas through lol.fb:present-fb, which is a byte-for-byte copy of the
@@ -75,7 +76,7 @@
     "poc/terminal.lisp"           ; lol.terminal — the VT engine
     "initramfs/pty.lisp"          ; pseudo-terminals (real ones: terminal:CMD runs CMD)
     "initramfs/file-views.lisp"   ; folders and files as subjects
-    "poc/shell.lisp"              ; draw-browser itself
+    "poc/shell.lisp"              ; the shell: panes, tabs, the status line, input
     "poc/file-manager.lisp"       ; the file manager's keys and prompts
     "initramfs/runs.lisp"         ; run panes: a command's output, streamed (needs shell)
     "initramfs/containers.lisp"   ; containers as subjects (no lol-ct on the host: says so)
@@ -396,7 +397,7 @@ OPTIONS
   "Replay SCRIPT (space-separated tokens) through the real input entry points — the
    world's event routing (poc/morph.lisp), exactly as the guest's loop feeds it. The
    world is repaired between steps because clicks hit-test against geometry the
-   drawing records (*crumb-rects*, a pane's PANE-BODY-TOP and PANE-CELLS) — without a
+   drawing records (a pane's PANE-ROWS, PANE-BODY-TOP and PANE-CELLS) — without a
    draw in between, a scripted click would test against a stale layout, which is
    precisely the class of bug this harness exists to catch."
   (declare (ignore w h))
@@ -416,8 +417,15 @@ OPTIONS
                    (send :drag x2 y2 0)
                    (lol.morph:world-repair *world* canvas)
                    (send :up x2 y2 0)))
-          ;; the wheel token counts LINES, as BROWSER-SCROLL does (not notches)
-          (:wheel (browser-scroll arg) (shell-changed))
+          ;; the wheel token counts LINES, as BROWSER-SCROLL does (not notches): a whole
+          ;; number of notches goes through the world, at the middle of the screen
+          (:wheel (if (zerop (mod arg +wheel-lines+))
+                      (lol.morph:world-dispatch
+                       *world* (lol.morph:make-event
+                                :kind :wheel :notches (- (floor arg +wheel-lines+)) :state state
+                                :x (floor (third (lol.morph:morph-bounds *world*)) 2)
+                                :y (floor (fourth (lol.morph:morph-bounds *world*)) 2)))
+                      (progn (browser-scroll arg) (lol.morph:invalidate *world*))))
           (t (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key key
                                                                      :state state)))))
       (pump-terminals 0.3))))
@@ -495,11 +503,11 @@ OPTIONS
           (let* ((cands (spotter-candidates))
                  (hits (spotter-results *spotter-query* cands)))
             (draw-spotter-card canvas w h *spotter-query* hits 0))
-          ;; the whole world, freshly: the shell (DRAW-BROWSER) and any windows
+          ;; the whole world, freshly: the shell's morphs and any windows
           (progn (lol.morph:invalidate *world*)
                  (lol.morph:world-repair *world* canvas)))
       (when *halo-at*
-        ;; the halo reads *DRAWN* from the frame just drawn, as it does in the guest
+        ;; the halo walks the morph tree under the point, as it does in the guest
         (destructuring-bind (hx hy &optional (depth 0)) *halo-at*
           (let* ((layers (halo-layers hx hy))
                  (depth (min depth (1- (length layers)))))

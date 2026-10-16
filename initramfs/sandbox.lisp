@@ -31,8 +31,8 @@
 ;;;; Accept's side effects again in every trial.
 ;;;;
 ;;;; What it does not catch, said plainly: a definition that is fine to LOAD and
-;;;; wrong to CALL. Redefine DRAW-BROWSER with an infinite loop in its body and the
-;;;; trial passes — nothing calls it in the child — and the next frame hangs PID 1.
+;;;; wrong to CALL. Redefine DRAW-PANE-EXPANDED with an infinite loop in its body and
+;;;; the trial passes — nothing calls it in the child — and the next repair hangs PID 1.
 ;;;; The child has no screen, no input and no event loop, so it cannot exercise what
 ;;;; the definition will be used for. Catching that needs the child to run the CALLER
 ;;;; (a frame, headless, as render-frame.lisp does on the host) — not attempted.

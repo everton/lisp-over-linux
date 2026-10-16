@@ -1211,22 +1211,15 @@
       (max 0 (- +cursor-idle-ms+ (ms-since *pointer-active-at*)))))
 
 ;;; The systray's clock is the second thing on screen that changes without input
-;;; (the stage is the first). It does NOT repaint the frame: DRAW-TRAY repaints the
-;;; tray's own strip of the canvas, and only that rectangle is sent — the same
-;;; economy as the pointer.
+;;; (the stage is the first). It does NOT repaint the frame: the TRAY morph repaints
+;;; its own strip of the canvas (TICK-TRAY, poc/morphic.lisp), and only that rectangle
+;;; is sent — the same economy as the pointer.
 (defun tray-timeout ()
   "Ms until the clock's next tick: the next wall-clock second, or minute when the
    tray shows no seconds (*CLOCK-SECONDS*), plus a few ms so we land just past it."
   (multiple-value-bind (sec usec) (sb-ext:get-time-of-day)
     (+ 5 (- (if *clock-seconds* 1000 (* 1000 (- 60 (mod sec 60))))
             (floor usec 1000)))))
-
-(defun tick-tray (canvas w)
-  "Repaint the tray strip into the canvas and hand it to the world as painted: the
-   next repair composites whatever lies over it (a window, an overlay's scrim) and
-   sends just that rectangle (SHELL-PAINTED, LOL.MORPH:NOTE-PAINTED)."
-  (draw-tray canvas w)
-  (when *tray-rect* (shell-painted (list *tray-rect*))))
 
 (defun earliest-timeout (&rest timeouts)
   "The soonest of several poll timeouts in ms, where -1 means 'no deadline'."
@@ -1405,9 +1398,11 @@
   (let* ((canvas *fb-canvas*) (xres *fb-xres*) (yres *fb-yres*)
          (waiting (plusp *blocking-overlays*)))
     ;; the agent (agent-ui.lisp): stream a reply into its panes and run the tool calls
-    ;; its turn posted — on THIS thread, so not while something below is waiting
-    (when (and (not waiting) (fboundp 'agent-ui-tick) (funcall 'agent-ui-tick))
-      (environment-changed))
+    ;; its turn posted — on THIS thread, so not while something below is waiting. What
+    ;; it changed (a conversation's text, a tab's dot, the tray's cost) the repair's
+    ;; own look at the morphs' signatures finds (DESK-SYNC, poc/morphic.lisp).
+    (when (and (not waiting) (fboundp 'agent-ui-tick))
+      (funcall 'agent-ui-tick))
     (multiple-value-call #'present-repair canvas (lol.morph:world-repair *world* canvas))
     (multiple-value-bind (kb ms kev xs)
         (fbb-wait 0 *fb-mouse* *fb-kbd*
@@ -1437,9 +1432,9 @@
         (when (and ms (not (lol.morph:world-damaged-p *world*))
                    (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
           (move-cursor canvas ox oy)
-          ;; (a page in a WINDOW, or under an overlay, gets no hover: the services see
-          ;; the shell's geometry)
-          (unless (or (focused-window) (top-overlay))
+          ;; the screen point: a page finds itself under it, in a window too (a page
+          ;; under an overlay gets no hover — the overlay has the pointer)
+          (unless (top-overlay)
             (fb-service-call :motion *cursor-x* *cursor-y*))))
       ;; a run asked to stop that has not: SIGKILL after the grace
       (escalate-run-stops)
@@ -1447,13 +1442,11 @@
       ;; program up (SIGHUP, as closing a window)
       (when (or kb ms kev) (terminal-sweep))
       ;; the services (a web page's frames, the terminals, the live workers): every
-      ;; turn, since they also react to what input just did. With a WINDOW focused the
-      ;; web page is told a full redraw is coming: it paints at the shell's geometry.
-      (when (member :redraw (fb-service-call :run canvas
-                                             (or (lol.morph:world-damaged-p *world*)
-                                                 (focused-window))))
+      ;; turn, since they also react to what input just did. A frame, a terminal's rows
+      ;; are painted where their pane is (PAINT-INTO); what else a service changed the
+      ;; desk finds by the morphs' signatures (ENVIRONMENT-CHANGED)
+      (when (member :redraw (fb-service-call :run canvas (lol.morph:world-damaged-p *world*)))
         (environment-changed))
-      (when xs (service-woke))
       ;; the morphs that change on their own: each damages only what it changed
       (lol.morph:world-step *world*)
       ;; nothing was ready: a deadline fired. An idle pointer hides; the clock is cheap,
@@ -1461,7 +1454,7 @@
       (unless (or kb ms kev xs)
         (when (zerop (cursor-idle-timeout))
           (hide-cursor canvas))
-        (tick-tray canvas xres)))
+        (tick-tray canvas)))
     nil))
 
 (defun run-browser-fb (&optional root)

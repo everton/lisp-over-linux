@@ -30,7 +30,8 @@
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
                  "initramfs/sysinfo.lisp" "poc/inflate.lisp" "poc/image.lisp"
                  "initramfs/files.lisp" "initramfs/file-views.lisp"
-                 "poc/shell.lisp" "poc/file-manager.lisp"
+                 "poc/shell.lisp" "poc/file-manager.lisp" "initramfs/runs.lisp"
+                 "poc/morphic.lisp"     ; the desk: what is on screen is morphs in a world
                  "initramfs/web-cdp.lisp" "initramfs/web.lisp"))
       (funcall 'load-recording (merge-pathnames m *root-dir*)))))
 
@@ -69,9 +70,16 @@
     (format t "~&  wrote ~a~%" path)))
 
 (defun frame ()
-  "What the framebuffer loop does each turn, minus the screen: service, then draw."
+  "What the framebuffer loop does each turn, minus the screen: service, then repair
+   the world (doc/morphic.org: the panes are morphs in it)."
   (web-service)
-  (draw-browser *canvas* *w* *h*))
+  (lol.morph:world-repair *world* *canvas*))
+
+(defun browser-click (x y)
+  "A left click at the screen point X,Y, as the loop routes one: through the world, to
+   the morph under it (a web page's pane, its toolbar)."
+  (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :down :x x :y y))
+  (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :up :x x :y y)))
 
 (defun pump-until (pred &optional (seconds 15))
   "Run frames until PRED is true. -> its value, or NIL on timeout."
@@ -157,6 +165,7 @@
   (sb-posix:setenv "HOME" (format nil "/tmp/lol-web-test-home-~d" (sb-posix:getpid)) 1)
   (set-browser-font (lol.canvas:load-font (namestring (merge-pathnames "cozette.lolf" *poc-dir*))))
   (open-environment (subj-workspace))
+  (setf *world* (make-desk *w* *h*))
   (format t "~&web pane, host Chrome (~a)~%" *web-chrome-binary*)
   (unwind-protect
        (progn

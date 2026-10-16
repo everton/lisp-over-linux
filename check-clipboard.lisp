@@ -197,7 +197,7 @@
   (check "back on the next move" (string= (probe "*cursor-hidden*") "NIL"))
 
   (format t "~&~%== I. the systray ==~%")
-  (check "the tray is drawn" (yes "(and *tray-rect* t)"))
+  (check "the tray is drawn" (yes "(and (tray-clip (desk-tray)) t)"))
   (format t "~&  tray items: ~a~%" (probe "(tray-items)"))
   (qmp-hold "meta_l" "slash") (sleep 1.5)
   (shot "cheatsheet")

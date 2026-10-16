@@ -43,6 +43,11 @@
 ;; SuperL-drill opens a NEW trail.
 (defvar *trails* '() "The open trails — a list of trails, each a list of PANEs.")
 (defvar *active* 0    "Index into *trails* of the focused trail.")
+(defvar *world* nil
+  "The world the environment is running in — a DESK (poc/morphic.lisp), whose morphs
+   are everything on screen, these panes among them — or NIL outside it. Made fresh
+   by each entry point (run-browser-fb, run-browser.lisp, render-frame.lisp) for its
+   canvas size.")
 
 ;;; A PANE is a MORPH (doc/morphic.org §12): the object that holds a subject and its
 ;;; view IS the thing on screen that draws it and takes its events. It used to be a
@@ -112,7 +117,19 @@
                :documentation "The stage's viewport (x y w h), for clicks.")
    (stage-body :initform nil :accessor pane-stage-body
                :documentation "The whole stage body (viewport, heads-up line, transcript)
-   as last drawn: all that a tick can change, so a stepping stage damages only this."))
+   as last drawn: all that a tick can change, so a stepping stage damages only this.")
+   (body-rect :initform nil :accessor pane-body-rect
+              :documentation "The rect its body (the text, the list, the grid ...) was
+   drawn in: what the halo outlines as the pane's text view, or its list.")
+   ;; ---- where it is: set by the layout of the trail it belongs to ----------------
+   (mode :initform nil :accessor pane-mode
+         :documentation ":COLLAPSED (an ancestor: a breadcrumb bar), :EXPANDED (the
+   trail's current pane: a panel and its body) or :SIDE (in an expanded pane's
+   right-hand column: its side pane, or its nav-split preview). NIL off screen.")
+   (split-plan :initform nil :accessor pane-split-plan
+            :documentation "An expanded pane's split, as EXPANDED-COLUMNS laid it out.")
+   (sig :initform nil :accessor pane-sig
+        :documentation "What its picture was last a function of (doc/morphic.org §12.6)."))
   (:documentation "A subject, presented: its view, where you are in it, and — being a
    morph — where it is on screen and what it drew there."))
 
@@ -122,6 +139,15 @@
   (apply #'make-instance 'pane initargs))
 
 (defun pane-p (x) (typep x 'pane))
+
+(defun screen-to-pane (pane x y)
+  "The screen point X,Y in the coordinates PANE draws and records in — a window's,
+   when PANE is in one (doc/morphic.org §12.4) -> (values X Y). A backend that knows
+   only where the pointer is on the screen (the web page's hover, its wheel) asks this."
+  (if (and pane (lol.morph:morph-owner pane))
+      (multiple-value-bind (ox oy) (lol.morph:surface-origin pane)
+        (values (- x ox) (- y oy)))
+      (values x y)))
 
 (defmethod print-object ((p pane) stream)
   "#<PANE workspace> — what it shows, which is how you tell two apart (the halo's
@@ -349,8 +375,6 @@
    backend, because BOTH backends need it and they learn about the wheel very
    differently: the guest decodes an evdev REL_WHEEL record, the X11 host receives
    a ButtonPress on button 4/5 (doc/input.org §6-7).")
-(defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
-(defvar *tab-rects* '()  "alist (trail-index . (x0 . x1)) for the top tab strip, set on draw.")
 (defvar *pending-prefix* nil
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
@@ -808,21 +832,6 @@
                   (if (eq (item-disposition item) :in-place) :dim :bright))
      :group (item-group item))))
 
-(defvar *drawn* '()
-  "Everything the last frame drew that you might point at, as
-   ((x y w h object drawers label) …): the OBJECT that is on screen there and the
-   DRAWERS — the functions whose code put it there, the one that paints it first.
-
-   This is what lets the halo answer \"who drew me?\" for any pixel. Morphic gets it
-   for free, because there every thing on screen IS an object (a morph) that draws
-   itself; here drawing is plain functions over plain structs, so the drawing
-   functions say what they drew, the way they already record their hit maps. Reset
-   by DRAW-BROWSER at the top of every frame.")
-
-(defun note-drawn (x y w h object drawers label)
-  "Record that DRAWERS painted OBJECT into the rect X,Y,W,H (see *DRAWN*)."
-  (push (list x y w h object drawers label) *drawn*))
-
 (defun draw-list-body (canvas pane x y w h)
   "Render a list view: the widget does rows, sections, selection and the scrollbar;
    this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
@@ -832,8 +841,6 @@
    special held both, whichever went second used to overwrite the other's map, so a
    click in the left list hit-tested against the right one's rows."
   (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
-    (note-drawn x y w h (pane-view pane) '(draw-list-body item->row lol.widgets:draw-list)
-                (format nil "list of ~d rows" (length rows)))
     (multiple-value-bind (top hits)
         (lol.widgets:draw-list canvas x y w h rows
                                :sel (pane-sel pane) :top (pane-top pane)
@@ -957,8 +964,6 @@
                         (cons (+ ox (body-x b) (round (- (* (car p) c) (* (cdr p) sn))))
                               (+ oy (body-y b) (round (+ (* (car p) sn) (* (cdr p) c))))))
                       (stage-sprite-points b))))
-    (note-drawn (- (+ ox (body-x b)) r) (- (+ oy (body-y b)) r) (* 2 r) (* 2 r)
-                b '(draw-stage-sprite stage-sprite-points) "sprite")
     (lol.canvas:draw-poly canvas pts color)
     ;; the station's ring and core — a hexagon alone reads as a rock
     (when (eq (body-kind b) :station)
@@ -1174,22 +1179,12 @@
   "The semantic tint for TRAIL's tab — from its ROOT view (see VIEW-KIND-COLOR)."
   (view-kind-color (pane-view (first trail))))
 
-(defvar *tab-close-rects* '()
-  "alist ((trail-index . (x0 . x1)) …) of every tab's × close hit-box. The design
-   mock-up (media/browser-views-design.html §1) puts a × on EVERY tab, not only the
-   focused one — closing a tab you are not in is the common case, and having to focus
-   it first is a step the picture does not ask for.")
-(defvar *tab-plus-rect* nil  "x-range (x0 . x1) of the + new-tab hit-box, or NIL.")
-
 ;;; ---- the systray: the right end of the tab strip -----------------------------
 ;;; What the user's StumpWM mode line shows on the host, in the same order — battery,
 ;;; then the date and time — plus an icon for the clipboard history. The DATA comes
 ;;; from initramfs/sysinfo.lisp (TRAY-ITEMS); this only lays it out. It is drawn into
 ;;; its own rectangle so the clock can tick by repainting just that strip
 ;;; (DRAW-TRAY), not the whole frame. See doc/systray.org.
-
-(defvar *tray-rect* nil "The tray's rectangle (x y w h), set on draw.")
-(defvar *tray-clip-rect* nil "The clipboard icon's x-range (x0 . x1), for clicks.")
 
 (defun tray-tone-color (tone)
   "A tray tone as a colour — the battery's green / yellow / red (the host script's),
@@ -1251,19 +1246,17 @@
        8)))
 
 (defun draw-tray (canvas w)
-  "Paint the tray, right-aligned in the tab strip: [clip] | BAT 87% | 2026-10-02 09:01.
-   An item with :ICON :AGENT is drawn as the agent's creature, then its text.
-   Records *TRAY-RECT* and *TRAY-CLIP-RECT*. Returns the tray's left edge."
+  "Paint the tray, right-aligned at W in the tab strip: [clip] | BAT 87% | 2026-10-02
+   09:01. An item with :ICON :AGENT is drawn as the agent's creature, then its text.
+   Returns (values X0 CLIP): the tray's left edge, and the clipboard icon's x-range
+   (x0 . x1) for clicks (the TRAY morph keeps it — poc/morphic.lisp)."
   (let* ((items (ignore-errors (tray-items)))
          (tw (tray-width))
          (x0 (- w tw))
-         (pen (+ x0 8)))
+         (pen (+ x0 8))
+         (clip (cons (- pen 3) (+ pen 13))))
     (lol.canvas:fill-rect canvas x0 0 tw (- +bar-h+ 1) *ui-bg*)
-    (note-drawn x0 0 tw (- +bar-h+ 1) items '(draw-tray tray-items) "the systray")
-    (note-drawn (- pen 3) 0 16 (- +bar-h+ 1) (lol.clipboard:clip-current)
-                '(draw-clip-icon open-clipboard-manager) "the clipboard icon")
     (draw-clip-icon canvas pen (floor (- +bar-h+ 13) 2) (if (lol.clipboard:clip-current) *ui-accent* *ui-dim*))
-    (setf *tray-clip-rect* (cons (- pen 3) (+ pen 13)))
     (incf pen 14)
     (dolist (it items)
       (lol.canvas:draw-string canvas *bfont* "|" (+ pen 4) (text-dy +bar-h+) *ui-rule*)
@@ -1274,8 +1267,7 @@
                                         (if (member (getf it :kind) '(:battery :wifi :wired :agent))   ; :agent — agent-ui.lisp
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
-    (setf *tray-rect* (list x0 0 tw (- +bar-h+ 1)))
-    x0))
+    (values x0 clip)))
 
 (defvar *trail-windowed-p* nil
   "A function (TRAIL) -> true when TRAIL is shown in a window of its own rather than
@@ -1287,13 +1279,16 @@
 (defun draw-tabs (canvas w)
   "The top tab strip: one tab per open trail, each with a kind-coloured stripe and its
    SuperL-number badge; the active one is highlighted (brighter bg + accent top-rule +
-   an × close), and a + after the last tab opens a fresh Workspace. Records *tab-rects*
-   / *tab-close-rect* / *tab-plus-rect* so clicks and drawing can't disagree; the app
-   name sits at the right when there's room."
-  (setf *tab-rects* '() *tab-close-rects* '() *tab-plus-rect* nil)
-  (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
-  (note-drawn 0 0 w +bar-h+ *trails* '(draw-tabs) "the tab strip")
-  (let ((x 8) (multi (cdr *trails*)))                        ; align with the 8px gutter below
+   an × close), and a + after the last tab opens a fresh Workspace. The design mock-up
+   (media/browser-views-design.html §1) puts the × on EVERY tab, not only the focused
+   one — closing a tab you are not in is the common case. Returns its hit maps, so
+   clicks and drawing can't disagree (the TAB-STRIP morph keeps them):
+   (values TABS CLOSES PLUS) — ((trail-index . (x0 . x1)) …) for the tabs and for their
+   × boxes, and the + button's (x0 . x1). The systray at the right end is a morph of
+   its own, drawn after this one."
+  (let ((x 8) (multi (cdr *trails*))                        ; align with the 8px gutter below
+        (tabs '()) (closes '()) (plus nil))
+    (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
     (loop for trail in *trails* for i from 0
           for active = (= i *active*)
           for closer = multi                     ; every tab gets a ×, once there are >1
@@ -1331,35 +1326,30 @@
                  (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
                    (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
                                            (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
-                   (push (cons i (cons cx (+ cx (char-w) 8))) *tab-close-rects*)))
-               (push (cons i (cons x (+ x tw))) *tab-rects*)
-               (note-drawn x 0 tw +bar-h+ trail '(draw-tabs trail-title)
-                           (format nil "tab ~d · ~a" (1+ i) (trail-title trail)))
+                   (push (cons i (cons cx (+ cx (char-w) 8))) closes)))
+               (push (cons i (cons x (+ x tw))) tabs)
                (incf x (+ tw 6))))                ; 6px gap between tabs
     ;; the + new-tab button
     (let ((px (+ x 2)))
       (lol.canvas:fill-rect canvas px 0 (+ (char-w) 8) +bar-h+ *ui-panel*)
       (lol.canvas:draw-string canvas *bfont* "+" (+ px 4) (text-dy +bar-h+) *ui-accent*)
-      (setf *tab-plus-rect* (cons px (+ px (char-w) 8)))
+      (setf plus (cons px (+ px (char-w) 8)))
       (setf x (+ px (char-w) 8)))
     ;; a hairline seam under the whole strip
     (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
-    ;; the systray where the app's name used to sit
-    (draw-tray canvas w)))
+    (values tabs closes plus)))
 
-(defun draw-crumb (canvas y w pane index)
-  "A collapsed ancestor bar: a kind-coloured stripe, the subject's title, and what
-   was picked inside it. The stripe is what makes a deep trail readable at a glance —
-   four grey bars say nothing, but gold/blue/green says package, class, generic."
+(defun draw-crumb (canvas x y w pane)
+  "A collapsed ancestor bar, W wide at X,Y: a kind-coloured stripe, the subject's
+   title, and what was picked inside it. The stripe is what makes a deep trail
+   readable at a glance — four grey bars say nothing, but gold/blue/green says
+   package, class, generic."
   (let ((tint (view-kind-color (pane-view pane)))
         (sel (selected-item pane)))
-    (lol.widgets:draw-bar canvas 8 y (- w 16)
+    (lol.widgets:draw-bar canvas x y w
                           :marker ">" :label (view-title (pane-view pane)) :tint tint
                           :right (and sel (format nil "picked ~a" (item-label sel))))
-    (lol.canvas:fill-rect canvas 8 y 3 +bar-h+ tint)        ; the kind stripe
-    (note-drawn 8 y (- w 16) +bar-h+ pane '(draw-crumb)
-                (format nil "breadcrumb · ~a" (short-title (view-title (pane-view pane))))))
-  (push (cons index y) *crumb-rects*))
+    (lol.canvas:fill-rect canvas x y 3 +bar-h+ tint)))      ; the kind stripe
 
 (defun preview-for (pane subject)
   "The cached read-only PANE that PANE's nav split shows for SUBJECT (its right-hand
@@ -1375,35 +1365,40 @@
         (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
     (pane-preview pane)))
 
-(defun draw-pane-body (canvas pane x y w h &optional (into :main))
+(defun draw-pane-body (canvas pane x y w h)
   "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
    into the rect. The one place that knows how each view kind paints, so the expanded
-   pane and the nav-split preview stay identical. INTO is passed to DRAW-LIST-BODY."
-  (when (eq into :side)                  ; the main pane is noted with its panel
-    (note-drawn x y w h pane '(draw-pane-body)
-                (format nil "side pane · ~a" (short-title (view-title (pane-view pane))))))
+   pane and the nav-split preview stay identical. The rect is kept (PANE-BODY-RECT):
+   it is what the halo outlines as the body."
+  (setf (pane-body-rect pane) (list x y w h))
   (cond
     ((pane-tv pane)
      (lol.textview:tv-geometry (pane-tv pane) x y w h)
-     (note-drawn x y w h (pane-tv pane) '(lol.textview:tv-draw) "text view")
      (lol.textview:tv-draw canvas (pane-tv pane)))
-    ((eq (view-kind (pane-view pane)) :matrix)
-     (note-drawn x y w h (view-data (pane-view pane)) '(draw-matrix-body lol.widgets:draw-grid)
-                 "dispatch matrix")
-     (draw-matrix-body canvas pane x y w h))
-    ((eq (view-kind (pane-view pane)) :stage)
-     (note-drawn x y w h (view-data (pane-view pane)) '(draw-stage-body) "stage")
-     (draw-stage-body canvas pane x y w h))
-    ((eq (view-kind (pane-view pane)) :image)
-     (note-drawn x y w h (view-data (pane-view pane)) '(draw-image-body) "image")
-     (draw-image-body canvas pane x y w h))
+    ((eq (view-kind (pane-view pane)) :matrix) (draw-matrix-body canvas pane x y w h))
+    ((eq (view-kind (pane-view pane)) :stage) (draw-stage-body canvas pane x y w h))
+    ((eq (view-kind (pane-view pane)) :image) (draw-image-body canvas pane x y w h))
     ;; a web page (initramfs/web.lisp): Chrome's frame under a toolbar
     ((eq (view-kind (pane-view pane)) :web)
      (funcall 'draw-web-body canvas pane x y w h))
     ((terminal-pane-p pane)                       ; poc/terminal-pane.lisp
-     (note-drawn x y w h (pane-subject pane) '(draw-terminal-body) "terminal")
      (funcall 'draw-terminal-body canvas pane x y w h))
     (t (draw-list-body canvas pane x y w h))))
+
+(defun pane-body-element (pane)
+  "What the halo calls PANE's body, as (values OBJECT DRAWERS LABEL): the instance on
+   screen there and the functions whose code paints it."
+  (let ((kind (view-kind (pane-view pane))))
+    (cond
+      ((pane-tv pane) (values (pane-tv pane) '(lol.textview:tv-draw) "text view"))
+      ((eq kind :matrix) (values (view-data (pane-view pane)) '(draw-matrix-body lol.widgets:draw-grid)
+                                 "dispatch matrix"))
+      ((eq kind :stage) (values (view-data (pane-view pane)) '(draw-stage-body) "stage"))
+      ((eq kind :image) (values (view-data (pane-view pane)) '(draw-image-body) "image"))
+      ((eq kind :web) (values (view-data (pane-view pane)) '(draw-web-body web-blit) "web page"))
+      ((terminal-pane-p pane) (values (pane-subject pane) '(draw-terminal-body) "terminal"))
+      (t (values (pane-view pane) '(draw-list-body item->row lol.widgets:draw-list)
+                 (format nil "list of ~d rows" (length (view-items (pane-view pane)))))))))
 
 (defparameter +non-list-kinds+ '(:matrix :stage :image :web :terminal)
   "View kinds with no textview that are NOT lists either: they draw themselves, and
@@ -1492,133 +1487,138 @@
        (let ((sel (selected-item pane)))
          (and sel (item-subject sel)))))
 
-(defvar *status-pane* nil
-  "The pane whose keys the status line advertises, when that is not the tiled shell's
-   current pane — a focused WINDOW's (poc/morphic.lisp). NIL: the current pane.")
+;;; ---- the expanded pane: a panel, its body, and maybe a column beside ----------
+;;; A trail on screen is a TRAIL-AREA morph whose children are its panes
+;;; (poc/morphic.lisp): the ancestors collapsed to breadcrumb bars (DRAW-CRUMB), the
+;;; last one EXPANDED — drawn here. What it shows in its right-hand column, if
+;;; anything, is a pane too, a child morph of this one (the side pane you pinned, or
+;;; the nav split's preview), which draws its own body after this. So the split is
+;;; decided before anything is drawn (EXPANDED-COLUMNS, called by the layout), and
+;;; drawing only follows it.
+
+(defun expanded-columns (cur x y w h)
+  "How the expanded pane CUR, its panel at X,Y W x H, divides. -> a plist: :KIND —
+   :TEXT-SIDE (a text pane with a list beside: the agent's Activity), :STAGE-SIDE (the
+   stage with its Workspace), :LIST-SIDE (a list with a pinned side pane), :PREVIEW (a
+   list whose selection is previewed) or :SINGLE; :BODY-Y :BODY-H; :MAIN, the (x w)
+   of the pane's own body; :SPLIT-X, where the right-hand column starts (NIL when
+   there is none); :SIDE, the pane shown there (for :PREVIEW, NIL when the selection
+   has nothing to preview); :SIDE-RECT. The proportions are the tiled shell's as they
+   have always been, written from the panel's own edges (L, R) so that they hold at
+   any X."
+  (let* ((l (+ x 4)) (r (+ x w 8)) (full-w (- r 24)) (gap 12)
+         (body-y (+ y +bar-h+ 4)) (body-h (- h +bar-h+ 4))
+         (is-list (and (null (pane-tv cur))
+                       (not (member (view-kind (pane-view cur)) +non-list-kinds+)))))
+    (flet ((split (kind main-w side sx sw)
+             (list :kind kind :body-y body-y :body-h body-h :main (list l main-w)
+                   :split-x sx :side side :side-rect (and side (list sx body-y sw body-h)))))
+      (cond
+        ;; A TEXT PANE with a list beside it — the agent's conversation with its
+        ;; Activity (agent-ui.lisp, layout A of doc/design/agent-workbench.html): the
+        ;; transcript keeps the larger part, the activity rail the rest; the focused
+        ;; half wears the accent rule, SuperL-o moves focus, as for the stage.
+        ((and (pane-tv cur) (pane-side cur) (null (pane-tv (pane-side cur))) (>= r 900))
+         (let* ((side-w (max 300 (floor (* full-w 34) 100)))
+                (text-w (- full-w side-w gap)))
+           (split :text-side text-w (pane-side cur) (+ l text-w gap) side-w)))
+        ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
+        ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
+        ;; but driven by 'w' rather than a selected row, and the stage keeps the
+        ;; larger half because it is the thing you are watching.
+        ((and (eq (view-kind (pane-view cur)) :stage) (pane-side cur))
+         (let* ((stage-w (max 300 (floor (* full-w 58) 100))) (sx (+ l stage-w gap)))
+           (split :stage-side stage-w (pane-side cur) sx (- r sx 12))))
+        ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right
+        ((and is-list (pane-side cur))
+         (let* ((list-w (max 260 (floor (* full-w 42) 100))) (sx (+ l list-w gap)))
+           (split :list-side list-w (pane-side cur) sx (- r sx 12))))
+        ;; NAV SPLIT: list left, a live READ-ONLY preview of the selection right
+        ((and is-list (selected-item cur) (item-subject (selected-item cur)))
+         (let* ((list-w (max 260 (floor (* full-w 42) 100))) (sx (+ l list-w gap)))
+           (split :preview list-w (preview-for cur (item-subject (selected-item cur))) sx (- r sx 12))))
+        ;; single pane, full width (source / matrix / a list with nothing to preview)
+        (t (list :kind :single :body-y body-y :body-h body-h :main (list l full-w)))))))
+
+(defun draw-pane-expanded (canvas cur x y w h)
+  "The trail's current pane, its panel at X,Y W x H: the panel with its title, tint
+   and badge, then its own body; when it is split, the divider, the right-hand
+   column's header and the accent rule over whichever half has the keyboard. The
+   column's body is the side pane's to draw (it is a morph of its own)."
+  (let* ((cols (or (pane-split-plan cur) (expanded-columns cur x y w h)))
+         (full-w (- (+ x w 8) 24))
+         (body-y (getf cols :body-y)) (body-h (getf cols :body-h))
+         (mx (first (getf cols :main))) (mw (second (getf cols :main)))
+         (sx (getf cols :split-x)) (side (getf cols :side))
+         (sw (third (getf cols :side-rect)))
+         (edit (pane-editing-side cur)))
+    (setf (pane-body-top cur) body-y            ; what its clicks are tested against
+          (pane-split-x cur) sx
+          (pane-body-rect cur) (list mx body-y mw body-h))
+    (lol.widgets:draw-panel canvas x y w h
+                            ;; when the pane is about to split, its title owns only
+                            ;; the left half: the right one carries the preview's
+                            ;; own title on the same line, and a long path in the
+                            ;; first used to run straight through the second
+                            :title (if (and (null (pane-tv cur))
+                                            (not (member (view-kind (pane-view cur)) +non-list-kinds+))
+                                            (or (pane-side cur)
+                                                (let ((it (selected-item cur))) (and it (item-subject it)))))
+                                       (clip-text (pane-title cur)
+                                                  (max 8 (floor (- (max 260 (floor (* full-w 42) 100)) 40)
+                                                                (lol.canvas:font-cw *bfont*))))
+                                       (pane-title cur))
+                            :tint (view-kind-color (pane-view cur))
+                            :badge (string-downcase (symbol-name (view-kind (pane-view cur)))))
+    (flet ((divider () (lol.canvas:draw-rect canvas (- sx 6) body-y 1 body-h *ui-rule*))
+           (header (text)
+             (lol.canvas:draw-string canvas *bfont* text sx (pane-header-text-y body-y)
+                                     (if edit *ui-accent* *ui-dim*)))
+           (accent ()                               ; over whichever half has focus
+             (if edit
+                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
+                 (lol.canvas:fill-rect canvas mx (- body-y 2) mw 2 *ui-accent*))))
+      (ecase (getf cols :kind)
+        (:text-side
+         (draw-pane-body canvas cur mx body-y mw body-h)
+         (divider)
+         (header (format nil "~a~@[   ~a~]" (view-title (pane-view side))
+                         (if edit "up/dn · ret opens · SuperL-o back" "SuperL-o")))
+         (accent))
+        (:stage-side
+         (draw-stage-body canvas cur mx body-y mw body-h)
+         (divider)
+         (header (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
+                         (if edit "editing — C-c C-c define · SuperL-o stage" "SuperL-o to edit")))
+         (accent))
+        (:list-side
+         (draw-list-body canvas cur mx body-y mw body-h)
+         (divider)
+         (header (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
+                         (if edit "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit")))
+         (accent))
+        (:preview
+         (draw-list-body canvas cur mx body-y mw body-h)
+         (divider)
+         (if side
+             (lol.canvas:draw-string canvas *bfont*
+                                     (clip-text (view-title (pane-view side))
+                                                (max 8 (floor (- sw (* 11 (char-w))) (char-w))))  ; leave the badge room
+                                     sx (pane-header-text-y body-y) *ui-dim*)
+             (lol.canvas:draw-string canvas *bfont* "(no preview)" sx (+ body-y 4) *ui-dim*)))
+        (:single
+         (draw-pane-body canvas cur mx body-y mw body-h))))))
 
 (defun draw-browser (canvas w h)
-  (setf *crumb-rects* '())
-  (setf *drawn* '())
-  (note-drawn 0 0 w h canvas '(draw-browser) "the screen")
-  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-  ;; the tab strip replaces the old static title bar
-  (draw-tabs canvas w)
-  ;; the focused trail's breadcrumbs and pane, between the strip and the status line
-  (draw-trail-area canvas w h (+ +bar-h+ 4) (+ (status-h) 2))
-  (draw-status-line canvas w h (or *status-pane* (current-pane))))
-
-(defun draw-trail-area (canvas w h top bottom)
-  "The focused trail, W x H, from y TOP down to BOTTOM pixels short of the bottom
-   edge: its ancestors as breadcrumb bars, then its current pane expanded in a panel
-   (split when the view asks). The body of the tiled shell — and, since Morphic, of a
-   trail torn off into a window (poc/morphic.lisp), which calls this into a canvas of
-   its own with its title bar above and no status line below."
-  (let* ((ancestors (butlast (current-trail)))
-         (cur (current-pane))
-         (y top))
-    ;; ancestor breadcrumb bars
-    (loop for p in ancestors for i from 0
-          do (draw-crumb canvas y w p i) (incf y (+ +bar-h+ 3)))
-    ;; the expanded current pane
-    (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 bottom)))
-      (setf (pane-body-top cur) body-y            ; remember them for click hit-testing
-            (pane-split-x cur) nil)
-      (note-drawn 8 y (- w 16) (- h y bottom) cur '(draw-pane-body lol.widgets:draw-panel)
-                  (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
-      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y bottom)
-                              ;; when the pane is about to split, its title owns only
-                              ;; the left half: the right one carries the preview's
-                              ;; own title on the same line, and a long path in the
-                              ;; first used to run straight through the second
-                              :title (if (and (null (pane-tv cur))
-                                              (not (member (view-kind (pane-view cur)) +non-list-kinds+))
-                                              (or (pane-side cur)
-                                                  (let ((it (selected-item cur))) (and it (item-subject it)))))
-                                         (clip-text (pane-title cur)
-                                                    (max 8 (floor (- (max 260 (floor (* (- w 24) 42) 100)) 40)
-                                                                  (lol.canvas:font-cw *bfont*))))
-                                         (pane-title cur))
-                              :tint (view-kind-color (pane-view cur))
-                              :badge (string-downcase (symbol-name (view-kind (pane-view cur)))))
-      (let ((is-list (and (null (pane-tv cur))
-                          (not (member (view-kind (pane-view cur)) +non-list-kinds+)))))
-        (cond
-          ;; A TEXT PANE with a list beside it — the agent's conversation with its
-          ;; Activity (agent-ui.lisp, layout A of doc/design/agent-workbench.html): the
-          ;; transcript keeps the larger part, the activity rail the rest; the focused
-          ;; half wears the accent rule, SuperL-o moves focus, as for the stage.
-          ((and (pane-tv cur) (pane-side cur) (null (pane-tv (pane-side cur)))
-                (>= w 900))
-           (let* ((full-w (- w 24)) (side-w (max 300 (floor (* full-w 34) 100)))
-                  (gap 12) (text-w (- full-w side-w gap)) (sx (+ 12 text-w gap))
-                  (side (pane-side cur)))
-             (setf (pane-split-x cur) sx)
-             (draw-pane-body canvas cur 12 body-y text-w body-h)
-             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
-             (lol.canvas:draw-string canvas *bfont*
-               (format nil "~a~@[   ~a~]" (view-title (pane-view side))
-                       (if (pane-editing-side cur) "up/dn · ret opens · SuperL-o back" "SuperL-o"))
-               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
-             (if (pane-editing-side cur)
-                 (lol.canvas:fill-rect canvas sx (- body-y 2) side-w 2 *ui-accent*)
-                 (lol.canvas:fill-rect canvas 12 (- body-y 2) text-w 2 *ui-accent*))
-             (draw-pane-body canvas side sx body-y side-w body-h :side)))
-          ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
-          ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
-          ;; but driven by 'w' rather than a selected row, and the stage keeps the
-          ;; larger half because it is the thing you are watching.
-          ((and (eq (view-kind (pane-view cur)) :stage) (pane-side cur))
-           (let* ((full-w (- w 24)) (stage-w* (max 300 (floor (* full-w 58) 100)))
-                  (gap 12) (sx (+ 12 stage-w* gap)) (sw (- w sx 12)) (side (pane-side cur)))
-             (setf (pane-split-x cur) sx)
-             (draw-stage-body canvas cur 12 body-y stage-w* body-h)
-             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
-             (lol.canvas:draw-string canvas *bfont*
-               (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
-                       (if (pane-editing-side cur)
-                           "editing — C-c C-c define · SuperL-o stage"
-                           "SuperL-o to edit"))
-               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
-             (if (pane-editing-side cur)
-                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
-                 (lol.canvas:fill-rect canvas 12 (- body-y 2) stage-w* 2 *ui-accent*))
-             (draw-pane-body canvas side sx body-y sw body-h :side)))
-          ;; ⇧↵ EDITABLE SIDE: the list on the left, a pinned editable pane on the right;
-          ;; the focused half wears an accent top-rule (SuperL-o moves focus).
-          ((and is-list (pane-side cur))
-           (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
-                  (gap 12) (sx (+ 12 list-w gap)) (sw (- w sx 12)) (side (pane-side cur)))
-             (setf (pane-split-x cur) sx)
-             (draw-list-body canvas cur 12 body-y list-w body-h)
-             (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
-             (lol.canvas:draw-string canvas *bfont*
-               (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
-                       (if (pane-editing-side cur) "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
-               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
-             ;; accent top-rule over whichever half has focus
-             (if (pane-editing-side cur)
-                 (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
-                 (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *ui-accent*))
-             (draw-pane-body canvas side sx body-y sw body-h :side)))
-          ;; NAV SPLIT: list left, a live READ-ONLY preview of the selection right.
-          ((and is-list (selected-item cur) (item-subject (selected-item cur)))
-           (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
-                  (gap 12) (prev-x (+ 12 list-w gap)) (prev-w (- w prev-x 12))
-                  (preview (preview-for cur (item-subject (selected-item cur)))))
-             (setf (pane-split-x cur) prev-x)
-             (draw-list-body canvas cur 12 body-y list-w body-h)
-             (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *ui-rule*)
-             (if preview
-                 (progn
-                   (lol.canvas:draw-string canvas *bfont*
-                                           (clip-text (view-title (pane-view preview))
-                                                      (max 8 (floor (- prev-w (* 11 (char-w))) (char-w))))  ; leave the badge room
-                                           prev-x (pane-header-text-y body-y) *ui-dim*)
-                   (draw-pane-body canvas preview prev-x body-y prev-w body-h :side))
-                 (lol.canvas:draw-string canvas *bfont* "(no preview)"
-                                         prev-x (+ body-y 4) *ui-dim*))))
-          ;; single pane, full width (source / matrix / a list with nothing to preview)
-          (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))))
+  "The whole screen, drawn afresh into CANVAS: every morph of the world, back to
+   front, each drawing itself — the tab strip, the tray, the breadcrumbs, the panes,
+   the status line, the windows (each window's contents drawn anew, not copied).
+   There is no other way to draw the browser: what used to be one function laying
+   out and painting everything is the world's tree now (doc/morphic.org §12). The name
+   stays for its callers — checks that time a full frame, the backdrop of a card with
+   no world to draw it."
+  (declare (ignore w h))
+  (when *world* (lol.morph:world-paint *world* canvas :fresh t)))
 
 (defvar *backdrop-fn* nil
   "A function (CANVAS W H) that draws what a modal card floats over — the whole screen
@@ -1629,15 +1629,32 @@
   (if *backdrop-fn* (funcall *backdrop-fn* canvas w h) (draw-browser canvas w h)))
 
 (defun draw-status-line (canvas w h cur)
-  "The bottom line: the last message, or the keys that matter for the pane CUR."
+  "The bottom line of a screen W x H: the last message, or the keys that matter for
+   the pane CUR — or, while one is open, the minibuffer; then -> the rect of its ✕
+   clear box, (x0 x1 y0 y1), or NIL (the STATUS-LINE morph keeps it for clicks)."
+  (lol.canvas:fill-rect canvas 0 (- h (status-h)) w (status-h) *ui-hi*)
+  (cond (*minibuffer* (draw-minibuffer canvas w h))
+        (*browser-status*
+         (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
+         nil)
+        (t (draw-hints canvas 10 (status-text-y h) w (status-hints cur))
+           nil)))
+
+(defun status-line-content (cur)
+  "What the status line shows for the pane CUR, as data: the minibuffer's state, or
+   the message, or the hints — the STATUS-LINE morph's signature (poc/morphic.lisp):
+   when this changes, and only then, the line is drawn again."
+  (cond (*minibuffer*
+         (let ((mb *minibuffer*))
+           (list :minibuffer (mb-prompt mb) (mb-text mb) (mb-point mb) (mb-hint mb)
+                 (mb-secret mb) (mb-single-key mb))))
+        (*browser-status* (list :status *browser-status*))
+        (t (list :hints (status-hints cur)))))
+
+(defun status-hints (cur)
+  "The keys that matter for the pane CUR, as ((CHORD . MEANING) …) — its own first,
+   then the environment's, then its subject's commands."
   (let ((cmds (ignore-errors (commands-for (pane-subject cur)))))
-    (note-drawn 0 (- h (status-h)) w (status-h) *browser-status* '(draw-status-line draw-hints)
-                "the status line")
-    (lol.canvas:fill-rect canvas 0 (- h (status-h)) w (status-h) *ui-hi*)
-    (when *minibuffer* (return-from draw-status-line (draw-minibuffer canvas w h)))
-    (if *browser-status*
-        (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
-        (draw-hints canvas 10 (status-text-y h) w
                     (append
                      (cond ((and (pane-editing-side cur) (pane-side cur))
                             ;; name the half you go BACK to, and the verb the pane's
@@ -1688,7 +1705,7 @@
                      '(("SuperL-<" . "back") ("SuperL-?" . "keys") ("SuperL-q" . "quit"))
                      (when cmds
                        (list (cons nil (format nil "commands: ~{~a~^ · ~}"
-                                               (mapcar #'command-label cmds))))))))))
+                                               (mapcar #'command-label cmds))))))))
 
 ;;; ---- the Spotter card (§4¾) ----------------------------------------------
 ;;; The DRAWING lives here, in the backend-blind layer, and only the input loop lives
@@ -1962,13 +1979,11 @@
         (t nil))))
   nil)
 
-(defvar *mb-clear-rect* nil
-  "(X0 X1 Y0 Y1) of the minibuffer's ✕ clear button as last drawn, or NIL.")
-
 (defun draw-minibuffer (canvas w h)
   "The minibuffer, over the status line: an amber rule, the prompt in amber, the
    text and a caret, and — when there is text — a ✕ that clears it (a click, or C-u).
-   A long text scrolls so the caret is always on screen."
+   A long text scrolls so the caret is always on screen. -> the ✕'s rect (X0 X1 Y0
+   Y1), or NIL."
   (let* ((mb *minibuffer*)
          (cw (lol.canvas:font-cw *bfont*))
          (y (- h (status-h)))
@@ -1984,20 +1999,19 @@
          (shown (if (mb-secret mb) (make-string (length shown) :initial-element #\*) shown)))
     (lol.canvas:fill-rect canvas 0 y w (status-h) *ui-hi*)
     (lol.canvas:fill-rect canvas 0 y w 2 *ui-amber*)
-    (note-drawn 0 y w (status-h) mb '(draw-minibuffer) "the minibuffer")
     (lol.canvas:draw-string canvas *bfont* (mb-prompt mb) 10 (status-text-y h) *ui-amber*)
     (lol.canvas:draw-string canvas *bfont* shown px (status-text-y h) *ui-text*)
     (lol.canvas:fill-rect canvas (+ px (* (- pt first) cw)) (1- (status-text-y h)) 2 (1+ (line-h)) *ui-accent*)
-    (setf *mb-clear-rect* nil)
-    (when clear
-      (let* ((bx (- w 10 hint-w clear-w -6))
-             (bw (- clear-w 6)))
-        (lol.canvas:fill-rect canvas bx (+ y 4) bw (- (status-h) 6) *ui-panel*)
-        (lol.canvas:draw-string canvas *bfont* clear-label (+ bx 3) (status-text-y h) *ui-dim*)
-        (setf *mb-clear-rect* (list bx (+ bx bw) y h))))
-    (when (mb-hint mb)
-      (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
-                              (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))))
+    (let ((rect (when clear
+                  (let* ((bx (- w 10 hint-w clear-w -6))
+                         (bw (- clear-w 6)))
+                    (lol.canvas:fill-rect canvas bx (+ y 4) bw (- (status-h) 6) *ui-panel*)
+                    (lol.canvas:draw-string canvas *bfont* clear-label (+ bx 3) (status-text-y h) *ui-dim*)
+                    (list bx (+ bx bw) y h)))))
+      (when (mb-hint mb)
+        (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
+                                (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))
+      rect)))
 
 ;;; ---- a subject's own keys, and its own hints --------------------------------
 ;;; Two generic functions so a subject type can bring keys to its LIST pane without
@@ -2011,6 +2025,13 @@
   (:method (subject pane key state)
     (declare (ignore subject pane key state))
     nil))
+
+(defgeneric subject-signature (subject pane)
+  (:documentation "What a pane showing SUBJECT draws from the subject itself, beyond its
+   view — a web tab's address and load state, a terminal's fate — as a list the desk
+   compares with its last (poc/morphic.lisp, the pane's MORPH-SIGNATURE): when it
+   changes, that pane is drawn again. NIL by default.")
+  (:method (subject pane) (declare (ignore subject pane)) nil))
 
 (defgeneric subject-hints (subject pane)
   (:documentation "The status-line hints ((CHORD . MEANING) …) for a pane showing
@@ -2808,21 +2829,48 @@
           (lol.clipboard:clip-select text)
           (clip-status "selected" text))))))
 
-(defun minibuffer-click (x y)
-  "A click while the minibuffer is up: on its ✕, clear the text and keep the prompt
-   open (returns T); anywhere else NIL — the caller ends the prompt, as before."
-  (let ((r *mb-clear-rect*))
-    (when (and *minibuffer* r (<= (first r) x (second r)) (<= (third r) y (fourth r)))
-      (setf (mb-text *minibuffer*) "" (mb-point *minibuffer*) 0)
-      (minibuffer-edited *minibuffer*)
-      t)))
+(defun minibuffer-click (rect x y)
+  "A click while the minibuffer is up: on its ✕ (RECT, as the status line drew it),
+   clear the text and keep the prompt open (returns T); anywhere else NIL — the caller
+   ends the prompt, as before."
+  (when (and *minibuffer* rect (<= (first rect) x (second rect)) (<= (third rect) y (fourth rect)))
+    (setf (mb-text *minibuffer*) "" (mb-point *minibuffer*) 0)
+    (minibuffer-edited *minibuffer*)
+    t))
 
-(defun browser-click (x y &optional ctrl super)
-  "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
-   list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
-   symbol in a source pane jumps to its definition. Uses the geometry DRAW-BROWSER
-   recorded (*tab-rects*, *crumb-rects*, and the pane's own PANE-BODY-TOP, PANE-SPLIT-X,
-   PANE-ROWS), so click and draw can never disagree.
+;;; ---- a press, wherever it lands -----------------------------------------------
+;;; A left press goes to the morph under the pointer (doc/morphic.org §12.5): a tab or
+;;; the + (TAB-STRIP-CLICK), a breadcrumb (back to that level), the clipboard icon, the
+;;; minibuffer's ✕, a window's title bar or grip — and anything inside the expanded
+;;; pane is PANE-CLICK. Every one of them that is the browser's begins the same way.
+
+(defun press-prelude ()
+  "What any press in the browser does first: it ends a drag (only a press in text
+   re-arms one), and it ends an open prompt — a click is a change of subject, like
+   C-g (the live filter keeps what was typed: its ON-CANCEL decides that, not us)."
+  (setf *drag-tv* nil *drag-origin* nil *term-drag* nil)
+  (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*))))
+
+(defun tab-strip-click (tabs closes plus x)
+  "A press at X in the tab strip, whose hit maps are TABS, CLOSES and PLUS (as
+   DRAW-TABS returned them): + opens a fresh Workspace, a tab's × closes THAT tab (not
+   merely the focused one), a tab activates its trail."
+  (cond
+    ((and plus (<= (car plus) x (cdr plus))) (new-trail (subj-workspace)))
+    ((find-if (lambda (e) (<= (cadr e) x (cddr e))) closes)
+     (let ((hit (find-if (lambda (e) (<= (cadr e) x (cddr e))) closes)))
+       (activate-trail (car hit))
+       (close-trail)))
+    (t (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) tabs)))
+         (when tab (activate-trail (car tab)))))))
+
+(defun pane-click (p x y &optional ctrl super)
+  "A left press at X,Y (where P was drawn) in the expanded pane P — or in its
+   right-hand column, whose own morph lets the press through to here, since this is
+   what knows the split: a list item drills (SuperL-click opens it in a NEW trail
+   instead); Ctrl-click on a symbol in a source pane jumps to its definition. Uses
+   the geometry P recorded when it drew (PANE-BODY-TOP, PANE-SPLIT-X, PANE-ROWS), so
+   click and draw can never disagree.
 
    In a side-by-side, a plain click in the half that does NOT have keyboard focus is
    a focus move and nothing more — SuperL-o with a pointer. It still positions you
@@ -2832,33 +2880,8 @@
    in the half that already has focus behaves as it always did, and Ctrl-click /
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
-  (setf *drag-tv* nil *drag-origin* nil *term-drag* nil) ; only a press below re-arms one
-  ;; a click ends a prompt: it is a change of subject, like C-g. (The live filter
-  ;; keeps what was typed — its ON-CANCEL decides that, not us.)
-  (when (minibuffer-click x y) (return-from browser-click nil))   ; its ✕ clears, keeps it open
-  (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*)))
-  ;; the tab strip owns the top +bar-h+ band: + opens a fresh Workspace, the active
-  ;; tab's × closes it, else a tab click activates that trail. (i x0 . x1) per entry.
-  (when (< y +bar-h+)
+  (let ((top (pane-body-top p)) (split (pane-split-x p)))
     (cond
-      ((and *tray-clip-rect* (<= (car *tray-clip-rect*) x (cdr *tray-clip-rect*)))
-       (open-clipboard-manager))
-      ((and *tab-plus-rect* (<= (car *tab-plus-rect*) x (cdr *tab-plus-rect*)))
-       (new-trail (subj-workspace)))
-      ((find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*)
-       ;; close THAT tab, not merely the focused one
-       (let ((hit (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*)))
-         (activate-trail (car hit))
-         (close-trail)))
-      (t (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
-           (when tab (activate-trail (car tab))))))
-    (return-from browser-click))
-  ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
-  (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*))
-        (p (current-pane)))
-    (let ((top (pane-body-top p)) (split (pane-split-x p)))
-    (cond
-      (hit (trail-goto (car hit)))
       ;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
       ((eq (view-kind (pane-view p)) :web)
        (when (>= y top) (funcall 'web-click p x y ctrl super)))
@@ -2949,7 +2972,7 @@
                (let ((it (nth i items)))
                  (when (item-subject it)
                    (if super (new-trail (item-subject it))
-                       (trail-push (item-subject it))))))))))))))
+                       (trail-push (item-subject it)))))))))))))
 
 ;;; ---- what is under the pointer --------------------------------------------
 ;;; The right-button menu and the middle-button halo both start from the same
@@ -2996,16 +3019,14 @@
     (when it
       (list :kind :row :pane pane :index i :item it :subject (item-subject it)))))
 
-(defun pointer-target (x y)
-  "What is under X,Y, as a plist with a :KIND of :TAB :TEXT :ROW :SPRITE or :PANE
-   (the pane's own subject, when nothing more specific was hit). Never NIL inside the
-   frame: pointing at empty space still points at the pane you are in."
-  (let ((p (current-pane)))
+(defun pane-target (p x y)
+  "What is under X,Y (where P was drawn) in the expanded pane P, as a plist with a
+   :KIND of :TEXT :ROW :SPRITE or :PANE (the pane's own subject, when nothing more
+   specific was hit). Never NIL: pointing at empty space still points at the pane you
+   are in. (A tab is the tab strip's to answer: TAB-TARGET, poc/morphic.lisp.)"
+  (progn
     (flet ((pane-itself (pane) (list :kind :pane :pane pane :subject (pane-subject pane))))
       (cond
-        ((< y +bar-h+)
-         (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
-           (and tab (list :kind :tab :index (car tab)))))
         ;; the right-hand column: a pinned side pane, or the read-only preview
         ((and (pane-split-x p) (>= x (pane-split-x p)) (>= y (pane-body-top p)))
          (let ((side (or (pane-side p) (pane-preview p))))
@@ -3242,15 +3263,17 @@
 ;;;     the word under the pointer       the symbol it names         Source, Senders
 ;;;     the row / the sprite             what it opens / stands for  Open, Inspect
 ;;;     the text view, the list          a TEXTVIEW / VIEW instance  Inspect, Code
-;;;     the pane                         a PANE instance             Inspect, Code
+;;;     the pane                         a PANE instance (a morph)   Inspect, Code
 ;;;     what the pane shows              its subject                 Open its view
-;;;     the screen                       the CANVAS                  Code: draw-browser
+;;;     the trail, the shell / window    the morphs that hold it     Inspect, Code
 ;;;
-;;; The first two are what the pointer is ON (POINTER-TARGET). The rest come from
-;;; *DRAWN*: every drawing function says what it drew where, so any pixel can answer
-;;; "which instance is this, and which code painted it". Inspect opens the INSTANCE,
-;;; fields settable in place (C-c C-c) and evaluable inside (C-c C-e); Code opens the
-;;; drawing function's definition, which C-c C-c recompiles for everyone.
+;;; The first two are what the pointer is ON (PANE-TARGET). The rest are the morph
+;;; tree itself (HALO-LAYERS, poc/morphic.lisp): the morph under the point and each
+;;; morph that holds it, each offering itself and what it draws — so any pixel can
+;;; answer "which instance is this, and which code painted it", because every thing on
+;;; screen is an object that draws itself. Inspect opens the INSTANCE, fields settable
+;;; in place (C-c C-c) and evaluable inside (C-c C-e); Code opens the drawing
+;;; function's definition, which C-c C-c recompiles for everyone.
 ;;;
 ;;; What the halo is about must never be a guess, so the chosen layer is shown, not
 ;;; described: it stays bright and outlined while everything else dims, and a caption
@@ -3263,10 +3286,6 @@
    (an on-screen instance, with the DRAWERS that paint it) or :SUBJECT (what a pane
    shows). RECT is (x y w h), what the halo outlines."
   (list :name name :title title :object object :rect rect :role role :drawers drawers))
-
-(defun drawn-record-of (object)
-  "The *DRAWN* record for OBJECT, or NIL."
-  (find object *drawn* :key #'fifth))
 
 (defun target-layers (target)
   "The innermost layers: the thing the pointer is ON, before what contains it."
@@ -3285,11 +3304,11 @@
                              :thing))))))
     (:row
      (let* ((pane (getf target :pane)) (item (getf target :item))
-            (rec (drawn-record-of (pane-view pane)))
+            (rec (pane-list-rect pane))
             (hit (find (getf target :index) (pane-rows pane) :key #'cdr))
             (rect (if (and rec hit)
                       (list (first rec) (car hit) (third rec) +row-h+)
-                      (and rec (subseq rec 0 4))))
+                      rec))
             (label (clip-text (item-label item) 20)))
        (remove nil
                (list (when (getf target :subject)
@@ -3298,44 +3317,17 @@
                      (halo-layer "row" (format nil "the row ~s itself" (item-label item))
                                  item rect :element '(item->row lol.widgets:draw-list))))))
     (:sprite
-     (let ((rec (drawn-record-of (getf target :body))))
-       (list (halo-layer (object-title (getf target :subject))
-                         "what the sprite stands for" (getf target :subject)
-                         (and rec (subseq rec 0 4)) :thing))))
+     (list (halo-layer (object-title (getf target :subject))
+                       "what the sprite stands for" (getf target :subject)
+                       (sprite-rect (getf target :pane) (getf target :body)) :thing)))
     (t nil)))
 
-(defun drawn-layers (x y)
-  "Every drawn element under X,Y, innermost (smallest) first — each pane followed by
-   what it shows."
-  (let ((under (remove-if-not (lambda (d)
-                                (destructuring-bind (dx dy dw dh &rest r) d
-                                  (declare (ignore r))
-                                  (and (<= dx x (+ dx dw -1)) (<= dy y (+ dy dh -1)))))
-                              *drawn*)))
-    (loop for d in (stable-sort (copy-list under) #'< :key (lambda (d) (* (third d) (fourth d))))
-          append (destructuring-bind (dx dy dw dh obj drawers label) d
-                   (let ((rect (list dx dy dw dh)))
-                     (cons (halo-layer (clip-text label 24) label obj rect :element drawers)
-                           (when (pane-p obj)
-                             (list (halo-layer "shows"
-                                               (format nil "what the pane shows: ~a"
-                                                       (view-title (pane-view obj)))
-                                               (pane-subject obj) rect :subject)))))))))
-
-(defvar *halo-extra-entries* nil
-  "A function (LAYER) -> handles that come FIRST on that layer: poc/morphic.lisp
-   installs a morph's affordances (a window's Move, Resize, Raise, Close, Re-tile —
-   doc/morphic.org step 3). NIL: none.")
-
-(defvar *halo-outer-layers* nil
-  "A function (X Y) -> more layers, OUTSIDE everything drawn: poc/morphic.lisp
-   installs the morphs under the point, so the halo's outermost layer is the shell
-   morph itself (doc/morphic.org). NIL: no world, nothing beyond the screen.")
-
-(defun halo-layers (x y)
-  "Everything under X,Y the halo can be about, innermost first."
-  (append (target-layers (pointer-target x y)) (drawn-layers x y)
-          (and *halo-outer-layers* (funcall *halo-outer-layers* x y))))
+(defun sprite-rect (pane b)
+  "The square body B of PANE's stage occupies (where PANE drew it), or NIL."
+  (let ((vp (pane-stage-rect pane)))
+    (when vp
+      (let ((r (body-r b)))
+        (list (- (+ (first vp) (body-x b)) r) (- (+ (second vp) (body-y b)) r) (* 2 r) (* 2 r))))))
 
 (defun halo-entries (layer)
   "The handles for LAYER. An element offers its instance and the code that draws it;
@@ -3380,7 +3372,10 @@
                              inspect))))
          (own (if (member role '(:element)) '()
                   (and (not (stringp object)) (command-entries object :halo g)))))
-    (append (and *halo-extra-entries* (funcall *halo-extra-entries* layer))
+    (append (and (typep object 'lol.morph:morph)  ; a morph's own handles first (§12.5):
+                 (mapcar (lambda (a) (menu-entry (getf a :label) (getf a :action)
+                                                 :group "halo" :tone :restart))
+                         (lol.morph:morph-affordances object)))   ; a window's Move, Resize …
             base
             (remove-if (lambda (e) (find (getf e :label) base :key (lambda (b) (getf b :label))
                                                               :test #'string-equal))
@@ -3542,32 +3537,39 @@
              (serious-condition (c)
                (setf *browser-status* (format nil "~a failed: ~a" (getf e :label) c)))))))))
 
-(defun browser-context-menu (x y)
-  "Right button at X,Y: the menu for whatever is there."
-  (choose-and-run :menu (context-menu-entries (pointer-target x y)) x y))
+(defun context-menu-at (target wx wy)
+  "The right-button menu for TARGET (what a press landed on: PANE-TARGET's or the tab
+   strip's answer, or NIL for nothing in particular), its card at the screen point
+   WX,WY."
+  (choose-and-run :menu (context-menu-entries target) wx wy))
 
-(defun browser-middle-click (x y &optional force-halo)
-  "Middle button at X,Y. In EDITABLE text it is X's middle-click paste: the PRIMARY
-   selection (whatever you last selected with the mouse) goes in at the pointer.
-   Anywhere else — and in text when FORCE-HALO (SuperL held) or there is nothing
-   selected to paste — it opens the HALO on the thing under the pointer.
+(defun open-halo (wx wy)
+  "The halo on whatever is under the screen point WX,WY (HALO-LAYERS walks the morph
+   tree there: poc/morphic.lisp)."
+  (let ((layers (halo-layers wx wy)))
+    (if layers
+        (choose-and-run :halo (halo-entries (first layers)) wx wy layers)
+        (setf *browser-status* "nothing here to put a halo on"))))
+
+(defun pane-middle-click (p x y wx wy &optional force-halo)
+  "Middle button at X,Y in the expanded pane P (the screen point WX,WY). In EDITABLE
+   text it is X's middle-click paste: the PRIMARY selection (whatever you last
+   selected with the mouse) goes in at the pointer. Anywhere else — and in text when
+   FORCE-HALO (SuperL held) or there is nothing selected to paste — it opens the HALO
+   on the thing under the pointer.
 
    That is the disambiguation, and it follows what each place is FOR: text you can
    edit is where a paste can land, so the paste wins there; a row, a sprite, a word in
    read-only text cannot receive a paste, so there the button is free for the halo."
-  (let ((target (pointer-target x y)))
+  (let ((target (pane-target p x y)))
     (cond
       ;; a terminal is text you can type into, so the paste wins there too
-      ((and (terminal-pane-p (current-pane)) (not force-halo) (>= y (pane-body-top (current-pane))))
-       (funcall 'terminal-middle (current-pane)))
+      ((and (terminal-pane-p p) (not force-halo) (>= y (pane-body-top p)))
+       (funcall 'terminal-middle p))
       ((and (eq (getf target :kind) :text) (getf target :editable)
             (not force-halo) (primary-selection))
        (paste-primary-at target))
-      (t
-       (let ((layers (halo-layers x y)))
-         (if layers
-             (choose-and-run :halo (halo-entries (first layers)) x y layers)
-             (setf *browser-status* "nothing here to put a halo on")))))))
+      (t (open-halo wx wy)))))
 
 (defun open-modules ()
   "The module index — every definition by the file it came from. Focus its tab if one
@@ -3592,7 +3594,7 @@
    host) there is nothing to power off, so it simply quits."
   (if (null *chooser*)
       (progn (setf *leave-action* :console) :quit)
-      (let* ((screen (car (last *drawn*)))         ; DRAW-BROWSER's first record
+      (let* ((screen (and *world* (lol.morph:morph-bounds *world*)))
              (x (- (floor (or (third screen) 800) 2) 100))
              (y (- (floor (or (fourth screen) 600) 2) 40))
              (keep (and (fboundp 'persistence-available-p) (funcall 'persistence-available-p)))
@@ -3654,7 +3656,12 @@
                           (lol.textview:tv-line-height tv))))
             (let ((hit (find (pane-sel p) (pane-rows p) :key #'cdr)))
               (values 40 (if hit (+ (car hit) 4) (pane-body-top p)))))
-      (browser-context-menu x y))))
+      ;; X,Y are where P drew (a window's coordinates, inside one); the card goes
+      ;; where that is on the screen
+      (destructuring-bind (wx wy &rest r)
+          (if (lol.morph:morph-owner p) (lol.morph:to-world-rect p (list x y 0 0)) (list x y))
+        (declare (ignore r))
+        (context-menu-at (pane-target p x y) wx wy)))))
 
 ;;; ---- the clipboard, wired into the editor ---------------------------------
 ;;; poc/clipboard.lisp holds the state and does the text surgery — pure functions

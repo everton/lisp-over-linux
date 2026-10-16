@@ -1,28 +1,40 @@
-;;;; morphic.lisp — the browser as the first window of a Lisp window system.
+;;;; morphic.lisp — the browser as a tree of morphs: the first windows of a Lisp
+;;;; window system.
 ;;;;
 ;;;; poc/morph.lisp is Morphic's core and knows nothing about the browser. This file
-;;;; is the browser's side of it (doc/morphic.org §2, steps 1–5):
+;;;; is the browser's side of it (doc/morphic.org §2 and §12). Everything the browser
+;;;; puts on screen is a morph, in one tree:
 ;;;;
 ;;;;   THE DESK      the world the environment runs in: one per screen, *WORLD*.
-;;;;   SHELL-MORPH   the whole tiled browser — tabs, breadcrumbs, the pane, the status
-;;;;                 line — as ONE morph. Its DRAW-MORPH is DRAW-BROWSER and its
-;;;;                 HANDLE-EVENT is BROWSER-KEY / BROWSER-CLICK / BROWSER-DRAG, so on
-;;;;                 the day it arrived nothing on screen changed: the screen was a
-;;;;                 world with one full-screen child, and every check passed as before.
-;;;;   TRAIL-WINDOW  a trail torn off the tab strip (SuperL-g, or a tab dragged out):
-;;;;                 its breadcrumbs and pane under a minimal title bar, over the shell,
-;;;;                 moved and resized opaquely, re-tiled with SuperL-g again or by
-;;;;                 dropping it on the strip. Its halo acts on it (step 3): Move,
-;;;;                 Resize, Raise, Close, Re-tile; Inspect shows its bounds, settable.
+;;;;   SHELL-MORPH   the tiled browser, a container in fixed bands: the TAB-STRIP (with
+;;;;                 the systray, a TRAY, at its right end), a TRAIL-AREA, and the
+;;;;                 STATUS-LINE (or the minibuffer) at the bottom.
+;;;;   TRAIL-AREA    one trail on screen. Its children are the trail's PANEs — a pane is
+;;;;                 a morph (shell.lisp) — laid out as the accordion: every ancestor
+;;;;                 collapsed to a breadcrumb bar, the last one expanded; the expanded
+;;;;                 pane's right-hand column (a side pane, the nav split's preview) is
+;;;;                 a pane too, its child. Tiling is this one layout policy.
+;;;;   TRAIL-WINDOW  a trail torn off the tab strip (SuperL-g, or a tab dragged out): a
+;;;;                 SURFACE (a morph with a backing store, poc/morph.lisp) holding a
+;;;;                 TITLE-BAR, a TRAIL-AREA of the same pane morphs and a WINDOW-FRAME.
+;;;;                 Tearing off and re-tiling move the pane morphs between trail areas.
+;;;;                 Its halo acts on it: Move, Resize, Raise, Close, Re-tile.
 ;;;;   OVERLAY       a modal card on top — the Spotter, a menu, the halo, the debugger
-;;;;                 (step 4; the cards themselves are poc/overlays.lisp and, for the
-;;;;                 debugger and the cheatsheet, fb-browser.lisp). It takes the input;
-;;;;                 everything else goes on behind it. One that answers a caller waits
-;;;;                 by turning the backend's own loop (RUN-OVERLAY).
-;;;;   STEPPING      the shell and each window step the pane they show when it changes
-;;;;                 on its own — a running stage, a live run (step 5) — and damage
-;;;;                 only what changed; the terminals' rows and the clock are painted
-;;;;                 straight in and composited by the world (NOTE-PAINTED).
+;;;;                 (the cards are poc/overlays.lisp and, for the debugger and the
+;;;;                 cheatsheet, fb-browser.lisp). It takes the input; everything else
+;;;;                 goes on behind it. One that answers a caller waits by turning the
+;;;;                 backend's own loop (RUN-OVERLAY).
+;;;;
+;;;; Each morph draws itself and takes its own events, in its surface's coordinates;
+;;;; what it drew where (a pane's rows, the strip's tabs) is its own slots. There is no
+;;;; other way to be on screen: no frame-wide hit maps, no drawing function that lays
+;;;; out the whole browser, no window context to swap them in and out.
+;;;;
+;;;; DAMAGE is per morph (§12.6). An event damages the morph it reached; everything
+;;;; else is found by DESK-SYNC, which runs before every repair and after every event:
+;;;; it lays the tree out from the trails (a morph moved, added or removed is damaged by
+;;;; that), and compares each morph's SIGNATURE — the few values its picture is a
+;;;; function of — with the one it had, damaging only those that changed.
 ;;;;
 ;;;; Backend-blind like the shell: the guest's loop (initramfs/fb-browser.lisp) and the
 ;;;; X11 host loop (poc/run-browser.lisp) both build events, hand them to
@@ -30,107 +42,294 @@
 
 (in-package :cl-user)
 
-(defvar *world* nil
-  "The desk the environment is running in (a DESK), or NIL outside it. Made fresh by
-   each entry point (run-browser-fb, run-browser.lisp, render-frame.lisp) for its
-   canvas size.")
-
+;;; *WORLD*, the desk the environment runs in, is declared in shell.lisp, which
+;;; loads first and asks for it (DRAW-BROWSER, the leave menu).
 
 ;;; ===========================================================================
-;;; The shell morph (step 1)
+;;; Signatures: how a morph says what its picture depends on
+;;; ===========================================================================
+;;;
+;;; A morph's SIGNATURE is a list of the values its picture is a function of — for the
+;;; tab strip, each trail's title, tint and number and which tab is lit; for a pane, its
+;;; view, selection and text. DESK-SYNC compares each morph's signature with the one
+;;; it had (EQUAL: strings by content, everything else — a view, a buffer — by
+;;; identity) and damages the morphs whose picture changed, whatever changed it: a key,
+;;; the agent streaming, a service, the REPL. NIL means "nothing beyond its bounds",
+;;; which layout already watches.
+
+(defgeneric morph-signature (morph)
+  (:documentation "The values MORPH's picture is a function of (see above), or NIL.")
+  (:method ((m lol.morph:morph)) nil))
+
+(defclass watched-morph (lol.morph:morph)
+  ((sig :initform :none :accessor morph-sig
+        :documentation "The signature the morph had when last compared."))
+  (:documentation "A morph whose picture DESK-SYNC watches through its signature."))
+
+(defgeneric morph-sig-place (morph)
+  (:documentation "Where MORPH's last signature is kept: (values GETTER SETTER).")
+  (:method ((m watched-morph)) (values (lambda () (morph-sig m)) (lambda (v) (setf (morph-sig m) v))))
+  (:method ((p pane)) (values (lambda () (pane-sig p)) (lambda (v) (setf (pane-sig p) v)))))
+
+(defun check-signature (m)
+  "Damage M if its picture changed since it was last compared."
+  (multiple-value-bind (get set) (morph-sig-place m)
+    (let ((now (morph-signature m)))
+      (unless (equal now (funcall get))
+        (funcall set now)
+        (lol.morph:invalidate m)))))
+
+;;; ===========================================================================
+;;; The tiled shell: a container in fixed bands
 ;;; ===========================================================================
 
 (defclass shell-morph (lol.morph:morph)
-  ((press-tab :initform nil :accessor shell-press-tab
-              :documentation "The tab a left press landed on, while the button is held:
-   dragged far enough out of the strip, that trail becomes a window (TEAR-OFF-TRAIL)."))
-  (:documentation "The tiled browser, whole, as one morph. It cannot yet say WHICH of
-   its parts changed, so any change damages all of it — exactly the redraw-everything
-   behaviour it had before it was a morph (doc/morphic.org §4.2). Finer damage can come
-   one view at a time, without changing the protocol."))
+  ((strip  :initarg :strip :reader shell-strip)
+   (area   :initarg :area :reader shell-area)
+   (status :initarg :status :reader shell-status))
+  (:documentation "The tiled browser: the tab strip on top, the status line at the
+   bottom, and between them the trail area that shows the tiled trail. Its own pixels
+   are only the page behind them (the gutters)."))
 
-(defmethod lol.morph:morph-opaque-p ((m shell-morph)) t)   ; DRAW-BROWSER fills its bounds
+(defmethod lol.morph:morph-opaque-p ((m shell-morph)) t)
 (defmethod lol.morph:morph-name ((m shell-morph)) "the tiled shell")
 
 (defmethod lol.morph:draw-morph ((m shell-morph) canvas clip)
   (declare (ignore clip))
-  (destructuring-bind (x y w h) (lol.morph:morph-bounds m)
-    (declare (ignore x y))
-    (draw-shell-now canvas w h)))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds m)
+    (lol.canvas:fill-rect canvas x y w h *ui-bg*)))
 
-(defun shell-changed (&optional rect (m (and *world* (desk-shell *world*))))
-  "The browser's state changed: RECT of it (default: all of it) must be redrawn."
-  (when m (lol.morph:invalidate m rect)))
+(defclass tab-strip (watched-morph)
+  ((tabs   :initform '() :accessor strip-tabs
+           :documentation "((trail-index . (x0 . x1)) …) of the tabs as last drawn.")
+   (closes :initform '() :accessor strip-closes
+           :documentation "The same for each tab's × close box.")
+   (plus   :initform nil :accessor strip-plus
+           :documentation "(x0 . x1) of the + new-tab button.")
+   (tray   :initform nil :accessor strip-tray)
+   (press-tab :initform nil :accessor strip-press-tab
+              :documentation "The tab a left press landed on, while the button is held:
+   dragged far enough out of the strip, that trail becomes a window (TEAR-OFF-TRAIL)."))
+  (:documentation "One tab per tiled trail (a trail in a window has its title bar
+   instead), and the + after them. What it drew where are its own slots (DRAW-TABS
+   returns them), which its clicks read back."))
 
-(defun browser-event (e)
-  "Run event E through the browser's own entry points, against whatever trail and hit
-   maps are current — the tiled shell's, or a window's inside WITH-WINDOW-CONTEXT,
-   with E's coordinates already that window's. Returns (values RESULT CHANGED):
-   RESULT is :QUIT to leave, else T when the event was the browser's; CHANGED says
-   the browser's state changed, so its picture must be redrawn."
-  (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
-        (state (lol.morph:event-state e)))
-    (case (lol.morph:event-kind e)
-      (:key (if (eq :quit (browser-key (lol.morph:event-key e) state))
-                (values :quit nil)
-                (values t t)))
-      (:menu (keyboard-context-menu) (values t t))
-      (:wheel (browser-scroll (* (- (lol.morph:event-notches e)) +wheel-lines+)) (values t t))
-      (:down (browser-click x y (lol.canvas:ctrl-p state) (lol.canvas:super-p state))
-             (values t t))
-      (:right (browser-context-menu x y) (values t t))
-      (:middle (browser-middle-click x y (lol.canvas:super-p state)) (values t t))
-      ;; a drag extends the selection the press started; it redraws only if it did
-      (:drag (values t (and (browser-drag x y) t)))
-      ;; a drag that selected something hands it to PRIMARY and the clipboard (X's
-      ;; rule). It changes nothing on screen, as it never did.
-      (:up (browser-drag-end) (values t nil))
-      (t (values nil nil)))))
+(defmethod lol.morph:morph-opaque-p ((s tab-strip)) t)
+(defmethod lol.morph:morph-name ((s tab-strip)) "the tab strip")
 
-(defun tab-at (x y)
-  "The index of the tab (not its close box, not +, not the tray) under X,Y in the
-   tiled shell's strip, or NIL."
-  (and (< y +bar-h+)
-       (not (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-close-rects*))
-       (car (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*))))
+(defmethod lol.morph:draw-morph ((s tab-strip) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds s)
+    (declare (ignore x y h))
+    ;; the lit tab is the TILED trail's, even while a window has the keyboard
+    (let ((*active* (tiled-index)))
+      (multiple-value-bind (tabs closes plus) (draw-tabs canvas w)
+        (setf (strip-tabs s) tabs (strip-closes s) closes (strip-plus s) plus)))))
 
-(defmethod lol.morph:handle-event ((m shell-morph) e)
-  "Every event the browser understands, routed exactly as the old loop routed it. A
-   press, a menu or the halo on the shell gives it the focus (from a window that had
-   it); the wheel scrolls it without taking the focus, as in every desktop."
-  (let ((kind (lol.morph:event-kind e)))
-    (when (member kind '(:down :right :middle))
-      (setf *active* (tiled-index)))
-    (when (eq kind :down)
-      (setf (shell-press-tab m) (tab-at (lol.morph:event-x e) (lol.morph:event-y e))))
-    (cond
-      ;; a tab pulled down out of the strip: that trail becomes a window, carried by
-      ;; the hand from here as if its title bar had been grabbed (doc/morphic.org §5)
-      ((and (eq kind :drag) (shell-press-tab m)
-            (>= (lol.morph:event-y e) (* 2 +bar-h+)))
-       (let ((i (shiftf (shell-press-tab m) nil)))
-         (tear-off-by-pointer i (lol.morph:event-x e) (lol.morph:event-y e)))
-       t)
-      (t
-       (when (eq kind :up) (setf (shell-press-tab m) nil))
-       (let ((was-damaged (lol.morph:world-damaged-p *world*))
-             (pane-before (current-pane)))
-         (multiple-value-bind (result changed)
-             (if (eq kind :wheel)
-                 (let ((*active* (tiled-index))) (browser-event e))
-                 (browser-event e))
-           ;; typed INTO a terminal: the echo comes back as output and repaints only
-           ;; its rows (terminal-pane.lisp), so the frame is not damaged — unless it
-           ;; already was, or the key was not the console's (an evdev chord)
-           (when (and changed
-                      (not (and (eq kind :key)
-                                (getf (lol.morph:event-data e) :tty)
-                                (not was-damaged)
-                                (fboundp 'terminal-key-was-cheap-p)
-                                (funcall 'terminal-key-was-cheap-p pane-before
-                                         (lol.morph:event-state e)))))
-             (shell-changed nil m))
-           result))))))
+(defmethod morph-signature ((s tab-strip))
+  (list (lol.morph:morph-local-bounds s) (tiled-index) (tray-width)
+        (loop for trail in *trails*
+              collect (list (trail-windowed-p trail) (trail-title trail) (trail-kind-color trail)
+                            (and (fboundp 'trail-agent-dot)
+                                 (multiple-value-list (funcall 'trail-agent-dot trail)))))))
+
+(defclass tray (watched-morph)
+  ((clip :initform nil :accessor tray-clip
+         :documentation "(x0 . x1) of the clipboard icon, for clicks."))
+  (:documentation "The systray at the right end of the tab strip: the clipboard icon,
+   the battery, the clock (doc/systray.org). The clock ticks by painting the tray alone
+   (TICK-TRAY), so it is the one item its signature leaves out."))
+
+(defmethod lol.morph:morph-opaque-p ((m tray)) t)
+(defmethod lol.morph:morph-name ((m tray)) "the systray")
+
+(defmethod lol.morph:draw-morph ((m tray) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds m)
+    (declare (ignore y h))
+    (multiple-value-bind (x0 clip) (draw-tray canvas (+ x w))
+      (declare (ignore x0))
+      (setf (tray-clip m) clip))))
+
+(defmethod morph-signature ((m tray))
+  (list (lol.morph:morph-local-bounds m) (and (lol.clipboard:clip-current) t)
+        (remove :clock (ignore-errors (tray-items)) :key (lambda (it) (getf it :kind)))))
+
+(defclass status-line (watched-morph)
+  ((clear :initform nil :accessor status-clear
+          :documentation "The minibuffer's ✕ clear box (x0 x1 y0 y1) as last drawn."))
+  (:documentation "The bottom line: the last message, or the keys of the focused pane —
+   or the minibuffer while one is open (shell.lisp, DRAW-STATUS-LINE)."))
+
+(defmethod lol.morph:morph-opaque-p ((m status-line)) t)
+(defmethod lol.morph:morph-name ((m status-line)) "the status line")
+
+(defmethod lol.morph:draw-morph ((m status-line) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds m)
+    (declare (ignore x))
+    ;; it advertises the FOCUSED pane's keys: a window's, when a window has them
+    (setf (status-clear m) (and *trails* (draw-status-line canvas w (+ y h) (current-pane))))))
+
+(defmethod morph-signature ((m status-line))
+  (list (lol.morph:morph-local-bounds m)
+        (and *trails* (status-line-content (current-pane)))))
+
+;;; ===========================================================================
+;;; A trail on screen: the accordion, as a layout
+;;; ===========================================================================
+
+(defclass trail-area (lol.morph:morph)
+  ((root :initform nil :accessor area-root
+         :documentation "The ROOT PANE of the trail shown — how the area finds its trail
+   in *TRAILS* (drilling replaces the list, never its first pane).")
+   (pad-top :initarg :pad-top :initform 4 :reader area-pad-top)
+   (pad-bottom :initarg :pad-bottom :initform 2 :reader area-pad-bottom))
+  (:documentation "One trail on screen, its panes as its children: the ancestors
+   collapsed to breadcrumb bars, the last one expanded to the rest of the height — the
+   accordion, as a layout policy (LAYOUT-TRAIL-AREA). The shell has one, under its tab
+   strip; every window has one, under its title bar."))
+
+(defmethod lol.morph:morph-name ((a trail-area))
+  (let ((trail (area-trail a)))
+    (format nil "trail · ~a" (if trail (trail-title trail) "-"))))
+
+(defun area-trail-index (a)
+  (and (area-root a) (position (area-root a) *trails* :key #'first)))
+
+(defun area-trail (a)
+  (let ((i (area-trail-index a))) (and i (nth i *trails*))))
+
+(defun area-expanded (a)
+  "The trail's current pane, as laid out in area A."
+  (find :expanded (lol.morph:morph-children a) :key #'pane-mode))
+
+(defun morph-area (m)
+  "The trail area M is in (M itself, if it is one), or NIL."
+  (loop for o = m then (lol.morph:morph-owner o)
+        while o
+        when (typep o 'trail-area) return o))
+
+(defun pane-trail-index (p)
+  "The index in *TRAILS* of the trail pane P is shown in, or NIL off screen."
+  (let ((a (morph-area p))) (and a (area-trail-index a))))
+
+(defun set-bounds-if (m rect)
+  "Give M the bounds RECT unless it has them already (a move, a resize: each damages
+   what it must)."
+  (unless (equal (lol.morph:morph-bounds m) rect)
+    (if (equal (lol.morph:morph-bounds m) '(0 0 0 0))
+        (progn (setf (lol.morph:morph-bounds m) (copy-list rect)) (lol.morph:invalidate m))
+        (lol.morph:set-morph-bounds m rect))))
+
+(defun set-pane-mode (p mode)
+  (unless (eq (pane-mode p) mode)
+    (setf (pane-mode p) mode (pane-split-plan p) nil)
+    (lol.morph:invalidate p)))
+
+(defun adopt (owner m)
+  "Make M a child of OWNER (taking it from wherever it was), on top."
+  (unless (eq (lol.morph:morph-owner m) owner)
+    (lol.morph:add-morph owner m)))
+
+(defun let-go (p)
+  "P leaves the screen: off its owner, its own children (a side pane, a preview) with
+   it, and no longer laid out."
+  (dolist (c (lol.morph:morph-children p)) (when (pane-p c) (let-go c)))
+  (when (lol.morph:morph-owner p) (lol.morph:remove-morph p))
+  (setf (pane-mode p) nil (pane-split-plan p) nil))
+
+(defun layout-trail-area (a trail)
+  "Lay TRAIL out in area A: its panes become A's children, in order — every one but
+   the last a breadcrumb bar (+BAR-H+ tall, 3 px apart), the last expanded to the
+   bottom — and the expanded one lays out its right-hand column. A pane of another
+   trail that was here goes. The geometry is the tiled shell's as it has always been:
+   8 px gutters, the first bar 4 px under the top."
+  (setf (area-root a) (first trail))
+  (dolist (c (lol.morph:morph-children a))
+    (unless (member c trail) (let-go c)))
+  (destructuring-bind (ax ay aw ah) (lol.morph:morph-bounds a)
+    (let ((y (+ ay (area-pad-top a)))
+          (bottom (- (+ ay ah) (area-pad-bottom a)))
+          (n (length trail)))
+      (loop for p in trail for i from 0
+            do (adopt a p)
+               (cond
+                 ((< i (1- n))
+                  (dolist (c (lol.morph:morph-children p)) (when (pane-p c) (let-go c)))
+                  (set-pane-mode p :collapsed)
+                  (set-bounds-if p (list (+ ax 8) y (- aw 16) +bar-h+))
+                  (incf y (+ +bar-h+ 3)))
+                 (t
+                  (set-pane-mode p :expanded)
+                  (set-bounds-if p (list (+ ax 8) y (- aw 16) (max 0 (- bottom y))))
+                  (layout-expanded p))))))
+  ;; children in the trail's order (each was added on top when it arrived)
+  (unless (equal (lol.morph:morph-children a) trail)
+    (setf (lol.morph:morph-children a)
+          (remove-if-not (lambda (c) (member c trail)) (copy-list trail)))))
+
+(defun layout-expanded (p)
+  "Lay out the expanded pane P's right-hand column: what EXPANDED-COLUMNS says sits
+   there becomes P's one child, at the column's rect; anything else that was there
+   goes. Its split and its body's top are recorded for its clicks."
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds p)
+    (let* ((cols (expanded-columns p x y w h))
+           (side (getf cols :side)))
+      (setf (pane-split-plan p) cols
+            (pane-body-top p) (getf cols :body-y)
+            (pane-split-x p) (getf cols :split-x))
+      (dolist (c (lol.morph:morph-children p))
+        (unless (eq c side) (let-go c)))
+      (when side
+        (adopt p side)
+        (set-pane-mode side :side)
+        (set-bounds-if side (lol.morph:to-world-rect p (getf cols :side-rect)))))))
+
+;;; ---- a pane, as a morph --------------------------------------------------------
+
+(defmethod lol.morph:morph-opaque-p ((p pane))
+  (member (pane-mode p) '(:collapsed :expanded)))   ; a bar, a panel: filled. A side body is not
+
+(defmethod lol.morph:morph-name ((p pane))
+  (let ((title (if (pane-view p) (short-title (view-title (pane-view p))) "-")))
+    (case (pane-mode p)
+      (:collapsed (format nil "breadcrumb · ~a" title))
+      (:side (format nil "side pane · ~a" title))
+      (t (format nil "pane · ~a" title)))))
+
+(defmethod lol.morph:draw-morph ((p pane) canvas clip)
+  (declare (ignore clip))
+  ;; drawn with *ACTIVE* at its own trail, so the code inside that asks for the
+  ;; current pane (a terminal's cursor, say) gets the one of the trail it is drawing
+  (let ((*active* (or (pane-trail-index p) *active*)))
+    (destructuring-bind (x y w h) (lol.morph:morph-local-bounds p)
+      (case (pane-mode p)
+        (:collapsed (draw-crumb canvas x y w p))
+        (:expanded (draw-pane-expanded canvas p x y w h))
+        (:side (draw-pane-body canvas p x y w h))))))
+
+(defun tv-signature (tv)
+  "A text view's picture, short of where it is scrolled to (which drawing itself
+   adjusts, to keep the caret in view): its buffer — a persistent vector, replaced on
+   every edit, so one EQ — its caret, selection and focus."
+  (and tv (list (lol.textview:tv-lines tv) (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv)
+                (lol.textview::tv-anchor-line tv) (lol.textview::tv-anchor-col tv)
+                (lol.textview::tv-mark-active tv) (lol.textview::tv-rect-mode tv)
+                (lol.textview:tv-focus tv))))
+
+(defmethod morph-signature ((p pane))
+  (let ((v (pane-view p)))
+    (case (pane-mode p)
+      (:collapsed
+       (let ((sel (selected-item p)))
+         (list :collapsed (lol.morph:morph-local-bounds p) (and v (view-title v)) (and v (view-kind v))
+               (and sel (item-label sel)))))
+      (t (list (pane-mode p) (lol.morph:morph-local-bounds p) v (and v (view-title v)) (pane-title p)
+               (pane-side p) (pane-preview p) (pane-sel p) (pane-editing-side p)
+               (tv-signature (pane-tv p))
+               (and (terminal-pane-p p) *minibuffer* t)
+               (subject-signature (pane-subject p) p))))))
 
 ;;; ===========================================================================
 ;;; The desk: the world the environment runs in
@@ -145,29 +344,50 @@
    (grab :initform nil :accessor desk-grab
          :documentation "The window SuperL-g put in keyboard move/resize mode, or NIL.")
    (font-size :initform nil :accessor desk-font-size
-              :documentation "The font size the windows were drawn at, to notice a change."))
+              :documentation "The font size the tree was laid out at, to notice a change."))
   (:documentation "The environment's world: the tiled shell at the bottom of the
-   z-order, trail windows above it."))
+   z-order, trail windows above it, overlays above those."))
 
 (defvar *windows-to-restore* nil
   "Windows for the next MAKE-DESK to tear off again: ((ROOT-PANE x y w h) …), back to
    front. Set from the desk file at boot (desk.lisp) and from the last world when you
    come back from the console (RUN-BROWSER-FB), so a session's windows survive both.")
 
+(defun make-shell-morph (w h)
+  (let* ((strip (make-instance 'tab-strip))
+         (tray (make-instance 'tray))
+         (area (make-instance 'trail-area :pad-bottom 2))
+         (status (make-instance 'status-line))
+         (sh (make-instance 'shell-morph :bounds (list 0 0 w h)
+                                         :strip strip :area area :status status)))
+    (lol.morph:add-morph sh strip)
+    (lol.morph:add-morph strip tray)
+    (setf (strip-tray strip) tray)
+    (lol.morph:add-morph sh area)
+    (lol.morph:add-morph sh status)
+    sh))
+
 (defun make-desk (w h)
-  "A world W x H holding the tiled shell, focused, all of it damaged: the first
+  "A world W x H holding the tiled shell, laid out and all of it damaged: the first
    repair draws the whole frame. Windows waiting in *WINDOWS-TO-RESTORE* are torn off
    again where they were (cut to this screen)."
-  (let* ((shell (make-instance 'shell-morph :bounds (list 0 0 w h)))
+  (let* ((shell (make-shell-morph w h))
          (desk (make-instance 'desk :bounds (list 0 0 w h) :shell shell)))
+    ;; a pane is one morph, so it can be in one world only: a world made fresh (the
+    ;; console and back, a new render) takes the trails' panes from the last one
+    (dolist (trail *trails*) (dolist (p trail) (let-go p)))
     (lol.morph:add-morph desk shell)
-    (setf (lol.morph:world-focus desk) shell
-          (desk-tiled-root desk) (and *trails* (first (nth *active* *trails*)))
+    (setf (desk-tiled-root desk) (and *trails* (first (nth (min *active* (1- (length *trails*))) *trails*)))
           (desk-font-size desk) (and *bfont* (lol.canvas:font-size *bfont*)))
-    (let ((layout (shiftf *windows-to-restore* nil)))
-      (when layout
-        (let ((*world* desk)) (restore-window-layout layout))))
+    (let ((*world* desk))
+      (desk-sync desk)
+      (let ((layout (shiftf *windows-to-restore* nil)))
+        (when layout (restore-window-layout layout))))
+    (lol.morph:invalidate desk)
     desk))
+
+(defun desk-tray (&optional (desk *world*))
+  (and desk (strip-tray (shell-strip (desk-shell desk)))))
 
 (defun desk-window-layout (&optional (desk *world*))
   "The desk's windows as ((ROOT-PANE x y w h) …), back to front: what
@@ -191,83 +411,83 @@
                      (x (max (- (* 4 (char-w)) w) (min x (- sw (* 4 (char-w))))))
                      (y (max +bar-h+ (min y (- sh +bar-h+)))))
                 (tear-off-trail i (list x y w h))))))))
-    (setf *active* (min keep (max 0 (1- (length *trails*)))))))
+    (setf *active* (min keep (max 0 (1- (length *trails*)))))
+    (desk-sync *world*)))
+
+(defun layout-shell (sh)
+  "The shell's bands: the strip on top (the tray at its right end), the status line at
+   the bottom, the trail area between them showing the tiled trail."
+  (destructuring-bind (x y w h) (lol.morph:morph-bounds sh)
+    (let ((strip (shell-strip sh)) (tw (tray-width)))
+      (set-bounds-if strip (list x y w +bar-h+))
+      (set-bounds-if (strip-tray strip) (list (- (+ x w) tw) y tw (- +bar-h+ 1)))
+      (set-bounds-if (shell-area sh) (list x (+ y +bar-h+) w (- h +bar-h+ (status-h))))
+      (set-bounds-if (shell-status sh) (list x (+ y (- h (status-h))) w (status-h)))
+      (layout-trail-area (shell-area sh) (and *trails* (nth (tiled-index) *trails*))))))
 
 (defun environment-changed ()
-  "Something other than an event changed what the environment shows — the agent
-   streamed, a run printed, a service woke, the stage ticked. Until those become
-   morphs that step themselves (doc/morphic.org step 5), they damage the shell, and
-   every window showing something live (a terminal, a page, a conversation …)."
-  (shell-changed)
-  (refresh-live-windows))
+  "Something other than an event may have changed what the environment shows — the
+   agent streamed, a service woke, a run printed. Nothing has to be guessed: the desk
+   compares every morph's picture with what it was (DESK-SYNC), and damages exactly
+   the morphs that changed."
+  (when *world* (desk-sync *world*)))
 
 ;;; ===========================================================================
-;;; Windows (step 2): a trail torn off the tab strip
+;;; Windows: a trail torn off the tab strip
 ;;; ===========================================================================
 ;;;
-;;; A TRAIL-WINDOW shows one trail — its breadcrumbs and its current pane — drawn by
-;;; the same DRAW-TRAIL-AREA the tiled shell uses, under a minimal title bar. The trail
-;;; itself stays in *TRAILS*: a trail is either in the tab strip or in a window, and
-;;; everything that walks *TRAILS* (the terminal and web sweeps, the desk file, the
-;;; unsaved-files question at SuperL-q) keeps seeing it. The window finds its trail by
-;;; the trail's ROOT PANE, the one thing about a trail that never changes identity
-;;; (drilling replaces the list, never its first pane).
+;;; A TRAIL-WINDOW shows one trail under a minimal title bar. The trail itself stays in
+;;; *TRAILS*: a trail is either in the tab strip or in a window, and everything that
+;;; walks *TRAILS* (the terminal and web sweeps, the desk file, the unsaved-files
+;;; question at SuperL-q) keeps seeing it. The window finds its trail by the trail's
+;;; ROOT PANE, the one thing about a trail that never changes identity.
 ;;;
 ;;; FOCUS is *ACTIVE*, as it always was: the focused trail. When it is a window's,
-;;; that window has the keyboard; when it is a tiled one, the shell has. So SuperL-Tab
-;;; and SuperL-1..9 reach windows too — and raise them — with no code of their own
-;;; (WORLD-AFTER-DISPATCH below makes the world agree after every event).
+;;; that window's expanded pane has the keyboard; when it is a tiled one, the shell's
+;;; does. So SuperL-Tab and SuperL-1..9 reach windows too — and raise them — with no
+;;; code of their own (DESK-SYNC makes the world agree after every event).
 ;;;
-;;; Each window draws into a BACKING STORE, a canvas of its own size, which the
-;;; world's repair then copies onto the screen (clipped). The shell's drawing code
-;;; puts things at fixed offsets from 0,0 and records where it put them in specials
-;;; (*LIST-ROWS*, *CONTENT-TOP* …) that its click handlers read back; in a canvas of
-;;; its own a window's pane is simply at 0,0, and a window keeps its OWN values of
-;;; those specials (WITH-WINDOW-CONTEXT), so its hit maps and the shell's never mix.
-;;; It also makes an opaque drag cheap: moving a window re-renders nothing in it.
+;;; A window is a SURFACE (poc/morph.lisp): its subtree — the title bar, a trail area
+;;; of the same pane morphs the shell uses, the frame — draws into a backing store of
+;;; its own, in the window's coordinates, which the world's repair copies onto the
+;;; screen. So an opaque drag copies the window and draws nothing in it, and a key in
+;;; its pane redraws that pane in the store and copies that rect.
 
-(defparameter +window-specials+
-  '(*crumb-rects* *tab-rects* *tab-close-rects* *tab-plus-rect* *drawn*
-    *drag-tv* *drag-origin* *term-drag* *last-press*)
-  "The shell's per-frame specials — hit maps, caches and focus-within-a-pane state —
-   of which every window keeps its own values. (What a PANE drew — its rows, its body's
-   top, its split, its preview — is the pane's own now: doc/morphic.org §12.)")
-
-(defparameter +window-specials-late+
-  '("*WEB-PRESS*" "*TERM-POINTER*")
-  "The same, from modules that load after this one (web.lisp): found by name.")
-
-(defun window-special-symbols ()
-  (append +window-specials+
-          (loop for name in +window-specials-late+
-                for s = (find-symbol name :cl-user)
-                when (and s (boundp s)) collect s)))
-
-(defun fresh-special-value (sym)
-  "What a new window starts with for SYM: the empty value, not the shell's."
-  (declare (ignore sym))
-  nil)
-
-(defclass trail-window (lol.morph:morph)
-  ((root     :initarg :root :accessor window-root
-             :documentation "The ROOT PANE of the trail shown: how the window finds it.")
-   (backing  :initform nil :accessor window-backing
-             :documentation "The window's own canvas, its size; NIL until first drawn.")
-   (stale    :initform t :accessor window-stale
-             :documentation "Must the backing store be drawn again before it is shown?
-   T: all of it; a rect (x y w h, the window's own coordinates): only that part, drawn
-   through a clip (a stage stepping inside it); NIL: it is up to date.")
-   (specials :initform '() :accessor window-specials
-             :documentation "The window's own values of the shell's hit-map specials.")
-   (renders  :initform 0 :accessor window-renders
-             :documentation "How many times its contents were drawn (not just copied)."))
+(defclass trail-window (lol.morph:surface)
+  ((root  :initarg :root :accessor window-root
+          :documentation "The ROOT PANE of the trail shown: how the window finds it.")
+   (title :accessor window-title)
+   (area  :accessor window-area)
+   (frame :accessor window-frame))
   (:documentation "One trail, torn off the tab strip: a title bar over its breadcrumbs
-   and current pane. Opaque; draws into a backing store; moves by being copied."))
+   and current pane, a frame and a resize grip. Opaque; a surface — it moves by being
+   copied."))
 
-(defmethod lol.morph:morph-opaque-p ((w trail-window)) t)
+(defclass title-bar (watched-morph) ()
+  (:documentation "A window's minimal title bar (doc/morphic.org §9, decision 6)."))
+(defclass window-frame (watched-morph) ()
+  (:documentation "A window's outline and its resize grip, drawn over everything in
+   the window; under the pointer only at the grip (MORPH-HIT-P)."))
+
 (defmethod lol.morph:morph-name ((w trail-window))
   (let ((trail (window-trail w)))
     (format nil "window · ~a" (if trail (trail-title trail) "?"))))
+(defmethod lol.morph:morph-name ((m title-bar)) "the title bar")
+(defmethod lol.morph:morph-name ((m window-frame)) "the window's frame")
+(defmethod lol.morph:morph-opaque-p ((m title-bar)) t)
+
+(defun window-renders (w)
+  "How many times W's contents were drawn into its backing store (not just copied)."
+  (lol.morph:surface-renders w))
+
+(defun make-trail-window (root bounds)
+  (let ((win (make-instance 'trail-window :root root :bounds bounds))
+        (title (make-instance 'title-bar))
+        (area (make-instance 'trail-area :pad-bottom 6))
+        (frame (make-instance 'window-frame)))
+    (setf (window-title win) title (window-area win) area (window-frame win) frame)
+    (dolist (m (list title area frame)) (lol.morph:add-morph win m))
+    win))
 
 (defun desk-windows (&optional (desk *world*))
   "The desk's windows, back to front."
@@ -278,6 +498,8 @@
 
 (defun window-trail (w)
   (let ((i (window-trail-index w))) (and i (nth i *trails*))))
+
+(defun window-pane (w) (let ((tr (window-trail w))) (and tr (car (last tr)))))
 
 (defun trail-window-of (trail)
   (and trail *world* (find (first trail) (desk-windows) :key #'window-root)))
@@ -302,34 +524,19 @@
   "The window holding the keyboard focus, or NIL when the shell has it."
   (and *trails* (trail-window-of (nth *active* *trails*))))
 
-(defvar *window-context* nil
-  "The window whose drawing or event is being handled, or NIL for the shell.")
-(defvar *shell-specials* nil
-  "The shell's values of the window specials, saved on entering a window's context,
-   so that a backdrop drawn from inside one (a menu opened in a window) draws the shell
-   with the shell's own hit maps (DRAW-WORLD-BACKDROP).")
-
-(defun call-with-window-context (w fn)
-  "Run FN with W's own values of the shell's per-frame specials, saving them back
-   afterwards. Inside, FN draws or handles input in window-local coordinates."
-  (let* ((syms (window-special-symbols))
-         (vals (mapcar (lambda (s)
-                         (let ((e (assoc s (window-specials w))))
-                           (if e (cdr e) (fresh-special-value s))))
-                       syms))
-         (shell (if *window-context* *shell-specials* (mapcar #'symbol-value syms))))
-    (progv syms vals
-      (let ((*window-context* w) (*shell-specials* shell))
-        (unwind-protect (funcall fn)
-          (setf (window-specials w) (mapcar (lambda (s) (cons s (symbol-value s))) syms)))))))
-
-(defmacro with-window-context ((w) &body body)
-  `(call-with-window-context ,w (lambda () ,@body)))
+(defun layout-window (win)
+  "A window's parts: the title bar on top, the trail area under it, the frame over
+   all of it — and its trail laid out in the area."
+  (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
+    (set-bounds-if (window-title win) (list x y w +bar-h+))
+    (set-bounds-if (window-area win) (list x (+ y +bar-h+) w (- h +bar-h+)))
+    (set-bounds-if (window-frame win) (list x y w h))
+    (layout-trail-area (window-area win) (window-trail win))))
 
 ;;; ---- drawing a window ------------------------------------------------------------
 
 (defun window-close-x (w)
-  "Local x where the title bar's close box starts."
+  "Window-local x where the title bar's close box starts."
   (- (third (lol.morph:morph-bounds w)) (char-w) 10))
 
 (defun window-grip-size ()
@@ -352,8 +559,7 @@
     (lol.canvas:draw-string canvas *bfont* (string (code-char 215))
                             (window-close-x win) (text-dy +bar-h+)
                             (if focused *ui-dim* *ui-rule*))
-    (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
-    (note-drawn 0 0 w +bar-h+ win '(draw-window-title) "the title bar")))
+    (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)))
 
 (defun draw-window-frame (canvas w h focused)
   "The window's outline (the accent when it has the focus) and its resize grip: three
@@ -364,128 +570,46 @@
           for d = (floor (* g k) 3)
           do (lol.canvas:draw-line canvas (- w 3) (- h 3 d) (- w 3 d) (- h 3) *ui-dim*))))
 
-(defun render-window (win)
-  "Draw WIN's contents into its backing store: the title bar, then its trail exactly
-   as the tiled shell draws one (DRAW-TRAIL-AREA), in the window's own context. When
-   only a part is stale (a rect), the same drawing runs through a clip to it: the
-   layout is the whole window's, the pixels written only that part's."
-  (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-    (declare (ignore x y))
-    (let ((c (window-backing win)) (part (window-stale win)))
-      (unless (and c (= (lol.canvas:canvas-w c) w) (= (lol.canvas:canvas-h c) h))
-        (setf c (setf (window-backing win) (lol.canvas:make-canvas w h))
-              part t))
-      (destructuring-bind (cx cy cw ch) (if (consp part) part (list 0 0 w h))
-        (lol.canvas:with-clip (c cx cy cw ch)
-          (let ((i (window-trail-index win)) (focused (eq win (focused-window))))
-            (lol.canvas:fill-rect c 0 0 w h *ui-bg*)
-            (when i
-              (let ((*active* i))
-                (with-window-context (win)
-                  (setf *crumb-rects* '() *drawn* '())
-                  (note-drawn 0 0 w h win '(render-window) "the window")
-                  (draw-window-title c w win focused)
-                  (draw-trail-area c w h (+ +bar-h+ 4) 6)
-                  (draw-window-frame c w h focused)))))))
-      (incf (window-renders win))
-      (setf (window-stale win) nil))))
-
-(defmethod lol.morph:draw-morph ((win trail-window) canvas clip)
+(defmethod lol.morph:draw-surface-ground ((win trail-window) canvas clip)
   (declare (ignore clip))
   (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-    (let ((b (window-backing win)))
-      (when (or (window-stale win) (null b)
-                (/= w (lol.canvas:canvas-w b)) (/= h (lol.canvas:canvas-h b)))
-        (render-window win)))
-    (lol.canvas:blit-canvas canvas (window-backing win) x y)))
-
-(defun window-changed (win &optional local)
-  "WIN's contents changed: draw them again, and show it. LOCAL, a rect in the
-   window's own coordinates, says only that part did (a stage's body): only it is
-   drawn again and repaired."
-  (cond
-    ((or (null local) (eq (window-stale win) t) (null (window-backing win)))
-     (setf (window-stale win) t)
-     (lol.morph:invalidate win))
-    (t
-     (setf (window-stale win)
-           (if (consp (window-stale win)) (lol.morph:rect-union (window-stale win) local) local))
-     (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-       (declare (ignore w h))
-       (lol.morph:invalidate win (list (+ x (first local)) (+ y (second local))
-                                       (third local) (fourth local)))))))
-
-(defun pane-live-p (p)
-  "Does pane P change on its own — a terminal, a web page, the stage, a run's output,
-   a live worker, a conversation?"
-  (and p
-       (or (member (view-kind (pane-view p)) '(:web :terminal :stage))
-             (and (fboundp 'pane-conversation) (funcall 'pane-conversation p))
-             (let ((tn (type-of (pane-subject p))))
-               (and (symbolp tn)
-                    (member (symbol-name tn) '("SUBJ-REMOTE" "RUN" "SUBJ-TERMINAL" "SUBJ-WEB")
-                            :test #'string=))))))
-
-(defun window-live-p (win)
-  "Is WIN's current pane live (PANE-LIVE-P)? Such windows are redrawn whenever the
-   world is told something changed without an event (ENVIRONMENT-CHANGED)."
-  (let ((trail (window-trail win))) (and trail (pane-live-p (car (last trail))))))
-
-(defun refresh-live-windows ()
-  (dolist (w (desk-windows)) (when (window-live-p w) (window-changed w))))
-
-(defun service-woke ()
-  "A service's fd woke the poll. The terminals and the live workers say exactly
-   which pane changed (TERMINAL-ROWS-TO-WORLD, DAMAGE-PANE); a web page's frame does
-   not, so windows showing a page are drawn again — and the shell's page too while a
-   window has the focus, since the web service then skips its own fast path (it paints
-   at the shell's geometry, which the focused pane is not in)."
-  (dolist (w (desk-windows))
-    (let ((p (window-pane w)))
-      (when (and p (eq (view-kind (pane-view p)) :web))
-        (window-changed w))))
-  (let ((p (holder-pane (desk-shell *world*))))
-    (when (and (focused-window) p (eq (view-kind (pane-view p)) :web))
-      (shell-changed))))
-
-(defun status-rect ()
-  (destructuring-bind (x y w h) (lol.morph:morph-bounds *world*)
     (declare (ignore x y))
-    (list 0 (- h (status-h)) w (status-h))))
+    (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)))
 
-(defun shell-painted (rects)
-  "The shell painted RECTS of itself straight into the screen's canvas — the fast
-   paths that skip a whole DRAW-BROWSER: the clock's tick, a terminal's rows, a web
-   frame. The world composites whatever lies over them (windows, an overlay's scrim)
-   and sends them (LOL.MORPH:NOTE-PAINTED). Outside a world: nothing to do."
-  (when *world*
-    (lol.morph:note-painted *world* rects (desk-shell *world*))))
+(defmethod lol.morph:draw-morph ((m title-bar) canvas clip)
+  (declare (ignore clip))
+  (let ((win (lol.morph:morph-owner m)))
+    (draw-window-title canvas (third (lol.morph:morph-bounds win)) win (eq win (focused-window)))))
 
-;;; ---- the shell and the windows, drawn together --------------------------------------
+(defmethod morph-signature ((m title-bar))
+  (let* ((win (lol.morph:morph-owner m)) (trail (window-trail win)))
+    (list (lol.morph:morph-local-bounds m) (eq win (focused-window)) (window-trail-index win)
+          (and trail (trail-title trail)) (and trail (trail-kind-color trail)))))
 
-(defun draw-shell-now (canvas w h)
-  "DRAW-BROWSER with the tiled trail current, and the focused window's pane (if a
-   window has the focus) advertised in the status line."
-  (let* ((focus (focused-window))
-         (*status-pane* (and focus (car (last (nth *active* *trails*)))))
-         (*active* (tiled-index)))
-    (draw-browser canvas w h)))
+(defmethod lol.morph:draw-morph ((m window-frame) canvas clip)
+  (declare (ignore clip))
+  (let ((win (lol.morph:morph-owner m)))
+    (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
+      (declare (ignore x y))
+      (draw-window-frame canvas w h (eq win (focused-window))))))
 
-(defun draw-world-backdrop (canvas w h)
-  "What a modal card floats over (DRAW-BACKDROP): the whole screen as the world shows
-   it — the shell, then every window on top. From inside a window's context the shell
-   is drawn with the shell's own specials, never the window's."
-  (if *window-context*
-      (progv (window-special-symbols) *shell-specials*
-        (let ((*window-context* nil)) (draw-shell-now canvas w h)))
-      (draw-shell-now canvas w h))
-  (dolist (win (desk-windows))
-    (when (window-backing win)
-      (destructuring-bind (x y ww wh) (lol.morph:morph-bounds win)
-        (declare (ignore ww wh))
-        (lol.canvas:blit-canvas canvas (window-backing win) x y)))))
+(defmethod morph-signature ((m window-frame))
+  (list (lol.morph:morph-local-bounds m) (eq (lol.morph:morph-owner m) (focused-window)) (window-grip-size)))
 
-(setf *backdrop-fn* 'draw-world-backdrop)
+(defun in-grip-p (win lx ly)
+  "Is LX,LY (window-local) on WIN's resize grip?"
+  (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
+    (declare (ignore x y))
+    (let ((g (+ 4 (window-grip-size))))
+      (and (>= lx (- w g)) (>= ly (- h g))))))
+
+(defmethod lol.morph:morph-hit-p ((m window-frame) x y)
+  (let ((win (lol.morph:morph-owner m)))
+    (destructuring-bind (wx wy ww wh) (lol.morph:morph-bounds win)
+      (declare (ignore ww wh))
+      (in-grip-p win (- x wx) (- y wy)))))
+
+(defmethod lol.morph:morph-opaque-p ((w trail-window)) t)
 
 ;;; ---- tearing off, re-tiling, closing ------------------------------------------------
 
@@ -502,8 +626,9 @@
 
 (defun tear-off-trail (i &optional bounds)
   "Show trail I in a window of its own (BOUNDS, else DEFAULT-WINDOW-BOUNDS), focused
-   and on top. The last tiled trail stays tiled — the shell always shows one; the
-   status line says so and NIL is returned. Returns the window."
+   and on top: its pane morphs move from the shell's trail area into the window's. The
+   last tiled trail stays tiled — the shell always shows one; the status line says so
+   and NIL is returned. Returns the window."
   (let ((trail (nth i *trails*)))
     (cond
       ((null trail) nil)
@@ -511,11 +636,9 @@
       ((<= (count-if-not #'windowed-trail-p *trails*) 1)
        (setf *browser-status*
              "the last tab stays tiled — open another (SuperL-e, SuperL-m …) to tear this one off")
-       (shell-changed (status-rect))
        nil)
       (t
-       (let ((win (make-instance 'trail-window :root (first trail)
-                                               :bounds (or bounds (default-window-bounds)))))
+       (let ((win (make-trail-window (first trail) (or bounds (default-window-bounds)))))
          (lol.morph:add-morph *world* win)
          ;; the tiled area shows its neighbour now: the nearest tiled trail before it
          (setf (desk-tiled-root *world*)
@@ -523,7 +646,7 @@
                                (position-if-not #'windowed-trail-p *trails*))
                            *trails*)))
          (setf *active* i)
-         (shell-changed)
+         (desk-sync *world*)
          win)))))
 
 (defun tear-off-by-pointer (i px py)
@@ -539,14 +662,14 @@
         (lol.morph:hand-pick-up (lol.morph:world-hand *world*) win :move)))))
 
 (defun retile-window (win)
-  "Put WIN's trail back in the tab strip, focused, and the window away."
+  "Put WIN's trail back in the tab strip, focused, and the window away: its pane
+   morphs move back into the shell's trail area."
   (let ((i (window-trail-index win)))
     (when (eq (desk-grab *world*) win) (setf (desk-grab *world*) nil))
     (lol.morph:remove-morph win)
     (when i
       (setf *active* i (desk-tiled-root *world*) (first (nth i *trails*))))
-    (setf (lol.morph:world-focus *world*) (desk-shell *world*))
-    (shell-changed)))
+    (desk-sync *world*)))
 
 (defun close-window-trail (win)
   "The close box: close WIN's trail, as SuperL-w would (never the last trail — but a
@@ -555,7 +678,7 @@
     (when i
       (setf *active* i)
       (close-trail)
-      (shell-changed))))                  ; the tabs renumber
+      (desk-sync *world*))))
 
 (defmethod lol.morph:drop-morph ((win trail-window) world x y)
   "Let go of a carried window. On the tab strip: back into it (re-tile). Elsewhere it
@@ -563,8 +686,7 @@
   (declare (ignore x))
   ;; a carry the halo's Move or Resize began was in grab mode: putting it down ends that
   (when (eq (desk-grab world) win)
-    (setf (desk-grab world) nil *browser-status* nil)
-    (shell-changed (status-rect)))
+    (setf (desk-grab world) nil *browser-status* nil))
   (if (< y +bar-h+)
       (retile-window win)
       (destructuring-bind (wx wy ww wh) (lol.morph:morph-bounds win)
@@ -575,95 +697,202 @@
                 (ny (max 0 (min wy (- sh +bar-h+)))))
             (lol.morph:move-morph win nx ny))))))
 
-;;; ---- a window's events -----------------------------------------------------------
+;;; ===========================================================================
+;;; Events: each morph takes its own, in its own coordinates
+;;; ===========================================================================
+;;;
+;;; A key goes to the world's focus — the focused trail's expanded pane — and is
+;;; BROWSER-KEY's. A press goes to the deepest morph under the pointer: a tab or the +,
+;;; the clipboard icon, the minibuffer's ✕, a breadcrumb, a window's title bar or grip,
+;;; and everything inside an expanded pane. A side pane lets its events through to its
+;;; expanded owner, which knows the split; a press in a gutter (beside a panel, between
+;;; two breadcrumbs, on the status line) reaches the trail area or the shell, which
+;;; hand it to the expanded pane just as the one click function used to. A drag and a
+;;; release go wherever the press went (the hand's capture).
+;;;
+;;; DAMAGE: an event damages the pane it reached (and its right-hand column, its child).
+;;; What else it changed — a tab, the status line, the layout — DESK-SYNC finds after
+;;; the event.
 
-(defun local-event (e win)
-  "E with its coordinates made WIN's own."
-  (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-    (declare (ignore w h))
-    (let ((c (copy-structure e)))
-      (setf (lol.morph:event-x c) (- (lol.morph:event-x e) x)
-            (lol.morph:event-y c) (- (lol.morph:event-y e) y))
-      c)))
+(defun morph-holder (m)
+  "The shell or the window M is in (M itself, if it is one)."
+  (loop for o = m then (lol.morph:morph-owner o)
+        while o
+        when (or (typep o 'shell-morph) (typep o 'trail-window)) return o))
 
-(defun offset-layer (layer dx dy)
-  (let ((r (getf layer :rect)))
-    (if r
-        (let ((l (copy-list layer)))
-          (setf (getf l :rect) (list (+ (first r) dx) (+ (second r) dy) (third r) (fourth r)))
-          l)
-        layer)))
+(defun area-of-holder (h)
+  (if (typep h 'trail-window) (window-area h) (shell-area h)))
 
-(defun window-chooser (chooser win)
-  "CHOOSER (the backend's menu/halo loop) as seen from inside WIN: the browser asks
-   for a menu at window coordinates; the card goes where that is on screen, and the
-   halo's layer outlines with it."
-  (and chooser
-       (destructuring-bind (ox oy w h) (lol.morph:morph-bounds win)
-         (declare (ignore w h))
-         (lambda (kind entries x y &optional layers)
-           (funcall chooser kind entries (+ x ox) (+ y oy)
-                    (mapcar (lambda (l) (offset-layer l ox oy)) layers))))))
+(defun holder-pane (h)
+  "The expanded pane of the shell or window H."
+  (and h (area-expanded (area-of-holder h))))
 
-(defun trails-same-except-p (before after root)
-  "Are the trail lists BEFORE and AFTER the same, but for the one rooted at ROOT?"
-  (and (= (length before) (length after))
-       (every (lambda (a b) (or (eq a b) (and (eq (first a) root) (eq (first b) root))))
-              before after)))
+(defun pane-event (p e)
+  "The pointer events of the expanded pane P (E in P's coordinates). -> T when taken."
+  (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
+        (wx (lol.morph:event-wx e)) (wy (lol.morph:event-wy e))
+        (state (lol.morph:event-state e)))
+    (case (lol.morph:event-kind e)
+      (:down (press-prelude)
+             (pane-click p x y (lol.canvas:ctrl-p state) (lol.canvas:super-p state))
+             (lol.morph:invalidate p) t)
+      (:right (context-menu-at (pane-target p x y) wx wy)
+              (lol.morph:invalidate p) t)
+      (:middle (pane-middle-click p x y wx wy (lol.canvas:super-p state))
+               (lol.morph:invalidate p) t)
+      ;; a drag extends the selection the press started; it redraws only if it did
+      (:drag (when (browser-drag x y) (lol.morph:invalidate p)) t)
+      ;; a drag that selected something hands it to PRIMARY and the clipboard (X's
+      ;; rule). It changes nothing on screen, as it never did.
+      (:up (browser-drag-end) t)
+      (t nil))))
 
-(defun window-browser-event (win e)
-  "Run E through the browser inside WIN — its trail current, its hit maps in place,
-   coordinates its own. Damage: the window if anything changed, the status line (the
-   messages and hints of the focused pane live there), and the whole shell if the
-   event changed any OTHER trail (a new tab, a closed one)."
-  (let ((before (copy-list *trails*)) (root (window-root win)))
-    (multiple-value-bind (result changed)
-        (let ((*chooser* (window-chooser *chooser* win)))
-          (with-window-context (win) (browser-event (local-event e win))))
-      (when changed
-        (window-changed win)
-        (shell-changed (status-rect)))
-      (unless (trails-same-except-p before *trails* root) (shell-changed))
-      result)))
+(defun area-scroll (a e)
+  "The wheel over area A: its trail's current pane scrolls — without taking the focus,
+   as in every desktop."
+  (let ((i (area-trail-index a)))
+    (when i
+      (let ((*active* i))
+        (browser-scroll (* (- (lol.morph:event-notches e)) +wheel-lines+)))
+      (let ((p (area-expanded a))) (when p (lol.morph:invalidate p)))
+      t)))
 
-(defun in-grip-p (win lx ly)
-  (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-    (declare (ignore x y))
-    (let ((g (+ 4 (window-grip-size))))
-      (and (>= lx (- w g)) (>= ly (- h g))))))
+(defmethod lol.morph:handle-event ((p pane) e)
+  (case (pane-mode p)
+    (:expanded
+     (case (lol.morph:event-kind e)
+       (:key (pane-key p e))
+       ;; the Menu key (fb: from the evdev): the right-button menu, at the caret
+       (:menu (keyboard-context-menu) (lol.morph:invalidate p) t)
+       (t (pane-event p e))))
+    ;; a breadcrumb: a press goes back to that level
+    (:collapsed
+     (when (eq (lol.morph:event-kind e) :down)
+       (let ((trail (area-trail (morph-area p))))
+         (press-prelude)
+         (trail-goto (position p trail))
+         t)))
+    ;; a side pane: its expanded owner takes its events — it knows the split
+    (t nil)))
 
-(defmethod lol.morph:handle-event ((win trail-window) e)
-  "A press focuses and raises the window, then: the close box closes it, the title bar
-   picks it up (the hand carries it while the button is held), the grip resizes it,
-   anything else goes to its trail. The wheel scrolls it without taking the focus."
-  (let* ((kind (lol.morph:event-kind e))
-         (i (window-trail-index win)))
-    (unless i (return-from lol.morph:handle-event nil))
-    (when (member kind '(:down :right :middle))
-      (setf *active* i)
-      (lol.morph:raise-morph win))
-    (destructuring-bind (x y w h) (lol.morph:morph-bounds win)
-      (declare (ignore w h))
-      (let ((lx (- (lol.morph:event-x e) x)) (ly (- (lol.morph:event-y e) y)))
-        (cond
-          ((and (eq kind :down) (< ly +bar-h+))
-           (if (>= lx (window-close-x win))
-               (close-window-trail win)
-               (lol.morph:hand-pick-up (lol.morph:world-hand *world*) win :move))
-           t)
-          ((and (eq kind :down) (in-grip-p win lx ly))
-           (lol.morph:hand-pick-up (lol.morph:world-hand *world*) win :resize)
-           t)
-          ((eq kind :wheel)
-           (let ((*active* i)) (window-browser-event win e)))
-          (t (window-browser-event win e)))))))
+(defun pane-key (p e)
+  "A key for the focused pane P: BROWSER-KEY's. P is damaged — unless the key was
+   typed INTO a terminal: the echo comes back as output and repaints only its rows
+   (terminal-pane.lisp), so nothing is damaged (unless the key was not the console's,
+   an evdev chord)."
+  (let ((state (lol.morph:event-state e)))
+    (let ((result (browser-key (lol.morph:event-key e) state)))
+      (unless (and (getf (lol.morph:event-data e) :tty)
+                   (fboundp 'terminal-key-was-cheap-p)
+                   (funcall 'terminal-key-was-cheap-p p state))
+        (lol.morph:invalidate p))
+      (if (eq result :quit) :quit t))))
+
+(defmethod lol.morph:handle-event ((a trail-area) e)
+  "What reaches the area itself: the wheel (from anywhere over it), and a press in a
+   gutter — the old click's rules: a breadcrumb's band (its bottom edge included,
+   across the whole width), else the expanded pane's."
+  (let ((p (area-expanded a)) (kind (lol.morph:event-kind e)))
+    (cond
+      ((eq kind :wheel) (area-scroll a e))
+      ((null p) nil)
+      ((eq kind :down)
+       (let* ((y (lol.morph:event-y e))
+              (crumb (find-if (lambda (c)
+                                (and (eq (pane-mode c) :collapsed)
+                                     (let ((cy (second (lol.morph:morph-local-bounds c))))
+                                       (<= cy y (+ cy +bar-h+)))))
+                              (lol.morph:morph-children a))))
+         (if crumb
+             (progn (press-prelude) (trail-goto (position crumb (area-trail a))) t)
+             (pane-event p e))))
+      (t (pane-event p e)))))
+
+(defun tab-target (s x)
+  "What a press at X in tab strip S is on: (:KIND :TAB :INDEX i), or NIL."
+  (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) (strip-tabs s))))
+    (and tab (list :kind :tab :index (car tab)))))
+
+(defun tab-at (s x)
+  "The index of the tab (not its close box, not +) under X in strip S, or NIL."
+  (and (not (find-if (lambda (e) (<= (cadr e) x (cddr e))) (strip-closes s)))
+       (getf (tab-target s x) :index)))
+
+(defmethod lol.morph:handle-event ((s tab-strip) e)
+  "A press activates a tab, closes one, or opens a Workspace (+); a tab dragged down
+   out of the strip becomes a window, carried by the hand from there (doc/morphic.org
+   §5). The right button is a tab's menu, the middle one the halo."
+  (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e)))
+    (case (lol.morph:event-kind e)
+      (:down (press-prelude)
+             (setf (strip-press-tab s) (tab-at s x))
+             (tab-strip-click (strip-tabs s) (strip-closes s) (strip-plus s) x)
+             t)
+      (:drag (when (and (strip-press-tab s) (>= y (* 2 +bar-h+)))
+               (tear-off-by-pointer (shiftf (strip-press-tab s) nil)
+                                    (lol.morph:event-wx e) (lol.morph:event-wy e)))
+             t)
+      (:up (setf (strip-press-tab s) nil) (browser-drag-end) t)
+      (:right (context-menu-at (tab-target s x) (lol.morph:event-wx e) (lol.morph:event-wy e)) t)
+      (:middle (open-halo (lol.morph:event-wx e) (lol.morph:event-wy e)) t)
+      (t nil))))
+
+(defmethod lol.morph:handle-event ((m tray) e)
+  "A press on the clipboard icon opens the history (SuperL-h's card)."
+  (when (eq (lol.morph:event-kind e) :down)
+    (press-prelude)
+    (let ((clip (tray-clip m)) (x (lol.morph:event-x e)))
+      (when (and clip (<= (car clip) x (cdr clip))) (open-clipboard-manager)))
+    t))
+
+(defmethod lol.morph:handle-event ((m status-line) e)
+  "A press on the minibuffer's ✕ clears its text and keeps it open; any other press
+   is the shell's (it ends the prompt, as a press anywhere does)."
+  (when (and (eq (lol.morph:event-kind e) :down)
+             (progn (setf *drag-tv* nil *drag-origin* nil *term-drag* nil)
+                    (minibuffer-click (status-clear m) (lol.morph:event-x e) (lol.morph:event-y e))))
+    (lol.morph:invalidate m)
+    t))
+
+(defmethod lol.morph:handle-event ((sh shell-morph) e)
+  "What reaches the shell itself — a press or a button on the status line, the wheel
+   over the strip or the status line — is the tiled pane's, as it always was."
+  (let ((a (shell-area sh)))
+    (if (eq (lol.morph:event-kind e) :wheel)
+        (area-scroll a e)
+        (let ((p (area-expanded a)))
+          (and p (pane-event p e))))))
+
+(defmethod lol.morph:handle-event ((m title-bar) e)
+  "A press on the close box closes the window's trail; anywhere else on the bar picks
+   the window up (the hand carries it while the button is held). The right button
+   offers the environment's menu, the middle one the halo."
+  (let ((win (lol.morph:morph-owner m)))
+    (case (lol.morph:event-kind e)
+      (:down (if (>= (lol.morph:event-x e) (window-close-x win))
+                 (close-window-trail win)
+                 (lol.morph:hand-pick-up (lol.morph:world-hand *world*) win :move))
+             t)
+      (:right (context-menu-at nil (lol.morph:event-wx e) (lol.morph:event-wy e)) t)
+      (:middle (open-halo (lol.morph:event-wx e) (lol.morph:event-wy e)) t)
+      (t nil))))
+
+(defmethod lol.morph:handle-event ((m window-frame) e)
+  "A press on the grip resizes the window (the hand carries its corner)."
+  (when (eq (lol.morph:event-kind e) :down)
+    (lol.morph:hand-pick-up (lol.morph:world-hand *world*) (lol.morph:morph-owner m) :resize)
+    t))
+
+(defmethod lol.morph:handle-event ((w trail-window) e)
+  "The wheel over a window's title bar scrolls its trail, as over its pane."
+  (when (eq (lol.morph:event-kind e) :wheel)
+    (area-scroll (window-area w) e)))
 
 ;;; ---- the desk's own keys: SuperL-g and the grab mode -----------------------------------
 
 (defun grab-status ()
   (setf *browser-status*
-        "window: arrows move · S-arrows ×8 · C-arrows resize · t or SuperL-g re-tile · Ret/Esc done")
-  (shell-changed (status-rect)))
+        "window: arrows move · S-arrows ×8 · C-arrows resize · t or SuperL-g re-tile · Ret/Esc done"))
 
 (defun clamp-window-position (win x y)
   "X,Y pulled back so that WIN's title bar stays on screen."
@@ -690,8 +919,7 @@
                  ;; Return or Esc puts it down where it is
                  (let ((hand (lol.morph:world-hand desk)))
                    (when (eq (lol.morph:hand-carrying hand) win)
-                     (setf (lol.morph:hand-carrying hand) nil)))
-                 (shell-changed (status-rect))))
+                     (setf (lol.morph:hand-carrying hand) nil)))))
           (cond
             ((and (member key '(:left :right :up :down)) ctrl)
              (lol.morph:resize-morph win
@@ -714,12 +942,25 @@
              (done) t)
             (t (done) nil)))))))
 
+(defun press-focus (desk e)
+  "A press (any button) gives the focus to the trail it lands in — the tiled one, or a
+   window's, which comes to the top — before the morph pressed acts on it."
+  (let* ((target (lol.morph:morph-at desk (lol.morph:event-wx e) (lol.morph:event-wy e)))
+         (holder (morph-holder target)))
+    (cond ((typep holder 'trail-window)
+           (let ((i (window-trail-index holder)))
+             (when i (setf *active* i)))
+           (lol.morph:raise-morph holder))
+          ((and holder *trails*)
+           (setf *active* (tiled-index))))))
+
 (defmethod lol.morph:handle-event ((desk desk) e)
   "The desk sees every event first. It brings the world in line with the trails (the
-   focus can have moved between events — a modal, a restored desk), then keeps only
-   the window keys: SuperL-g, and the keys of the grab mode it starts. SuperL-g on a
-   tiled trail tears it off into a window (and grabs it); on a window, grabs it —
-   arrows then move it."
+   focus can have moved between events — a modal, a restored desk), hands everything to
+   an overlay that is up, focuses the trail a press lands in, and keeps the window
+   keys: SuperL-g, and the keys of the grab mode it starts. SuperL-g on a tiled trail
+   tears it off into a window (and grabs it); on a window, grabs it — arrows then move
+   it."
   (desk-sync desk)
   ;; an overlay on top (the Spotter, a menu, the debugger …) is MODAL for input: it
   ;; takes every event, wherever the pointer is — a click off its card is its business
@@ -729,78 +970,194 @@
     (when ov
       (overlay-event ov e)
       (return-from lol.morph:handle-event t)))
-  (when (eq (lol.morph:event-kind e) :key)
-    (let ((key (lol.morph:event-key e)) (state (lol.morph:event-state e)))
-      (cond
-        ((desk-grab desk) (grab-key desk key state))
-        ((and (lol.canvas:super-p state) (member key '(#\g #\G)) (not *minibuffer*))
-         (let ((win (or (focused-window) (tear-off-trail *active*))))
-           (when win
-             (setf (desk-grab desk) win)
-             (grab-status)))
-         t)))))
+  (case (lol.morph:event-kind e)
+    ((:down :right :middle) (press-focus desk e) nil)
+    (:key
+     (let ((key (lol.morph:event-key e)) (state (lol.morph:event-state e)))
+       (cond
+         ((desk-grab desk) (grab-key desk key state))
+         ((and (lol.canvas:super-p state) (member key '(#\g #\G)) (not *minibuffer*))
+          (let ((win (or (focused-window) (tear-off-trail *active*))))
+            (when win
+              (setf (desk-grab desk) win)
+              (grab-status)))
+          t))))))
 
 (defmethod lol.morph:world-after-dispatch ((desk desk) e)
   (declare (ignore e))
   (desk-sync desk))
 
+(defmethod lol.morph:world-before-repair ((desk desk))
+  (desk-sync desk))
+
 (defun desk-sync (desk)
-  "Make the world agree with the trails: a window whose trail is gone goes; the focus
-   follows *ACTIVE* (a window that gets it is raised, and both title bars restyle); a
-   font size change redraws everything. Run before and after every event."
-  (dolist (w (desk-windows desk))
-    (unless (window-trail-index w)
-      (when (eq (desk-grab desk) w) (setf (desk-grab desk) nil))
-      (lol.morph:remove-morph w)))
-  (when *trails*
-    (setf *active* (max 0 (min *active* (1- (length *trails*)))))
-    (let* ((trail (nth *active* *trails*))
-           (win (trail-window-of trail))
-           (new (or win (desk-shell desk)))
-           (old (lol.morph:world-focus desk)))
-      (unless win
-        (unless (eq (desk-tiled-root desk) (first trail))
-          (setf (desk-tiled-root desk) (first trail))
-          (shell-changed)))
-      (unless (eq new old)
-        (when (typep old 'trail-window) (window-changed old))
-        (when win (lol.morph:raise-morph win) (window-changed win))
-        (setf (lol.morph:world-focus desk) new)
-        (shell-changed (status-rect)))))
-  (let ((fs (and *bfont* (lol.canvas:font-size *bfont*))))
-    (unless (eql fs (desk-font-size desk))
-      (setf (desk-font-size desk) fs)
-      (dolist (w (desk-windows desk)) (setf (window-stale w) t))
-      (lol.morph:invalidate desk)))
-  nil)
+  "Make the world agree with the trails, and damage what changed. A window whose trail
+   is gone goes; the tiled trail follows *ACTIVE* when that is a tiled one; a font size
+   change damages everything (every metric moved); the tree is laid out (LAYOUT-SHELL,
+   LAYOUT-WINDOW — a morph that moves is damaged by moving); the keyboard focus is the
+   focused trail's expanded pane, and a window that gets it comes to the top; and each
+   morph whose picture changed — by its SIGNATURE — is damaged. Run before every repair
+   and around every event; cheap when nothing changed."
+  (let ((*world* desk))
+    (dolist (w (desk-windows desk))
+      (unless (window-trail-index w)
+        (when (eq (desk-grab desk) w) (setf (desk-grab desk) nil))
+        (lol.morph:remove-morph w)))
+    (when *trails*
+      (setf *active* (max 0 (min *active* (1- (length *trails*)))))
+      (let ((trail (nth *active* *trails*)))
+        (unless (trail-window-of trail)
+          (setf (desk-tiled-root desk) (first trail)))))
+    (let ((fs (and *bfont* (lol.canvas:font-size *bfont*))))
+      (unless (eql fs (desk-font-size desk))
+        (setf (desk-font-size desk) fs)
+        (dolist (w (desk-windows desk)) (setf (lol.morph:surface-damage w) :all))
+        (lol.morph:invalidate desk)))
+    (layout-shell (desk-shell desk))
+    (dolist (w (desk-windows desk)) (layout-window w))
+    (let* ((win (focused-window))
+           (focus (if win (holder-pane win) (holder-pane (desk-shell desk)))))
+      (when (and win (not (eq win (car (last (desk-windows desk))))) (not (top-overlay desk)))
+        (lol.morph:raise-morph win))
+      (setf (lol.morph:world-focus desk) (or focus (desk-shell desk))))
+    (dolist (m (lol.morph:morph-descendants desk))
+      (when (or (typep m 'watched-morph) (and (pane-p m) (pane-mode m)))
+        (check-signature m)))
+    nil))
 
 ;;; ---- the halo knows about morphs --------------------------------------------------
-;;; The halo's layers (shell.lisp, HALO-LAYERS) go from the word under the pointer out
-;;; to the screen. Outside the screen, now, is the world: each morph under the point
-;;; becomes a layer, topmost first, so walking OUT with Up ends on the shell morph —
-;;; and Inspect on it shows a CLOS instance with its bounds (doc/morphic.org §6).
-;;; Inside a window the point and the rects are the window's own, as the rest of that
-;;; halo's layers are (WINDOW-CHOOSER puts them back on screen).
+;;; The halo is about the thing under the pointer and everything that holds it: the
+;;; target there (the word, the row, the sprite — TARGET-LAYERS, shell.lisp), then each
+;;; morph from the deepest under the point out to the shell or the window, with the
+;;; layers that morph offers: a pane its body when the point is on it, then itself,
+;;; then what it shows; the tab strip a tab and itself; the tray the clipboard icon and
+;;; itself; the status line the minibuffer and itself. So walking OUT with Up ends on
+;;; the shell morph, or the window — and Inspect on either shows a CLOS instance with
+;;; its bounds (doc/morphic.org §6, §12.5). Rects are on the screen, where the halo
+;;; draws them.
 
-(defun morph-halo-layers (x y)
+(defgeneric morph-drawers (morph)
+  (:documentation "The functions whose code paints MORPH — the halo's Code handles.")
+  (:method ((m lol.morph:morph)) '(lol.morph:draw-morph lol.morph:handle-event))
+  (:method ((m shell-morph)) '(layout-shell lol.morph:draw-morph))
+  (:method ((m tab-strip)) '(draw-tabs tab-strip-click))
+  (:method ((m tray)) '(draw-tray tray-items))
+  (:method ((m status-line)) '(draw-status-line draw-hints))
+  (:method ((m trail-area)) '(layout-trail-area))
+  (:method ((m title-bar)) '(draw-window-title))
+  (:method ((m window-frame)) '(draw-window-frame))
+  (:method ((m trail-window)) '(layout-window lol.morph:surface-refresh))
+  (:method ((p pane))
+    (case (pane-mode p)
+      (:collapsed '(draw-crumb))
+      (:side '(draw-pane-body))
+      (t '(draw-pane-expanded lol.widgets:draw-panel pane-click)))))
+
+(defun morph-layer (m)
+  "M itself as a halo layer: its name, its instance, its rect, its drawers."
+  (halo-layer (clip-text (lol.morph:morph-name m) 24)
+              (format nil "the morph ~a — ~(~a~)" (lol.morph:morph-name m) (class-name (class-of m)))
+              m (copy-list (lol.morph:morph-bounds m)) :element (morph-drawers m)))
+
+(defun local-rect-in (m rect)
+  "RECT, recorded where M draws, on the screen."
+  (and rect (lol.morph:to-world-rect m rect)))
+
+(defgeneric morph-halo-layers (morph wx wy)
+  (:documentation "The layers MORPH offers the halo at the screen point WX,WY, inner
+   first: by default, the morph itself.")
+  (:method ((m lol.morph:morph) wx wy) (declare (ignore wx wy)) (list (morph-layer m))))
+
+(defmethod morph-halo-layers ((p pane) wx wy)
+  (let ((shows (halo-layer "shows" (format nil "what the pane shows: ~a" (view-title (pane-view p)))
+                           (pane-subject p) (copy-list (lol.morph:morph-bounds p)) :subject)))
+    (if (eq (pane-mode p) :collapsed)
+        (list (morph-layer p) shows)
+        (let* ((body (local-rect-in p (if (eq (view-kind (pane-view p)) :web)
+                                          (let ((tab (view-data (pane-view p))))
+                                            (and (fboundp 'web-tab-page-rect) (funcall 'web-tab-page-rect tab)))
+                                          (pane-body-rect p))))
+               (on-body (and body (lol.morph:rect-contains-point-p body wx wy))))
+          (append
+           ;; a sprite on the stage is the smallest thing there
+           (when (and on-body (eq (view-kind (pane-view p)) :stage))
+             (multiple-value-bind (lx ly) (lol.morph:surface-origin p)
+               (let ((b (stage-body-at p (- wx lx) (- wy ly))))
+                 (when b
+                   (list (halo-layer "sprite" "sprite" b (local-rect-in p (sprite-rect p b)) :element
+                                     '(draw-stage-sprite stage-sprite-points)))))))
+           (when on-body
+             (multiple-value-bind (object drawers label) (pane-body-element p)
+               (list (halo-layer (clip-text label 24) label object body :element drawers))))
+           (list (morph-layer p) shows))))))
+
+(defmethod morph-halo-layers ((s tab-strip) wx wy)
+  (declare (ignore wy))
+  (let* ((lx (- wx (lol.morph:surface-origin s)))
+         (tab (find-if (lambda (e) (<= (cadr e) lx (cddr e))) (strip-tabs s))))
+    (append (when tab
+              (let ((trail (nth (car tab) *trails*)))
+                (list (halo-layer (clip-text (format nil "tab ~d · ~a" (1+ (car tab)) (trail-title trail)) 24)
+                                  (format nil "tab ~d · ~a" (1+ (car tab)) (trail-title trail))
+                                  trail (local-rect-in s (list (cadr tab) 0 (- (cddr tab) (cadr tab)) +bar-h+))
+                                  :element '(draw-tabs trail-title)))))
+            (call-next-method))))
+
+(defmethod morph-halo-layers ((m tray) wx wy)
+  (declare (ignore wy))
+  (let ((clip (tray-clip m)) (lx (- wx (lol.morph:surface-origin m))))
+    (append (when (and clip (<= (car clip) lx (cdr clip)))
+              (list (halo-layer "the clipboard icon" "the clipboard icon" (lol.clipboard:clip-current)
+                                (local-rect-in m (list (car clip) 0 16 (- +bar-h+ 1))) :element
+                                '(draw-clip-icon open-clipboard-manager))))
+            (call-next-method))))
+
+(defmethod morph-halo-layers ((m status-line) wx wy)
+  (declare (ignore wx wy))
+  (append (when *minibuffer*
+            (list (halo-layer "the minibuffer" "the minibuffer" *minibuffer*
+                              (copy-list (lol.morph:morph-bounds m)) :element '(draw-minibuffer))))
+          (call-next-method)))
+
+(defun morph-target (m x y)
+  "What the pointer is ON at X,Y (where M draws), asked of M and then its owners: a
+   pane's word, row or sprite (PANE-TARGET), or a tab."
+  (loop for o = m then (lol.morph:morph-owner o)
+        while o
+        for target = (typecase o
+                       (pane (and (eq (pane-mode o) :expanded) (pane-target o x y)))
+                       (tab-strip (tab-target o x))
+                       (trail-area (let ((p (area-expanded o))) (and p (pane-target p x y))))
+                       (t nil))
+        when target return target
+        until (or (typep o 'shell-morph) (typep o 'trail-window))))
+
+(defun halo-layers (wx wy)
+  "Everything under the screen point WX,WY the halo can be about, innermost first: the
+   thing the pointer is on, then each morph from the deepest under it out to the shell
+   or the window, as that morph offers itself (MORPH-HALO-LAYERS). The overlays are
+   left out — the halo is one itself, and a halo is about what is under it."
   (when *world*
-    (destructuring-bind (ox oy &rest r)
-        (if *window-context* (lol.morph:morph-bounds *window-context*) '(0 0))
-      (declare (ignore r))
-      ;; (not the overlays: the halo is itself one, and a halo is about what is under it)
-      (loop for m in (remove-if (lambda (m) (typep m 'overlay))
-                                (lol.morph:morphs-at *world* (+ x ox) (+ y oy)))
-            for (bx by bw bh) = (lol.morph:morph-bounds m)
-            collect (halo-layer (lol.morph:morph-name m)
-                                (format nil "the morph ~a — ~(~a~)" (lol.morph:morph-name m)
-                                        (class-name (class-of m)))
-                                m (list (- bx ox) (- by oy) bw bh) :element
-                                '(lol.morph:draw-morph lol.morph:handle-event))))))
-
-(setf *halo-outer-layers* 'morph-halo-layers)
+    (let ((deepest (find-if-not (lambda (m) (typep m 'overlay))
+                                (lol.morph:morphs-at *world* wx wy))))
+      (when deepest
+        (multiple-value-bind (ox oy) (lol.morph:surface-origin deepest)
+          (let* ((target (morph-target deepest (- wx ox) (- wy oy)))
+                 (pane (getf target :pane)))
+            (append
+             (mapcar (lambda (l)
+                       (if (and pane (getf l :rect))
+                           (let ((l (copy-list l)))
+                             (setf (getf l :rect) (local-rect-in pane (getf l :rect)))
+                             l)
+                           l))
+                     (target-layers target))
+             (loop for m = deepest then (lol.morph:morph-owner m)
+                   while (and m (not (typep m 'lol.morph:world)))
+                   append (morph-halo-layers m wx wy)))))))))
 
 ;;; ===========================================================================
-;;; Overlays (step 4): the modal cards are morphs in the one loop
+;;; Overlays: the modal cards are morphs in the one loop
 ;;; ===========================================================================
 ;;;
 ;;; The Spotter, the menus and the halo, the clipboard manager, the value prompt, the
@@ -906,56 +1263,47 @@
   (when (lol.morph:morph-owner ov) (lol.morph:remove-morph ov))
   result)
 
-(defun call-at-top-level (fn)
-  "Run FN as the loop's own top level would: with the shell's values of the hit-map
-   specials, not those of a window whose event is being handled. A blocking overlay
-   opened from INSIDE a window (a menu, the debugger) turns the whole loop from there,
-   and that loop draws the shell and dispatches to everything — so the window's
-   bindings are set aside for the duration, and whatever the shell recorded meanwhile
-   (its hit maps) is written back to the top level before the window's come back."
-  (if (null *window-context*)
-      (funcall fn)
-      (let ((syms (window-special-symbols)))
-        (progv syms (mapcar #'sb-ext:symbol-global-value syms)
-          (unwind-protect
-               (let ((*window-context* nil) (*shell-specials* nil)
-                     (*chooser* (sb-ext:symbol-global-value '*chooser*)))
-                 (funcall fn))
-            (dolist (s syms) (setf (sb-ext:symbol-global-value s) (symbol-value s))))))))
-
 (defun run-overlay (ov &optional bounds)
   "Open OV and wait for its answer, turning the backend's loop meanwhile (see above);
    -> OVERLAY-RESULT. However the wait ends — an answer, or a restart that unwinds
    straight through it (the debugger's) — the overlay goes. With no loop to turn
-   (*WORLD-CYCLE* NIL) or no world, nothing can wait: NIL at once."
+   (*WORLD-CYCLE* NIL) or no world, nothing can wait: NIL at once. (A wait opened from
+   inside a window needs nothing set aside any more: nothing the browser draws or
+   reads lives in specials a window would have had to swap.)"
   (cond
     ((or (null *world*) (null *world-cycle*)) nil)
     (t
      (open-overlay ov bounds)
      (let ((*blocking-overlays* (1+ *blocking-overlays*)))
        (unwind-protect
-            (call-at-top-level
-             (lambda ()
-               (loop until (overlay-done ov)
-                     do (when (eq :quit (funcall *world-cycle*))
-                          (setf *world-quit* t)
-                          (close-overlay ov nil)))))
+            (loop until (overlay-done ov)
+                  do (when (eq :quit (funcall *world-cycle*))
+                       (setf *world-quit* t)
+                       (close-overlay ov nil)))
          (unless (overlay-done ov) (close-overlay ov nil))))
      (overlay-result ov))))
+
+(defun draw-world-backdrop (canvas w h)
+  "What a modal card floats over when it is drawn on its own (DRAW-BACKDROP — a frame
+   rendered by render-frame.lisp): the whole world but its overlays."
+  (declare (ignore w h))
+  (when *world*
+    (lol.morph:world-paint *world* canvas :exclude (lambda (m) (typep m 'overlay)))))
+
+(setf *backdrop-fn* 'draw-world-backdrop)
 
 ;;; ===========================================================================
 ;;; The halo acts on morphs (step 3)
 ;;; ===========================================================================
 ;;;
-;;; The halo already lists each morph under the pointer as a layer (MORPH-HALO-LAYERS
-;;; above), so walking out with Up reaches the window, then the shell. On a WINDOW's
-;;; layer it now offers what Morphic's halo is for — handles that act on the morph
-;;; itself: Move and Resize (the hand carries it, no button held, until a click puts it
-;;; down; arrows and C-arrows work meanwhile, Return or Esc stop), Raise, Close and
-;;; Re-tile. They come first, before Inspect and the Code handles every element has.
-;;; Inspect on the window shows the TRAIL-WINDOW instance, and its BOUNDS field is
-;;; settable: C-c C-c, type (list 100 80 700 450), and the window moves — through
-;;; SET-MORPH-BOUNDS, so the screen hears of it (INSPECT-SLOT-SETTER below).
+;;; On a WINDOW's layer the halo offers what Morphic's halo is for — handles that act on
+;;; the morph itself: Move and Resize (the hand carries it, no button held, until a
+;;; click puts it down; arrows and C-arrows work meanwhile, Return or Esc stop), Raise,
+;;; Close and Re-tile. They come first (shell.lisp's HALO-ENTRIES asks MORPH-AFFORDANCES),
+;;; before Inspect and the Code handles every element has. Inspect on the window shows
+;;; the TRAIL-WINDOW instance, and its BOUNDS field is settable: C-c C-c, type (list 100
+;;; 80 700 450), and the window moves — through SET-MORPH-BOUNDS, so the screen hears of
+;;; it (INSPECT-SLOT-SETTER below).
 
 (defun focus-window (win)
   "Give WIN the focus (its trail becomes *ACTIVE*); DESK-SYNC raises it."
@@ -973,8 +1321,7 @@
   (setf (desk-grab *world*) win
         *browser-status* (if (eq mode :resize)
                              "resizing: move the pointer, click to finish · C-arrows too · Ret/Esc done"
-                             "moving: move the pointer, click to put it down · arrows too · Ret/Esc done"))
-  (shell-changed (status-rect)))
+                             "moving: move the pointer, click to put it down · arrows too · Ret/Esc done")))
 
 (defmethod lol.morph:morph-affordances ((w trail-window))
   (list (list :label "Move"    :action (lambda () (halo-carry w :move)))
@@ -982,16 +1329,6 @@
         (list :label "Raise"   :action (lambda () (focus-window w)))
         (list :label "Close"   :action (lambda () (close-window-trail w)))
         (list :label "Re-tile" :action (lambda () (retile-window w)))))
-
-(defun morph-halo-entries (layer)
-  "The halo's handles for a morph's layer: its MORPH-AFFORDANCES, as chooser entries."
-  (let ((m (getf layer :object)))
-    (when (typep m 'lol.morph:morph)
-      (mapcar (lambda (a) (menu-entry (getf a :label) (getf a :action)
-                                      :group "halo" :tone :restart))
-              (lol.morph:morph-affordances m)))))
-
-(setf *halo-extra-entries* 'morph-halo-entries)
 
 ;; the inspector's fields of a morph (model.lisp, INSPECT-PLACES): BOUNDS is set the
 ;; way that damages the screen; OWNER and CHILDREN are the tree, which only ADD-MORPH /
@@ -1002,35 +1339,17 @@
 (defmethod inspect-slot-setter ((m lol.morph:morph) (slot (eql 'lol.morph::children))) nil)
 
 ;;; ===========================================================================
-;;; Stepping (step 5): live panes step themselves
+;;; Stepping: a live pane steps itself
 ;;; ===========================================================================
 ;;;
-;;; The shell morph and each window HOLD a pane (their trail's current one). When that
-;;; pane changes on its own, the holder steps: MORPH-STEP-MS answers a period from the
-;;; pane — a running stage 33 ms, a run pane whose program is live (or whose view is
-;;; behind its output) 100 ms — and NIL otherwise, so a holder whose pane is still costs
-;;; nothing and the poll sleeps. STEP-MORPH advances the pane and damages exactly what
-;;; it changed: a stage its BODY (the viewport and the transcript — not the tabs, the
-;;; breadcrumbs or the status line), a run pane its holder. A stage in a hidden tab
-;;; does not step at all: nothing holds it.
-
-(defgeneric holder-pane (morph)
-  (:documentation "The pane MORPH shows, or NIL.")
-  (:method ((m lol.morph:morph)) nil))
-
-(defun window-pane (w) (let ((tr (window-trail w))) (and tr (car (last tr)))))
-
-(defmethod holder-pane ((m shell-morph))
-  (and *trails* (car (last (nth (tiled-index) *trails*)))))
-(defmethod holder-pane ((w trail-window)) (window-pane w))
-
-(defun holder-trail (m)
-  (cond ((typep m 'shell-morph) (and *trails* (nth (tiled-index) *trails*)))
-        ((typep m 'trail-window) (window-trail m))))
-
-(defun holder-changed (m &optional rect)
-  "Damage RECT (the holder's own coordinates; NIL = all) of a pane holder."
-  (if (typep m 'trail-window) (window-changed m rect) (shell-changed rect m)))
+;;; An EXPANDED pane that changes on its own steps: MORPH-STEP-MS answers a period from
+;;; the pane — a running stage 33 ms, a run pane whose program is live (or whose view is
+;;; behind its output) 100 ms — and NIL otherwise, so a still pane costs nothing and the
+;;; poll sleeps. STEP-MORPH advances it and damages exactly what changed: a stage its
+;;; BODY (the viewport and the transcript — the repair then draws that pane alone, under
+;;; a clip: not the tab strip, the breadcrumbs or the status line, which are other
+;;; morphs), a run pane itself. A stage in a hidden tab, or behind a breadcrumb, does not
+;;; step at all: it is not expanded on screen.
 
 (defparameter +stage-frame-ms+ 33
   "Milliseconds between stage ticks — about thirty a second. Fast enough that motion
@@ -1048,17 +1367,15 @@
        (let ((st (view-data (pane-view p)))) (and (stage-running st) st))))
 
 (defun pane-step-ms (p)
-  "How often a holder showing P must step: a running stage's frame, a run pane's
-   tick, or NIL — P is still."
+  "How often P must step: a running stage's frame, a run pane's tick, or NIL — P is
+   still."
   (cond ((null p) nil)
         ((pane-running-stage p) +stage-frame-ms+)
         ((run-pane-step-ms p))
         (t nil)))
 
-(defmethod lol.morph:morph-step-ms ((m shell-morph))
-  (and (zerop *blocking-overlays*) (pane-step-ms (holder-pane m))))
-(defmethod lol.morph:morph-step-ms ((w trail-window))
-  (and (zerop *blocking-overlays*) (pane-step-ms (holder-pane w))))
+(defmethod lol.morph:morph-step-ms ((p pane))
+  (and (eq (pane-mode p) :expanded) (zerop *blocking-overlays*) (pane-step-ms p)))
 
 (defun step-stage-pane (p)
   "Advance P's stage by however many ticks the wall clock says are due. -> :LAYOUT
@@ -1073,8 +1390,7 @@
    A contact here can signal — that is the point of the whole view — and the signal
    reaches RUN-DEBUGGER-FB through the HANDLER-BIND below exactly as one from the
    Workspace does (WORKSPACE-DEBUG-IT), with the stack still standing and the stage's
-   own restarts on the rail. (It used to be TICK-LIVE-STAGE in fb-browser.lisp, for
-   the current pane only; as a step it runs for every pane on screen.)"
+   own restarts on the rail."
   (let* ((st (pane-running-stage p))
          (now (get-internal-real-time))
          (elapsed (round (* 1000 (- now (gethash st *stage-last-ticks* now)))
@@ -1102,63 +1418,88 @@
       (setf layout t))
     (if layout :layout t)))
 
-(defun step-holder (m)
-  (let ((p (holder-pane m)))
-    (cond ((null p) nil)
-          ((pane-running-stage p)
-           (if (eq :layout (step-stage-pane p))
-               (holder-changed m)
-               (holder-changed m (pane-stage-body p))))
-          ((step-run-panes p) (holder-changed m)))))
-
-(defmethod lol.morph:step-morph ((m shell-morph) now)
+(defmethod lol.morph:step-morph ((p pane) now)
   (declare (ignore now))
-  (step-holder m))
-(defmethod lol.morph:step-morph ((w trail-window) now)
-  (declare (ignore now))
-  (step-holder w))
+  (cond ((pane-running-stage p)
+         (if (or (eq :layout (step-stage-pane p)) (null (pane-stage-body p)))
+             (lol.morph:invalidate p)
+             (lol.morph:invalidate-local p (pane-stage-body p))))
+        ((step-run-panes p) (lol.morph:invalidate p))))
 
 ;;; ---- what the services changed, exactly ---------------------------------------------
 
 (defun visible-trails ()
   "The trails on screen: the tiled one, and every window's."
   (if *world*
-      (remove nil (cons (holder-trail (desk-shell *world*))
+      (remove nil (cons (and *trails* (nth (tiled-index) *trails*))
                         (mapcar #'window-trail (desk-windows))))
       (list (current-trail))))
 
-(defun holder-shows-pane-p (m p)
-  (some (lambda (q) (or (eq q p) (eq (pane-side q) p) (eq (pane-preview q) p)))
-        (holder-trail m)))
-
 (defun damage-pane (p)
-  "P changed on its own (a live worker's view arrived): redraw whichever morph shows
-   it, and nothing else — a pane nobody shows costs nothing."
-  (when *world*
-    (let ((sh (desk-shell *world*)))
-      (when (holder-shows-pane-p sh p) (shell-changed nil sh)))
-    (dolist (w (desk-windows))
-      (when (holder-shows-pane-p w p) (window-changed w)))))
+  "P changed on its own (a live worker's view arrived): redraw it where it is on
+   screen, and nothing else — a pane nobody shows costs nothing."
+  (when (and *world* (pane-mode p) (lol.morph:morph-world p))
+    (lol.morph:invalidate p)))
+
+(defun paint-into (m canvas fn)
+  "Let M paint part of itself straight into the canvas it draws into — the screen's
+   CANVAS for a morph on the screen, a window's backing store for one in a window —
+   the fast paths that skip a whole DRAW-MORPH: the clock's tick, a terminal's rows, a
+   web page's frame. FN gets that canvas and returns the rects (in its coordinates) it
+   painted, or :FAIL when it could not (then M is damaged whole). On the screen the
+   world composites whatever lies over those rects (a window, an overlay's scrim) and
+   sends them (LOL.MORPH:NOTE-PAINTED); in a window they are only copied out. -> the
+   rects, or NIL."
+  (let ((s (lol.morph:morph-surface m)))
+    (cond
+      ((null s) nil)
+      ((typep s 'lol.morph:surface)
+       (let ((b (lol.morph:surface-backing s)))
+         (if (or (null b) (eq (lol.morph:surface-damage s) :all))
+             (progn (lol.morph:invalidate m) nil)  ; not drawn yet: draw it whole
+             (let ((rects (funcall fn b)))
+               (if (eq rects :fail)
+                   (progn (lol.morph:invalidate m) nil)
+                   (progn
+                     ;; the store is right there now: the window only has to be copied
+                     (dolist (r rects) (lol.morph:invalidate s (lol.morph:to-world-rect m r)))
+                     rects))))))
+      (t
+       (let ((rects (funcall fn canvas)))
+         (if (eq rects :fail)
+             (progn (lol.morph:invalidate m) nil)
+             (progn (lol.morph:note-painted s rects m) rects)))))))
+
+(defun tick-tray (canvas)
+  "The clock ticked: repaint the tray alone, straight into the screen's CANVAS, and let
+   the world composite what lies over it (PAINT-INTO)."
+  (let ((tray (desk-tray)))
+    (when (and tray (lol.morph:morph-world tray))
+      (paint-into tray canvas
+                  (lambda (c)
+                    (destructuring-bind (x y w h) (lol.morph:morph-local-bounds tray)
+                      (declare (ignore y h))
+                      (multiple-value-bind (x0 clip) (draw-tray c (+ x w))
+                        (declare (ignore x0))
+                        (setf (tray-clip tray) clip))
+                      (list (lol.morph:morph-local-bounds tray))))))))
+
+(defun on-screen-panes ()
+  "Every pane morph on screen: expanded, collapsed and side."
+  (and *world* (remove-if-not (lambda (m) (and (pane-p m) (pane-mode m)))
+                              (lol.morph:morph-descendants *world*))))
 
 (defun terminal-rows-to-world (canvas)
-  "The terminals' programs wrote: repaint only the ROWS that changed. The tiled
-   terminal's straight into the screen's CANVAS — the world composites anything over
-   them and sends them (SHELL-PAINTED); a window's into its backing store, damaged
-   rect by rect, so the repair copies just those rows. A terminal that cannot be
-   updated this way (a side pane, a grid that no longer fits) is drawn again whole."
-  (let ((sh (desk-shell *world*)))
-    (when (terminal-pane-p (holder-pane sh))
-      (let ((rects (let ((*active* (tiled-index))) (terminal-paint-dirty canvas))))
-        (if rects (shell-painted rects) (shell-changed)))))
-  (dolist (w (desk-windows))
-    (when (and (terminal-pane-p (window-pane w)) (window-trail-index w))
-      (if (or (window-stale w) (null (window-backing w)))
-          (window-changed w)
-          (let ((rects (let ((*active* (window-trail-index w)))
-                         (with-window-context (w) (terminal-paint-dirty (window-backing w))))))
-            (if rects
-                (destructuring-bind (x y ww wh) (lol.morph:morph-bounds w)
-                  (declare (ignore ww wh))
-                  (dolist (r rects)
-                    (lol.morph:invalidate w (list (+ x (first r)) (+ y (second r)) (third r) (fourth r)))))
-                (window-changed w)))))))
+  "The terminals' programs wrote: repaint only the ROWS that changed, in each terminal
+   pane on screen — the tiled one's straight onto the screen's CANVAS, a window's into
+   its backing store (PAINT-INTO). A terminal that cannot be updated this way (a side
+   pane, a grid that no longer fits) is drawn again whole."
+  (dolist (p (on-screen-panes))
+    (when (terminal-pane-p p)
+      (let ((*active* (or (pane-trail-index p) *active*)))
+        (paint-into p canvas (lambda (c) (or (terminal-paint-dirty p c) :fail)))))))
+
+(defun pane-painted (pane canvas fn)
+  "PAINT-INTO for a pane by the backends' services (web.lisp's frames): NIL when PANE
+   is not on screen."
+  (when (and *world* (pane-mode pane)) (paint-into pane canvas fn)))
