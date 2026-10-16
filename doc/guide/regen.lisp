@@ -394,9 +394,10 @@
      "initramfs/worker.lisp" "initramfs/worker-live.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
      "initramfs/containers.lisp" "initramfs/runs.lisp" "initramfs/net-views.lisp")
     ("UI toolkit" "pixels and text: the canvas, fonts, widgets, the text editor, the TTY line editor"
-     "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
-    ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter"
-     "poc/shell.lisp" "poc/file-manager.lisp")
+     "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
+     "initramfs/line-editor.lisp")
+    ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter — and the desk it runs in"
+     "poc/shell.lisp" "poc/file-manager.lisp" "poc/morphic.lisp")
     ("persistence" "what a session keeps on /home: the change journal and its replay, file-out, the desk"
      "initramfs/journal.lisp" "initramfs/file-out.lisp" "initramfs/desk.lisp")
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"

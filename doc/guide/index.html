@@ -166,7 +166,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where">firmware → <code>BOOTX64.EFI</code></span>
     There is no bootloader. The kernel's <code>bzImage</code> <em>is</em> an EFI application (the "EFI stub"),
     and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:387</span></a>).
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:389</span></a>).
     The kernel's command line is compiled in (
     <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:398</span></a>). It says
     <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is
@@ -193,10 +193,10 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:84</span></a></span>
     It prints diagnostics, runs DHCP (<a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:452</span></a>),
     starts the network REPL only if the boot asked for it, and then calls
-    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1364</span></a>. That function catches every
+    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1464</span></a>. That function catches every
     error, so a broken environment drops you at the menu instead of killing PID 1. A kernel panics if PID 1
     exits, so every path here either loops or powers off.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1364</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1464</span></a></span>
     The environment: one loop that redraws when something changed, then blocks in <code>poll(2)</code> on the
     keyboard and mouse. It opens on the Workspace. Everything from here on is the subject of
     <a href="present.html">present and the shell</a> and <a href="pixels.html">Pixels and input</a>.</li>

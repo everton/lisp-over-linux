@@ -3240,9 +3240,15 @@
                                                        (view-title (pane-view obj)))
                                                (pane-subject obj) rect :subject)))))))))
 
+(defvar *halo-outer-layers* nil
+  "A function (X Y) -> more layers, OUTSIDE everything drawn: poc/morphic.lisp
+   installs the morphs under the point, so the halo's outermost layer is the shell
+   morph itself (doc/morphic.org). NIL: no world, nothing beyond the screen.")
+
 (defun halo-layers (x y)
   "Everything under X,Y the halo can be about, innermost first."
-  (append (target-layers (pointer-target x y)) (drawn-layers x y)))
+  (append (target-layers (pointer-target x y)) (drawn-layers x y)
+          (and *halo-outer-layers* (funcall *halo-outer-layers* x y))))
 
 (defun halo-entries (layer)
   "The handles for LAYER. An element offers its instance and the code that draws it;

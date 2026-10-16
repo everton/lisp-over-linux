@@ -211,6 +211,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../poc/canvas.lisp][=poc/canvas.lisp=]]  | the pixel buffer + the resizable =font= (outline or bitmap, glyph cache) + =draw-string= ([[file:fonts.org][fonts.org]]) |
   | [[file:../poc/textview.lisp][=poc/textview.lisp=]] | the editable text view (uses canvas)                    |
   | [[file:../poc/widgets.lisp][=poc/widgets.lisp=]] | =lol.widgets=: panel/bar/list/scrollbar/grid/card + the semantic palette |
+  | [[file:../poc/morph.lisp][=poc/morph.lisp=]]   | =lol.morph=: Morphic's core — the =morph=, =world= and =hand= classes, events, damage (=invalidate=, =world-repair=) and routing (=world-dispatch=); backend-blind ([[file:morphic.org][morphic.org]]) |
   | [[file:../poc/fb.lisp][=poc/fb.lisp=]]      | the =/dev/fb0= presenter + =KD_GRAPHICS= ([[file:framebuffer.org][framebuffer.org]] §9) |
   | [[file:../initramfs/ansi.lisp][=ansi.lisp=]]        | 16-colour SGR helpers (used by line-editor + repl)        |
   | [[file:../initramfs/line-editor.lisp][=line-editor.lisp=]] | the "poor man's readline" toolkit (see [[file:line-editing.org][line-editing.org]])      |
@@ -232,10 +233,11 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/agent-tools.lisp][=agent-tools.lisp=]] | the rest of the agent's tools: =lisp-inspect=, =lisp-applicable=, =lisp-backtrace= (over a snapshot the ASK restart takes), =browse= (a subject shown beside the conversation) and the gated =web-fetch= ([[file:agent.org][agent.org]] §14.10; uses agent-ui) |
   | [[file:../initramfs/agent-store.lisp][=agent-store.lisp=]] | a conversation saved to =~/.lol/agent/conversations/= after every turn (0600, atomic, never the key, nothing on a diskless boot) and reopened from the Spotter ([[file:agent.org][agent.org]] §14.10) |
   | [[file:../poc/terminal-pane.lisp][=poc/terminal-pane.lisp=]] | =subj-terminal=: the terminal as a pane — drawing, keys, mouse, =open-terminal=, =SuperL-↵= (uses shell + terminal + pty) |
+  | [[file:../poc/morphic.lisp][=poc/morphic.lisp=]] | the *desk*: the world the environment runs in, the whole tiled shell as one morph (=shell-morph=) ([[file:morphic.org][morphic.org]]; uses morph + shell) |
   | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
-  | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾) |
+  | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾); its loop decodes input into =lol.morph= events (=input-events=), lets the world route them and sends what the world repaired (=present-repair=) |
   | [[file:../initramfs/worker-live.lisp][=worker-live.lisp=]] | a second process whose view stays *live*: =subj-live=, the =serve= argv role, handles + =(:invalidate h)=, the child's pipe in the poll as the =:workers= service ([[file:processes.org][processes.org]] §7½). After =web.lisp= in =LISP_SOURCES= (needs the shell, fb-browser's services, web-cdp's =set-nonblocking=) |
   | [[file:../initramfs/sandbox.lisp][=sandbox.lisp=]]     | Accept tries a definition in a child first (the =try= role) and refuses one that kills or hangs it — =*accept-sandbox*=, the hook in =accept-source= ([[file:processes.org][processes.org]] §7¾) |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |

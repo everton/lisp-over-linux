@@ -80,6 +80,7 @@ LISP_SOURCES=(
   "$POC_DIR/canvas.lisp"             # pixel buffer + font + draw-string + modifier predicates
   "$POC_DIR/textview.lisp"           # editable text view (uses canvas)
   "$POC_DIR/widgets.lisp"            # phase 3 toolkit: panel/list/scrollbar/grid/card (uses canvas)
+  "$POC_DIR/morph.lisp"              # lol.morph: morph/world/hand, events, damage repair (doc/morphic.org)
   "$POC_DIR/fb.lisp"                 # /dev/fb0 presenter + KD_GRAPHICS (uses canvas)
   "$INITRAMFS_DIR/ansi.lisp"         # 16-color SGR helpers (used by line-editor + repl)
   "$INITRAMFS_DIR/line-editor.lisp"  # the "poor man's readline" toolkit (with-raw-mode, read-escape,
@@ -106,6 +107,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/agent-tools.lisp"  # more tools: lisp-inspect/-applicable/-backtrace, browse, web-fetch (uses agent-ui)
   "$INITRAMFS_DIR/agent-store.lisp"  # conversations saved to ~/.lol/agent/conversations, reopened from the Spotter
   "$POC_DIR/terminal-pane.lisp"      # SUBJ-TERMINAL: the terminal as a pane (uses shell + terminal + pty)
+  "$POC_DIR/morphic.lisp"            # the desk: the tiled shell as a morph, trail windows (uses morph + shell)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)

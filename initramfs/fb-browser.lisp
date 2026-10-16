@@ -1148,13 +1148,45 @@
       (replace dst src :start1 (* row +cursor-w+) :end1 (+ (* row +cursor-w+) n)
                        :start2 (+ (* (+ y row) cw) x)))
     (draw-cursor patch 0 0)
-    (lol.fb:present-fb patch :x0 x :y0 y)))
+    (lol.fb:present-fb patch :x0 x :y0 y)
+    (setf *cursor-shown-x* x *cursor-shown-y* y)))
 
-(defun show-frame (canvas)
+(defvar *cursor-shown-x* 0 "Where PUT-CURSOR last drew the arrow: what a repair that
+   moved it must put back (PRESENT-REPAIR).")
+(defvar *cursor-shown-y* 0)
+
+(defun present-frame (canvas)
   "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is
    hidden for inactivity)."
   (lol.fb:present-fb canvas)
   (when (and *fb-mouse* (not *cursor-hidden*)) (put-cursor canvas *cursor-x* *cursor-y*)))
+
+(defun show-frame (canvas)
+  "PRESENT-FRAME for the modal loops (the Spotter, the menus, the debugger …), which
+   draw whole frames of their own behind the world's back: say so, so that the world
+   repairs everything once the modal is gone (*SCREEN-OVERDRAWN*, morphic.lisp)."
+  (setf *screen-overdrawn* t)
+  (present-frame canvas))
+
+(defun cursor-over-rect-p (r)
+  "Does the arrow, drawn at the cursor, overlap rect R (x y w h)?"
+  (destructuring-bind (x y w h) r
+    (and (< (- x +cursor-w+) *cursor-x* (+ x w))
+         (< (- y +cursor-h+) *cursor-y* (+ y h)))))
+
+(defun present-repair (canvas &optional rects full)
+  "Send what LOL.MORPH:WORLD-REPAIR just redrew: the whole frame when FULL (then
+   exactly what the loop always did), else each rect alone. The pointer goes back on
+   top if a rect ran under it, and is moved if it moved since it was last drawn."
+  (cond
+    (full (present-frame canvas))
+    (rects
+     (dolist (r rects) (apply #'lol.fb:present-fb-rect canvas r))
+     (when (and *fb-mouse* (not *cursor-hidden*))
+       (if (or (/= *cursor-shown-x* *cursor-x*) (/= *cursor-shown-y* *cursor-y*))
+           (move-cursor canvas *cursor-shown-x* *cursor-shown-y*)
+           (when (some #'cursor-over-rect-p rects)
+             (put-cursor canvas *cursor-x* *cursor-y*)))))))
 
 (defun move-cursor (canvas old-x old-y)
   "The pointer moved and nothing else changed: put back what was under it (straight
@@ -1361,6 +1393,74 @@
 
 (fb-register-service :terminals :fd 'terminal-fds :run 'terminal-service-run)
 
+;;; ---- what happened, as events ------------------------------------------------
+;;; The loop used to act on each input as it decoded it. Now it only DECODES — into
+;;; LOL.MORPH events (poc/morph.lisp) — and the world decides who acts: the focused
+;;; morph for a key, the morph under the pointer for a click. The decoding itself is
+;;; the old loop's, step for step and in the same order (the keyboard's evdev, then
+;;; the console, then the pointers), so nothing about input changed meaning.
+
+(defun input-events (kb ms kev xres yres)
+  "The events the last poll's readable fds hold, in the order the old loop handled
+   them; :EOF in the list means the console is gone and the environment must end.
+   KB, MS, KEV say which of the console, the pointers and the keyboards' evdev were
+   ready (FBB-WAIT's values)."
+  (let ((events '()))
+    (flet ((emit (kind &rest args)
+             (push (apply #'lol.morph:make-event :kind kind
+                          :x *cursor-x* :y *cursor-y* args)
+                   events)))
+      ;; refresh Ctrl/Shift/Super first; the Menu key opens the context menu where
+      ;; the caret (or selected row) is
+      (let ((ev (and kev (read-keyboard-evdev *fb-kbd*))))
+        (cond ((eq ev :menu) (emit :menu))
+              ;; seen only on the evdev: the console keeps them for its own
+              ;; scrollback (a terminal pane's history)
+              ((eq ev :shift-page-up) (emit :key :key :page-up :state 1))
+              ((eq ev :shift-page-down) (emit :key :key :page-down :state 1))
+              ;; a Ctrl chord the console sends no byte for
+              ((characterp ev)
+               (emit :key :key ev :state (logior 4 (if *super-down* 64 0))))))
+      (when kb
+        (multiple-value-bind (key state) (fb-read-key 0)
+          ;; Ctrl-/ reaches the tty as DEL, Backspace's own byte (defkeymap:
+          ;; ctrl_map[53] = 0x7f), so only the held Ctrl tells them apart: undo, as
+          ;; C-/ is in Emacs
+          (when (and (eq key :backspace) (zerop state) *ctrl-down*)
+            (setf key #\/ state 4))
+          (if (eq key :eof)
+              (push :eof events)
+              ;; The cooked tty sends a bare ESC[A for EVERY arrow and no byte for a
+              ;; held modifier — it lives only in the evdev state, so fold it in
+              ;; (Ctrl-arrow = word, Shift = select, Super = the spatial layer).
+              (emit :key :key key
+                         :state (logior state (if *ctrl-down* 4 0) (if *shift-down* 1 0)
+                                        (if *super-down* 64 0))
+                         :data '(:tty t)))))
+      (when ms
+        (let ((ox *cursor-x*) (oy *cursor-y*) (was-down *button-down*))
+          (multiple-value-bind (clicked wheel button)
+              (read-mouse *fb-mouse* xres yres)        ; every ready pointer
+            ;; wheel first: a notch scrolls the pane under focus a few lines
+            (unless (zerop wheel) (emit :wheel :notches wheel))
+            ;; Alt-click is the middle button, for a pointer that has none
+            ;; (doc/input.org, "Three buttons")
+            (when (and clicked *alt-down*)
+              (setf clicked nil button :middle *button-down* nil))
+            (when clicked
+              (emit :down :state (logior (if *ctrl-down* 4 0) (if *super-down* 64 0))))
+            (case button
+              (:right (emit :right))
+              (:middle (emit :middle :state (if *super-down* 64 0))))
+            ;; moved with the button still held: a drag
+            (when (and *button-down* (not clicked)
+                       (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+              (emit :drag))
+            ;; the button came up
+            (when (and was-down (not *button-down*))
+              (emit :up))))))
+    (nreverse events)))
+
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
    it once at boot, and again from its menu ('b', 'p', 'c', 'l'). Blocks until you
@@ -1401,23 +1501,28 @@
             (open-input-devices)
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
-                  *cursor-hidden* nil *pointer-active-at* (get-internal-real-time))
+                  *cursor-hidden* nil *pointer-active-at* (get-internal-real-time)
+                  ;; the world: the tiled shell as one full-screen morph, all damaged
+                  *world* (make-desk xres yres) *screen-overdrawn* nil)
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
                    (with-raw-mode (0 nil)
-                     ;; DIRTY = the browser's state changed since the last frame. Only
-                     ;; a key, a click, the wheel or a stage tick can change it; a held
-                     ;; modifier or a bare pointer move cannot, so neither redraws.
-                     (loop with dirty = t do
+                     ;; THE CYCLE (doc/morphic.org §4.2): repair what is damaged, sleep
+                     ;; in poll until something happens, turn what happened into
+                     ;; events, let the world route them, then the things that change
+                     ;; the screen without an event (services, the stage, the clock).
+                     ;; The world starts wholly damaged, so the first turn draws the
+                     ;; frame. A held modifier or a bare pointer move damages nothing,
+                     ;; so neither redraws.
+                     (block environment
+                      (loop do
                        ;; the agent (agent-ui.lisp): stream a reply into its panes and
                        ;; run the tool calls its turn posted — on THIS thread
                        (when (and (fboundp 'agent-ui-tick) (funcall 'agent-ui-tick))
-                         (setf dirty t))
-                       (when dirty
-                         (draw-browser canvas xres yres)
-                         (show-frame canvas)
-                         (setf dirty nil))
+                         (environment-changed))
+                       (multiple-value-call #'present-repair canvas
+                         (lol.morph:world-repair *world* canvas))
                        ;; A running stage (§3b) is the one thing on screen that changes
                        ;; without being asked, so it — and only it — makes the loop
                        ;; wake on a deadline rather than sleeping until input.
@@ -1434,105 +1539,46 @@
                                                 (funcall 'agent-ui-timeout) -1)
                                             (fb-service-call :timeout))
                                      (fb-service-fds))
-                         ;; refresh Ctrl/Shift/Super first; the Menu key opens the
-                         ;; context menu where the caret (or selected row) is
-                         (let ((ev (and kev (read-keyboard-evdev *fb-kbd*))))
-                           (cond ((eq ev :menu)
-                                  (keyboard-context-menu)
-                                  (setf dirty t))
-                                 ;; seen only on the evdev: the console keeps them for
-                                 ;; its own scrollback (a terminal pane's history)
-                                 ((eq ev :shift-page-up) (browser-key :page-up 1) (setf dirty t))
-                                 ((eq ev :shift-page-down) (browser-key :page-down 1) (setf dirty t))
-                                 ;; a Ctrl chord the console sends no byte for
-                                 ((characterp ev)
-                                  (setf dirty t)
-                                  (when (eq :quit (browser-key ev (logior 4 (if *super-down* 64 0))))
-                                    (return)))))
-                         (when kb
-                          (let ((was-dirty dirty) (pane-before (current-pane)))
-                           (setf dirty t)
-                           (multiple-value-bind (key state) (fb-read-key 0)
-                             ;; Ctrl-/ reaches the tty as DEL, Backspace's own byte
-                             ;; (defkeymap: ctrl_map[53] = 0x7f), so only the held Ctrl
-                             ;; tells them apart: undo, as C-/ is in Emacs
-                             (when (and (eq key :backspace) (zerop state) *ctrl-down*)
-                               (setf key #\/ state 4))
-                             ;; The cooked tty sends a bare ESC[A for EVERY arrow and no
-                             ;; byte for a held modifier — it lives only in the evdev
-                             ;; state, so fold it in (Ctrl-arrow = word, Shift = select,
-                             ;; Super = the spatial layer / SuperL-?).
-                             (let ((state (logior state
-                                                  (if *ctrl-down* 4 0)
-                                                  (if *shift-down* 1 0)
-                                                  (if *super-down* 64 0))))
-                               (when (or (eq key :eof)
-                                         (eq :quit (browser-key key state)))
-                                 (return))
-                               ;; typed INTO a terminal: the echo will come back as
-                               ;; output, and repaint only its rows
-                               (when (and (not was-dirty)
-                                          (terminal-key-was-cheap-p pane-before state))
-                                 (setf dirty nil))))))
-                         (when ms
-                           (let ((ox *cursor-x*) (oy *cursor-y*)
-                                 (was-down *button-down*)
-                                 (was-hidden (pointer-activity)))
-                             (multiple-value-bind (clicked wheel button)
-                                 (read-mouse *fb-mouse* xres yres)   ; every ready pointer
-                               ;; wheel first: a notch scrolls the current pane a few
-                               ;; lines (up = toward the start), point untouched.
-                               (unless (zerop wheel)
-                                 (browser-scroll (* (- wheel) +wheel-lines+))
-                                 (setf dirty t))
-                               ;; Alt-click is the middle button, for a pointer that
-                               ;; has none (doc/input.org, "Three buttons")
-                               (when (and clicked *alt-down*)
-                                 (setf clicked nil button :middle *button-down* nil))
-                               (when clicked
-                                 (browser-click *cursor-x* *cursor-y* *ctrl-down* *super-down*)
-                                 (setf dirty t))
-                               (case button
-                                 (:right  (browser-context-menu *cursor-x* *cursor-y*)
-                                          (setf dirty t))
-                                 (:middle (browser-middle-click *cursor-x* *cursor-y* *super-down*)
-                                          (setf dirty t)))
-                               ;; moved with the button still held: a drag, which
-                               ;; extends the text selection the press started
-                               (when (and *button-down* (not clicked)
-                                          (or (/= ox *cursor-x*) (/= oy *cursor-y*))
-                                          (browser-drag *cursor-x* *cursor-y*))
-                                 (setf dirty t))
-                               ;; the button came up: a drag that selected something
-                               ;; hands it to PRIMARY and the clipboard (X's rule)
-                               (when (and was-down (not *button-down*))
-                                 (browser-drag-end))
-                               ;; a bare move: the frame is still right, only the arrow
-                               ;; is in the wrong place (a redraw would move it anyway)
-                               (when (and (not dirty)
-                                          (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                                 (move-cursor canvas ox oy)
-                                 (fb-service-call :motion *cursor-x* *cursor-y*)))))
+                         (let ((ox *cursor-x*) (oy *cursor-y*)
+                               (was-hidden (and ms (pointer-activity))))
+                           ;; what happened, as events, routed by the world: keys to
+                           ;; the focus, the pointer to the morph under it
+                           (dolist (e (input-events kb ms kev xres yres))
+                             (when (or (eq e :eof)
+                                       (eq :quit (lol.morph:world-dispatch *world* e)))
+                               (return-from environment)))
+                           ;; a bare move: the frame is still right, only the arrow is
+                           ;; in the wrong place (a repair would move it anyway)
+                           (when (and ms (not (lol.morph:world-damaged-p *world*))
+                                      (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
+                             (move-cursor canvas ox oy)
+                             (fb-service-call :motion *cursor-x* *cursor-y*)))
                          ;; a run's reader thread may have collected output: copy it
                          ;; into its pane (cheap when nothing changed — a compare)
-                         (when (tick-runs) (setf dirty t))
+                         (when (tick-runs) (environment-changed))
                          ;; a closed tab or a popped pane may have taken a terminal
                          ;; with it: hang its program up (SIGHUP, as closing a window)
                          (when (or kb ms kev) (terminal-sweep))
                          ;; the services (a web page's frames, …): every turn, since
                          ;; they also react to what input just did (a click's page)
-                         (when (member :redraw (fb-service-call :run canvas dirty))
-                           (setf dirty t))
+                         (when (member :redraw (fb-service-call :run canvas
+                                                                (lol.morph:world-damaged-p *world*)))
+                           (environment-changed))
                          ;; Nothing was ready: a deadline fired. Which one? A running
                          ;; stage advances the world; an idle pointer hides.
                          (unless (or kb ms kev xs)
                            (when (/= -1 (live-stage-timeout))
-                             (tick-live-stage) (setf dirty t))
+                             (tick-live-stage) (environment-changed))
                            (when (zerop (cursor-idle-timeout))
                              (hide-cursor canvas))
                            ;; the clock: cheap, so simply on every timeout — a
                            ;; stage frame or a hide repaints an unchanged tray
-                           (unless dirty (tick-tray canvas xres)))))))
+                           (unless (lol.morph:world-damaged-p *world*) (tick-tray canvas xres)))
+                         ;; a modal loop (the Spotter, a menu, the debugger) drew whole
+                         ;; frames of its own: what is on the glass is no longer what
+                         ;; the world drew, so repair all of it
+                         (when (shiftf *screen-overdrawn* nil)
+                           (lol.morph:invalidate *world*)))))))
               (close-input-devices)))))
     (serious-condition (c)
       (log-condition "the environment died" c)

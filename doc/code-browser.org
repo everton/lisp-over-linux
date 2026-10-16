@@ -2425,11 +2425,15 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   "terminal". It is the first view that changes on its own *without* a timer: the
   loop polls the terminals' pty masters beside the input devices and repaints only
   the rows a program changed.
-- *Phase 7 — DESIGNED, not built (2026-10-16).* Morphic: the browser stops being
-  *the* application and becomes the first window on a Lisp window system of our
-  own. The design — morphs as CLOS objects, one World loop, the tiled shell as the
-  first morph, tear-off trail windows, damage repair, six steps — is
-  [[file:morphic.org][morphic.org]], reviewed by the user the same day (its §9 records the decisions).
+- *Phase 7 — IN PROGRESS: steps 0–1 of 6 built (2026-10-16).* Morphic: the browser
+  stops being *the* application and becomes the first window on a Lisp window system
+  of our own. The design — morphs as CLOS objects, one World loop, the tiled shell as
+  the first morph, tear-off trail windows, damage repair, six steps — is
+  [[file:morphic.org][morphic.org]], reviewed by the user the same day (its §9 records the decisions;
+  its §10 tracks what is built). Built: the canvas's clip rectangle (step 0) and the
+  World with one morph — =poc/morph.lisp=, =poc/morphic.lisp=, the guest's and the X11
+  host's loops routing events through it, the halo's outermost layer the shell morph
+  (step 1).
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 

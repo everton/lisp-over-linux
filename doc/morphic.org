@@ -1,7 +1,7 @@
 #+TITLE: Morphic — the browser becomes the first window of a Lisp window system
 #+STARTUP: showall
 
-*STATUS (2026-10-16): step 0 of 6 BUILT* (§10 tracks each step: what shipped, what
+*STATUS (2026-10-16): steps 0 and 1 of 6 BUILT* (§10 tracks each step: what shipped, what
 changed against the plan, and the measured costs). Written first as a design for
 the user to review; the user answered §9 the same day, and the answers are recorded
 there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
@@ -346,3 +346,65 @@ at load time, and the harness did not load =poc/host-logging.lisp=. Fixed in the
 harness; nothing to do with the clip. Likewise =poc/web-test.lisp= fails "a frame
 arrived and was decoded" on this host with or without the clip (checked on the
 untouched tree) — a host matter, not this step.
+
+** Step 1 — the World with one morph: BUILT (2026-10-16)
+
+Two files, split the way the shell and the toolkit are split:
+
+- [[file:../poc/morph.lisp][poc/morph.lisp]], package =lol.morph=, knows nothing about the browser: the [[file:../poc/morph.lisp::defclass morph ()][=morph=]]
+  class (bounds, owner, children, =step-ms=, =subject=, and a =draws= counter the
+  tests read), the [[file:../poc/morph.lisp::defclass world (morph)][=world=]] and the [[file:../poc/morph.lisp::defclass hand (morph)][=hand=]], the event struct of §3.3, rectangles,
+  [[file:../poc/morph.lisp::defun invalidate][=invalidate=]], [[file:../poc/morph.lisp::defun merge-damage][=merge-damage=]], [[file:../poc/morph.lisp::defun world-repair][=world-repair=]] and [[file:../poc/morph.lisp::defun world-dispatch][=world-dispatch=]]. Generic
+  functions =draw-morph=, =handle-event=, =step-morph=, =morph-affordances= as
+  designed, plus three the build needed: =morph-opaque-p= (see the repair rule
+  below), =drop-morph= (the hand let go) and =world-after-dispatch= (the world's
+  chance to tidy up after any event).
+- [[file:../poc/morphic.lisp][poc/morphic.lisp]], in =CL-USER= beside the shell, is the browser's side: the
+  [[file:../poc/morphic.lisp::defclass desk (lol.morph:world)][=desk=]] (the world the environment runs in, =*world*=) and [[file:../poc/morphic.lisp::defclass shell-morph (lol.morph:morph)][=shell-morph=]], whose
+  =draw-morph= is =draw-browser= and whose =handle-event= is the old loop's routing
+  — =browser-key=, =browser-click=, =browser-drag=, =browser-drag-end=,
+  =browser-scroll=, the menus — moved, not rewritten.
+
+The guest's loop ([[file:../initramfs/fb-browser.lisp::defun run-browser-fb][=run-browser-fb=]]) now only /decodes/: [[file:../initramfs/fb-browser.lisp::defun input-events][=input-events=]] is the old
+decoding, step for step and in the same order (the keyboard's evdev, then the
+console, then the pointers), producing events instead of acting; the world routes
+them; the loop sends what =world-repair= drew. The old =dirty= flag is gone: a state
+change /damages/ the shell morph instead, and the agent's tick, a run pane, a
+service's =:redraw= and a stage tick do so through one function,
+[[file:../poc/morphic.lisp::defun environment-changed][=environment-changed=]] — the five special cases step 5 will turn into stepping. The
+pointer contract of [[file:framebuffer.org][framebuffer.org]] §9.5 is untouched (the hand is not drawn; a bare
+move damages nothing); the stall watcher's =note-main-idle= / =note-main-busy= live
+in =poll-input-once=, which the loop still calls; =*fb-services*= still run every
+turn. The X11 host loop ([[file:../poc/run-browser.lisp][run-browser.lisp]]) and the frame renderer ([[file:../poc/render-frame.lisp][render-frame.lisp]],
+whose =-k= script now goes through =world-dispatch= and gained a
+=drag:X1,Y1,X2,Y2= token) run the same world.
+
+*Two rules the design left open, decided in the build:*
+
+- *Repair starts at the topmost opaque morph that covers the rect.* Every morph
+  overlapping a damaged rect is drawn back to front — except that nothing under an
+  opaque morph covering the whole rect can show, so the walk starts there. With
+  windows (step 2) that is what makes a moved window cost a copy rather than a
+  repaint of the shell beneath it.
+- *Damage rects merge only when they overlap.* The design said "or whose union is
+  not much bigger than their sum"; but a window moved down by a few pixels leaves a
+  thin strip /touching/ its new bounds, and their union is a window and a half of
+  shell to redraw, where apart they are a strip of shell plus a window-sized copy.
+  More than 16 rects, or one covering the screen, become one full-screen repair.
+
+*Proof.* Every regression check passed on the step-1 image, and [[file:../check-morphic.lisp][check-morphic.lisp]]'s
+section A (9 checks): the environment is a desk whose only child is the shell morph,
+covering the screen and holding the focus; a bare pointer move repairs nothing (the
+shell's =draws= counter does not move); a key repairs it once, as one full-screen
+rect; the halo's outermost layer is the =SHELL-MORPH= instance, both asked of
+=halo-layers= and by walking a real halo (QEMU's middle button, then =Up=) all the way
+out. =render-frame.lisp= frames are unchanged from step 0 for the same 9 subjects as
+there; the halo frame differs by its caption, which now lists one more layer.
+
+*Found on the way, not a design question:* the first image died at its first wake —
+=invalid number of arguments: 2= — because =world-repair= with nothing to repair
+returned one value where the loop's =multiple-value-call= expected two. It now
+returns =(values nil nil)=. Recorded because the symptom was "every check fails"
+with nothing on the console: the environment's =handler-case= drops to the menu,
+and a diskless guest has no session log; the condition was caught by rebinding
+=log-condition= over the net REPL and re-entering with =b=.

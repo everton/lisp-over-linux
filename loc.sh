@@ -51,6 +51,9 @@ CATS=(
 # Persistence (journal.lisp, file-out.lisp, desk.lisp) is "ours": the record shape,
 # the replay rules and the desk's reference whitelist are designs
 # (doc/session-persistence.org), even though they print with the Lisp printer.
+# poc/morph.lisp and poc/morphic.lisp (Morphic, doc/morphic.org) are "ours": the
+# vocabulary is Self's and Squeak's, but no spec fixes the code — the damage rules,
+# the desk and the trail windows are designs.
 # agent-tools.lisp is "ours" although it carries html-text: a skimmer for the
 # model, not an HTML parser; agent-store.lisp (the conversation file) is ours too.
 ORIGINS=(

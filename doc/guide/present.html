@@ -138,9 +138,9 @@ page walks through it.</p>
 The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:2974</span></a>), builds menu
 entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3016</span></a>) and runs the chosen one through
 <a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2953</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:3450</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3454</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3439</span></a>. That function calls whatever <code>*chooser*</code> the
+The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:3456</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3460</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3445</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser-fb</code> on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>
@@ -218,7 +218,7 @@ move does not redraw: <code>move-cursor</code> repairs only the pointer's rectan
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-browser" href="../../poc/shell.lisp"><code>draw-browser</code><span class="loc">poc/shell.lisp:1435</span></a></span>
     Clears the canvas, then draws the tabs, the breadcrumb bars, the expanded pane (or the split) and the status line.
     It records what it drew where (<code>*drawn*</code>, used by the halo) and the hit maps used for clicks.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#show-frame" href="../../initramfs/fb-browser.lisp"><code>show-frame</code><span class="loc">initramfs/fb-browser.lisp:1153</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#show-frame" href="../../initramfs/fb-browser.lisp"><code>show-frame</code><span class="loc">initramfs/fb-browser.lisp:1164</span></a></span>
     <code>lol.fb:present-fb</code> then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
 </ol>
 

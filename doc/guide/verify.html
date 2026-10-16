@@ -58,7 +58,7 @@ a plain SBCL on the host, a rendered frame, the docs' own checkers, and a booted
 </ul>
 
 <h3>render-frame</h3>
-<p><a class="ref" data-ref="poc/render-frame.lisp#parse-subject" href="../../poc/render-frame.lisp"><code>parse-subject</code><span class="loc">poc/render-frame.lisp:241</span></a> lists the subjects it can open (<code>-h</code> prints
+<p><a class="ref" data-ref="poc/render-frame.lisp#parse-subject" href="../../poc/render-frame.lisp"><code>parse-subject</code><span class="loc">poc/render-frame.lisp:244</span></a> lists the subjects it can open (<code>-h</code> prints
 them). It loads most of the stack in build order, but not <code>fb.lisp</code>, <code>fb-browser.lisp</code>, the network modules
 or the supervisor. In a rendered frame those modules' definitions show as "not in this image". That is expected.
 Convert the PPM with <code>sbcl --script host-client/ppm2png.lisp in.ppm out.png</code>.</p>

@@ -64,6 +64,7 @@
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
     "poc/textview.lisp"           ; the editable, syntax-colouring text view
     "poc/widgets.lisp"            ; phase 3 toolkit: panel / list / scrollbar / grid
+    "poc/morph.lisp"              ; lol.morph — morph, world, hand, damage repair
     "initramfs/ansi.lisp"         ; needed by line-editor
     "initramfs/line-editor.lisp"  ; token-start / longest-common-prefix, used by the shell
     "poc/clipboard.lisp"          ; lol.clipboard — the shell's copy / paste / rectangles
@@ -83,6 +84,7 @@
     "initramfs/agent.lisp"        ; the agent: conversations, tools
     "initramfs/agent-ui.lisp"     ; a conversation as a Workspace pane, the tray item
     "poc/terminal-pane.lisp"      ; the terminal pane
+    "poc/morphic.lisp"            ; the desk: the shell as a morph, trail windows
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).
@@ -148,7 +150,8 @@ OPTIONS
   -s WxH      canvas size (default 1280x720; the QEMU guest is 1280x800)
   -k \"KEYS\"   replay a script before drawing, so a frame can be a DRILLED state:
               tokens are up down left right ret tab bs esc space pgup pgdn,
-              a bare character, click:X,Y, or wheel:N (+N lines toward the end) —
+              a bare character, click:X,Y, drag:X1,Y1,X2,Y2 (press, move held,
+              release), or wheel:N (+N lines toward the end) —
               each may take C- M- S- s- prefixes
               (Ctrl / Meta / Shift / Super).  e.g. -k \"down down ret S-ret\"
   --spotter Q draw the Spotter palette, filtered by Q, over the chosen subject
@@ -369,6 +372,8 @@ OPTIONS
        ;; evdev/X11 events the harness has no way to synthesise, so replay the line
        ;; count BROWSER-SCROLL would have been handed.
        (values :wheel (parse-integer (subseq tok 6)) state))
+      ((starts-with "drag:" tok)
+       (values :drag (mapcar #'parse-integer (split-on #\, (subseq tok 5))) state))
       ((starts-with "click:" tok)
        (let ((xy (split-on #\, (subseq tok 6))))
          (values :click (cons (parse-integer (first xy)) (parse-integer (second xy))) state)))
@@ -387,19 +392,33 @@ OPTIONS
                (sleep 0.05)))))
 
 (defun replay-keys (script canvas w h)
-  "Replay SCRIPT (space-separated tokens) through the real input entry points. The
-   canvas is redrawn between steps because clicks hit-test against geometry that
+  "Replay SCRIPT (space-separated tokens) through the real input entry points — the
+   world's event routing (poc/morph.lisp), exactly as the guest's loop feeds it. The
+   world is repaired between steps because clicks hit-test against geometry that
    DRAW-BROWSER records (*crumb-rects*, *content-top*, *matrix-cells*) — without a
    draw in between, a scripted click would test against a stale layout, which is
    precisely the class of bug this harness exists to catch."
+  (declare (ignore w h))
   (dolist (tok (split-on #\Space script))
     (multiple-value-bind (key arg state) (parse-key-token tok)
-      (draw-browser canvas w h)
-      (case key
-        (:click (browser-click (car arg) (cdr arg)
-                               (lol.canvas:ctrl-p state) (lol.canvas:super-p state)))
-        (:wheel (browser-scroll arg))
-        (t (browser-key key state)))
+      (lol.morph:world-repair *world* canvas)
+      (flet ((send (kind x y &optional (st state))
+               (lol.morph:world-dispatch *world* (lol.morph:make-event :kind kind :x x :y y
+                                                                       :state st))))
+        (case key
+          (:click (send :down (car arg) (cdr arg)))
+          ;; drag:X1,Y1,X2,Y2 — press, move with the button held, release: a text
+          ;; selection, or a window carried by its title bar (doc/morphic.org)
+          (:drag (destructuring-bind (x1 y1 x2 y2) arg
+                   (send :down x1 y1)
+                   (lol.morph:world-repair *world* canvas)
+                   (send :drag x2 y2 0)
+                   (lol.morph:world-repair *world* canvas)
+                   (send :up x2 y2 0)))
+          ;; the wheel token counts LINES, as BROWSER-SCROLL does (not notches)
+          (:wheel (browser-scroll arg) (shell-changed))
+          (t (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key key
+                                                                     :state state)))))
       (pump-terminals 0.3))))
 
 ;;; ---- PPM out -------------------------------------------------------------
@@ -465,6 +484,7 @@ OPTIONS
                             (merge-pathnames "cozette.lolf" *poc-dir*) :size size)))
     (let ((canvas (lol.canvas:make-canvas w h)))
       (open-environment (parse-subject subject-spec))
+      (setf *world* (make-desk w h))        ; the tiled shell as one morph (morphic.lisp)
       (when *terminals*                 ; a terminal: size it (a first draw), let it run
         (draw-browser canvas w h)
         (pump-terminals 1.5))
@@ -474,7 +494,9 @@ OPTIONS
           (let* ((cands (spotter-candidates))
                  (hits (spotter-results *spotter-query* cands)))
             (draw-spotter-card canvas w h *spotter-query* hits 0))
-          (draw-browser canvas w h))
+          ;; the whole world, freshly: the shell (DRAW-BROWSER) and any windows
+          (progn (lol.morph:invalidate *world*)
+                 (lol.morph:world-repair *world* canvas)))
       (when *halo-at*
         ;; the halo reads *DRAWN* from the frame just drawn, as it does in the guest
         (destructuring-bind (hx hy &optional (depth 0)) *halo-at*

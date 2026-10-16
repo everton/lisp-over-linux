@@ -627,6 +627,17 @@ set; =move-cursor= otherwise. (The value prompt also used to leave the mouse unr
 and since =poll= is level-triggered an unread mouse is readable forever: the prompt
 spun, repainting, from the first twitch of the pointer until you pressed Enter.)
 
+*Since Morphic step 1* (2026-10-16, [[file:morphic.org][morphic.org]] §10) the browser's own loop no longer
+has a =dirty= flag: it hands decoded input to a /world/ ([[file:../poc/morph.lisp][poc/morph.lisp]]) and sends what
+the world repaired — [[file:../initramfs/fb-browser.lisp::defun present-repair][=present-repair=]]: the whole frame (=present-frame=, then the
+arrow) when the repair covered the screen, else each repaired rect with
+=present-fb-rect=, and the arrow put back if a rect ran under it or moved if it
+moved. The contract above is unchanged: the hand is a morph that is *not* drawn into
+the canvas, a bare move damages nothing, and =check-pointer.lisp= still holds.
+=show-frame= is now what the /modal/ loops call; it also tells the world that they
+drew the whole screen behind its back (=*screen-overdrawn*=), so it repairs
+everything once they return.
+
 | per pointer move | before (a full frame) | after      |
 |------------------+-----------------------+------------|
 | KVM              | 6.5 ms                | 12 µs      |
