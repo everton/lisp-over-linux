@@ -11,8 +11,9 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#27* (USB Ethernet dongles — the RTL8153 and the generic CDC classes, §8; built
-on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
+Current tag: *#28* (when the KERNEL is stuck: Magic SysRq, the lockup and hung-task
+detectors, pstore on EFI variables — §6; built on #27 = USB Ethernet dongles, the RTL8153
+and the generic CDC classes, §8; built on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
 seccomp, SysV IPC, inotify, fw_cfg and virtio-9p — §8; built on top of #25 = storage:
 NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased the config onto Linux 7.2.5, #23 =
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
@@ -40,7 +41,9 @@ BLK_DEV_NVME|NVME_CORE|EXT4_FS|EXT4_FS_POSIX_ACL|JBD2|VIRTIO_BLK|\
 MSDOS_PARTITION|EFI_PARTITION|USER_NS|OVERLAY_FS|SYSVIPC|POSIX_MQUEUE|\
 INOTIFY_USER|SECCOMP|SECCOMP_FILTER|IPV6|CFG80211|MAC80211|IWLWIFI|IWLMVM|RFKILL|\
 FW_CFG_SYSFS|DMI_SYSFS|NET_9P|NET_9P_VIRTIO|9P_FS|\
-USB_USBNET|USB_RTL8152|USB_NET_CDCETHER|USB_NET_CDC_NCM)=' .config | sort
+USB_USBNET|USB_RTL8152|USB_NET_CDCETHER|USB_NET_CDC_NCM|\
+MAGIC_SYSRQ|MAGIC_SYSRQ_DEFAULT_ENABLE|SOFTLOCKUP_DETECTOR|HARDLOCKUP_DETECTOR|\
+DETECT_HUNG_TASK|PSTORE|EFI_VARS_PSTORE|MISC_FILESYSTEMS)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -200,6 +203,10 @@ the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 �
 | Option                  | State | Role                                                      |
 |-------------------------+-------+-----------------------------------------------------------|
 | =CONFIG_SERIAL_8250=    | y     | =console=ttyS0= so =build.sh --run= can scrape markers     |
+| =CONFIG_MAGIC_SYSRQ= (default enable =0x1=, all functions) | y | #28: Alt-SysRq works even when the Lisp is dead or stuck — it is the kernel's own keyboard handler, under =KD_GRAPHICS= too. =w= / =t= dump blocked / all tasks to the kernel log, =s u b= sync, remount read-only, reboot; =c= panics on purpose, which (with pstore) keeps the log ([[file:diagnostics.org][diagnostics.org]] §6) |
+| =CONFIG_SOFTLOCKUP_DETECTOR= + =HARDLOCKUP_DETECTOR= (perf NMI) | y | #28: a CPU stuck in the kernel (with or without interrupts) is reported in the kernel log, which =session-log.lisp= copies to =kernel.log=. Report only: =BOOTPARAM_SOFTLOCKUP_PANIC=0= |
+| =CONFIG_DETECT_HUNG_TASK= | y | #28: a task in uninterruptible sleep over 120 s (a stuck disk or driver) is reported, report only (=BOOTPARAM_HUNG_TASK_PANIC=0=) |
+| =CONFIG_PSTORE= + =EFI_VARS_PSTORE= (needs =MISC_FILESYSTEMS=) | y | #28: on a panic the kernel writes its last log into EFI variables; the next boot of *Debian* shows it in =/sys/fs/pstore= and =systemd-pstore= (enabled on the host) moves it to =/var/lib/systemd/pstore= — and frees the variables. =PSTORE_COMPRESS= (zlib) keeps the records small |
 
 * 7. Networking (IPv4 + QEMU virtio-net) — NEW in tag #21
 
@@ -419,3 +426,17 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   =ZAURUS=) — left on: they are small and cover common dongles. =bootx64.efi= is
   4,064,256 bytes at #27. Found by the networking track: the host's =lsusb= shows
   =0bda:8153 RTL8153 Gigabit Ethernet Adapter=. /Not yet booted on the laptop./
+- =#28= *When the kernel is stuck* (2026-10-16): =MAGIC_SYSRQ= (default enable
+  =0x1=), =SOFTLOCKUP_DETECTOR=, =HARDLOCKUP_DETECTOR= (perf NMI),
+  =DETECT_HUNG_TASK=, =PSTORE= + =EFI_VARS_PSTORE= (§6). =PSTORE= is under the
+  =MISC_FILESYSTEMS= menu, which was off: =scripts/config -e PSTORE= alone was
+  silently dropped by =olddefconfig= until the menu was enabled too — which turned
+  nothing else on (every filesystem in it defaults to =n=). =olddefconfig= added
+  =LOCKUP_DETECTOR=, =HARDLOCKUP_DETECTOR_PERF= / =_COUNTS_HRTIMER=,
+  =DETECT_HUNG_TASK_BLOCKER=, =MAGIC_SYSRQ_SERIAL=, =PSTORE_COMPRESS= with
+  =ZLIB_INFLATE= / =ZLIB_DEFLATE=, and the two =BOOTPARAM_*_PANIC=0= (report, never
+  panic). Why: a session froze on the laptop and a stuck kernel is invisible from
+  Lisp ([[file:diagnostics.org][diagnostics.org]]). =bootx64.efi= is 4,080,640 bytes at #28 (4,064,256 at
+  #27); 1,071 =CONFIG_= lines. Verified in QEMU+OVMF by =check-diagnostics.lisp=:
+  =pstore: Registered efi_pstore=, =/proc/sys/kernel/sysrq= = 1,
+  =hung_task_timeout_secs= = 120, =watchdog= = 1. /Not yet booted on the laptop./
