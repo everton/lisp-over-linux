@@ -805,6 +805,202 @@
               collect (list :name (frame-var-name v)
                             :value (frame-var-value v loc frame)))))))
 
+;;; ---- frame locals as PLACES: setting a variable in a standing frame ------
+;;; (doc/inspector-history.org §5.4.) INSPECT-PLACES turned an object's fields from
+;;; values into places; this does the same for a stack frame's locals, so the
+;;; debugger can write a new value into a frame that is still waiting for ERROR (or
+;;; CERROR) to return — and then CONTINUE, or re-enter the frame, and watch the
+;;; function carry on with the value you gave it.
+;;;
+;;; Where a local LIVES. The compiler told sb-di, for every debug variable, a
+;;; "storage class + offset" (SC+OFFSET): which kind of storage (a register, a stack
+;;; slot, an unboxed float slot, ...) and which one. A frame that is NOT the innermost
+;;; one is stopped at a call, and SBCL on x86-64 has no callee-saved registers, so
+;;; across that call everything still live has been SAVED to the frame's stack — the
+;;; variable's SAVE-SC+OFFSET. Writing there is writing what the frame will read when
+;;; the call returns. The innermost frame of an internal error (CAR of a number, a
+;;; type check) is different: it was INTERRUPTED, so its registers sit in a signal
+;;; context ("escaped"), and sb-di writes into that context instead.
+;;;
+;;; Measured against ./sbcl 2.6.8 first (the numbers and the cases are in the doc):
+;;;   * at (debug 0) a frame's locals are ARG-0, ARG-1 ... and :UNKNOWN — not settable;
+;;;   * at (debug 1), our image's default, only the ARGUMENTS survive as debug vars —
+;;;     a LET-bound temporary is simply not there to set;
+;;;   * at (debug 2)+ every local is listed, valid, and a write is seen on CONTINUE.
+;;; And three traps, each guarded below rather than left to bite:
+;;;   1. A variable the compiler keeps as a FIXNUM (storage class ANY-REG) will take a
+;;;      string without complaint — and the frame then computes with the string's
+;;;      address as if it were a number ((+ n 1) => 38663474160). So the storage class
+;;;      decides what may be written, not the old value.
+;;;   2. An "indirect" variable — one a dynamic-extent local function reads out of its
+;;;      PARENT's frame — makes SBCL's own (SETF DEBUG-VAR-VALUE) overwrite the slot
+;;;      that holds the parent's frame POINTER. Measured: the next read is a memory
+;;;      fault, and in PID 1 a memory fault is a kernel panic. We write through the
+;;;      pointer instead (SET-INDIRECT-FRAME-VAR).
+;;;   3. A variable CLOSED OVER but never SETQ'd is COPIED into each closure made from
+;;;      it. Setting the frame's copy does not change a closure already made — which is
+;;;      Lisp's semantics, not a bug, but it reads like one, so the doc says so.
+
+(defun sc-number (name)
+  "The value of SB-VM's NAME-SC-NUMBER constant, or NIL — looked up by name so that an
+   SBCL without (say) a separate CHARACTER-STACK simply contributes nothing."
+  (let ((s (find-symbol name :sb-vm)))
+    (and s (boundp s) (symbol-value s))))
+
+(defun sc-value-type (scn)
+  "The Lisp type a variable stored in storage class SCN can hold, or T for a boxed
+   (descriptor) slot, which can hold any object. The unboxed classes are raw machine
+   words: what goes in must already BE that kind of number, character or pointer."
+  (flet ((in (&rest names) (member scn (mapcar #'sc-number names))))
+    (cond ((in "ANY-REG-SC-NUMBER")                              'fixnum)
+          ((in "SIGNED-REG-SC-NUMBER" "SIGNED-STACK-SC-NUMBER")    '(signed-byte 64))
+          ((in "UNSIGNED-REG-SC-NUMBER" "UNSIGNED-STACK-SC-NUMBER") '(unsigned-byte 64))
+          ((in "CHARACTER-REG-SC-NUMBER" "CHARACTER-STACK-SC-NUMBER") 'character)
+          ((in "SAP-REG-SC-NUMBER" "SAP-STACK-SC-NUMBER")          'system-area-pointer)
+          ((in "SINGLE-REG-SC-NUMBER" "SINGLE-STACK-SC-NUMBER")    'single-float)
+          ((in "DOUBLE-REG-SC-NUMBER" "DOUBLE-STACK-SC-NUMBER")    'double-float)
+          (t t))))
+
+(defun frame-var-value-type (var)
+  "What VAR's storage can hold (see SC-VALUE-TYPE). For an indirect variable the slot
+   that matters is the one in the parent frame, not the pointer to it."
+  (sc-value-type
+   (sb-c:sc+offset-scn (or (sb-di::compiled-debug-var-indirect-sc+offset var)
+                           (sb-di::compiled-debug-var-sc+offset var)))))
+
+(defun frame-var-unsettable-reason (var loc frame)
+  "NIL when VAR can be written in FRAME at code location LOC; otherwise a short phrase
+   saying why not, for the debugger to show. Never signals."
+  (handler-case
+      (cond ((not (typep var 'sb-di::compiled-debug-var)) "not a compiled variable")
+            ((not (typep frame 'sb-di::compiled-frame))   "not a compiled frame")
+            ;; :INVALID = dead here (not yet bound, or no longer used); :UNKNOWN =
+            ;; sb-di cannot tell, which is what (debug 0) code gives for everything
+            ((eq (sb-di:debug-var-validity var loc) :invalid)
+             "not live at this point in the function")
+            ((not (eq (sb-di:debug-var-validity var loc) :valid))
+             "location unknown here (compiled at low debug)")
+            ;; sb-di's own marker for a value in a register this frame has no saved
+            ;; copy of: there is nowhere to write that the frame would read back.
+            ((eq (sb-di::access-compiled-debug-var-slot var frame)
+                 :invalid-value-for-unescaped-register-storage)
+             "held only in a register here")
+            (t nil))
+    (serious-condition () "sb-di cannot locate it")))
+
+(defun set-indirect-frame-var (var frame new)
+  "Write NEW into an INDIRECT variable: one stored in a PARENT frame and reached from
+   FRAME through a saved copy of the parent's frame pointer (a dynamic-extent FLET
+   reading its enclosing function's LET). Mirrors the read path in SBCL's
+   ACCESS-COMPILED-DEBUG-VAR-SLOT step for step: fetch the parent's frame pointer from
+   VAR's own slot, then write at the indirect SC+OFFSET relative to it. SBCL's (SETF
+   DEBUG-VAR-VALUE) skips the first step and overwrites the pointer — see trap 2."
+  (let* ((escaped (sb-di::compiled-frame-escaped frame))
+         (parent  (sb-di::sub-access-debug-var-slot
+                   (sb-di::frame-pointer frame)
+                   (if escaped
+                       (sb-di::compiled-debug-var-sc+offset var)
+                       (or (sb-di::compiled-debug-var-save-sc+offset var)
+                           (sb-di::compiled-debug-var-sc+offset var)))
+                   escaped))
+         (parent-fp (sb-sys:int-sap (sb-kernel:get-lisp-obj-address parent)))
+         (indirect  (sb-di::compiled-debug-var-indirect-sc+offset var))
+         (old (sb-di::sub-access-debug-var-slot parent-fp indirect escaped)))
+    ;; closed over AND set: the slot holds a value cell, and the cell is the variable
+    (if (sb-di::indirect-value-cell-p old)
+        (sb-kernel:value-cell-set old new)
+        (sb-di::sub-set-debug-var-slot parent-fp indirect new escaped))
+    new))
+
+(defun set-frame-var (var frame new)
+  "Write NEW into the local VAR of the standing FRAME, and return the value READ BACK
+   from the frame afterwards (not NEW: the read-back is the evidence the write landed).
+   Signals a plain ERROR, with a reason, when the variable cannot be written or NEW
+   cannot live in its storage — the caller (the debugger) shows the message."
+  (let ((loc (sb-di:frame-code-location frame)))
+    (let ((why (frame-var-unsettable-reason var loc frame)))
+      (when why (error "~a cannot be set: ~a" (frame-var-name var) why)))
+    (let ((type (frame-var-value-type var)))
+      (unless (typep new type)
+        (error "~a is stored as a raw ~(~a~) in this frame; ~s is not one"
+               (frame-var-name var) type new)))
+    (if (sb-di::compiled-debug-var-indirect-sc+offset var)
+        (set-indirect-frame-var var frame new)
+        ;; SBCL's own setter handles the plain and the value-cell cases correctly
+        (setf (sb-di:debug-var-value var frame) new))
+    (sb-di:debug-var-value var frame)))
+
+(defun frame-local-places (frame)
+  "FRAME's locals as PLACES — FRAME-LOCALS plus, for each, how to write it: a list of
+   (:name STRING :value STRING-or-:UNAVAILABLE :set FN-or-NIL :why STRING-or-NIL).
+   FN takes the new value and returns what the frame holds afterwards (SET-FRAME-VAR);
+   :WHY says why a local has no FN. The same shape INSPECT-PLACES gives an object's
+   fields, applied to a second data source. Never signals."
+  (ignore-errors
+    (let* ((fun  (sb-di:frame-debug-fun frame))
+           (loc  (sb-di:frame-code-location frame))
+           (vars (sb-di::debug-fun-debug-vars fun)))
+      (when (and vars (plusp (length vars)))
+        (loop for v across vars
+              for why = (frame-var-unsettable-reason v loc frame)
+              collect (list :name (frame-var-name v)
+                            :value (frame-var-value v loc frame)
+                            :set (unless why
+                                   (let ((v v)) (lambda (new) (set-frame-var v frame new))))
+                            :why why))))))
+
+(defun eval-in-frame-context (text frame)
+  "READ TEXT and evaluate it with FRAME's live locals in scope (sb-di's EVAL-IN-FRAME,
+   which binds each valid local as a symbol macro), so the value typed for a local may
+   be computed from its neighbours: (* x 3). READ in the home package of the frame's
+   function, for the same reason EVAL-IN-CONTEXT reads in a class's package: a local
+   named X in LOL.EXAMPLES is not CL-USER::X. Falls back to a plain EVAL when the frame
+   has no debug variables to scope over."
+  (let* ((name (frame-defn-name frame))
+         (sym  (if (consp name) (second name) name))
+         (*package* (or (and (symbolp sym) sym (symbol-package sym)) *package*))
+         (form (read-from-string text)))
+    (handler-case (sb-di:eval-in-frame frame form)
+      (sb-di::no-debug-vars () (eval form)))))
+
+;;; ---- re-entering a frame: RESTART-FRAME --------------------------------------
+;;; With a local set, there are two ways to see the effect: CONTINUE (when the error
+;;; offered that restart — CERROR does) lets the frame run on from where it stopped;
+;;; RESTART-FRAME unwinds TO the frame and calls its function again, from the top,
+;;; with the arguments the frame holds NOW — so an argument you just set is the
+;;; argument of the new call. Both pieces are SBCL's own debugger's (sb-debug's
+;;; RESTART-FRAME command): FRAME-CALL reads the call back out of the frame, and
+;;; UNWIND-TO-FRAME-AND-CALL unwinds (running every UNWIND-PROTECT cleanup on the way)
+;;; and calls a thunk in the frame's place. Internal to SB-DEBUG, but in the core.
+
+(defun frame-restart-refusal (frame)
+  "NIL when FRAME can be restarted; otherwise why not, as a short phrase."
+  (handler-case
+      (multiple-value-bind (name args) (sb-debug::frame-call frame)
+        (cond ((not (sb-debug::frame-has-debug-tag-p frame))
+               "no unwind tag — compiled at (debug 0)")
+              ((not (and (sb-int:legal-fun-name-p name) (fboundp name)))
+               "no global function to call again")
+              ((some (lambda (a) (typep a 'sb-debug::unprintable-object)) args)
+               "an argument is unavailable")
+              (t nil)))
+    (serious-condition () "sb-debug cannot read the call")))
+
+(defun frame-call-form (frame)
+  "FRAME's call as a list (NAME ARG...), with the values its arguments hold now."
+  (multiple-value-bind (name args) (sb-debug::frame-call frame)
+    (cons name args)))
+
+(defun restart-frame (frame)
+  "Unwind to FRAME and call its function again with the arguments the frame holds now
+   (the global definition, so a definition re-Accepted meanwhile is the one called).
+   Does not return. Signals an ERROR, with the reason, when FRAME cannot be restarted."
+  (let ((why (frame-restart-refusal frame)))
+    (when why (error "can't restart this frame: ~a" why)))
+  (destructuring-bind (name &rest args) (frame-call-form frame)
+    (sb-debug::unwind-to-frame-and-call
+     frame (lambda () (apply (fdefinition name) args)))))
+
 ;;; ======================================================================
 ;;; The condition system — the STATIC face (§3, phase 4a)
 ;;; ======================================================================

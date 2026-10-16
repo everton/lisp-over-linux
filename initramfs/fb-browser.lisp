@@ -1583,34 +1583,57 @@
           (butlast result)
           result))))
 
-(defun draw-dbg-locals (canvas x0 y0 w h locals)
-  "Render LOCALS (a list of (:name :value) plists from FRAME-LOCALS) as one 'name =
-   value' line each, starting at X0,Y0 and stopping before the screen bottom. An
-   unavailable value is dimmed; each line is clipped to the panel's right edge (W) so
-   a wide value can't run off-screen. Placeholder when the frame has no debug vars."
+(defvar *dbg-locals-top* 0 "screen-y of the first visible locals row, for click hit-testing.")
+(defvar *dbg-locals-first* 0 "index of the first VISIBLE local (the strip scrolls to the selection).")
+(defvar *dbg-locals-rows* 0 "how many locals rows the strip shows (set at draw).")
+
+(defun draw-dbg-locals (canvas x0 y0 w h locals &optional lsel)
+  "Render LOCALS (FRAME-LOCAL-PLACES plists: :name :value :set :why) as one 'name =
+   value' line each, starting at X0,Y0 and stopping before the screen bottom. A local
+   that can be SET (it has a :set function) has its name in teal; one that cannot is
+   dim all through — that is the honest version of the feature (doc/inspector-history
+   §5.4): only what sb-di vouches for looks editable. LSEL, when non-NIL, is the
+   selected row (the locals have the focus): it is highlighted and the strip scrolls
+   to keep it in view. Each line is clipped to the panel's right edge (W).
+   Placeholder when the frame has no debug vars."
+  (setf *dbg-locals-top* y0 *dbg-locals-first* 0
+        *dbg-locals-rows* (max 1 (floor (- h 8 y0) (line-h))))
   (if (null locals)
       (lol.canvas:draw-string canvas *bfont* "(no locals — no debug vars here)"
                               x0 y0 *ui-dim*)
-      (let ((y y0)
-            (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*)))))  ; chars that fit
-        (dolist (v locals)
+      (let* ((y y0)
+             (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*))))  ; chars that fit
+             (first (if lsel (max 0 (- lsel (1- *dbg-locals-rows*))) 0)))
+        (setf *dbg-locals-first* first)
+        (loop for v in (nthcdr first locals) for i from first do
           (when (< y (- h 8))
             (let* ((val     (getf v :value))
                    (unavail (eq val :unavailable))
+                   (fixed   (or unavail (null (getf v :set))))   ; shown, but not settable
                    (name    (princ-to-string (getf v :name)))
                    (vstr    (if unavail "#<unavailable>" (princ-to-string val)))
                    (full    (format nil "~a = ~a" name vstr)))
-              ;; name in teal, value in text (whole line dim when unavailable); a line that
-              ;; overruns is clipped with ".." (the … glyph would blit as a stray &).
+              (when (eql i lsel)
+                (lol.canvas:fill-rect canvas (- x0 6) (- y 1) (- w x0) (line-h) *ui-sel*)
+                (lol.canvas:fill-rect canvas (- x0 6) (- y 1) 2 (line-h) *ui-accent*))
+              ;; name in teal, value in text (whole line dim when it cannot be set); a
+              ;; line that overruns is clipped with ".." (the … glyph would blit as a stray &).
               (if (> (length full) maxc)
                   (lol.canvas:draw-string canvas *bfont*
                     (concatenate 'string (subseq full 0 (max 1 (- maxc 2))) "..")
-                    x0 y (if unavail *ui-dim* *ui-text*))
+                    x0 y (if fixed *ui-dim* *ui-text*))
                   (let ((pen (lol.canvas:draw-string canvas *bfont* name x0 y
-                                                     (if unavail *ui-dim* *ui-accent*))))
+                                                     (if fixed *ui-dim* *ui-accent*))))
                     (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
                                             (if unavail *ui-dim* *ui-text*))))
               (incf y (line-h))))))))
+
+(defun dbg-local-at (x y n)
+  "The locals-row index at screen X,Y (accounting for the strip's scroll), or NIL."
+  (declare (ignore x))
+  (when (>= y *dbg-locals-top*)
+    (let ((i (+ *dbg-locals-first* (floor (- y *dbg-locals-top*) (line-h)))))
+      (when (and (< i n) (< (- i *dbg-locals-first*) *dbg-locals-rows*)) i))))
 
 ;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
 (defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
