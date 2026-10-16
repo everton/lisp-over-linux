@@ -228,14 +228,33 @@
   "The tab label for TRAIL — the ROOT pane's subject, short enough to be a tab."
   (short-title (view-title (pane-view (first trail)))))
 
-(defun open-environment (root)
-  "Seed the cohesive environment (§4¾): ROOT as the first, focused tab, PLUS a
-   Workspace tab so the editor, the Workspace, and the Spotter all live together —
-   unless ROOT is itself the Workspace (no duplicate). Everything else is a
-   Super-Space / Super-drill away."
-  (trail-root root)
-  (unless (typep root 'subj-workspace) (new-trail (subj-workspace)))
-  (setf *active* 0))
+(defvar *restore-desk-fn* nil
+  "A function of no arguments that rebuilds *TRAILS* from the saved desk and returns
+   true, or returns NIL when there is none. Set by initramfs/desk.lisp, which loads
+   after this file (doc/session-persistence.org §2c).")
+
+(defun open-environment (&optional root)
+  "Seed the cohesive environment (§4¾), WITHOUT throwing away what is already open.
+
+   With no ROOT: the trails as they were, when there are any — leaving to the
+   supervisor's console and coming back with 'b' used to replace them with one fresh
+   Workspace, losing every tab (doc/session-persistence.org §1.3); else the desk
+   saved by the last session (*RESTORE-DESK-FN*); else the Workspace alone.
+
+   With a ROOT (the menu's 'p', 'c', 'l'; a host entry point): focus a tab already
+   rooted at an EQUALP subject, else open ROOT in a new one. On an empty environment
+   that is ROOT plus a Workspace tab, unless ROOT is itself the Workspace."
+  (cond
+    ((and root *trails*)
+     (let ((i (position-if (lambda (trail) (equalp (pane-subject (first trail)) root)) *trails*)))
+       (if i (activate-trail i) (new-trail root))))
+    (root
+     (trail-root root)
+     (unless (typep root 'subj-workspace) (new-trail (subj-workspace)))
+     (setf *active* 0))
+    (*trails* (setf *active* (min *active* (1- (length *trails*)))))
+    ((and *restore-desk-fn* (ignore-errors (funcall *restore-desk-fn*))))
+    (t (trail-root (subj-workspace)))))
 
 (defun set-pane-sel (pane n)
   "Move PANE's selection to N (clamped) and re-arm FOLLOW, so the next draw brings
@@ -2094,12 +2113,14 @@
             (if (or (workspace-pane-p pane) (file-pane-p pane)) (values nil nil nil) (accept-target subj))
           (let ((n (accept-source text name kind label)))
             ;; the Accept sandbox (sandbox.lisp) leaves the trial's pid behind:
-            ;; say it, so a definition tried elsewhere first is visibly that
+            ;; say it, so a definition tried elsewhere first is visibly that; and
+            ;; the journal's note (journal.lisp) when keeping the change failed
             (setf *browser-status*
                   (let ((trial (and (boundp '*last-sandbox*) (symbol-value '*last-sandbox*))))
-                    (format nil "Accepted: ~(~a~)~@[   (tried first in pid ~a)~]" n
+                    (format nil "Accepted: ~(~a~)~@[   (tried first in pid ~a)~]~@[  - ~a~]" n
                             (and (member (getf trial :outcome) '(:accepted :error))
-                                 (getf trial :pid)))))))
+                                 (getf trial :pid))
+                            *accept-note*)))))
       (serious-condition (c)
         (setf *browser-status* (format nil "Accept failed: ~a" c))))))
 
@@ -3474,22 +3495,62 @@
    by LEAVE-MENU. The backend reads it once it has given the screen back.")
 
 (defun leave-menu ()
-  "SuperL-q: ask how to leave — straight to power-off, or down to the supervisor's
-   console menu (the REPL, the worker, the other roots). Returns :QUIT with
-   *LEAVE-ACTION* set, or NIL when the menu is dismissed. The console comes first so
-   that a reflexive Return is the step you can come back from. With no menus on this
-   backend (the X11 host) there is nothing to power off, so it simply quits."
+  "SuperL-q: ask how to leave — down to the supervisor's console menu (the REPL, the
+   worker, the other roots), or shut down, saving the desk or not
+   (doc/session-persistence.org §4). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
+   :SAVE-POWER-OFF or :POWER-OFF), or NIL when the menu is dismissed. The console
+   comes first so that a reflexive Return is the step you can come back from. On a
+   diskless boot nothing can be kept, and the one shut-down entry says so instead of
+   offering a save that would write to RAM. With no menus on this backend (the X11
+   host) there is nothing to power off, so it simply quits."
   (if (null *chooser*)
       (progn (setf *leave-action* :console) :quit)
       (let* ((screen (car (last *drawn*)))         ; DRAW-BROWSER's first record
+             (x (- (floor (or (third screen) 800) 2) 100))
+             (y (- (floor (or (fourth screen) 600) 2) 40))
+             (keep (and (fboundp 'persistence-available-p) (funcall 'persistence-available-p)))
              (e (funcall *chooser* :menu
-                         (list (menu-entry "Supervisor console" :console :key "1" :group "leave")
-                               (menu-entry "Shut down" :power-off :key "2" :group "leave"))
-                         (- (floor (or (third screen) 800) 2) 100)
-                         (- (floor (or (fourth screen) 600) 2) 40))))
-        (when e
+                         (cons (menu-entry "Supervisor console" :console :key "1" :group "leave")
+                               (if keep
+                                   (list (menu-entry "Save and shut down" :save-power-off
+                                                     :key "2" :group "leave")
+                                         (menu-entry "Shut down without saving" :power-off
+                                                     :key "3" :group "leave"))
+                                   (list (menu-entry "Shut down (no disk - nothing is kept)"
+                                                     :power-off :key "2" :group "leave"))))
+                         x y)))
+        (when (and e (or (not (member (getf e :action) '(:power-off :save-power-off)))
+                         (unsaved-files-resolved-p x y)))
           (setf *leave-action* (getf e :action))
           :quit))))
+
+(defun unsaved-files-resolved-p (x y)
+  "Before shutting down: are there file panes with unsaved changes, and if so, what
+   becomes of them? Asks once for all of them — save all, discard, or cancel — and
+   returns true when it is fine to go on. A file you did not save used to vanish at
+   power-off without a word (doc/session-persistence.org §1.3)."
+  (let ((dirty (loop for trail in *trails*
+                     append (loop for p in trail
+                                  when (file-pane-dirty-p p) collect p
+                                  when (and (pane-side p) (file-pane-dirty-p (pane-side p)))
+                                    collect (pane-side p)))))
+    (or (null dirty)
+        (let ((e (funcall *chooser* :menu
+                          (list (menu-entry (format nil "Save ~d modified file~:p" (length dirty))
+                                            :save :key "1" :group "unsaved")
+                                (menu-entry "Discard their changes" :discard :key "2" :group "unsaved")
+                                (menu-entry "Cancel" :cancel :key "3" :group "unsaved"))
+                          x y)))
+          (case (getf e :action)
+            (:discard t)
+            (:save
+             (dolist (p dirty) (ignore-errors (funcall 'save-file-pane p)))
+             (let ((left (count-if #'file-pane-dirty-p dirty)))
+               (or (zerop left)
+                   (progn (setf *browser-status*
+                                (format nil "~d file~:p could not be saved - not shutting down" left))
+                          nil))))
+            (t nil))))))
 
 (defun keyboard-context-menu ()
   "The Menu key, or Shift-F10: the right-button menu without a pointer, anchored at

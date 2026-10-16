@@ -189,6 +189,21 @@
   "NIL, or a function of (TEXT PACKAGE-NAME) called before Accept touches this image;
    it signals to refuse. The child that does the trying binds it back to NIL.")
 
+;;; Persistence listens here (initramfs/journal.lisp, doc/session-persistence.org):
+;;; it has to see every successful Accept, from whichever surface made it — a source
+;;; pane, the Workspace, a file pane, the agent's tool, the REPL. A hook rather than a
+;;; call because the journal loads much later than this file, and because the registry
+;;; should not know what a disk is.
+(defvar *accept-hooks* '()
+  "Functions called after every SUCCESSFUL Accept with (NAME KIND LABEL PACKAGE-NAME
+   TEXT): what was defined, and the exact text and package it was read with. A hook
+   may return a short string, which becomes *ACCEPT-NOTE* (the shell shows it after
+   \"Accepted: …\"); a hook that signals is ignored — keeping a change must never be
+   the reason a change fails.")
+
+(defvar *accept-note* nil
+  "The last Accept's note from *ACCEPT-HOOKS* (e.g. \"journal: disk full\"), or NIL.")
+
 (defun accept-source (text &optional name kind label)
   "Compile TEXT (an edited definition) into the RUNNING image and update the
    registry: eval the form (redefining it live — the Smalltalk 'accept'), and set
@@ -200,7 +215,8 @@
    *ACCEPT-SANDBOX* refuses TEXT because trying it killed or hung a child process."
   (when *accept-sandbox*
     (funcall *accept-sandbox* text (package-name (accept-package name kind))))
-  (let* ((form   (let ((*package* (accept-package name kind)))
+  (let* ((pkg    (accept-package name kind))
+         (form   (let ((*package* pkg))
                    (read-from-string text)))
          (result (eval form)))                  ; compile/redefine in the live image
     (multiple-value-bind (fname fkind flabel) (defn-name-and-kind form)
@@ -225,8 +241,15 @@
                   (setf (defn-source existing) trimmed))
                 (push (make-defn :name the-name :kind the-kind :label the-label
                                  :source trimmed :born t
-                                 :package (package-name (accept-package name kind)))
+                                 :package (package-name pkg))
                       (gethash the-name *registry*)))))
+        ;; only now, with the eval done and the registry updated: a change that
+        ;; failed to compile is not a change, and is never kept
+        (setf *accept-note* nil)
+        (dolist (hook *accept-hooks*)
+          (let ((note (ignore-errors
+                       (funcall hook the-name the-kind the-label (package-name pkg) trimmed))))
+            (when (stringp note) (setf *accept-note* note))))
         (or the-name result)))))
 
 ;;; ---- runtime queries (what the REPL / browser ask) -----------------------

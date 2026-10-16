@@ -108,6 +108,11 @@
         (t (format t "~&network REPL could not start.~%")))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   (sleep 1)                       ; let the boot diagnostics be read first
+  ;; the journal: every Accept of earlier sessions compiled back in, each entry
+  ;; guarded on its own — a bad one is skipped and reported, never fatal
+  ;; (journal.lisp, doc/session-persistence.org). The net REPL is up first, so a
+  ;; boot that misbehaves here can still be looked at.
+  (boot-replay-journal)
   ;; Boot straight INTO the environment: it is what the machine is for. The menu
   ;; below is the fallback — you land there when you leave the environment
   ;; (SuperL-q, or q on a list), or when it dies: RUN-BROWSER-FB catches any error,
@@ -146,7 +151,7 @@
                     (format t "  (INSECURE: remote eval = remote root — trusted wires only)~%"))
                    (:stopped
                     (format t "~&network REPL disabled.~%"))))
-                ((string-equal choice "s") (power-off))
+                ((string-equal choice "s") (console-shutdown))   ; asks: save the desk? (desk.lisp)
                 ((string= choice ""))                 ; bare Enter: just redraw
                 (t (format t "~&unknown choice: ~a~%" choice)))))
         (serious-condition (c)

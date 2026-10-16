@@ -123,6 +123,10 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/http.lisp"         # HTTP/1.1 client: http-request, chunked, redirects (uses dns + tls)
   "$INITRAMFS_DIR/wifi.lisp"         # Wi-Fi: rfkill, the HOST's wpa_supplicant, its control socket (uses dhcp)
   "$INITRAMFS_DIR/net-views.lisp"    # the network as a subject: SuperL-n, the Spotter (uses shell + wifi)
+  "$INITRAMFS_DIR/journal.lisp"      # every Accept appended to ~/.local/share/lol/changes.lisp, replayed
+                                     #   at boot, + the journal view (doc/session-persistence.org)
+  "$INITRAMFS_DIR/file-out.lisp"     # write live edits back into the checkout's .lisp files (uses journal)
+  "$INITRAMFS_DIR/desk.lisp"         # the desk: tabs + Workspace text saved/restored (uses every subject)
   "$INITRAMFS_DIR/supervisor.lisp"   # the menu loop + init-toplevel (entry)
 )
 ISO_ROOT="$MICRO/iso_root"
@@ -228,6 +232,14 @@ done
 # host (= the laptop the image boots on). Fixed: it does not follow DST
 # (doc/systray.org).
 printf '(set-utc-offset "%s")\n' "$(date +%z)" >> "$BUILD_LISP"
+# Which build this is, baked into the heap: the git revision (+dirty when the tree had
+# uncommitted changes) and the UTC time. Every journal record carries the stamp of
+# the image that wrote it; replay runs a record freely only under the SAME stamp, and
+# shows one from any other build as "pending" (journal.lisp, doc/session-persistence.org).
+BUILD_REV="$(git -C "$MICRO" rev-parse --short HEAD 2>/dev/null || echo norev)"
+[ -n "$(git -C "$MICRO" status --porcelain 2>/dev/null)" ] && BUILD_REV="$BUILD_REV+dirty"
+BUILD_STAMP="$BUILD_REV $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+printf '(setf *build-stamp* "%s")\n' "$BUILD_STAMP" >> "$BUILD_LISP"
 cat >> "$BUILD_LISP" <<LISP
 (sb-ext:save-lisp-and-die "$INITRAMFS_DIR/lisp-init"
   :executable t :toplevel #'init-toplevel)

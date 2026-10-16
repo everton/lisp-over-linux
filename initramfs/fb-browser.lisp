@@ -1393,7 +1393,7 @@
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
         (session-log "entering the environment")
-        (open-environment (or root (subj-workspace)))
+        (open-environment root)        ; NIL: the desk as it was (shell.lisp)
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres)))
             ;; every keyboard and pointer, plus a watch for the ones still to come;
@@ -1536,13 +1536,17 @@
               (close-input-devices)))))
     (serious-condition (c)
       (log-condition "the environment died" c)
+      ;; start the next 'b' afresh: the trails it died with may be why it died
+      (setf *trails* nil)
       (format t "~&code browser: ~a~%" c) (finish-output)))
   (note-main-away)                       ; the text console now: not watched for stalls
   (session-log "left the environment~@[ (~(~a~))~]" *leave-action*)
   ;; SuperL-q chose to power off: only now, with the text console back, so the
   ;; kernel's last words (and POWER-OFF's own) are readable if it is refused
-  (when (eq (shiftf *leave-action* nil) :power-off)
-    (power-off)))
+  (case (shiftf *leave-action* nil)
+    (:power-off (funcall 'leave-without-saving) (power-off))   ; both in desk.lisp, loaded later
+    ;; the desk is written HERE, before POWER-OFF's release-disk makes /home read-only
+    (:save-power-off (funcall 'save-desk) (power-off))))
 
 (defun fb-stop-requested-p ()
   "True when a key is waiting and it is Esc or C-g — the file manager's recursive find
