@@ -155,13 +155,17 @@
 
 (defun session-log-close (fmt &rest args)
   "Write the session's LAST line — \"shutdown: …\", which tells the next boot this one
-   ended on purpose — then refuse every later line. SESSION-LOG-REOPEN undoes it,
-   for a power-off the kernel refused."
+   ended on purpose — then refuse every later line and let go of stderr.log, the one
+   log file held open (fd 2): a file open for writing makes the read-only remount of
+   /home fail with EBUSY (RELEASE-DISK). SESSION-LOG-REOPEN undoes it, for a
+   power-off the kernel refused."
   (prog1 (session-log "shutdown: ~?" fmt args)
-    (setf *logs-closed* t)))
+    (setf *logs-closed* t)
+    (stderr-to-console)))
 
 (defun session-log-reopen (why)
   (setf *logs-closed* nil)
+  (stderr-to-log)
   (session-log "the shutdown did not happen: ~a" why))
 
 (defun session-log-block (title text &key (max-lines 80))
@@ -549,6 +553,22 @@
 
 (defvar *console-stderr* nil "The console, on the fd that 2 used to be, for Lisp's *ERROR-OUTPUT*.")
 
+(defun open-stderr-log ()
+  "stderr.log opened for fd 2's use: append, 0600, O_DSYNC. A raw fd, or NIL."
+  (let ((path (log-path "stderr")))
+    (ensure-directories-exist path)
+    ;; O_DSYNC (1 << 12, linux/include/uapi/asm-generic/fcntl.h): each write
+    ;; reaches the disk before it returns. Without it the runtime's
+    ;; dying words sit in the page cache, and a panic reboots in 10 s,
+    ;; before the 30 s writeback — found by check-crash.lisp, 2026-10-16.
+    (values (sb-unix:unix-open path (logior sb-unix:o_wronly sb-unix:o_creat sb-unix:o_append
+                                            #o10000)
+                               #o600))))
+
+(defun log-dup2 (from to)
+  (sb-alien:alien-funcall
+   (sb-alien:extern-alien "dup2" (function sb-alien:int sb-alien:int sb-alien:int)) from to))
+
 (defun capture-stderr ()
   "Point file descriptor 2 at stderr.log, so what the C runtime and child processes
    write there survives the session — keeping Lisp's own *ERROR-OUTPUT* on the
@@ -558,26 +578,38 @@
    dup(2) keeps the console on a new fd; dup2(log, 2) puts the log at 2; and
    *STDERR* becomes a fresh stream on the kept console fd."
   (ignore-errors
-    (let* ((path (log-path "stderr"))
-           (fd (progn (ensure-directories-exist path)
-                      ;; O_DSYNC (1 << 12, linux/include/uapi/asm-generic/fcntl.h): each write
-                      ;; reaches the disk before it returns. Without it the runtime's
-                      ;; dying words sit in the page cache, and a panic reboots in 10 s,
-                      ;; before the 30 s writeback — found by check-crash.lisp, 2026-10-16.
-                      (sb-unix:unix-open path (logior sb-unix:o_wronly sb-unix:o_creat sb-unix:o_append
-                                                      #o10000)
-                                         #o600))))
+    (let ((fd (open-stderr-log)))
       (when fd
         (let ((console (sb-unix:unix-dup 2)))
           (when console
-            (sb-alien:alien-funcall
-             (sb-alien:extern-alien "dup2" (function sb-alien:int sb-alien:int sb-alien:int)) fd 2)
+            (log-dup2 fd 2)
             (sb-unix:unix-close fd)
             (setf *console-stderr*
                   (sb-sys:make-fd-stream console :output t :buffering :line
                                                  :external-format :utf-8 :name "console"))
             (setf sb-sys:*stderr* *console-stderr*)
             t))))))
+
+(defun stderr-to-console ()
+  "Give fd 2 back to the console (SESSION-LOG-CLOSE): stderr.log is then open nowhere
+   in PID 1. Children do not hold it either: every run-program here passes :ERROR
+   NIL or a stream (its default follows :OUTPUT, whose default is /dev/null), and a
+   pty child's fd 2 is its pty — except the supervisor's menu worker (:ERROR T,
+   process.lisp), which is not running at power-off."
+  (ignore-errors
+    (when *console-stderr*
+      (log-dup2 (sb-sys:fd-stream-fd *console-stderr*) 2)
+      t)))
+
+(defun stderr-to-log ()
+  "Undo STDERR-TO-CONSOLE."
+  (ignore-errors
+    (when *console-stderr*
+      (let ((fd (open-stderr-log)))
+        (when fd
+          (log-dup2 fd 2)
+          (sb-unix:unix-close fd)
+          t)))))
 
 ;;; ===========================================================================
 ;;; Boot: set the last session aside, start this one

@@ -42,6 +42,10 @@
    sync already put the data on disk; at worst the host replays the journal)."
   (let ((pid (ignore-errors (parse-integer (sb-ext:posix-getenv "LOL_ROOTD_PID")))))
     (when pid
+      ;; the logs hold files on /home open for writing (stderr.log is fd 2), and the
+      ;; kernel refuses to remount a filesystem read-only while one is: EBUSY.
+      ;; POWER-OFF has closed them already; a direct call (check-files.lisp) has not.
+      (unless *logs-closed* (session-log-close "releasing the disk"))
       (sb-alien:alien-funcall
        (sb-alien:extern-alien "kill" (function sb-alien:int sb-alien:int sb-alien:int))
        pid 10)                          ; SIGUSR1 on x86-64

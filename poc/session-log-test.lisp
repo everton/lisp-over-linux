@@ -266,6 +266,16 @@
 (check "Lisp's *ERROR-OUTPUT* is a stream on the kept console fd"
        (eq sb-sys:*stderr* *console-stderr*))
 
+;; a file open for writing keeps /home from being remounted read-only (EBUSY), so
+;; closing the logs must give fd 2 back — found by check-files, 2026-10-16
+(defun fd2-target () (ignore-errors (sb-unix:unix-readlink "/proc/self/fd/2")))
+(session-log-close "test")
+(check "after SESSION-LOG-CLOSE, fd 2 is no longer stderr.log"
+       (not (search "stderr.log" (or (fd2-target) "stderr.log"))) (fd2-target))
+(session-log-reopen "test")
+(check "SESSION-LOG-REOPEN points fd 2 at stderr.log again"
+       (search "stderr.log" (or (fd2-target) "")) (fd2-target))
+
 (sb-ext:delete-directory *scratch* :recursive t)
 (format t "~%~:[all checks passed~;~:*~d FAILED~]~%" (and (plusp *failures*) *failures*))
 (sb-ext:exit :code (if (plusp *failures*) 1 0) :abort t)

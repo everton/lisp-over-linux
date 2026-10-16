@@ -93,6 +93,18 @@ so writers carry on at the new end).
 the page cache — and the panic reboots in 10 s, before the kernel's 30 s writeback
 (=vm.dirty_expire_centisecs= = 3000), so it was lost every time.
 
+*Let go of at power-off.* A file open for writing is all it takes for the kernel to
+refuse a read-only remount of its filesystem (=EBUSY=), and fd 2 holds =stderr.log=
+open for the whole session — so =lol-rootd='s remount of =/home= failed and the
+power-off fell back to "synced only". Found by =check-files.lisp= on 2026-10-16, a
+regression of the day fd 2 moved here. [[file:../initramfs/session-log.lisp::defun session-log-close][=session-log-close=]], after the shutdown line,
+now points fd 2 back at the console ([[file:../initramfs/session-log.lisp::defun stderr-to-console][=stderr-to-console=]]), and
+[[file:../initramfs/process.lisp::defun release-disk][=release-disk=]] closes the logs itself when its caller has not. *Ruled out:* children
+holding it. Every =run-program= here passes =:error= =nil= or a stream (SBCL's
+default follows =:output=, which defaults to =/dev/null=), and a pty child's fd 2 is
+its pty; the one exception, the supervisor menu's worker (=:error t=), is not
+running at power-off. The other logs are opened per line and closed again.
+
 * 3. The pulse and the stall watcher
 
 One thread, =lol-watch=, wakes every second ([[file:../initramfs/session-log.lisp::defun watch-loop][=watch-loop=]]).
@@ -249,10 +261,10 @@ Alt-SysRq-w then -c before holding the power button (§6).
 
 * 8. Tests
 
-- [[file:../poc/session-log-test.lisp][=poc/session-log-test.lisp=]] (host, 42 checks): lines, the cap, set-aside and
+- [[file:../poc/session-log-test.lisp][=poc/session-log-test.lisp=]] (host, 44 checks): lines, the cap, set-aside and
   the clean/crash verdict, archive + read back (our inflate and =gzip -t=), pruning,
   a STALL naming the stuck function and the lock it holds, a LONG report, kmsg
-  records, file modes, an unhandled error ending only its thread, fd 2 captured —
+  records, file modes, an unhandled error ending only its thread, fd 2 captured and given back at close —
   and *the LDB freeze itself*: a plain SBCL calling =lose()= is still waiting after
   6 s; after =disable_lossage_handler= it exits with the message on stderr.
 - [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 29 checks; with or without
