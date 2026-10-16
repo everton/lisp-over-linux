@@ -612,6 +612,16 @@ int main(void) {
         if (f) { fputs("0\n", f); fclose(f); }
     }
 
+    /* If PID 1 ever exits, the kernel panics — and with the console in
+     * KD_GRAPHICS the panic is drawn nowhere: the last frame just stays on screen,
+     * which is indistinguishable from a hang. Reboot 10 s after a panic instead;
+     * the reason is in ~/.lol/log (session-log.lisp, doc/diagnostics.org). Only
+     * root may write this, so it is set here, before preinit drops to the user. */
+    {
+        FILE *f = fopen("/proc/sys/kernel/panic", "w");
+        if (f) { fputs("10\n", f); fclose(f); }
+    }
+
     /* Storage and identity (doc/storage.org). */
     read_config();
     int have_disk = mount_storage();
@@ -658,8 +668,16 @@ int main(void) {
     }
 
     /* Become the Lisp supervisor. argv[0] is conventional; no "worker"
-     * argument means "run as the supervisor" (see the Lisp toplevel). */
-    char *argv[] = { "/sbin/lisp", NULL };
+     * argument means "run as the supervisor" (see the Lisp toplevel).
+     *
+     * --dynamic-space-size: the Lisp heap's ceiling. SBCL's default is 1 GiB, and
+     * running out is fatal (the GC cannot continue). The heap is reserved address
+     * space, not memory: pages are only used once touched, so a larger ceiling
+     * costs nothing until it is needed. 4 GiB on a 16 GiB laptop. The runtime
+     * removes its own options from argv, so the Lisp still sees no role
+     * argument. (LDB, the runtime's console debugger, is turned off from Lisp —
+     * session-log.lisp, DISABLE-LDB — so every role gets it, not only PID 1.) */
+    char *argv[] = { "/sbin/lisp", "--dynamic-space-size", "4GB", NULL };
     execve("/sbin/lisp", argv, envp);
 
     /* Only reached if execv failed — keep PID 1 alive so the kernel doesn't panic. */

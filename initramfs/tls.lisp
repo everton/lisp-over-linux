@@ -56,6 +56,7 @@
 (defvar *openssl-loaded* nil "T once the four libraries are in.")
 (defvar *ssl-ctx* nil "One SSL_CTX (the configured 'factory' for connections), made once.")
 (defvar *ssl-lock* (sb-thread:make-mutex :name "openssl setup"))
+(watch-locks (lambda () (list *ssl-lock*)))   ; named in a STALL report (session-log.lisp)
 
 (defun host-file (path) (concatenate 'string *host-root* path))
 

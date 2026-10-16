@@ -689,6 +689,7 @@
            (let ((*tool-executor* executor))
              (handler-case (run-turn conv prompt :question question :origin origin :again again)
                (serious-condition (c)
+                 (log-condition (format nil "agent turn ~d failed outside RUN-TURN" (conversation-id conv)) c)
                  (ignore-errors (fail-turn conv c :question question))
                  (with-conversation-lock (conv)
                    (setf (conversation-state conv) :idle (conversation-thread conv) nil))
@@ -944,7 +945,10 @@
              (with-conversation-lock (conv)
                (setf (conversation-jobs conv) (remove job (conversation-jobs conv))))
              (handler-bind ((tool-approval-request #'environment-approval))
-               (run-job job))
+               ;; named for the watcher: a tool that hangs here hangs the screen
+               (with-main-activity ("agent tool ~a (conversation ~d)"
+                                    (call-name (agent-job-call job)) (conversation-id conv))
+                 (run-job job)))
              (setf ran t))))))
     ran))
 

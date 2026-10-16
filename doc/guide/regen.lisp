@@ -385,7 +385,7 @@
      "initramfs/net.lisp" "initramfs/dhcp.lisp" "initramfs/dns.lisp" "initramfs/sntp.lisp"
      "initramfs/tls.lisp" "initramfs/http.lisp" "initramfs/wifi.lisp")
     ("data" "pure formats and algorithms: bytes in, values out, no I/O of their own"
-     "poc/inflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
+     "poc/inflate.lisp" "poc/deflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
     ("model" "the image describing itself: captured source, CLOS via the MOP, SBCL's own source"
      "initramfs/registry.lisp" "initramfs/model.lisp" "initramfs/sbcl-source.lisp")
     ("present protocol" "subjects -> views of items + commands; pure, headless"
@@ -396,8 +396,9 @@
      "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter"
      "poc/shell.lisp" "poc/file-manager.lisp")
-    ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor"
-     "initramfs/fb-browser.lisp" "initramfs/repl.lisp" "initramfs/supervisor.lisp")
+    ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"
+     "initramfs/fb-browser.lisp" "initramfs/repl.lisp" "initramfs/supervisor.lisp"
+     "initramfs/session-log.lisp")
     ("host tools" "never in the image: the X11 backend, runners, the frame renderer, converters"
      "poc/x11.lisp" "poc/run-browser.lisp" "poc/run-editor.lisp" "poc/run-host.lisp"
      "poc/run-guest.lisp" "poc/scene.lisp" "poc/render-frame.lisp" "poc/bdf2font.lisp")))

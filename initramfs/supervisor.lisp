@@ -84,6 +84,11 @@
 (defun supervisor-main ()
   "PID 1: boot diagnostics, the environment, then an interactive menu loop.
    Never returns."
+  ;; FIRST, before anything writes a log line: set the last session's logs aside,
+  ;; take fd 2, start the watcher (session-log.lisp, doc/diagnostics.org)
+  (session-boot)
+  (when (previous-session-unclean-p)
+    (setf *browser-status* "the last session ended without a shutdown — see ~/.lol/log/archive/"))
   (format t "~%Supervisor up — I am PID ~a, SBCL ~a on ~a ~a.~%"
           (sb-unix:unix-getpid) (lisp-implementation-version)
           (software-type) (software-version))
@@ -145,6 +150,7 @@
                 ((string= choice ""))                 ; bare Enter: just redraw
                 (t (format t "~&unknown choice: ~a~%" choice)))))
         (serious-condition (c)
+          (log-condition "supervisor menu" c)
           (format t "~&menu error: ~a~%" c) (finish-output))))))
 
 (defun init-toplevel ()
@@ -159,6 +165,9 @@
                 when there is no host shell to run (doc/terminal.org). A separate
                 heap: nothing typed there can hurt the environment.
      (none)     the supervisor, i.e. PID 1"
+  ;; every role: a fatal runtime error ends the process instead of waiting in LDB on
+  ;; a console nobody can see (session-log.lisp, DISABLE-LDB)
+  (disable-ldb)
   (let ((args (rest sb-ext:*posix-argv*)))
     (cond ((and args (string= (first args) "worker"))
            (worker-main (second args)))

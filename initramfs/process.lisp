@@ -60,6 +60,9 @@
   ;; history — while /home is still writable, and its processes exit before
   ;; RELEASE-DISK remounts that read-only
   (when (fboundp 'web-shutdown) (ignore-errors (funcall 'web-shutdown)))
+  ;; the session log's last line, while /home is still writable: the next boot reads
+  ;; it to tell a shutdown from a crash (session-log.lisp, SET-ASIDE-LIVE-LOGS)
+  (session-log-close "power off")
   (sb-alien:alien-funcall (sb-alien:extern-alien "sync" (function sb-alien:void)))
   (release-disk)
   (sleep 1)
@@ -68,5 +71,6 @@
    (sb-alien:extern-alien "reboot" (function sb-alien:int sb-alien:int))
    #x4321fedc)
   ;; only reached if the power-off was refused
+  (session-log-reopen "reboot(2) refused the power-off")
   (format t "~&Power-off failed (need privileges?). Back to the menu.~%")
   (finish-output))

@@ -112,13 +112,13 @@ cannot take PID 1 down.</p>
 <code>handler-case</code>, which unwinds first. This is the whole trick, and it is why the restarts listed are live.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:1852</span></a>: a modal loop over the same canvas and the
+  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:1871</span></a>: a modal loop over the same canvas and the
     same three fds, published in <code>*fb-canvas*</code> and friends.</li>
   <li>Data from the model: <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:715</span></a> (<code>compute-restarts</code>),
     <a class="ref" data-ref="initramfs/model.lisp#backtrace-frame-objects" href="../../initramfs/model.lisp"><code>backtrace-frame-objects</code><span class="loc">initramfs/model.lisp:725</span></a> (walks <code>sb-di</code> frames),
     <a class="ref" data-ref="initramfs/model.lisp#frame-locals" href="../../initramfs/model.lisp"><code>frame-locals</code><span class="loc">initramfs/model.lisp:793</span></a>.</li>
   <li>The stage arms the same handler around every simulation tick
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#tick-live-stage" href="../../initramfs/fb-browser.lisp"><code>tick-live-stage</code><span class="loc">initramfs/fb-browser.lisp:1232</span></a>), so a collision with no method opens the
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#tick-live-stage" href="../../initramfs/fb-browser.lisp"><code>tick-live-stage</code><span class="loc">initramfs/fb-browser.lisp:1245</span></a>), so a collision with no method opens the
     debugger with the stage's own restarts (<code>define-method</code> drops a method template into the Workspace).</li>
 </ul>
 <div class="ruled-out">Several comments and two docs said the debugger is entered through <code>*debugger-hook*</code>.

@@ -96,20 +96,20 @@ Sizes measured on 2026-10-12 against the tag #26 kernel: preinit 62,864 bytes, l
 <ul>
   <li>Load order: <a class="ref" data-ref="build.sh#&quot;LISP_SOURCES=(&quot;" data-label="LISP_SOURCES" href="../../build.sh"><code>LISP_SOURCES</code><span class="loc">build.sh:66</span></a>.
     Each entry has a comment saying what it is and what it needs.</li>
-  <li>The generated build script: <a class="ref" data-ref="build.sh#&quot;BUILD_LISP=&quot;" data-label="BUILD_LISP" href="../../build.sh"><code>BUILD_LISP</code><span class="loc">build.sh:206</span></a> through
-    <a class="ref" data-ref="build.sh#&quot;sb-ext:save-lisp-and-die&quot;" data-label="save-lisp-and-die" href="../../build.sh"><code>save-lisp-and-die</code><span class="loc">build.sh:226</span></a>. It exists only in a temp file.
+  <li>The generated build script: <a class="ref" data-ref="build.sh#&quot;BUILD_LISP=&quot;" data-label="BUILD_LISP" href="../../build.sh"><code>BUILD_LISP</code><span class="loc">build.sh:209</span></a> through
+    <a class="ref" data-ref="build.sh#&quot;sb-ext:save-lisp-and-die&quot;" data-label="save-lisp-and-die" href="../../build.sh"><code>save-lisp-and-die</code><span class="loc">build.sh:229</span></a>. It exists only in a temp file.
     <a href="../sbcl-init.org">sbcl-init.org</a> reproduces its shape.</li>
   <li>The cpio's contents: <a class="ref" data-ref="initramfs/initramfs.sbcl.list" href="../../initramfs/initramfs.sbcl.list"><code>initramfs.sbcl.list</code><span class="loc">initramfs/initramfs.sbcl.list</span></a>, a plain list of
     <code>dir</code> / <code>nod</code> / <code>file</code> lines.</li>
   <li><code>--install-host</code> copies the two files to <code>/boot/lisp</code> for a GRUB entry
-    (<a class="ref" data-ref="build.sh#&quot;HOST_DIR=/boot/lisp&quot;" data-label="install-host" href="../../build.sh"><code>install-host</code><span class="loc">build.sh:387</span></a>).</li>
+    (<a class="ref" data-ref="build.sh#&quot;HOST_DIR=/boot/lisp&quot;" data-label="install-host" href="../../build.sh"><code>install-host</code><span class="loc">build.sh:390</span></a>).</li>
 </ul>
 
 <h2>The frozen heap: why <code>save-lisp-and-die</code> matters</h2>
 <p>An SBCL "core" is a snapshot of the whole Lisp heap: every function, class, hash table and string that
 exists at the moment of saving. <code>save-lisp-and-die</code> writes the running process's heap to a file and
 exits. With <code>:executable t</code> the runtime is prepended, so the result is a program that wakes up with that
-heap already in memory and calls <code>:toplevel</code>, here <a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:150</span></a>.</p>
+heap already in memory and calls <code>:toplevel</code>, here <a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:156</span></a>.</p>
 <p>So the image's contents are fixed when it is saved. Hence a rule from AGENTS.md: anything the image needs must
 be loaded <em>before</em> the save. The two SBCL contribs (<code>sb-bsd-sockets</code>, <code>sb-introspect</code>)
 are <code>require</code>d by the build script and frozen in, because there are no contrib fasls in the guest.

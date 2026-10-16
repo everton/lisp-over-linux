@@ -468,28 +468,12 @@
 (defvar *netd-hooks* '() "Functions of no arguments netd calls on every wake-up.")
 (defvar *netd-log* '() "The last few things netd did, newest first: (universal-time . text).")
 
-(defun network-log-path ()
-  "$HOME/.lol/log/network.log, or NIL on a diskless boot (HOME unset or /)."
-  (let ((home (sb-ext:posix-getenv "HOME")))
-    (and home (string/= home "") (string/= home "/")
-         (format nil "~a/.lol/log/network.log" (string-right-trim "/" home)))))
-
 (defun network-log (text)
-  "Append one time-stamped line to NETWORK-LOG-PATH. /tmp dies with the machine; this
-   file is on the laptop's /home, so the NEXT boot (or Debian) can read what went
-   wrong. Kept under 256 KB by rotating to .old. Never signals."
-  (ignore-errors
-    (let ((path (network-log-path)))
-      (when path
-        (ensure-directories-exist path)
-        (with-open-file (o path :direction :output :if-exists :append
-                                :if-does-not-exist :create)
-          (when (> (file-length o) (* 256 1024))
-            (close o)
-            (rename-file path (concatenate 'string path ".old"))
-            (return-from network-log (network-log text)))
-          (multiple-value-bind (s m h d mo y) (decode-universal-time (get-universal-time) 0)
-            (format o "~d-~2,'0d-~2,'0d ~2,'0d:~2,'0d:~2,'0dZ ~a~%" y mo d h m s text)))))))
+  "Append one time-stamped line to network.log. /tmp dies with the machine; on the
+   laptop this file is on /home (~/.lol/log/), so the NEXT boot (or Debian) can read
+   what went wrong. The writing, the size cap and the per-boot archiving are
+   session-log.lisp's, shared by every log. Never signals."
+  (append-log-line (log-path "network") text))
 
 (defun netd-note (fmt &rest args)
   (network-log (apply #'format nil fmt args))

@@ -57,6 +57,12 @@ below; =SuperL-↵= opens a shell. It added a =repl= role to =init-toplevel= (th
 image re-executed as a Lisp REPL on a terminal, the shell of last resort) and made
 preinit create =/dev/fd= and =/dev/std{in,out,err}=, which devtmpfs lacks and
 bash's =<(…)= needs.
+Userland, 2026-10-16, after a session froze on the laptop: *crash diagnostics*
+([[file:diagnostics.org][diagnostics.org]]). =session-log.lisp= keeps =~/.lol/log/= (a session log with a
+pulse, STALL reports with every thread's backtrace, the agent's turns and calls;
+fd 2 as =stderr.log=), archived and gzipped at every boot; an unhandled error now
+ends only its own thread (it used to quit PID 1), LDB is off, and preinit sets
+=kernel.panic=10=, a 4 GiB heap, and appends the host's =/etc/hosts= to ours.
 See =* The supervisor= / "Two findings".
 
 * The challenge in one sentence
@@ -178,6 +184,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 
   | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly; its last form records its *own* source (=record-source=), since =load-recording= cannot load the file that defines it |
   | [[file:../initramfs/logcount-fix.lisp][=logcount-fix.lisp=]] | *first*: patches SBCL 2.6.8's =LOGCOUNT= routine for CPUs without POPCNT (QEMU's default qemu64), then self-tests with POPCNT switched off — without it, compiling arithmetic at runtime faults the guest ([[file:inspector-history.org][inspector-history.org]] §5.6) |
+  | [[file:../poc/deflate.lisp][=poc/deflate.lisp=]] | =lol.deflate=: the DEFLATE / zlib / gzip *writer* (=inflate.lisp= is the reader) — it gzips the previous boot's logs; =host-client/png.lisp= loads it too |
+  | [[file:../initramfs/session-log.lisp][=session-log.lisp=]] | =~/.lol/log=: the session log, the pulse and STALL watcher, unhandled errors ending only their thread, LDB off, fd 2 into =stderr.log=, per-boot archiving — early, so every later module can log ([[file:diagnostics.org][diagnostics.org]]) |
   | [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] | SBCL's *own* source, read on demand from the =./sbcl= tree on the mounted =/home= (logical =SYS:= path → file → the form at the recorded offset, cut out by a textual scanner); =show-reference= appends it below a builtin's facts ([[file:code-browser.org][code-browser.org]], "Two kinds of subject") |
   | [[file:../initramfs/model.lisp][=model.lisp=]]       | CLOS/introspection model: class DAG, GF/method graph, categories, inspector — incl. closures-as-records, =all-instances=, =retention-path=, =eval-in-context= ([[file:inspector-history.org][inspector-history.org]]) |
   | [[file:../initramfs/present.lisp][=present.lisp=]]     | the drill-down =present= / =commands-for= protocol + affordance model (code browser §4½, headless); the function/instances/retention/disassembly views |
@@ -440,7 +448,7 @@ no files present.
 
 [[file:../initramfs/preinit.c][=initramfs/preinit.c=]] began as ~40 lines and still has that core: mount
 =/proc=, =/sys=, =/dev=, =/tmp=, then =execv= the Lisp (the process stays PID 1).
-Since tag #25 (storage) it has grown to ~540 lines (at #26), because it also does every *privileged*
+Since tag #25 (storage) it has grown to ~540 lines at #26, 713 on 2026-10-16, because it also does every *privileged*
 setup step, once, before the Lisp exists:
 
 1. read =/etc/lol.conf= (written by =build.sh=: the user and the disk UUID) and
@@ -470,9 +478,16 @@ groups inside that range, and the default range =1 0= is empty. So =ping= failed
 every container (no =CAP_NET_RAW= there) even when the network worked.
 =check-containers.lisp= pings SLIRP's gateway to prove it.
 
+Since 2026-10-16 ([[file:diagnostics.org][diagnostics.org]]) it also writes =10= to =/proc/sys/kernel/panic=, so a
+dead PID 1 reboots after ten seconds instead of leaving the last frame on screen;
+appends the host's =/etc/hosts= to ours once the disk is mounted
+([[file:../initramfs/preinit.c::static void merge_host_hosts][=merge_host_hosts=]], [[file:networking.org][networking.org]] §2c); and starts the Lisp with
+=--dynamic-space-size 4GB= (SBCL's default heap ceiling is 1 GiB; the runtime strips
+that option from =*posix-argv*=, so the role dispatch still sees no argument).
+
 Every step is non-fatal; with no disk it is exactly the old shim and the Lisp runs
 as root. The full story — why each mount flag, why capabilities, why in C and not
-in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skeleton, unchanged:
+in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skeleton (only =argv= has grown):
 #+begin_src c
   int main(void) {
       mount("proc",     "/proc", "proc",     0, NULL);
@@ -480,7 +495,7 @@ in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skelet
       mount("devtmpfs", "/dev",  "devtmpfs", 0, NULL);
       mount("tmpfs",    "/tmp",  "tmpfs",    0, "size=64m,mode=1777");
       /* ... storage + identity (tag #25) ... */
-      char *argv[] = { "/sbin/lisp", NULL };
+      char *argv[] = { "/sbin/lisp", "--dynamic-space-size", "4GB", NULL };
       execve("/sbin/lisp", argv, envp);
 
       /* Only reached if exec failed. */
@@ -490,7 +505,7 @@ in Lisp, what was ruled out — is [[file:storage.org][storage.org]]. The skelet
   }
 #+end_src
 Built tiny with musl: =musl-gcc -static -O2 -s -o preinit preinit.c= (62,864 bytes
-at tag #26, the same as at #25). musl ships no kernel headers, so the five capability numbers and the
+at tag #26, the same as at #25; 66,960 on 2026-10-16, still tag #27). musl ships no kernel headers, so the five capability numbers and the
 =capset= structs are copied into the file from the kernel's
 =include/uapi/linux/capability.h=.
 

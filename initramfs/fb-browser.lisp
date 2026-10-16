@@ -1044,7 +1044,12 @@
         (put-slot 1 *input-watch-fd*)
         (loop for d in devs for i from 2 do (put-slot i (input-dev-fd d)))
         (loop for fd in extra for i from (+ 2 (length devs)) do (put-slot i fd))
+        ;; every loop in the environment sleeps HERE, so this is where its thread is
+        ;; idle — and busy from the moment poll returns until it comes back. The
+        ;; watcher (session-log.lisp) reports a STALL when busy lasts too long.
+        (note-main-idle)
         (%fbb-poll (sb-alien:cast fds (sb-alien:* sb-alien:unsigned-char)) n timeout-ms)
+        (note-main-busy)
         (incf *input-wakeups*)
         (setf *poll-extra-ready*
               (loop for fd in extra for i from (+ 2 (length devs))
@@ -1387,6 +1392,7 @@
         ;; the touchpad: does a tap click? Off unless the settings say so.
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
+        (session-log "entering the environment")
         (open-environment (or root (subj-workspace)))
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres)))
@@ -1529,7 +1535,10 @@
                            (unless dirty (tick-tray canvas xres)))))))
               (close-input-devices)))))
     (serious-condition (c)
+      (log-condition "the environment died" c)
       (format t "~&code browser: ~a~%" c) (finish-output)))
+  (note-main-away)                       ; the text console now: not watched for stalls
+  (session-log "left the environment~@[ (~(~a~))~]" *leave-action*)
   ;; SuperL-q chose to power off: only now, with the text console back, so the
   ;; kernel's last words (and POWER-OFF's own) are readable if it is refused
   (when (eq (shiftf *leave-action* nil) :power-off)
@@ -1865,6 +1874,10 @@
    restart, established here around the rail, so it is listed and chosen like the
    condition's own; choosing it shows the agent's answer and comes back here, with the
    stack still standing."
+  ;; the log keeps what the screen shows, in case the screen is the last thing seen
+  (ignore-errors
+    (session-log-block (format nil "debugger: ~s ~a" (type-of condition) (clip-one-line condition 300))
+                       (backtrace-string :count 25) :max-lines 25))
   (restart-case (%run-debugger-fb condition)
     (ask-the-agent ()
       :report "ASK - explain this, and propose a fix"

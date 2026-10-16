@@ -66,6 +66,9 @@ POC_DIR="$MICRO/poc"
 LISP_SOURCES=(
   "$INITRAMFS_DIR/logcount-fix.lisp" # FIRST: repairs SBCL 2.6.8's no-POPCNT LOGCOUNT (qemu64 has
                                      #   no POPCNT; without this, compiling arithmetic crashes the guest)
+  "$POC_DIR/deflate.lisp"            # lol.deflate: DEFLATE/zlib/gzip WRITERS (gzips the last boot's logs)
+  "$INITRAMFS_DIR/session-log.lisp"  # ~/.lol/log: session log, pulse, stall watcher, crash capture,
+                                     #   per-boot archiving — early, so every later module can log
   "$INITRAMFS_DIR/sbcl-source.lisp" # SBCL's OWN source, read from the disk on demand (the ./sbcl tree on /home)
   "$INITRAMFS_DIR/model.lisp"       # CLOS/introspection model: classes, GFs, categories, inspector
   "$INITRAMFS_DIR/present.lisp"      # the drill-down present protocol + commands-for (uses model)

@@ -307,6 +307,8 @@
             (conversation-state c) (length (conversation-turns c)))))
 
 (defvar *conversations* '() "Every conversation this session, newest first.")
+;; a STALL report (session-log.lisp) says which thread holds which conversation
+(watch-locks (lambda () (mapcar #'conversation-lock *conversations*)))
 (defvar *conversation* nil "The current conversation — what a bare ? continues.")
 (defvar *conversation-counter* 0)
 
@@ -1486,6 +1488,8 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                (if (and (retryable-p c) (< attempt *agent-retries*))
                    (let ((wait (or (and (typep c 'agent-api-error) (api-error-retry-after c))
                                    (min 32 (expt 2 attempt)))))
+                     (session-log "agent: conversation ~d, attempt ~d failed (~a), retrying in ~ds"
+                                  (conversation-id conv) attempt (clip-one-line c 200) wait)
                      (note conv (format nil "~a — trying again in ~ds (~d/~d)"
                                         (getf (describe-agent-failure c) :headline) wait attempt *agent-retries*))
                      (interruptible-sleep conv wait))
@@ -1569,6 +1573,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
       (unless running
         (unless (turn-usage turn) (setf (turn-usage turn) (list :input 0 :output 0 :cache-read 0 :cache-write 0 :cost 0)))
         (setf (turn-done turn) t)))
+    (session-log "agent: conversation ~d failed: ~a" (conversation-id conv) (getf f :headline))
     (touch conv (getf f :headline))
     (agent-listen :failure f)
     turn))
@@ -1594,6 +1599,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
     (with-conversation-lock (conv)
       (vector-push-extend turn (conversation-turns conv))
       (setf (conversation-state conv) :working (conversation-cancel conv) nil))
+    (session-log "agent: conversation ~d, turn begins: ~a" (conversation-id conv) (clip-one-line question 160))
     (let ((turn-usage (list :input 0 :output 0 :cache-read 0 :cache-write 0)) (turn-cost 0))
       (unwind-protect
            (let ((outcome
@@ -1641,10 +1647,15 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                                                          for call = (block-call b)
                                                          do (touch conv (format nil "running ~a" (call-headline call)))
                                                             (agent-listen :tool call)
-                                                         collect (let ((r (if *tool-executor*
+                                                            (session-log "agent: conversation ~d calls ~a ~a" (conversation-id conv) (call-name call)
+                                                                         (clip-one-line (or (ignore-errors (lol.json:to-json (call-input call))) "") 300))
+                                                         collect (let* ((t0 (get-internal-real-time))
+                                                                        (r (if *tool-executor*
                                                                               (funcall *tool-executor* conv call
                                                                                        (lambda () (execute-tool-call conv call)))
                                                                               (execute-tool-call conv call))))
+                                                                   (session-log "agent: conversation ~d, ~a ~(~a~) in ~,1fs" (conversation-id conv) (call-name call)
+                                                                                (call-status call) (seconds-since t0))
                                                                    (agent-listen :tool-done call)
                                                                    (make-instance 'content-block :json r)))))
                                              (append-message conv "user" results)
@@ -1653,6 +1664,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                        ;; transcript in words, never only in a status line or a log
                        (serious-condition (c)
                          (fail-turn conv c :turn turn) :error)))))
+             (session-log "agent: conversation ~d, turn ends: ~(~a~)" (conversation-id conv) outcome)
              (when (eq outcome :cancelled) (note conv "stopped (C-g)")))
         (with-conversation-lock (conv)
           (setf (conversation-live conv) nil
