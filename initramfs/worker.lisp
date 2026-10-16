@@ -17,7 +17,7 @@
 ;;;;      the mechanism spawn-worker already used; init-toplevel dispatches on
 ;;;;      argv. So the child arrives owning present.lisp, model.lisp and the whole
 ;;;;      registry. We are not defining a foreign protocol — we are deciding how a
-;;;;      view crosses a boundary. That is why this file is ~150 lines and not
+;;;;      view crosses a boundary. That is why this file is ~210 lines and not
 ;;;;      ~350: there is no client library to write, because the client is us.
 ;;;;
 ;;;;   2. A PIPE, NOT A SOCKET. run-program gives us :output :stream for free,

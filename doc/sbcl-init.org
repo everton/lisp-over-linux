@@ -37,6 +37,11 @@ container ([[file:containers.org][containers.org]]; section "lol-ct" below), wit
 =runs.lisp= streaming its output into a live pane. The same day the environment
 gained a web browser: =web-cdp.lisp= and =web.lisp= drive the host's Google Chrome,
 headless, through lol-ct (section "The web pane" below; [[file:web-browser.org][web-browser.org]]).
+Since 2026-10-16 (userland only, still tag #27) two more Lisp modules close the
+worker track of [[file:processes.org][processes.org]]: =worker-live.lisp= keeps a child process
+alive whose view follows it with no key pressed (two new argv roles, =serve= and
+=try=), and =sandbox.lisp= makes every Accept try the definition in such a child
+before PID 1 runs it.
 Also since 2026-10-12 the network is complete in QEMU ([[file:networking.org][networking.org]]): =network-up=
 replaces =configure-eth0= at boot (DHCP on any wired link, the default route, a Lisp
 DNS resolver writing =/etc/resolv.conf=, SNTP, an HTTP/1.1 client, HTTPS through the
@@ -220,6 +225,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]     | =report-memory= (the =m)= menu action)                     |
   | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]  | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾) |
+  | [[file:../initramfs/worker-live.lisp][=worker-live.lisp=]] | a second process whose view stays *live*: =subj-live=, the =serve= argv role, handles + =(:invalidate h)=, the child's pipe in the poll as the =:workers= service ([[file:processes.org][processes.org]] §7½). After =web.lisp= in =LISP_SOURCES= (needs the shell, fb-browser's services, web-cdp's =set-nonblocking=) |
+  | [[file:../initramfs/sandbox.lisp][=sandbox.lisp=]]     | Accept tries a definition in a child first (the =try= role) and refuses one that kills or hangs it — =*accept-sandbox*=, the hook in =accept-source= ([[file:processes.org][processes.org]] §7¾) |
   | [[file:../initramfs/repl.lisp][=repl.lisp=]]        | =run-repl= / =editing-repl= / =plain-repl= (uses line-editor) |
   | [[file:../initramfs/net.lisp][=net.lisp=]]         | =bring-up-interface= (ioctls), the default route (=add-default-route=, =SIOCADDRT=), routes/v6 addresses read from =/proc=, interfaces from =/sys/class/net=, + the TCP REPL (=toggle-net-repl=, [[file:networking.org][networking.org]]) |
   | [[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]        | a DHCP client for any interface, the =LEASE= object, =apply-lease= (address + default route + =*lease-hooks*=), the =netd= renewal thread, and =network-up= — what the supervisor runs at boot ([[file:networking.org][networking.org]] §2b–c) |
@@ -260,9 +267,12 @@ image*: =build.sh= does =(require :sb-bsd-sockets)= at build time (with =SBCL_HO
 pointed at the SBCL tree's =obj/sbcl-home=) before =save-lisp-and-die=, so sockets
 are frozen into =/sbin/lisp= and need no fasl at runtime. See [[file:networking.org][networking.org]].
 
-One executable, two roles chosen by argv: no args => the SUPERVISOR (PID 1); "worker <id>" => a short-lived WORKER. Toplevel =init-toplevel=
-dispatches; key functions =supervisor-main=, =run-repl=, =power-off=,
-=worker-main=, =spawn-worker=.
+One executable, several roles chosen by argv: no args => the SUPERVISOR (PID 1);
+"worker <id>" => a short-lived WORKER; "job NAME" => compute one view and print it
+(worker.lisp); "serve NAME" => stay up and serve a LIVE view (worker-live.lisp);
+"try" => Accept one definition in a throwaway heap (sandbox.lisp); "repl" => a REPL
+on its own terminal. Toplevel =init-toplevel= dispatches; key functions
+=supervisor-main=, =run-repl=, =power-off=, =worker-main=, =spawn-worker=.
 
 *Boot goes straight into the environment.* After its diagnostics (input devices,
 DHCP, the network REPL, interfaces) =supervisor-main= calls =run-browser-fb=, which

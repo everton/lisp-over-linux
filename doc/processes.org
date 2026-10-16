@@ -9,9 +9,11 @@ every future dependency has to clear.
 
 Companion to [[file:framebuffer.org][framebuffer.org]] (how one process owns =/dev/fb0=), [[file:input.org][input.org]] (how it
 reads the mouse) and [[file:code-browser.org][code-browser.org]] §4½ (the =present= protocol this all turns
-on). §7 is *built* — worker.lisp, a second process contributing a view — and §6
-records an audit whose conclusion was to change nothing, and why. The rest is
-analysis, and says so where it matters.
+on). §7 is *built* — worker.lisp, a second process contributing a view — and so
+are its two sequels: §7½, a child whose view stays *live* (worker-live.lisp), and
+§7¾, Accept trying a definition in a child first (sandbox.lisp). §6 records an
+audit whose conclusion was to change nothing, and why. The rest is analysis, and
+says so where it matters.
 
 * 0. The question, and why it splits in two
 
@@ -132,8 +134,11 @@ plain data. A view that arrived over a socket drops straight in.
    inverted the way =*stage-subject-fn*= already does for the stage.
 2. *Two slots are closures and cannot cross* — =item.edit= (the inspector's
    setter) and =command.action=. They become declarative tags the child resolves.
-   Note nothing invokes =command-action= today; the shell only reads
-   =command-label=. Going declarative costs nothing that currently works.
+   (/When this was written/ nothing invoked =command-action= and the shell read
+   only =command-label=. That stopped being true: =run-command= in
+   [[file:../poc/shell.lisp][shell.lisp]] now calls an action from the right-button menu and the halo. So
+   going declarative would now cost a migration, which is one reason §7½ simply
+   drops the child's closures instead.)
 3. *=EQ= identity breaks, subtly.* Three sites in =shell.lisp= compare subjects
    with =EQ= (the beside-toggle, twice, and the preview cache). Freshly-=read=
    structs are never =EQ=, so the preview would re-open every frame and =⇧↵=
@@ -143,6 +148,11 @@ plain data. A view that arrived over a socket drops straight in.
    sends =(:invalidate handle)=; the shell re-presents if that subject is on
    screen. This is *better* than the stage, because poll wakes on data rather
    than on a 33 ms timer — the zero-CPU-idle property survives.
+
+/2026-10-16:/ points 1, 3 and 4 are built, much as written — §7½. Point 2 was
+side-stepped (the closures are dropped at the boundary, so a remote inspector is
+read-only), and the transport ended up a pipe pair rather than the AF_UNIX socket
+the table below assumes; §7½ says why.
 
 ** What already exists
 
@@ -471,17 +481,18 @@ would hold a *socket* rather than a single-digit device node.
 * 7. The worked example  [BUILT]
 
 [[file:../initramfs/worker.lisp][worker.lisp]] is §2's claim, running: a second process contributes a view to this
-environment, and no pixels cross between them. It is ~150 lines rather than the
+environment, and no pixels cross between them. It is ~210 lines, comments included, rather than the
 ~350 §2 estimates, because it does the easy half — see "what it does not do".
 
 ** Run it without typing anything
 
-The Workspace primer carries the first two forms, so =C-c C-i= (Inspect it) with
+The Workspace primer carries the first two forms below, so =C-c C-i= (Inspect it) with
 point after one of them opens it as a pane; the third is for the REPL:
 
 #+begin_src lisp
   (subj-worker :self)         ; proof a different process answered: compare pids
-  (subj-worker :signallers)   ; the whole-image sweep; each row drills
+  (subj-live :ticker)         ; the LIVE one (§7½): it keeps changing, no key pressed
+  (subj-worker :signallers)   ; the whole-image sweep; each row drills (not in the primer)
   (show-worker :self)         ; the same thing printed, for the REPL (not in the primer)
 #+end_src
 
@@ -568,24 +579,263 @@ it keeps [[file:../poc/render-frame.lisp][render-frame.lisp]] and the host proto
 
 ** What it does not do
 
-Everything §2 lists beyond the first step, and the omissions are the honest part:
+The synchronous worker stays exactly as described above, on purpose: it is the
+simplest correct shape, and the next two sections are built *beside* it rather
+than on top of it. What it does not do, and where that went:
 
-- *No liveness.* This is synchronous — the parent waits. A child pushing
-  =(:invalidate handle)= as results arrive is what wants the socket and the fourth
-  poll slot, and is the next real piece of work.
-- *No handle protocol.* Names, not handles, so a worker cannot yet hand back an
-  object that has no name.
-- *No =EQ= interning*, because nothing is re-presented across calls yet — the
-  trap §2 names is still waiting for whoever adds liveness.
-- *No isolation benefit.* A crash in the child is a pipe that closes, which is
-  reported as an empty view rather than as a debugger. Sandboxed Accept — the
+- *No liveness* — the parent waits for one answer. §7½.
+- *No handles* — names only, so it cannot hand back an object that has no name.
+  §7½.
+- *No =EQ= interning* — nothing is re-presented across calls, so the trap §2 names
+  cannot fire here. It fires in §7½, which interns.
+- *No isolation benefit* — a crash in the child is a pipe that closes, reported as
+  "the worker said nothing" rather than as a debugger. The one place isolation is
+  worth something is Accept: §7¾.
+
+* 7½. A live worker: handles, (:invalidate h), a pipe in the poll  [BUILT]
+
+[[file:../initramfs/worker-live.lisp][worker-live.lisp]] (2026-10-16) is the half of §2 that "would actually need
+designing". The child does not exit: it keeps its own objects, the parent shows
+views of them, and when the child's state changes the pane on screen follows it
+*with no key pressed*.
+
+#+begin_src lisp
+  (subj-live :ticker)   ; a child that changes once a second; one row drills into
+                        ; the child's own job object, which has no name
+  (subj-live :sweep)    ; §7's whole-image sweep, in batches: rows arrive as found
+#+end_src
+
+=C-c C-i= (Inspect it) on either opens it as a pane. The first is in the
+Workspace primer.
+
+** The protocol, all of it
+
+The child is this image again, argv =("serve" NAME)=, its stdin and stdout both
+pipes. Messages are READable forms, each ended by a NUL byte — the framing
+[[file:../initramfs/web-cdp.lisp][web-cdp.lisp]] already uses for Chrome's DevTools pipe, with s-expressions where
+Chrome has JSON. Six heads, and a frame with any other head is dropped unread:
+
+| Direction | Message | Meaning |
+|-----------+---------+---------|
+| child → parent | =(:hello :pid N)= | I am up, and this is my pid |
+| parent → child | =(:present H)= | present your subject number H |
+| child → parent | =(:view H DATA)= | here it is, as plain data |
+| child → parent | =(:invalidate H)= | H may have changed — ask if you care |
+| child → parent | =(:error TEXT)= | a job that does not exist, or a step that failed |
+| parent → child | =(:quit)= | goodbye (closing the pipe means the same) |
+
+=DATA= is a view with every live thing taken out: title, kind, selection, text,
+and per row the label, detail, kind, group, disposition — and a *handle* where the
+subject was.
+
+** Handles: the subject stays, its number travels
+
+Every subject the child shows us is filed in a table on *its* side; we get an
+integer. Our side wraps (connection, handle) in a =subj-remote=, and presenting
+one sends =(:present H)=. So the ticker's last row leads to the child's own
+=live-ticker= struct, shown by the child's own inspector — an object with no name,
+which §7's name-passing could never reach.
+
+The child must give the *same* subject the *same* handle, or every refresh would
+mint new numbers and the parent's interning (below) would be for nothing. Two
+cases, because subjects come in two kinds:
+
+- A *named wrapper* — =subj-condition=, =subj-defn= — is built fresh by every
+  =present=, so =EQ= would never match. Its slots are its identity: =SERVER-HANDLE=
+  keys it by (type . slot values) under =EQUAL=, when every slot is plain data
+  (symbols, numbers, strings, lists of them).
+- Anything else is keyed by =EQ= — so a =present= method that wants a stable handle
+  for a live object must hand back the same object each time. =live-ticker= keeps
+  its =(subj-object self)= in a slot for exactly that reason.
+
+The table only grows, for the life of the child. A child is one pane's worth of
+browsing, and is quit when that pane goes (below), so it has not mattered.
+
+** Liveness is a push of a NAME, not of a view
+
+When the child's state changes it sends =(:invalidate H)=, not the new view. The
+parent decides whether anything showing H is *on screen* — the focused trail, its
+side panes, and the nav-split preview when it previews a selection there — and
+only then sends =(:present H)=. The child sends *at most one* invalidate per
+handle until the parent asks again.
+
+Put together, those two rules give the property §2 promised: a live tab you are
+not looking at costs one message and then silence, and comes back up to date the
+moment its tab is focused (=WORKER-LIVE-RUN= asks for every stale handle that is
+on screen, every turn). Measured in the guest: over 4 s with the ticker's tab
+hidden, zero frames drawn and zero views fetched; shown again, it redraws at once
+and every second after.
+
+** The pipe is a poll slot — through the existing service hook
+
+=fb-browser.lisp= already had the general form of "something other than input
+wakes the loop": =*FB-SERVICES*=, a plist of functions per service (=:fd=,
+=:timeout=, =:run=), which [[file:../initramfs/web.lisp][web.lisp]] registers for Chrome's pipe and the
+terminals for their pty masters. The live workers are one more, =:workers=:
+
+- =:fd= → every live child's output pipe (read end, =O_NONBLOCK=);
+- =:run= → drain each pipe without blocking, refresh the panes whose views
+  arrived, ask for whatever is stale and on screen, let go of children nobody shows;
+- =:timeout= → -1 always, except while a child is waiting out its idle grace.
+
+So the loop still sleeps until a key, a click — or a child writing. This is why
+it is not [[file:../initramfs/runs.lisp][runs.lisp]]'s shape (a reader thread, a 100 ms tick while anything
+runs): a view that changes once a minute costs one wake a minute.
+
+A child that dies — killed, crashed, exited — hangs up its end. =poll(2)= reports
+that as =POLLHUP=, which the loop's extra-fd test counts as "ready", so =:run=
+runs, reads 0 bytes, and closes the connection. Its fd leaves the poll set *at
+once*: an fd at end-of-file stays "ready" forever, and leaving it in would turn
+the loop into a busy one. The pane keeps the last view, and its provenance row
+says the worker exited. (Asserted: the fd is gone from =fb-service-fds= and no
+frame is drawn afterwards.)
+
+A child no pane shows for =+WORKER-IDLE-SECONDS+= (5) is sent =(:quit)=, its pipes
+closed, and reaped — =process-alive-p= is a =waitpid= with =WNOHANG=, so nothing
+lingers as a zombie. Closing the tab is how you let a worker go.
+
+** Interning: the §2 trap, met on purpose
+
+The shell compares subjects with =EQ= (the preview cache, the beside-toggle). So
+=REMOTE-SUBJECT= hands out one =subj-remote= per (connection, handle), forever,
+and a live update *replaces the pane's view* rather than the pane or its subject:
+same pane object, same subject, same selection index (clamped), new rows.
+Asserted in the guest after many updates: =(eq *zz-pane* (current-pane))= and
+=(eq (pane-subject …) (remote-subject conn 0))=.
+
+** Three decisions, against §2's sketch
+
+1. *A pipe pair, not an AF_UNIX socket.* §2 assumed a socket. But the child is
+   ours: =run-program :input :stream :output :stream= gives both directions, with
+   no listening socket, no accept loop, and no file in =/tmp= anyone else could
+   connect to. A socket earns its place when the peer is a process we did *not*
+   start — still nobody.
+2. *The closures do not cross.* =item-edit= and =item-action= are functions in the
+   child's heap; they are dropped, so a remote inspector is read-only. Making them
+   travel means naming them (§2 point 2), which now costs a migration, because
+   =run-command= has started calling actions.
+3. *Views that are not rows do not cross either.* =:list= and =:inspector= cross as
+   rows; a text view crosses as its text, read-only (=:reference=); a view whose
+   renderer reads live =:data= — the dispatch matrix, the stage — is replaced by a
+   line saying so. That is §7's "why the stage was the wrong candidate", as code.
+
+Two threads can touch a connection — the browser's loop and whoever presents a
+remote subject, which from the net REPL is another thread. So each connection's
+reads and writes run under its own lock, its tables are synchronized, and
+=subj-live= fetches the first view *before* the connection is published to the
+loop. Two readers on one pipe would each get half the frames.
+
+** Found on the way, kept so nobody looks again
+
+- =conn-close= was the first name chosen for closing a connection; [[file:../initramfs/http.lisp][http.lisp]]
+  has a one-argument =conn-close= of its own, loaded *later*, which silently
+  replaced ours. The host test passed (it does not load http.lisp); the guest's
+  status line said "workers: invalid number of arguments: 3", and a killed child
+  was never noticed. Renamed =worker-close=. Every image module shares =CL-USER=,
+  so a generic verb-noun name is a collision waiting for a later file.
+- The nav-split preview pane is a *cache* that survives a tab switch. Counting it
+  as "on screen" unconditionally made a hidden ticker redraw every second. It now
+  counts only while it previews the selection of a visible pane. The host test
+  could not see this: nothing draws there, so nothing fills the cache.
+- Not a bug in this work, but found by it: =check-worker.lisp= read
+  "definitions the child could see" with =parse-integer :junk-allowed=, and once
+  the registry passed 999 it read "2,447" as 2. Fixed in the test.
+
+** How it is tested
+
+- [[file:../poc/worker-live-test.lisp][poc/worker-live-test.lisp]] (25 checks, host): the wire (a frame cut in two
+  reads, a NUL and a newline inside strings, an unknown head, =#.=, EOF), then the
+  ticker and the sweep with the "child" a *thread* over two real pipes — the
+  fallback the host takes for want of =/sbin/lisp=, saying so in the provenance
+  row.
+- [[file:../check-worker.lisp][check-worker.lisp]] (39 checks, guest; sections E–J are this): *no key is
+  sent* — the script never opens QMP. The ticker's ticks advance by 4 in 4 s and
+  =draw-browser= runs 4 times; the drilled object's =TICKS= field moves from 6 to
+  9 in 3 s; hidden, 0 frames and 0 fetches; killed, =:EXITED= and out of the poll;
+  the live sweep reads 1,200 of 2,447 definitions in its first 1.5 s and ends
+  with the same 15 condition types as the one-shot sweep; with no pane, no live
+  connection and no zombie left 9 s later. (Measured 2026-10-16, tag #27,
+  qemu64.)
+
+* 7¾. Accept tries a definition in a child first  [BUILT]
+
+[[file:../initramfs/sandbox.lisp][sandbox.lisp]] (2026-10-16). =C-c C-c= compiles a definition into the running
+image, and the running image is PID 1. Most mistakes are harmless there: a
+compile error or a type error is a condition, =accept-pane= catches it, the status
+line says "Accept failed". What a handler cannot catch is a form that never
+returns, or one that takes its process with it:
+
+#+begin_src lisp
+  (defparameter *table* (loop))           ; PID 1 frozen: no key is ever answered
+  (defvar *x* (sb-ext:exit :abort t))     ; PID 1 exits, and the kernel panics
+#+end_src
+
+Both run at *load* time, which is exactly when Accept runs them. So
+=accept-source= ([[file:../initramfs/registry.lisp][registry.lisp]]) now first calls =*accept-sandbox*= — before
+anything, even the =READ=, since a =#.= in the text is code too. =sandbox.lisp=
+sets it to =sandbox-try-accept=: re-exec the image as =("try")=, send
+=(:accept TEXT PACKAGE)= down the same NUL-framed wire, wait up to
+=*sandbox-seconds*= (10). The child Accepts it in its own heap and answers
+=(:accepted NAME)= or =(:error TEXT)=.
+
+| The child … | PID 1 … | Why |
+|-------------+---------+-----|
+| answered =:accepted= | accepts it | it loaded somewhere first |
+| answered =:error= | accepts it *anyway* | an error is what PID 1 already survives — and the child may have failed only for lack of state PID 1 has (a class defined with Do it an hour ago); refusing would be a false alarm |
+| died (pipe closed, no answer) | *refuses* (=accept-refused=) | it would have died too |
+| did not answer in time | *refuses*, kills the child | it would have hung |
+
+So the sandbox refuses *only* what PID 1 could not have survived. That rule is
+also why the child does *not* first replay this session's earlier Accepts to make
+itself a closer copy of PID 1: a missing definition can only turn into an error,
+which is let through anyway, and replaying would re-run every earlier Accept's side
+effects in every trial.
+
+It covers every caller of =accept-source=: =C-c C-c= in a source pane, the
+Workspace and a Lisp file pane, and the agent's define tool. The status line says
+=Accepted: greet   (tried first in pid 56)=. A trial costs 0.02–0.04 s in the
+guest — the child is the same image, its pages already in the page cache (§5) —
+which is why it is on by default. =(setf *accept-sandbox* nil)= turns it off, for a
+definition the sandbox refuses that you mean anyway.
+
+** What it does not catch
+
+A definition that is fine to *load* and wrong to *call*. Redefine =draw-browser=
+with an infinite loop in its body and the trial passes — nothing calls it in the
+child — and the next frame hangs PID 1. The child has no screen, no input and no
+event loop, so it cannot exercise what the definition will be used for. Catching
+that would mean the child running the *caller* — a frame, headless, the way
+[[file:../poc/render-frame.lisp][render-frame.lisp]] does on the host. Not attempted; it is the obvious next step
+if this ever bites.
+
+Also not covered: Do it / Print it / Inspect it / Debug it. They evaluate rather
+than define, and Debug it exists precisely to stop *in PID 1* with the stack
+standing. Sandboxing an evaluation would lose its value.
+
+** Tested
+
+=check-worker.lisp= section K, in the guest: =(defun zz-sand …)= accepted after a
+trial in another pid and callable; =(defparameter *zz-hang* (loop))= refused after
+4 s, never bound in PID 1; =(defvar *zz-die* (sb-ext:exit :abort t))= refused with
+the trial recorded as =:DIED= — and PID 1 still answers the next probe, which is
+the real assertion, since a failure there panics the guest; a read error let
+through (the child said =:ERROR=, PID 1 then signalled and was caught). Also
+re-run with this in: =check-compile.lisp= (its =accept-source= checks), all pass.
+
 * 8. Status
 
+- §7¾ — *BUILT* (2026-10-16). [[file:../initramfs/sandbox.lisp][sandbox.lisp]] + the =*accept-sandbox*= hook in
+  [[file:../initramfs/registry.lisp][registry.lisp]] and the =try= argv role. Refuses a definition that kills or
+  hangs its trial process; lets errors through. Does not catch a definition that
+  is wrong to *call* rather than to load (§7¾, "What it does not catch").
+- §7½ — *BUILT* (2026-10-16). [[file:../initramfs/worker-live.lisp][worker-live.lisp]]: the =serve= argv role, handles,
+  =(:invalidate h)=, interning, the =:workers= service in the poll. Proven in the
+  guest with no key pressed. Still owed from §2: making the child's closures travel
+  (a remote inspector is read-only), and a socket for a peer we did not start
+  (there is none).
 - §7 — *BUILT.* [[file:../initramfs/worker.lisp][worker.lisp]]: a =job= argv role, two jobs, =subj-worker= + one
-  =present= method, and the forms sitting ready in the Workspace primer. Verified
-  in the guest — the environment is PID 1 and the view came back from another
-  pid. Synchronous only; liveness, handles and sandboxed Accept are still owed,
-  and §7's "what it does not do" lists them.
+  =present= method. Verified in the guest — the environment is PID 1 and the view
+  came back from another pid. Deliberately left synchronous; §7½ is its live twin.
 - §6 — *DONE, and its conclusion is "change nothing".* =sb-posix= was audited
   against every hand-rolled =define-alien-routine= in the image. The one
   promising migration (termios) was written, tested, booted — and then reverted,
@@ -593,15 +843,13 @@ Everything §2 lists beyond the first step, and the omissions are the honest par
   which would have cost live editing of [[file:../initramfs/line-editor.lisp][line-editor.lisp]]. What shipped from that
   section is the *rule* in "The general rule this establishes", and one bug fix:
   the pollfd fd-width bug in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]], where both =fbb-wait= and
-  =fbb-ready-p= wrote only the low byte of a descriptor.
-- §1–§5 — *analysis only.* Dated 2026-09-19/20. If any of it is implemented,
-  this document is stale and the code is truth.
-- A different liveness has landed beside it (2026-10-12): [[file:../initramfs/runs.lisp][runs.lisp]]'s run
-  panes stream a child's TEXT output live — a reader thread per run, and the poll
-  loop waking on a deadline (not a fourth poll slot) to copy a snapshot into the
-  pane ([[file:containers.org][containers.org]] §7). It carries lines, not views, so the
-  worker's own liveness below is still owed.
-- Next: liveness. A socket, a fourth poll slot, and =(:invalidate handle)= — at
-  which point §2's =EQ=-interning trap becomes real. The irreducible cost is that
-  it can only be proven by booting, since it is a view changing with no key
-  pressed.
+  =fbb-ready-p= wrote only the low byte of a descriptor. §7½ and §7¾ kept the rule:
+  they use =sb-unix= reads and writes, =run-program=, =wait-until-fd-usable= and
+  web-cdp.lisp's hand-rolled =fcntl=, and no =sb-posix= at all.
+- §1–§5 — *analysis only.* Dated 2026-09-19/20, except where §2 is annotated as
+  built. If more of it is implemented, this document is stale and the code is truth.
+- A different liveness sits beside §7½: [[file:../initramfs/runs.lisp][runs.lisp]]'s run panes (2026-10-12)
+  stream a child's TEXT output — a reader thread per run, and the poll loop waking
+  on a 100 ms deadline to copy a snapshot into the pane ([[file:containers.org][containers.org]] §7). Lines
+  from any program, as against views from our own image; both shapes are right for
+  what they carry.

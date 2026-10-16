@@ -38,7 +38,7 @@ against the source. The line numbers are generated, so they stay correct when th
 
 <h2>How to use this guide</h2>
 <ul>
-  <li><strong>References</strong> look like <a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2289</span></a>.
+  <li><strong>References</strong> look like <a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2295</span></a>.
     The link opens the file. The grey <code>file:line</code> is for Emacs: <kbd>M-x find-file</kbd>, then
     <kbd>M-g g</kbd> to the line. Better still, open the definition in the running environment itself
     (<a href="paths.html">Reading paths</a> shows how).</li>
@@ -166,7 +166,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where">firmware → <code>BOOTX64.EFI</code></span>
     There is no bootloader. The kernel's <code>bzImage</code> <em>is</em> an EFI application (the "EFI stub"),
     and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:370</span></a>).
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:373</span></a>).
     The kernel's command line is compiled in (
     <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:397</span></a>). It says
     <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is

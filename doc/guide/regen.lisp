@@ -387,10 +387,11 @@
     ("data" "pure formats and algorithms: bytes in, values out, no I/O of their own"
      "poc/inflate.lisp" "poc/deflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
     ("model" "the image describing itself: captured source, CLOS via the MOP, SBCL's own source"
-     "initramfs/registry.lisp" "initramfs/model.lisp" "initramfs/sbcl-source.lisp")
+     "initramfs/registry.lisp" "initramfs/model.lisp" "initramfs/sbcl-source.lisp"
+     "initramfs/sandbox.lisp")
     ("present protocol" "subjects -> views of items + commands; pure, headless"
      "initramfs/present.lisp" "initramfs/tour.lisp" "initramfs/file-views.lisp"
-     "initramfs/worker.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
+     "initramfs/worker.lisp" "initramfs/worker-live.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
      "initramfs/containers.lisp" "initramfs/runs.lisp" "initramfs/net-views.lisp")
     ("UI toolkit" "pixels and text: the canvas, fonts, widgets, the text editor, the TTY line editor"
      "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "initramfs/line-editor.lisp")

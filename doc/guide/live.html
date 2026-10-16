@@ -64,9 +64,9 @@ a reviewable list of changes with history.</figcaption>
 <ul>
   <li><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2073</span></a>,
     <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:797</span></a>,
-    <a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:183</span></a>,
+    <a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:192</span></a>,
     <a class="ref" data-ref="initramfs/registry.lisp#accept-package" href="../../initramfs/registry.lisp"><code>accept-package</code><span class="loc">initramfs/registry.lisp:172</span></a>,
-    <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:329</span></a>.</li>
+    <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:341</span></a>.</li>
   <li>Why the package matters: an edit of <code>lol.textview::tv-draw</code> read in <code>CL-USER</code> would define a
     <em>new</em> <code>cl-user::tv-draw</code> and leave the real one running. Accept would appear to work and change nothing.
     The <code>package</code> slot of each DEFN prevents this.</li>

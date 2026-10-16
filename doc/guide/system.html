@@ -136,8 +136,8 @@ default route, writes <code>/etc/resolv.conf</code> and checks the clock through
 
 <h2>A second process</h2>
 <p>Only one process writes <code>/dev/fb0</code>. A peer process contributes a <em>view</em> (data), never pixels.
-<a class="ref" data-ref="initramfs/worker.lisp#call-worker" href="../../initramfs/worker.lisp"><code>call-worker</code><span class="loc">initramfs/worker.lisp:141</span></a> re-executes <code>/sbin/lisp job NAME</code>, reads one
-plist from the pipe with <code>*read-eval*</code> off, and <a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:179</span></a>
+<a class="ref" data-ref="initramfs/worker.lisp#call-worker" href="../../initramfs/worker.lisp"><code>call-worker</code><span class="loc">initramfs/worker.lisp:151</span></a> re-executes <code>/sbin/lisp job NAME</code>, reads one
+plist from the pipe with <code>*read-eval*</code> off, and <a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:189</span></a>
 rebuilds real subjects from the names it receives. <a href="../processes.org">processes.org</a> §2 and §7 explain the
 design. <code>check-worker.lisp</code> proves the fork is real.</p>
 

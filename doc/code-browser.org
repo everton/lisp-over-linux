@@ -1464,7 +1464,12 @@ subject and one =present= method, appearing as an ordinary drillable pane.
 =(subj-worker :self)= reports the child's pid, =(subj-worker :signallers)= a
 whole-image sweep whose rows drill into this image's own condition views. Why it
 is a view and not pixels, and why nothing here had to change to host it, is
-[[file:processes.org][processes.org]] §2 and §7.
+[[file:processes.org][processes.org]] §2 and §7. Since 2026-10-16 such a view can stay *live*:
+=(subj-live :ticker)= is a child process whose pane follows it with no key
+pressed, its rows reaching the child's own objects by handle
+([[file:../initramfs/worker-live.lisp][worker-live.lisp]], processes.org §7½); and every Accept is tried in a child
+first, so a definition that would hang or kill PID 1 is refused
+([[file:../initramfs/sandbox.lisp][sandbox.lisp]], processes.org §7¾).
 
 *The FB shell, concretely* (see the mock-up): a single *tab strip* of open trails
 across the top — numbered, ad-hoc and pinned alike, each with a × and a
