@@ -798,6 +798,14 @@ guest — the child is the same image, its pages already in the page cache (§5)
 which is why it is on by default. =(setf *accept-sandbox* nil)= turns it off, for a
 definition the sandbox refuses that you mean anyway.
 
+*The trial keeps nothing.* The child binds =*accept-hooks*= (registry.lisp) to
+nothing, as it binds =*accept-sandbox*=: those hooks are PID 1's — the change journal
+([[file:session-persistence.org][session-persistence.org]]) is one — and a trial that ran them wrote every Accept into
+the journal twice, once from the child and once for real. Found when the two tracks
+met (2026-10-16): =check-persist.lisp= counted four records for two Accepts. Boot
+replay goes through =accept-source= too, so each replayed entry is tried in a child
+first — a replayed definition that would kill PID 1 is refused like a typed one.
+
 ** What it does not catch
 
 A definition that is fine to *load* and wrong to *call*. Redefine =draw-browser=

@@ -130,6 +130,10 @@
         (wire-send w
                    (handler-case
                        (let ((*accept-sandbox* nil)        ; the trial must not trial itself
+                             ;; ...nor KEEP itself: the hooks are PID 1's (the journal,
+                             ;; journal.lisp), and a trial that ran them appended every
+                             ;; Accept to the journal twice — once here, once for real
+                             (*accept-hooks* '())
                              (*package* (or (find-package package-name) (find-package :cl-user)))
                              (*standard-output* (make-broadcast-stream))
                              (*error-output* (make-broadcast-stream)))
