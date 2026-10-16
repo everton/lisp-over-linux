@@ -161,7 +161,7 @@ the table below assumes; §7½ says why.
 | AF_UNIX sockets | =CONFIG_UNIX=y= (see [[file:kernel-config.org][kernel-config.org]]); =/tmp= is a tmpfs |
 | =local-socket= in the heap | =build.sh= requires =sb-bsd-sockets= before the save |
 | A socket fd in the event loop | =socket-file-descriptor=; =fbb-wait='s docstring already anticipates a fourth slot |
-| Waking for non-input reasons | the stage heartbeat, =live-stage-timeout= |
+| Waking for non-input reasons | the stage heartbeat, =live-stage-timeout= (since Morphic step 5, the world's step deadlines) |
 | Reading untrusted forms | =*read-eval*= nil, as =registry.lisp= and =model.lisp= already do |
 | A client connect/retry idiom | [[file:../host-client/qmp.lisp][host-client/qmp.lisp]], liftable wholesale |
 

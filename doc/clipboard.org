@@ -16,8 +16,8 @@ keys my fingers already know?/
 *Status (2026-10-02):* *built and wired.* The core is host-tested (63 assertions);
 the keys, the mouse and the manager card are wired in [[file:../poc/shell.lisp::defun clipboard-key][=poc/shell.lisp=]] (the
 "clipboard, wired into the editor" section), [[file:../poc/textview.lisp::defun tv-region][=poc/textview.lisp=]] (the region and
-the rectangle display) and [[file:../initramfs/fb-browser.lisp::defun run-clipboard-fb][=initramfs/fb-browser.lisp=]] (the manager's input
-loop), and verified in the booted guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]]. §6 is the key
+the rectangle display) and [[file:../poc/overlays.lisp::defun run-clipboard-manager][=poc/overlays.lisp=]] (the manager's input —
+a loop in =fb-browser.lisp= until Morphic step 4 made it an overlay), and verified in the booted guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]]. §6 is the key
 table as built.
 
 * The one-sentence essence
@@ -344,7 +344,8 @@ ASCII, so the bitmap font is sure to have it), runs of blanks collapsed, cut wit
 (=#1=, =#2= …), and the PRIMARY line in the sketch was left out: PRIMARY is not part
 of the history, and a middle click is the way to use it. =↵= pastes into whichever
 editor had focus; with none, it only makes the entry current. Drawing:
-[[file:../poc/shell.lisp::defun draw-clipboard-card][=draw-clipboard-card=]]; input: [[file:../initramfs/fb-browser.lisp::defun run-clipboard-fb][=run-clipboard-fb=]].
+[[file:../poc/shell.lisp::defun draw-clipboard-card][=draw-clipboard-card=]]; input: [[file:../poc/overlays.lisp::defun run-clipboard-manager][=run-clipboard-manager=]] (an overlay that waits for
+the pick; [[file:../poc/shell.lisp::defun open-clipboard-manager][=open-clipboard-manager=]] pastes it).
 
 * 8. Limits
 

@@ -329,9 +329,8 @@ finds /places/, and that landing shows the file previewed on the right beside it
 neighbours, one Enter from the editor. The pure logic is =parse-path-query=,
 =path-completions= and =complete-path-query= in [[file:../initramfs/files.lisp][files.lisp]] (host-tested), the rows
 =spotter-path-results= in [[file:../initramfs/file-views.lisp][file-views.lisp]], and the Spotter's existing
-=spotter-results= switches on =path-query-p= — so the framebuffer's =run-spotter-fb=
-and =render-frame.lisp --spotter= both get it. (The X11 host runner has no Spotter
-loop of its own.) The Spotter also lists =files= and =home= as surfaces, through a new
+=spotter-results= switches on =path-query-p= — so the Spotter (=run-spotter-fb= then, the =open-spotter= overlay since Morphic
+step 4) and =render-frame.lisp --spotter= both get it. The Spotter also lists =files= and =home= as surfaces, through a new
 hook, =*spotter-sources*=, so present.lisp does not name the file manager.
 
 * 10. Getting there

@@ -1316,8 +1316,9 @@ row ([[file:input.org][input.org]], "Three buttons on a pad with one"). Ctrl-cli
 jump to the definition — which is the halo's Source handle anyway.
 
 Both are modal overlays drawn by the shell ([[file:../poc/shell.lisp::defun draw-context-menu][=draw-context-menu=]], [[file:../poc/shell.lisp::defun draw-halo][=draw-halo=]])
-and read by one input loop in the backend ([[file:../initramfs/fb-browser.lisp::defun run-chooser-fb][=run-chooser-fb=]], installed as the
-shell's =*chooser*= hook, the way =*value-prompt*= is): arrows or hover move, Enter
+and read by one chooser ([[file:../poc/overlays.lisp::defun run-chooser][=run-chooser=]] — an overlay since Morphic step 4,
+a loop of its own in fb-browser.lisp before — installed as the shell's =*chooser*=
+hook, the way =*value-prompt*= is): arrows or hover move, Enter
 or a click picks, a digit picks directly, Esc or a click elsewhere leaves. On the
 X11 host backend no chooser is installed, and the buttons say so in the status line.
 Verified in the guest by [[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle
@@ -1505,7 +1506,8 @@ not a fuzzy search: its rows are the folder's entries completing the last compon
 folder with the file selected. =./= is relative to the focused file manager's folder.
 The grammar and the reasons: [[file:file-manager.org][file-manager.org]] §9.
 The Spotter's *drawing* lives in the shell with the rest of the shell's drawing;
-only the modal input loop is in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]. That is phase 3's rule applied to
+only the modal input loop was in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] (since Morphic step 4 it is the
+=open-spotter= overlay, [[file:../poc/overlays.lisp][poc/overlays.lisp]], backend-blind too). That is phase 3's rule applied to
 the last surface that ignored it, and it pays immediately: the palette can be
 rendered on the host — =sbcl --script poc/render-frame.lisp modules --spotter coll= —
 instead of being verifiable only by booting the guest and holding down Super.
@@ -2425,7 +2427,7 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   "terminal". It is the first view that changes on its own *without* a timer: the
   loop polls the terminals' pty masters beside the input devices and repaints only
   the rows a program changed.
-- *Phase 7 — IN PROGRESS: steps 0–2 of 6 built (2026-10-16).* Morphic: the browser
+- *Phase 7 — BUILT: all six steps (2026-10-16).* Morphic: the browser
   stops being *the* application and becomes the first window on a Lisp window system
   of our own. The design — morphs as CLOS objects, one World loop, the tiled shell as
   the first morph, tear-off trail windows, damage repair, six steps — is
@@ -2436,8 +2438,17 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   (step 1); and *windows* — a trail torn off the tab strip (=SuperL-g=, or a tab
   dragged down) into a =trail-window= with a minimal title bar, moved and resized
   opaquely by pointer or keyboard, raised on focus, re-tiled by =SuperL-g t= or a drop
-  on the strip, with damage repair so a moving window costs a copy (step 2). Left:
-  halo handles on morphs (3), the modal loops as morphs (4), stepping (5).
+  on the strip, with damage repair so a moving window costs a copy (step 2); the
+  halo's handles acting on a window — Move and Resize carried by the pointer, Raise,
+  Close, Re-tile — and Inspect on it with its bounds settable, =C-c C-c= moving it (3);
+  every nested modal loop — the Spotter, the menus and the halo, the clipboard manager,
+  the cheatsheet, the value prompt, the debugger, its source viewer and its ASK view —
+  an *overlay* morph in the one loop, those that answer a caller waiting by turning
+  that same loop, so nothing behind them stops ([[file:../poc/overlays.lisp][poc/overlays.lisp]]) (4); and stepping:
+  a running stage, a live run pane, a terminal's rows, a live worker each damage only
+  what changed, and idle the loop sleeps (5). Windows survive the desk file and a trip
+  to the console. Owed, in morphic.org §10: a stage step still lays out the whole shell
+  under its clip; the agent's tick and a web frame in a window stay coarse.
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 

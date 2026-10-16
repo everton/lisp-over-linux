@@ -35,7 +35,7 @@ What writing the guide turned up (each is recorded where it belongs):
 - =registry.lisp= was the one module missing from its own registry, so =accept-source= opened as "SBCL's own"
   reference. It now records itself (=record-source=, the last form in [[file:../initramfs/registry.lisp::when *load-truename* (record-source][registry.lisp]]).
 - Comments and two docs said the debugger is entered through =*debugger-hook*=. Nothing sets that variable: both
-  entry points use =handler-bind= ([[file:../poc/shell.lisp::defun workspace-debug-it][workspace-debug-it]], [[file:../initramfs/fb-browser.lisp::defun tick-live-stage][tick-live-stage]]).
+  entry points use =handler-bind= ([[file:../poc/shell.lisp::defun workspace-debug-it][workspace-debug-it]], [[file:../poc/morphic.lisp::defun step-stage-pane][step-stage-pane]], once =tick-live-stage=).
 - [[file:sbcl-init.org][sbcl-init.org]] said =shell.lisp= expands =with-raw-mode=. It does not. =fb-browser.lisp= and =repl.lisp= do.
 
 * The guide's pages

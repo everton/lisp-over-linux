@@ -611,7 +611,7 @@ Nothing the browser *draws* depends on where the pointer is (there are no hover
 effects), so a bare move does not need a redraw at all — only the arrow has to move.
 That works if the canvas never contains the arrow:
 
-- [[file:../initramfs/fb-browser.lisp::defun show-frame][=show-frame=]] sends a freshly drawn canvas, then
+- [[file:../initramfs/fb-browser.lisp::defun present-frame][=present-frame=]] sends a freshly drawn canvas, then
   [[file:../initramfs/fb-browser.lisp::defun put-cursor][=put-cursor=]] composites the arrow into a *patch* the size of the arrow (copying
   the canvas pixels under it first, so the transparent cells show the right thing)
   and sends only that patch.
@@ -621,7 +621,8 @@ That works if the canvas never contains the arrow:
   the new position. Two writes of 20 short rows each.
 
 Every event loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — the browser, the source viewer, the value
-prompt, the debugger, the cheatsheet, the Spotter — follows one pattern: a =dirty=
+prompt, the debugger, the cheatsheet, the Spotter — followed one pattern (until
+Morphic step 4 made them all one loop, below): a =dirty=
 flag set by a key, a click, a wheel notch or a stage tick; a redraw only when it is
 set; =move-cursor= otherwise. (The value prompt also used to leave the mouse unread,
 and since =poll= is level-triggered an unread mouse is readable forever: the prompt
@@ -634,16 +635,21 @@ arrow) when the repair covered the screen, else each repaired rect with
 =present-fb-rect=, and the arrow put back if a rect ran under it or moved if it
 moved. The contract above is unchanged: the hand is a morph that is *not* drawn into
 the canvas, a bare move damages nothing, and =check-pointer.lisp= still holds.
-=show-frame= is now what the /modal/ loops call; it also tells the world that they
-drew the whole screen behind its back (=*screen-overdrawn*=), so it repairs
-everything once they return.
+Until step 4 the /modal/ loops called a =show-frame= that told the world they had
+drawn the whole screen behind its back; since step 4 there are no modal loops — the
+Spotter, the menus, the debugger and the rest are /overlays/, morphs the world draws
+like any other, and a modal that waits for an answer turns this same loop
+([[file:morphic.org][morphic.org]] §10, step 4) — so =show-frame= is gone.
 
 *With windows* (Morphic step 2) three fast paths still paint the /shell's/ pixels
-straight into the canvas and send their rect without the world: the clock's tick,
-a terminal's dirty rows and a web page's new frame. Each now calls
-[[file:../poc/morphic.lisp::defun recomposite-windows][=recomposite-windows=]] before sending, which copies back any window lying over that
-rect from the window's backing store — so a window over the tray stays on top while
-the clock ticks under it. With no windows it does nothing.
+straight into the canvas: the clock's tick, a terminal's dirty rows and a web page's
+new frame. Since step 4 they do not send their rect themselves: they hand it to the
+world as /painted/ ([[file:../poc/morphic.lisp::defun shell-painted][=shell-painted=]], =lol.morph:note-painted=), and the next repair
+draws, in that rect only, whatever lies /above/ the shell — a window's backing store,
+an overlay's scrim and card — and sends it with the rest. So a window over the tray
+stays on top while the clock ticks under it, and a terminal printing behind an open
+menu is shown dimmed, as it should be. (In step 2 this was =recomposite-windows=,
+which knew only windows.)
 
 | per pointer move | before (a full frame) | after      |
 |------------------+-----------------------+------------|

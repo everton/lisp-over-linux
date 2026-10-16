@@ -321,7 +321,7 @@ The same probe looked at the other controls that use browser UI:
    =Runtime.enable=: the script cancelled the click and its report went nowhere.
 3. *Our chooser.* The event is queued and, after the pipe has been read, shown by
    =WEB-PICK=. A list goes to the *right-button menu's card*, the same
-   =RUN-CHOOSER-FB= ([[file:../initramfs/fb-browser.lisp::defun run-chooser-fb][fb-browser.lisp]])
+   =RUN-CHOOSER= ([[file:../poc/overlays.lisp::defun run-chooser][poc/overlays.lisp]]; =RUN-CHOOSER-FB= until Morphic step 4)
    with a kind of its own, =:select=: placed under the control (CSS pixels times
    =*web-zoom*= plus the page's origin on screen, the mapping =WEB-PAGE-POINT=
    inverts), at least as wide as it, opening on the current option, the optgroups as

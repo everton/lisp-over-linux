@@ -469,7 +469,8 @@ cleanly to a bare =self= binding instead of erroring.
 *Where it goes, and why it is genuinely cheap:* almost all of it already exists.
 
 - [[file:../poc/shell.lisp::defvar *value-prompt*][=*value-prompt*=]] — the one-line modal input hook — is already implemented on both
-  backends ([[file:../initramfs/fb-browser.lisp::defun fb-prompt-value][=fb-prompt-value=]] in the guest).
+  backends (=fb-prompt-value= in the guest then; since Morphic step 4 the value
+  prompt overlay, [[file:../poc/overlays.lisp::defun run-value-prompt][=run-value-prompt=]]).
 - [[file:../poc/shell.lisp::defun ws-eval][=ws-eval=]] already evaluates a form with output captured to a string and every
   =serious-condition= trapped — because a bad form must not take down PID 1.
 - [[file:../poc/shell.lisp::defun set-field][=set-field=]] is already the exact shape of the new command: prompt → read → eval →

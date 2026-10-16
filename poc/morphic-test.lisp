@@ -1,5 +1,5 @@
-;;;; morphic-test.lisp — host test for the World and its windows (doc/morphic.org,
-;;;; steps 1–2), against the real shell, headless.
+;;;; morphic-test.lisp — host test for the World, its windows, the halo's handles, the
+;;;; overlays and stepping (doc/morphic.org, steps 1–5), against the real shell, headless.
 ;;;;
 ;;;;     sbcl --script poc/morphic-test.lisp        ; exits 0 if every check passes
 ;;;;
@@ -10,6 +10,9 @@
 ;;;; anywhere on the screen, for any event. On top of that, the economy: which morphs
 ;;;; a repair drew (a window moved is copied, not redrawn; a key in a window redraws
 ;;;; the window and the status line, not the shell), and how big the repaired area is.
+;;;;
+;;;; The overlays that WAIT (a menu, the value prompt) turn a scripted stand-in for the
+;;;; backend's loop (SCRIPTED-CYCLE, below), and the screen is checked inside the wait.
 ;;;;
 ;;;; Loads poc/render-frame.lisp as a library for the real stack and its key parser.
 
