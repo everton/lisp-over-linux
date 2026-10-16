@@ -35,7 +35,11 @@
     ;; the transport: the networking track's HTTP-REQUEST, loaded as poc/http-test.lisp
     ;; loads it (plain http to 127.0.0.1 needs neither DNS nor TLS, but they come along)
     (dolist (f '("net" "dhcp" "dns" "sntp" "tls" "http"))
-      (load (merge-pathnames (format nil "initramfs/~a.lisp" f) *root*)))))
+      (load (merge-pathnames (format nil "initramfs/~a.lisp" f) *root*)))
+    ;; the tools and the store load after the transport, as in build.sh's order
+    ;; (agent-ui.lisp, between them there, needs the shell; it is left out here)
+    (dolist (m '("initramfs/agent-tools.lisp" "initramfs/agent-store.lisp"))
+      (funcall 'load-recording (merge-pathnames m *root*)))))
 
 (defvar *mock-library-only* t)
 (load (merge-pathnames "host-client/mock-anthropic.lisp" *root*))
@@ -298,6 +302,153 @@ line2") ("b" "no-space"))))
         (delete-file path)
         (forget-agent-key)))
     "key_unreadable")
+
+(format t "~&== the tools of agent-tools.lisp ==~%")
+(defun run-tool (conv name input-json)
+  "Run tool NAME on INPUT-JSON in CONV as the turn would; (values result-text call)."
+  (let* ((call (make-instance 'tool-call :id "toolu_direct" :number 900 :name name
+                                         :input (lol.json:parse-json input-json)))
+         (r (let ((*tool-conversation* conv)) (execute-tool-call conv call))))
+    (values (lol.json:jget r "content") call)))
+
+(defun first-call (conv) (aref (conversation-calls conv) 0))
+
+(let ((c (make-conversation)))
+  (run-turn c "inspectme please")
+  (let ((call (first-call c)))
+    (ok "lisp-inspect ran (through the mock)" (call-status call) :done)
+    (ok "...and listed the list's fields" (and (search "car" (call-result call)) (search "claude-opus-5-5" (call-result call)) t))
+    (ok "...its subject is the object" (call-subject call) +fallback-models+))
+  (ok "lisp-inspect drills a path" (and (search "\"claude-opus-5\"" (run-tool c "lisp-inspect" "{\"name\": \"+fallback-models+\", \"path\": [\"cdr\", \"car\"]}")) t))
+  (ok "lisp-inspect starts from an earlier call's value"
+      (and (search "fields" (run-tool c "lisp-inspect" "{\"call\": 0, \"path\": [\"car\"]}")) t))
+  (multiple-value-bind (text call) (run-tool c "lisp-inspect" "{\"name\": \"+fallback-models+\", \"path\": [\"nope\"]}")
+    (ok "a field that is not there is an error result, naming the fields"
+        (list (call-status call) (and (search "no field" text) (search "car" text) t)) '(:error t)))
+  (ok "lisp-inspect never interns a typo"
+      (progn (run-tool c "lisp-inspect" "{\"name\": \"zz-no-such-symbol-qq\"}")
+             (find-symbol "ZZ-NO-SUCH-SYMBOL-QQ" :cl-user))
+      nil))
+
+(let ((c (make-conversation)))
+  (run-turn c "applicable please")
+  (let ((call (first-call c)))
+    (ok "lisp-applicable ran" (call-status call) :done)
+    (ok "...and shows the effective method" (and (search "primary" (call-result call)) (search "subj-defn" (call-result call)) t))
+    (ok "...its subject is the onion" (subj-onion-p (call-subject call)) t))
+  (ok "lisp-applicable checks the arity"
+      (and (search "dispatches on 1" (run-tool c "lisp-applicable" "{\"name\": \"present\", \"classes\": [\"t\", \"t\"]}")) t)))
+
+(let ((c (make-conversation)))
+  (run-turn c "backtrace please")
+  (ok "lisp-backtrace outside the debugger: says so, lists threads"
+      (and (search "not opened from the debugger" (call-result (first-call c))) t))
+  (note-debugger-context c (make-condition 'simple-error :format-control "the test's error" :format-arguments '())
+                         (backtrace-frame-objects 8))
+  (let ((text (run-tool c "lisp-backtrace" "{}")))
+    (ok "with a debugger snapshot: the condition and the frames"
+        (and (search "simple-error" text) (search "the test's error" text) (search "backtrace (innermost first)" text) t)))
+  (ok "...and a frame's locals" (and (search "locals:" (run-tool c "lisp-backtrace" "{\"frame\": 0}")) t))
+  (ok "...a frame that is not there is an error"
+      (and (search "no frame 99" (run-tool c "lisp-backtrace" "{\"frame\": 99}")) t)))
+
+(let ((c (make-conversation)))
+  (run-turn c "browse please")
+  (let ((call (first-call c)))
+    (ok "browse ran" (call-status call) :done)
+    (ok "...said where it showed it (no screen here: the Activity panel)"
+        (and (search "Shown to the user noted in the conversation's Activity panel" (call-result call)) t))
+    (ok "...and what the view shows" (and (search "senders" (call-result call)) t))
+    (ok "...and it is listed for the Activity panel" (length (gethash c *conversation-shown*)) 1))
+  (ok "browse refuses a kind it does not know"
+      (and (search "browse cannot show" (run-tool c "browse" "{\"what\": \"telescope\", \"name\": \"x\"}")) t))
+  (ok "browse opens a call's subject" (and (search "Shown to the user" (run-tool c "browse" "{\"what\": \"call\", \"name\": \"0\"}")) t)))
+
+(let ((c (make-conversation)) (served lol.mock:*pages-served*))
+  (handler-bind ((tool-approval-request (lambda (cnd) (declare (ignore cnd)) (invoke-restart 'allow))))
+    (run-turn c "fetchpage please"))
+  (let ((r (call-result (first-call c))))
+    (ok "web-fetch: gated, allowed, fetched once" (list (call-status (first-call c)) (- lol.mock:*pages-served* served)) '(:done 1))
+    (ok "...HTML reduced to its words, entities decoded"
+        (and (search "The mock's page" r) (search "Fish & chips" r) (search "<3" r) t))
+    (ok "...no script, no style, no comment, no tags"
+        (list (search "hidden" r) (search "color:red" r) (search "a comment" r) (search "<li>" r)) '(nil nil nil nil))))
+(let ((c (make-conversation)) (served lol.mock:*pages-served*))
+  (run-turn c "fetchpage with nobody around")
+  (ok "web-fetch with nobody to approve: declined, nothing fetched"
+      (list (call-status (first-call c)) (- lol.mock:*pages-served* served)) '(:denied 0)))
+(let ((c (make-conversation)) (*agent-authority* :read-only))
+  (run-turn c "plain question, read-only")
+  (ok "read-only: web-fetch is not offered"
+      (loop for tool across (lol.json:jget (last-request) "tools") never (equal (lol.json:jget tool "name") "web-fetch"))))
+
+(let ((c (make-conversation)) (*agent-api-key* "sk-test-secret-0123456789"))
+  (run-turn c "showkey please")
+  (let ((r (call-result (first-call c))))
+    (ok "lisp-describe of *agent-api-key*: the key is taken out of the result"
+        (list (search "sk-test-secret" r) (and (search "[the API key]" r) t)) '(nil t))
+    (ok "...and never reached the mock"
+        (notany (lambda (q) (search "sk-test-secret" (lol.json:to-json (getf q :body)))) lol.mock:*requests*))))
+
+(format t "~&== a conversation survives power-off (agent-store.lisp) ==~%")
+(let* ((*agent-api-key* "sk-test-stored-0123456789")
+       (c (make-conversation)))
+  (run-turn c "hello store")
+  (run-turn c "show me the source, store")
+  (let* ((file (getf (gethash c *conversation-stores*) :file))
+         (dir (conversation-store-dir))
+         (path (and file (path-join dir file))))
+    (ok "the store is under HOME" dir (concatenate 'string (string-right-trim "/" *scratch*) "/.lol/agent/conversations"))
+    (ok "saved at the end of the turn" (and path (probe-file path) t))
+    (ok "the file is the user's alone (0600), its folder 0700"
+        (list (logand (sb-posix:stat-mode (sb-posix:stat path)) #o777)
+              (logand (sb-posix:stat-mode (sb-posix:stat dir)) #o777))
+        (list #o600 #o700))
+    (let ((text (with-open-file (s path) (let ((x (make-string (file-length s)))) (subseq x 0 (read-sequence x s))))))
+      (ok "the API key is not in it" (search "sk-test-stored" text) nil)
+      (ok "the thinking signature is" (and (search "sig-mock-0042" text) t)))
+    (ok "it is listed, newest first" (getf (first (saved-conversations)) :file) file)
+    (ok "the Spotter offers 'saved conversations'"
+        (and (find "saved conversations" (saved-conversation-candidates) :key (lambda (x) (getf x :label)) :test #'string=) t))
+    ;; "power-off": the session forgets the conversation; only the file is left
+    (let ((tools-before (lol.json:to-json (conversation-tools-json c)))
+          (messages-before (length (conversation-messages c))))
+      (setf *conversations* (remove c *conversations*))
+      (remhash c *conversation-stores*)
+      (ok "the Spotter now offers it to reopen"
+          (and (find-if (lambda (x) (search "saved conversation: hello store" (getf x :label))) (saved-conversation-candidates)) t))
+      (ok "its preview reads the file and opens nothing"
+          (let ((n (length *conversations*)))
+            (list (and (search "hello store" (view-text (present-preview (subj-saved-conversation file)))) t)
+                  (- (length *conversations*) n)))
+          '(t 0))
+      (let ((r (reopen-conversation file)))
+        (ok "reopened: a new live conversation, made current" (list (not (eq r c)) (eq *conversation* r)) '(t t))
+        (ok "...with every message and turn" (list (length (conversation-messages r)) (length (conversation-turns r)))
+            (list messages-before 2))
+        (ok "...its tool call linked to its block, with a subject again"
+            (let ((call (first-call r)))
+              (list (call-name call) (call-status call) (subj-defn-p (call-subject call))
+                    (eq call (some (lambda (m) (some #'block-call (message-blocks m)))
+                                   (coerce (conversation-messages r) 'list)))))
+            '("lisp-source" :done t t))
+        (ok "...the same tools, byte for byte" (lol.json:to-json (conversation-tools-json r)) tools-before)
+        (ok "reopening again gives the same object" (reopen-conversation file) r)
+        (run-turn r "and on, after the reboot")
+        (ok "it goes on: the API accepted the restored history" lol.mock:*problems* nil)
+        (ok "...sent with the tools it was begun with" (lol.json:to-json (lol.json:jget (last-request) "tools")) tools-before)
+        (ok "...into the same file" (list (getf (gethash r *conversation-stores*) :file)
+                                          (getf (first (saved-conversations)) :turns))
+            (list file 3))
+        (ok "...and this session's cost counts only this session's turn"
+            (< (conversation-cost r) (or (getf (first (saved-conversations)) :cost) 0)))))))
+(let ((saved (sb-posix:getenv "HOME")))
+  (sb-posix:setenv "HOME" "/" 1)
+  (let ((c (make-conversation)))
+    (run-turn c "hello diskless")
+    (ok "a diskless boot (HOME=/): nothing saved, nothing signalled"
+        (list (conversation-store-dir) (save-conversation c) (saved-conversations)) '(nil nil nil)))
+  (sb-posix:setenv "HOME" saved 1))
 
 (format t "~&== the key and the settings ==~%")
 (let ((*agent-endpoint* "https://api.anthropic.com"))

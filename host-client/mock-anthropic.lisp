@@ -32,7 +32,7 @@
 
 (defpackage :lol.mock
   (:use :cl :lol.json)
-  (:export #:start-mock #:stop-mock #:*requests* #:*problems* #:serve-forever))
+  (:export #:start-mock #:stop-mock #:*requests* #:*problems* #:*pages-served* #:serve-forever))
 
 (in-package :lol.mock)
 
@@ -165,6 +165,36 @@
                                   "usage" (jobj "output_tokens" output)))
   (sse sock "message_stop" (jobj "type" "message_stop")))
 
+(defvar *current-headers* '() "The headers of the request being answered.")
+(defvar *pages-served* 0 "How many times GET /page.html was answered.")
+
+(defun request-host (body)
+  "host:port the client addressed (its Host header) — how a page URL the mock hands
+   out reaches the mock again, from the host (127.0.0.1) or a guest (10.0.2.2)."
+  (declare (ignore body))
+  (or (cdr (assoc "host" *current-headers* :test #'string=)) "127.0.0.1:18014"))
+
+
+(defparameter +tool-steers+
+  (list (list "inspectme" "lisp-inspect" "{\"name\": \"+fallback-models+\"}")
+        (list "applicable" "lisp-applicable" "{\"name\": \"present\", \"classes\": [\"subj-defn\"]}")
+        (list "backtrace" "lisp-backtrace" "{}")
+        (list "browse" "browse" "{\"what\": \"senders\", \"name\": \"draw-alien\"}")
+        (list "fetchpage" "web-fetch"
+              (lambda (body) (format nil "{\"url\": \"http://~a/page.html\"}" (request-host body))))
+        (list "showkey" "lisp-describe" "{\"name\": \"*agent-api-key*\"}"))
+  "A word in the question -> the one tool call the mock answers it with: (WORD TOOL
+   INPUT), INPUT a JSON string or a function of the request body that returns one.")
+
+(defun tool-steer (text)
+  (find-if (lambda (e) (search (first e) text)) +tool-steers+))
+
+(defparameter +mock-page+
+  "<!doctype html><html><head><title>Mock page</title><style>body{color:red}</style>
+<script>var hidden = 'not text';</script></head><body><h1>The mock&#39;s page</h1>
+<p>Fish &amp; chips, <b>caf&eacute;</b> &lt;3</p><!-- a comment --><ul><li>one</li><li>two</li></ul></body></html>"
+  "What GET /page.html serves: a page web-fetch must reduce to its words.")
+
 (defun reply-for (sock body)
   "Choose and send the reply. The words that steer it:
      overload   first time a 529 (retry-after 1), then a normal answer
@@ -175,6 +205,8 @@
      eval       a lisp-eval tool call (a WRITE: gated)
      source     a lisp-source tool call (read-only)
      slow       a long answer, a word every 0.3 s (to cancel)
+     and the words of +TOOL-STEERS+ — inspectme, applicable, backtrace, browse,
+     fetchpage, showkey — each one call of the tool it names (agent-tools.lisp)
    and after tool results, a closing answer that quotes the first one."
   (let* ((text (or (last-user-text body) ""))
          (results (last-tool-results body))
@@ -208,6 +240,12 @@
          ((and (search "midstream" text) (= count 1))
           (text-block sock 1 "This reply will break off ")
           (sse sock "error" (jobj "type" "error" "error" (jobj "type" "overloaded_error" "message" "Overloaded"))))
+         ((tool-steer text)
+          (destructuring-bind (word name input) (tool-steer text)
+            (declare (ignore word))
+            (tool-block sock 1 (format nil "toolu_mock_~a" (substitute #\_ #\- name)) name
+                        (if (functionp input) (funcall input body) input))
+            (finish sock "tool_use" 15)))
          ((search "eval" text)
           (text-block sock 1 "I will evaluate it.")
           (tool-block sock 2 "toolu_mock_eval" "lisp-eval" "{\"form\": \"(+ 40 2)\", \"package\": \"cl-user\"}")
@@ -293,6 +331,12 @@
   (multiple-value-bind (method path headers text) (read-request sock)
     (cond
       ((null method) nil)
+      ((and (string= method "GET") (string= path "/page.html"))
+       (let ((o (sb-ext:string-to-octets +mock-page+ :external-format :utf-8)))
+         (incf *pages-served*)              ; not in *REQUESTS*: those are Messages calls
+         (send-text sock (format nil "HTTP/1.1 200 OK~aContent-Type: text/html; charset=utf-8~aContent-Length: ~d~aConnection: close~a~a"
+                                 (crlf) (crlf) (length o) (crlf) (crlf) (crlf)))
+         (send-octets sock o)))
       ((not (and (string= method "POST") (string= path "/v1/messages")))
        (send-json-error sock 404 "not_found_error" (format nil "~a ~a" method path)))
       (t
@@ -303,7 +347,7 @@
              (progn (push problem *problems*)
                     (format *error-output* "~&mock: 400 ~a~%" problem)
                     (send-json-error sock 400 "invalid_request_error" problem))
-             (reply-for sock body)))))))
+             (let ((*current-headers* headers)) (reply-for sock body))))))))
 
 (defun serve (server)
   (loop

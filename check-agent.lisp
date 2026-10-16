@@ -70,6 +70,13 @@
 (defun pane-has (text)
   (format nil "(and (search ~s (lol.textview:tv-text (pane-tv (current-pane)))) t)" text))
 
+(defun ready-to-type ()
+  "Wait until the current conversation's turn has ended (its pane is read-only while
+   one streams, so keys typed then are lost), focus the transcript, caret to the end."
+  (wait-until "(not (conversation-busy-p *conversation*))" :seconds 30)
+  (probe "(progn (setf *editing-side* nil) (caret-to-end (current-pane)) t)")
+  (sleep 0.3))
+
 (defun checks ()
   (quiet-kernel-console)
   (check "the environment came up" (wait-for-browser 60))
@@ -91,9 +98,9 @@
          (string= (row "last marker present" (probe (pane-has "--- your turn"))) "T"))
   (check "usage and cost were counted"
          (string= (row "session cost > 0" (probe "(and (plusp (session-cost)) t)")) "T"))
-  ;; the tray item reads "<authority> <cost>" since ad35a9e (it said "agent ask")
+  ;; the word "agent" became the creature (DRAW-AGENT-ICON, §14.8¾): the text is "ask $0.01"
   (check "the tray shows the agent"
-         (string= (row "tray item" (probe "(and (eql 0 (search (string-downcase (string *agent-authority*)) (getf (agent-tray-item) :text))) t)")) "T"))
+         (string= (row "tray item" (probe "(let ((it (agent-tray-item))) (and (eq (getf it :icon) :agent) (search \"ask $\" (getf it :text)) t))")) "T"))
   (shot "agent-answer")
 
   (format t "~&~%== 2. a gated write: approve it from the chooser ==~%")
@@ -108,15 +115,54 @@
          (string= (row "the call's result" (wait-until "(let ((c (find \"lisp-eval\" (conversation-calls *conversation*) :key #'call-name :test #'string=))) (and c (eq (call-status c) :done) (search \"values: 42\" (call-result c)) t))")) "T"))
   (check "the model saw the result"
          (string= (row "pane quotes the tool's answer" (wait-until (pane-has "The tool answered: values: 42"))) "T"))
-  ;; since ad35a9e a finished call is FOLDED into one steps line ("N step(s) · <verb> N"),
-  ;; not a ;; #N line (that is *agent-steps-detail* :verbose); its verb is CALL-VERB's
-  (check "the call shows in the pane (its folded steps line)"
-         (string= (row "a steps line naming the call's verb" (probe "(let ((tx (lol.textview:tv-text (pane-tv (current-pane))))) (and (search \" step\" tx) (search (call-verb \"lisp-eval\") tx) t))")) "T"))
+  ;; folded into one steps line since the Activity panel (*agent-steps-detail*
+  ;; :concise, doc/agent.org §14.8¾); this asserted a ;; #0 line until then
+  (check "the call shows in the pane's steps line"
+         (string= (row "a steps line: evaluated 1" (probe (pane-has "evaluated 1"))) "T"))
+
+  (format t "~&~%== 2b. the tools of agent-tools.lisp ==~%")
+  (flet ((ask-for (question)
+           ;; the pane is read-only while a turn streams, so typing into it then is
+           ;; lost: wait for the last turn to end, caret to the draft, then type
+           (ready-to-type)
+           (qmp-type question) (sleep 0.3)
+           (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a"))
+         (last-call-of (name &optional (test "(eq (call-status c) :done)"))
+           (format nil "(let ((c (find ~s (conversation-calls *conversation*) :key #'call-name :test #'string= :from-end t))) (and c ~a t))"
+                   name test)))
+    (ask-for "inspectme please")
+    (check "lisp-inspect ran in the guest and listed the fields"
+           (string= (row "lisp-inspect result" (wait-until (last-call-of "lisp-inspect" "(eq (call-status c) :done) (search \"car\" (call-result c))"))) "T"))
+    (wait-until "(not (conversation-busy-p *conversation*))" :seconds 20)
+    (ask-for "applicable please")
+    (check "lisp-applicable showed the effective method"
+           (string= (row "lisp-applicable result" (wait-until (last-call-of "lisp-applicable" "(eq (call-status c) :done) (search \"primary\" (call-result c))"))) "T"))
+    (wait-until "(not (conversation-busy-p *conversation*))" :seconds 20)
+    (ask-for "browse please")
+    (check "browse put the senders view beside the conversation"
+           (string= (row "browse said where" (wait-until (last-call-of "browse" "(search \"beside the conversation\" (call-result c))"))) "T"))
+    (check "...as a 'shown to you' row of the Activity panel"
+           (string= (row "activity row"
+                         (wait-until "(let ((side (pane-side (current-pane)))) (and side (find-if (lambda (it) (search \"shown to you\" (or (item-group it) \"\"))) (view-items (pane-view side))) t))" :seconds 10))
+                    "T"))
+    (check "...and the focus did not move"
+           (string= (row "current pane still the conversation" (probe "(and (pane-conversation (current-pane)) t)")) "T"))
+    (shot "agent-browse")
+    (wait-until "(not (conversation-busy-p *conversation*))" :seconds 20)
+    (ask-for "fetchpage please")
+    (check "web-fetch is gated: it waits for approval"
+           (string= (row "web-fetch :waiting" (wait-until (last-call-of "web-fetch" "(eq (call-status c) :waiting)") :seconds 20)) "T"))
+    (sleep 1.5)
+    (qmp-key "1")                                   ; Allow
+    (check "allowed: the page came back as words"
+           (string= (row "web-fetch result" (wait-until (last-call-of "web-fetch" "(eq (call-status c) :done) (search \"Fish & chips\" (call-result c)) (not (search \"hidden\" (call-result c)))"))) "T"))
+    (row "idle again" (wait-until "(not (conversation-busy-p *conversation*))" :seconds 20)))
 
   (format t "~&~%== 3. C-g stops a slow answer ==~%")
+  (ready-to-type)
   (qmp-type "slow answer please") (sleep 0.3)
   (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a")
-  (wait-until (pane-has "word3") :seconds 20)
+  (row "the slow answer is streaming" (wait-until (pane-has "word3") :seconds 20))
   (qmp-chord "ctrl" "g")
   (check "stopped: the conversation is idle again"
          (string= (row "state" (wait-until "(conversation-state *conversation*)" :want ":IDLE" :seconds 15)) ":IDLE"))
@@ -219,6 +265,10 @@
          (string= (row "a debugger: conversation answered"
                        (wait-until "(let ((c (find-if (lambda (c) (search \"debugger:\" (conversation-title c))) *conversations*))) (and c (eq (conversation-state c) :idle) (plusp (length (conversation-turns c))) (turn-done (aref (conversation-turns c) 0)) t))" :seconds 40))
                   "T"))
+  (check "lisp-backtrace has the debugger's stack, copied when ASK was chosen"
+         (string= (row "a snapshot with frames"
+                       (probe "(let* ((c (find-if (lambda (c) (search \"debugger:\" (conversation-title c))) *conversations*)) (ctx (gethash c *conversation-debug-contexts*))) (and ctx (plusp (length (getf ctx :frames))) t))"))
+                  "T"))
   (check "it was seeded with the failing definition's source"
          (string= (row "the prompt carried source"
                        (probe "(let ((c (find-if (lambda (c) (search \"debugger:\" (conversation-title c))) *conversations*))) (and (search \"Source of\" (turn-prompt (aref (conversation-turns c) 0))) t))"))
@@ -229,6 +279,42 @@
   (qmp-chord "ctrl" "g") (sleep 1.5)                 ; abort: back to the Workspace
   (check "back in the environment after the debugger"
          (string= (row "status after abort" (probe "*browser-status*")) "\"aborted\""))
+
+  (format t "~&~%== 5b. a conversation survives power-off (LOL_GUEST_DISK only) ==~%")
+  (if (not (sb-posix:getenv "LOL_GUEST_DISK"))
+      (format t "~&  (skipped: no disk, so no /home to save into — LOL_GUEST_DISK=test-disk.img runs it)~%")
+      (progn
+        ;; the conversation section 1 began (titled by its first question)
+        (probe "(defun first-conv () (find \"hello guest\" *conversations* :key #'conversation-title :test #'string=))")
+        (check "the store is under the user's home"
+               (string= (row "conversation-store-dir" (probe "(and (conversation-store-dir) (search \"/home/\" (conversation-store-dir)) t)")) "T"))
+        (check "the first conversation was saved at the end of its turns"
+               (string= (row "its file is listed"
+                             (probe "(let ((f (getf (gethash (first-conv) *conversation-stores*) :file))) (and f (find f (saved-conversations) :key (lambda (e) (getf e :file)) :test #'equal) t))"))
+                        "T"))
+        (check "...as the user's file, mode 0600"
+               (string= (row "mode" (probe "(let ((p (path-join (conversation-store-dir) (getf (gethash (first-conv) *conversation-stores*) :file)))) (multiple-value-bind (ok dev ino mode) (sb-unix:unix-stat p) (declare (ignore dev ino)) (and ok (logand mode #o777))))"))
+                        "384"))                     ; #o600
+        ;; "power-off": this session forgets the conversation, only the file is left
+        (probe "(progn (defparameter cl-user::*forgotten* (first-conv)) (setf *conversations* (remove cl-user::*forgotten* *conversations*)) (remhash cl-user::*forgotten* *conversation-stores*) t)")
+        (qmp-hold "meta_l" "spc") (sleep 2.0)
+        (qmp-type "saved conversation hello guest") (sleep 1.5)
+        (shot "agent-spotter-saved")
+        (qmp-key "ret") (sleep 3.0)
+        (check "the Spotter reopened it, in a pane of its own"
+               (string= (row "a new conversation object in the pane"
+                             (probe "(let ((c (pane-conversation (current-pane)))) (and c (not (eq c cl-user::*forgotten*)) (member c *conversations*) t))"))
+                        "T"))
+        (check "...showing its earlier turns"
+               (string= (row "pane shows the first answer" (probe (pane-has "Hello from the mock"))) "T"))
+        (probe "(progn (caret-to-end (current-pane)) t)")
+        (qmp-type "hello again after the reboot") (sleep 0.3)
+        (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "a")
+        (check "...and it goes on: the next question is answered"
+               (string= (row "answered after reopening"
+                             (wait-until (pane-has "You asked: hello again after the reboot") :seconds 30))
+                        "T"))
+        (shot "agent-reopened")))
 
   (format t "~&~%== 6. what the guest sent ==~%")
   (check "the guest spoke through the image's own HTTP-REQUEST"
