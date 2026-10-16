@@ -26,6 +26,16 @@
 ;;;; that. Coordinates are WORLD pixels, not owner-relative (as in Squeak): hit-testing
 ;;;; and damage are then plain rectangle comparisons, with no transform stack.
 ;;;;
+;;;; SURFACES (doc/morphic.org §12.4). A surface is a morph that draws its subtree into
+;;;; a canvas of its OWN — a backing store — which the world's repair then copies onto
+;;;; the screen: a window, so that moving it is a copy and never a redraw. Inside a
+;;;; surface, morphs DRAW and TAKE EVENTS in the surface's coordinates (its top-left is
+;;;; their 0,0), while their BOUNDS stay world coordinates like every other morph's. So
+;;;; hit-testing and damage still compare plain rects, and a moved surface changes
+;;;; nothing in its canvas, nor in anything its morphs recorded about where they drew.
+;;;; MORPH-SURFACE names the surface a morph draws into (the world, for most), and
+;;;; MORPH-LOCAL-BOUNDS gives its bounds in that surface's coordinates.
+;;;;
 ;;;; A rectangle is a list (x y w h) throughout, as everywhere else in the shell.
 
 (defpackage :lol.morph
@@ -40,18 +50,24 @@
    #:draw-morph #:handle-event #:step-morph #:morph-affordances #:drop-morph
    #:add-morph #:remove-morph #:raise-morph #:morph-world #:morph-at #:morphs-at
    #:move-morph #:resize-morph #:set-morph-bounds #:morph-descendants #:morph-steps
+   #:morph-hit-p #:drawable-descendants #:morph-ancestors
+   ;; surfaces
+   #:surface #:surface-backing #:surface-damage #:surface-renders #:draw-surface-ground
+   #:surface-refresh #:morph-surface #:surface-origin #:morph-local-bounds #:to-world-rect
+   #:localize-event
    ;; damage
-   #:invalidate #:merge-damage #:note-painted
+   #:invalidate #:invalidate-local #:merge-damage #:note-painted
    ;; the world and the hand
    #:world #:make-world #:world-hand #:world-focus #:world-damage #:world-last-repair
    #:world-repairs #:world-damaged-p #:world-repair #:world-dispatch #:world-step
-   #:world-step-timeout #:world-after-dispatch #:world-painted
+   #:world-step-timeout #:world-after-dispatch #:world-painted #:world-paint
+   #:world-before-repair
    #:hand #:hand-x #:hand-y #:hand-capture #:hand-carrying #:hand-mode
    #:hand-grab-dx #:hand-grab-dy #:hand-pick-up #:hand-drop #:now-ms
    #:+max-damage-rects+
    ;; events
    #:event #:make-event #:event-kind #:event-key #:event-state #:event-x #:event-y
-   #:event-notches #:event-data))
+   #:event-notches #:event-data #:event-wx #:event-wy))
 
 (in-package :lol.morph)
 
@@ -167,17 +183,86 @@
   (:documentation "The hand let go of MORPH at X,Y (after a carry).")
   (:method ((m morph) world x y) (declare (ignore world x y)) nil))
 
+(defgeneric morph-hit-p (morph x y)
+  (:documentation "Is the world point X,Y ON this morph — for routing a press and for
+   the halo? Default: anywhere in its bounds. A morph can be under the pointer in less
+   than its bounds: a window's frame, which is drawn over the whole window, is hit only
+   at its resize grip.")
+  (:method ((m morph) x y) (rect-contains-point-p (morph-bounds m) x y)))
+
+;;; ---- surfaces ----------------------------------------------------------------
+;;; Defined here, before the functions below ask (typep … 'surface).
+
+(defclass surface (morph)
+  ((backing :initform nil :accessor surface-backing
+            :documentation "The canvas the subtree draws into, the surface's size; NIL
+   until first drawn (and again whenever the surface is resized).")
+   (damage  :initform :all :accessor surface-damage
+            :documentation "What of the backing store is wrong: a list of rects in the
+   surface's OWN coordinates, or :ALL. INVALIDATE on a morph inside fills it.")
+   (renders :initform 0 :accessor surface-renders
+            :documentation "How many times SURFACE-REFRESH drew anything into the backing
+   store — the tests' evidence that a moved window was copied, not redrawn."))
+  (:documentation "A morph that draws its subtree into a backing store of its own,
+   which the world then copies onto the screen (doc/morphic.org §12.4). Its
+   descendants draw and take events in its coordinates; their bounds stay world
+   coordinates. Moving it is a copy."))
+
+(defmethod morph-opaque-p ((s surface)) t)
+
+(defgeneric draw-surface-ground (surface canvas clip)
+  (:documentation "Paint SURFACE's own pixels, under its children, into its backing
+   CANVAS (surface coordinates; CLIP is the local rect being refreshed).")
+  (:method ((s surface) canvas clip) (declare (ignore canvas clip)) nil))
+
 (defun morph-world (m)
   "The world M lives in (walking owners), or NIL when it is not on screen."
   (loop for o = m then (morph-owner o)
         while o
         when (typep o 'world) return o))
 
+(defun morph-ancestors (m)
+  "M's owners, nearest first, the world last."
+  (loop for o = (morph-owner m) then (morph-owner o) while o collect o))
+
+(defun morph-surface (m)
+  "The surface M draws into: its nearest proper ancestor that is a SURFACE, else its
+   world (NIL off screen). A surface itself draws into the one around it."
+  (loop for o = (morph-owner m) then (morph-owner o)
+        while o
+        when (or (typep o 'surface) (typep o 'world)) return o))
+
+(defun surface-origin (m)
+  "(values X Y): where M's surface's 0,0 is on the screen — 0,0 for the world."
+  (let ((s (morph-surface m)))
+    (if (typep s 'surface)
+        (values (first (morph-bounds s)) (second (morph-bounds s)))
+        (values 0 0))))
+
+(defun morph-local-bounds (m)
+  "M's bounds in its surface's coordinates: where it draws, and where its events are."
+  (multiple-value-bind (ox oy) (surface-origin m)
+    (destructuring-bind (x y w h) (morph-bounds m)
+      (list (- x ox) (- y oy) w h))))
+
+(defun to-world-rect (m rect)
+  "RECT, given in M's surface coordinates, in world coordinates."
+  (multiple-value-bind (ox oy) (surface-origin m)
+    (destructuring-bind (x y w h) rect
+      (list (+ x ox) (+ y oy) w h))))
+
 (defun morph-descendants (m)
   "M's children and theirs, back to front (each child before its own children)."
   (loop for c in (morph-children m)
         collect c
         append (morph-descendants c)))
+
+(defun drawable-descendants (m)
+  "What M's repair draws itself, back to front: its descendants, but not past a
+   surface — a surface is listed, and draws its own subtree into its backing store."
+  (loop for c in (morph-children m)
+        collect c
+        unless (typep c 'surface) append (drawable-descendants c)))
 
 (defun add-morph (owner m)
   "Put M on top of OWNER's children, and mark its rect damaged."
@@ -212,11 +297,13 @@
   m)
 
 (defun morphs-at (m x y)
-  "Every morph under X,Y in M's tree, TOPMOST first (the order a click looks in)."
+  "Every morph under X,Y in M's tree, TOPMOST first (the order a click looks in). A
+   morph's children are looked for only inside its bounds; MORPH-HIT-P says whether
+   the morph itself is under the point."
   (let ((out '()))
     (labels ((walk (n)
                (when (rect-contains-point-p (morph-bounds n) x y)
-                 (push n out)
+                 (when (morph-hit-p n x y) (push n out))
                  (mapc #'walk (morph-children n)))))
       (mapc #'walk (morph-children m)))
     out))
@@ -281,8 +368,24 @@
 ;;; DATA is a plist for what only one backend knows (:tty T for a key that came from
 ;;; the console rather than the keyboard's evdev).
 
+;;; X,Y are in the coordinates of the morph handling the event — its surface's (§12.5):
+;;; the world's for most, a window's for the morphs inside one. WX,WY are the same
+;;; point on the SCREEN, for what must be placed there (a menu card, the halo); the
+;;; world fills them in when it routes the event.
+
 (defstruct event
-  kind key (state 0) (x 0) (y 0) (notches 0) data)
+  kind key (state 0) (x 0) (y 0) (notches 0) data wx wy)
+
+(defun localize-event (e m)
+  "E as morph M sees it: X,Y in M's surface's coordinates (E itself when they are the
+   world's)."
+  (multiple-value-bind (ox oy) (surface-origin m)
+    (if (and (zerop ox) (zerop oy))
+        e
+        (let ((c (copy-structure e)))
+          (setf (event-x c) (- (or (event-wx e) (event-x e)) ox)
+                (event-y c) (- (or (event-wy e) (event-y e)) oy))
+          c))))
 
 ;;; ---- the hand -----------------------------------------------------------------
 
@@ -363,13 +466,30 @@
   (apply #'make-instance 'world :bounds (list 0 0 w h) initargs))
 
 (defun invalidate (m &optional rect)
-  "Say that RECT (default: M's bounds) is wrong on screen. Cut to the world; a morph
-   that is not on screen invalidates nothing."
+  "Say that RECT (world coordinates; default: M's bounds) is wrong on screen. Cut to
+   the world; a morph that is not on screen invalidates nothing. Inside a surface it is
+   wrong in the surface's backing store too: each surface around M is told which part
+   of it (in its own coordinates) to draw again before it is next copied."
   (let ((w (if (typep m 'world) m (morph-world m))))
     (when w
       (let ((r (rect-intersect (or rect (morph-bounds m)) (morph-bounds w))))
-        (when r (push r (world-damage w))))))
+        (when r
+          (push r (world-damage w))
+          (unless (typep m 'world)
+            (dolist (s (morph-ancestors m))
+              (when (typep s 'surface)
+                (let ((sr (rect-intersect r (morph-bounds s))))
+                  (when (and sr (listp (surface-damage s)))
+                    (destructuring-bind (sx sy sw sh) (morph-bounds s)
+                      (declare (ignore sw sh))
+                      (push (list (- (first sr) sx) (- (second sr) sy) (third sr) (fourth sr))
+                            (surface-damage s))))))))))))
   nil)
+
+(defun invalidate-local (m rect)
+  "INVALIDATE RECT given in M's surface coordinates — a rect M recorded while drawing
+   (a stage's body, a terminal's rows)."
+  (invalidate m (to-world-rect m rect)))
 
 (defun world-damaged-p (world) (and (world-damage world) t))
 
@@ -407,36 +527,104 @@
         (values (list screen) t)
         (values rs nil))))
 
+;;; ---- repair --------------------------------------------------------------------
+;;; One algorithm, used twice: for the screen (WORLD-REPAIR) and for a surface's
+;;; backing store (SURFACE-REFRESH). For each damaged rect: clip to it, and draw the
+;;; morphs that overlap it, back to front — starting from the topmost OPAQUE one that
+;;; covers the whole rect, since nothing beneath that one can show.
+
+(defvar *repair-drawn* nil
+  "While a repair runs, ((MORPH . TIMES) …): every morph that drew, inside surfaces
+   too — what LAST-REPAIR's :DRAWN reports.")
+
+(defun note-draw (m)
+  (incf (morph-draws m))
+  (let ((e (assoc m *repair-drawn*)))
+    (if e (incf (cdr e)) (push (cons m 1) *repair-drawn*))))
+
+(defun from-cover (over r)
+  "OVER (morphs overlapping world rect R, back to front) from the topmost opaque one
+   that covers R; all of them when none does."
+  (let ((base (position-if (lambda (m) (and (morph-opaque-p m) (rect-contains-p (morph-bounds m) r)))
+                           over :from-end t)))
+    (if base (nthcdr base over) over)))
+
+(defun covered-p (todo r)
+  "Does the first morph of TODO (FROM-COVER's answer) cover world rect R opaquely?"
+  (and todo (morph-opaque-p (first todo)) (rect-contains-p (morph-bounds (first todo)) r)))
+
+(defun surface-render (s canvas rects)
+  "Draw S's subtree into CANVAS (S-sized, S's coordinates) in each of RECTS (local):
+   S's ground — unless an opaque child covers the rect — then the morphs overlapping it."
+  (destructuring-bind (sx sy w h) (morph-bounds s)
+    (declare (ignore w h))
+    (let ((inside (drawable-descendants s)))
+      (dolist (r rects)
+        (let* ((wr (list (+ sx (first r)) (+ sy (second r)) (third r) (fourth r)))
+               (todo (from-cover (remove-if-not (lambda (m) (rect-overlap-p (morph-bounds m) wr)) inside)
+                                 wr)))
+          (destructuring-bind (x y cw ch) r
+            (lol.canvas:with-clip (canvas x y cw ch)
+              (unless (covered-p todo wr) (draw-surface-ground s canvas r))
+              (dolist (m todo) (note-draw m) (draw-morph m canvas r)))))))))
+
+(defun surface-refresh (s)
+  "Bring S's backing store up to date — draw again what its damage says is wrong (all
+   of it when the store is new or S changed size) — and return it."
+  (destructuring-bind (sx sy w h) (morph-bounds s)
+    (declare (ignore sx sy))
+    (let ((c (surface-backing s)) (w (max 1 w)) (h (max 1 h)))
+      (unless (and c (= (lol.canvas:canvas-w c) w) (= (lol.canvas:canvas-h c) h))
+        (setf c (setf (surface-backing s) (lol.canvas:make-canvas w h))
+              (surface-damage s) :all))
+      (let* ((d (shiftf (surface-damage s) '()))
+             (rects (if (eq d :all) (list (list 0 0 w h)) (merge-damage d (list 0 0 w h)))))
+        (when rects
+          (incf (surface-renders s))
+          (surface-render s c rects)))
+      c)))
+
+(defmethod draw-morph ((s surface) canvas clip)
+  "A surface on the screen: refresh its backing store, then copy it (clipped)."
+  (declare (ignore clip))
+  (let ((b (surface-refresh s)))
+    (destructuring-bind (x y w h) (morph-local-bounds s)
+      (declare (ignore w h))
+      (lol.canvas:blit-canvas canvas b x y))))
+
+(defgeneric world-before-repair (world)
+  (:documentation "Called first thing by WORLD-REPAIR and WORLD-PAINT: the world's chance
+   to bring its tree in line with whatever changed since (the desk lays out its panes
+   and damages what changed — poc/morphic.lisp).")
+  (:method ((w world)) nil))
+
 (defun world-repair (world canvas)
   "Redraw every damaged rect of WORLD into CANVAS, and only those: for each merged
    rect, clip to it and draw the morphs that overlap it, back to front — starting
    from the topmost OPAQUE morph that covers the whole rect, since nothing beneath
-   that one can show. Before that, the rects a morph painted itself (NOTE-PAINTED)
-   get only what lies above that morph — FIRST, because a damaged rect is drawn whole
-   and anything composited over it afterwards would be composited twice (a scrim
-   dimmed twice). Returns (values RECTS FULL-P): what the backend must now send to the
-   screen (all of it when FULL-P). Nothing to do: (values NIL NIL)."
+   that one can show (a surface among them refreshes its own backing store first, the
+   same way, and is copied). Before that, the rects a morph painted itself
+   (NOTE-PAINTED) get only what lies above that morph — FIRST, because a damaged rect
+   is drawn whole and anything composited over it afterwards would be composited
+   twice (a scrim dimmed twice). Returns (values RECTS FULL-P): what the backend must
+   now send to the screen (all of it when FULL-P). Nothing to do: (values NIL NIL)."
+  (world-before-repair world)
   (let ((damage (shiftf (world-damage world) '()))
         (painted (shiftf (world-painted world) '())))
     (if (and (null damage) (null painted))
         (values nil nil)
       (multiple-value-bind (rects full)
           (if damage (merge-damage damage (morph-bounds world)) (values '() nil))
-        (let ((t0 (get-internal-real-time)) (drawn '()) (per-rect '()) (sent '())
-              (all (morph-descendants world)))
+        (let ((t0 (get-internal-real-time)) (per-rect '()) (sent '())
+              (*repair-drawn* '())
+              (all (drawable-descendants world)))
           (flet ((draw-in (r todo &optional (record t))
                    (when record (push (cons r todo) per-rect))
                    (destructuring-bind (x y w h) r
                      (lol.canvas:with-clip (canvas x y w h)
                        (dolist (m todo)
-                         (incf (morph-draws m))
-                         (let ((e (assoc m drawn))) (if e (incf (cdr e)) (push (cons m 1) drawn)))
-                         (draw-morph m canvas r)))))
-                 (from-cover (over r)
-                   (let ((base (position-if (lambda (m) (and (morph-opaque-p m)
-                                                             (rect-contains-p (morph-bounds m) r)))
-                                            over :from-end t)))
-                     (if base (nthcdr base over) over))))
+                         (note-draw m)
+                         (draw-morph m canvas r))))))
             (unless full
               (loop for (r . below) in (reverse painted)
                     unless (some (lambda (d) (rect-contains-p d r)) rects)
@@ -456,14 +644,33 @@
                   (list :rects rects :full full :painted sent
                         :ms (/ (round (* 10000 (- (get-internal-real-time) t0))
                                       internal-time-units-per-second) 10.0)
-                        :drawn (nreverse drawn) :per-rect (nreverse per-rect))))
+                        :drawn (reverse *repair-drawn*) :per-rect (nreverse per-rect))))
           (values (append rects sent) full))))))
 
+(defun world-paint (world canvas &key (exclude (constantly nil)) fresh)
+  "Draw WORLD whole into CANVAS, back to front, leaving its damage alone — what a modal
+   card's backdrop wants (EXCLUDE says which morphs to leave out: the overlays), and,
+   with FRESH, what a test compares an incrementally repaired screen with: every
+   surface drawn again from scratch into a canvas of its own, instead of copying a
+   backing store whose damage might have been missed."
+  (world-before-repair world)
+  (destructuring-bind (x y w h) (morph-bounds world)
+    (lol.canvas:with-clip (canvas x y w h)
+      (dolist (m (drawable-descendants world))
+        (unless (funcall exclude m)
+          (if (and fresh (typep m 'surface))
+              (destructuring-bind (sx sy sw sh) (morph-local-bounds m)
+                (let ((c (lol.canvas:make-canvas (max 1 sw) (max 1 sh))))
+                  (surface-render m c (list (list 0 0 sw sh)))
+                  (lol.canvas:blit-canvas canvas c sx sy)))
+              (draw-morph m canvas (list x y w h))))))))
+
 (defun bubble (m event)
-  "Offer EVENT to M, then to each owner in turn, until one consumes it."
+  "Offer EVENT to M, then to each owner in turn, until one consumes it — each in its
+   own surface's coordinates (LOCALIZE-EVENT)."
   (loop for n = m then (morph-owner n)
         while n
-        for r = (handle-event n event)
+        for r = (handle-event n (localize-event event n))
         when r return r))
 
 (defgeneric world-after-dispatch (world event)
@@ -479,6 +686,9 @@
    capture), and while the hand CARRIES a morph, the pointer moves it instead.
    Returns what the consuming HANDLE-EVENT returned (:QUIT to leave)."
   (let ((hand (world-hand world)) (kind (event-kind event)))
+    ;; the event's screen point, kept whatever coordinates a morph later sees it in
+    (unless (event-wx event)
+      (setf (event-wx event) (event-x event) (event-wy event) (event-y event)))
     (unless (member kind '(:key :menu))
       (setf (hand-x hand) (event-x event) (hand-y hand) (event-y event)))
     (prog1

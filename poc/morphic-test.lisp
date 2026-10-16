@@ -83,6 +83,92 @@
   (loop for (r . morphs) in (getf (lol.morph:world-last-repair *world*) :per-rect)
         when (member (desk-shell *world*) morphs) sum (lol.morph:rect-area r)))
 
+;;; ---- the core alone: a surface, with plain morphs (doc/morphic.org §12.4) ---------
+
+(defclass box (lol.morph:morph)
+  ((color :initarg :color :reader box-color)
+   (seen :initform '() :accessor box-seen))
+  (:documentation "A test morph: fills its bounds — its LOCAL bounds, so inside a
+   surface it paints in the surface's coordinates — and records the events it got."))
+(defmethod lol.morph:morph-opaque-p ((b box)) t)
+(defmethod lol.morph:draw-morph ((b box) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds b)
+    (lol.canvas:fill-rect canvas x y w h (box-color b))))
+(defmethod lol.morph:handle-event ((b box) e)
+  (push (list (lol.morph:event-x e) (lol.morph:event-y e) (lol.morph:event-wx e) (lol.morph:event-wy e))
+        (box-seen b))
+  t)
+(defclass test-surface (lol.morph:surface) ())
+(defmethod lol.morph:draw-surface-ground ((s test-surface) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-bounds s)
+    (declare (ignore x y))
+    (lol.canvas:fill-rect canvas 0 0 w h #x202020)))
+(defclass grip-only (box) ()
+  (:documentation "Under the pointer only in its bottom-right 10x10 (MORPH-HIT-P)."))
+(defmethod lol.morph:morph-opaque-p ((b grip-only)) nil)
+(defmethod lol.morph:draw-morph ((b grip-only) canvas clip)
+  (declare (ignore clip))
+  (destructuring-bind (x y w h) (lol.morph:morph-local-bounds b)
+    (lol.canvas:fill-rect canvas (+ x w -10) (+ y h -10) 10 10 (box-color b))))
+(defmethod lol.morph:morph-hit-p ((b grip-only) x y)
+  (destructuring-bind (bx by w h) (lol.morph:morph-bounds b)
+    (and (>= x (+ bx w -10)) (>= y (+ by h -10)) (< x (+ bx w)) (< y (+ by h)))))
+
+(format t "~&== the core: a surface with morphs inside ==~%")
+(let* ((world (lol.morph:make-world 400 300))
+       (ground (make-instance 'box :color #x111111 :bounds (list 0 0 400 300)))
+       (s (make-instance 'test-surface :bounds (list 100 100 200 150)))
+       (child (make-instance 'box :color #xAA0000 :bounds (list 120 130 50 40)))
+       (corner (make-instance 'grip-only :color #x00AA00 :bounds (list 100 100 200 150)))
+       (screen (lol.canvas:make-canvas 400 300))
+       (fresh (lol.canvas:make-canvas 400 300)))
+  (lol.morph:add-morph world ground)
+  (lol.morph:add-morph world s)
+  (lol.morph:add-morph s child)
+  (lol.morph:add-morph s corner)
+  (flet ((px (c x y) (aref (lol.canvas:canvas-pixels c) (+ (* y 400) x)))
+         (right () (lol.morph:world-repair world screen)
+                   (lol.canvas:fill-rect fresh 0 0 400 300 #x123456)
+                   (lol.morph:world-paint world fresh :fresh t)
+                   (equalp (lol.canvas:canvas-pixels screen) (lol.canvas:canvas-pixels fresh))))
+    (lol.morph:world-repair world screen)
+    (check "inside a surface a morph draws in the surface's coordinates"
+           (and (= (px screen 125 135) #xAA0000) (= (px screen 105 105) #x202020)
+                (= (px screen 50 50) #x111111)))
+    (check "... its local bounds are its bounds less the surface's corner"
+           (equal (lol.morph:morph-local-bounds child) '(20 30 50 40)))
+    (let ((r0 (lol.morph:surface-renders s)))
+      (lol.morph:move-morph s 140 120)
+      (lol.morph:world-repair world screen)
+      (check "a moved surface is copied, not drawn again"
+             (= r0 (lol.morph:surface-renders s)))
+      (check "... its morphs' bounds moved with it, their local bounds did not"
+             (and (equal (lol.morph:morph-bounds child) '(160 150 50 40))
+                  (equal (lol.morph:morph-local-bounds child) '(20 30 50 40))))
+      (check "... and the screen is right" (right)))
+    (let ((r0 (lol.morph:surface-renders s)))
+      (lol.morph:invalidate child)
+      (lol.morph:world-repair world screen)
+      (check "a morph inside invalidated: the surface draws again, in that rect only"
+             (and (= (1+ r0) (lol.morph:surface-renders s))
+                  (equal (getf (lol.morph:world-last-repair world) :rects) (list (lol.morph:morph-bounds child)))
+                  (assoc child (getf (lol.morph:world-last-repair world) :drawn))
+                  (not (assoc ground (getf (lol.morph:world-last-repair world) :drawn)))))
+      (check "... and the screen is right" (right)))
+    (lol.morph:world-dispatch world (lol.morph:make-event :kind :down :x 170 :y 160))
+    (check "an event reaches a morph in its surface's coordinates, with its screen point"
+           (equal (first (box-seen child)) '(30 40 170 160)))
+    (lol.morph:world-dispatch world (lol.morph:make-event :kind :down :x 335 :y 265))
+    (check "MORPH-HIT-P: a morph is under the pointer only where it says"
+           (and (equal (first (box-seen corner)) '(195 145 335 265))
+                (eq (lol.morph:morph-at world 250 200) s)))
+    (lol.morph:set-morph-bounds s (list 90 80 260 190))
+    (check "a resized surface draws all of itself again, and the screen is right"
+           (let ((r0 (lol.morph:surface-renders s)))
+             (and (right) (> (lol.morph:surface-renders s) r0))))))
+
 ;;; ---------------------------------------------------------------------------
 
 (open-environment (parse-subject "modules"))   ; tab 1 the module index, tab 2 a Workspace
