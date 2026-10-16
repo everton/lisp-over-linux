@@ -1229,6 +1229,13 @@
     (setf *tray-rect* (list x0 0 tw (- +bar-h+ 1)))
     x0))
 
+(defvar *trail-windowed-p* nil
+  "A function (TRAIL) -> true when TRAIL is shown in a window of its own rather than
+   in the tab strip (poc/morphic.lisp installs it). NIL: no windows, every trail tiled.")
+
+(defun trail-windowed-p (trail)
+  (and *trail-windowed-p* (funcall *trail-windowed-p* trail)))
+
 (defun draw-tabs (canvas w)
   "The top tab strip: one tab per open trail, each with a kind-coloured stripe and its
    SuperL-number badge; the active one is highlighted (brighter bg + accent top-rule +
@@ -1246,7 +1253,11 @@
           for title = (format nil "~a " (clip-text (trail-title trail) 16))
           for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
           for tw = (+ lw (if closer (+ (char-w) 8) 0))   ; the x box
-          while (< (+ x tw) (- w (+ (char-w) 20) (tray-width)))  ; room for the + button and the tray
+          while (or (trail-windowed-p trail)       ; a window's trail takes no room here
+                    (< (+ x tw) (- w (+ (char-w) 20) (tray-width))))  ; room for the + button and the tray
+          ;; a trail torn off into a window (doc/morphic.org §5) has no tab: its title
+          ;; bar is its tab. It keeps its NUMBER, so SuperL-N still reaches it.
+          unless (trail-windowed-p trail)
           do (progn
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
                (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
@@ -1432,6 +1443,10 @@
        (let ((sel (selected-item pane)))
          (and sel (item-subject sel)))))
 
+(defvar *status-pane* nil
+  "The pane whose keys the status line advertises, when that is not the tiled shell's
+   current pane — a focused WINDOW's (poc/morphic.lisp). NIL: the current pane.")
+
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
   (setf *split-x* nil)
@@ -1440,18 +1455,28 @@
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   ;; the tab strip replaces the old static title bar
   (draw-tabs canvas w)
+  ;; the focused trail's breadcrumbs and pane, between the strip and the status line
+  (draw-trail-area canvas w h (+ +bar-h+ 4) (+ (status-h) 2))
+  (draw-status-line canvas w h (or *status-pane* (current-pane))))
+
+(defun draw-trail-area (canvas w h top bottom)
+  "The focused trail, W x H, from y TOP down to BOTTOM pixels short of the bottom
+   edge: its ancestors as breadcrumb bars, then its current pane expanded in a panel
+   (split when the view asks). The body of the tiled shell — and, since Morphic, of a
+   trail torn off into a window (poc/morphic.lisp), which calls this into a canvas of
+   its own with its title bar above and no status line below."
   (let* ((ancestors (butlast (current-trail)))
          (cur (current-pane))
-         (y (+ +bar-h+ 4)))
+         (y top))
     ;; ancestor breadcrumb bars
     (loop for p in ancestors for i from 0
           do (draw-crumb canvas y w p i) (incf y (+ +bar-h+ 3)))
     ;; the expanded current pane
-    (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 (status-h) 2)))
+    (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 bottom)))
       (setf *content-top* body-y)                 ; remember it for click hit-testing
-      (note-drawn 8 y (- w 16) (- h y (status-h) 2) cur '(draw-pane-body lol.widgets:draw-panel)
+      (note-drawn 8 y (- w 16) (- h y bottom) cur '(draw-pane-body lol.widgets:draw-panel)
                   (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
-      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y (status-h) 2)
+      (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y bottom)
                               ;; when the pane is about to split, its title owns only
                               ;; the left half: the right one carries the preview's
                               ;; own title on the same line, and a long path in the
@@ -1544,8 +1569,15 @@
                  (lol.canvas:draw-string canvas *bfont* "(no preview)"
                                          prev-x (+ body-y 4) *ui-dim*))))
           ;; single pane, full width (source / matrix / a list with nothing to preview)
-          (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))
-    (draw-status-line canvas w h cur)))
+          (t (draw-pane-body canvas cur 12 body-y (- w 24) body-h)))))))
+
+(defvar *backdrop-fn* nil
+  "A function (CANVAS W H) that draws what a modal card floats over — the whole screen
+   as the world shows it, windows included (poc/morphic.lisp). NIL: DRAW-BROWSER.")
+
+(defun draw-backdrop (canvas w h)
+  "The page behind a floating card (the Spotter, a menu, the halo, the clipboard)."
+  (if *backdrop-fn* (funcall *backdrop-fn* canvas w h) (draw-browser canvas w h)))
 
 (defun draw-status-line (canvas w h cur)
   "The bottom line: the last message, or the keys that matter for the pane CUR."
@@ -1711,7 +1743,7 @@
    line, the results with the matched characters lit, and a footer of what the keys do.
    RESULTS must already be banded (see SPOTTER-RESULTS) — this only draws. Records
    *spotter-rect* / *spotter-hits* so a click routes to the row actually painted there."
-  (draw-browser canvas w h)                          ; the browser, as backdrop …
+  (draw-backdrop canvas w h)                         ; the browser, as backdrop …
   (let* ((rows   (spotter-rows results query))
          (cw     (min (* 130 (char-w)) (- w 80)))   ; 780 at 6x15
          (cx     (floor (- w cw) 2))
@@ -3120,7 +3152,7 @@
 (defun draw-context-menu (canvas w h entries sel x y)
   "The browser, then the right-button menu as a card whose corner is at X,Y — moved
    left/up when it would run off the screen, the way every desktop does it."
-  (draw-browser canvas w h)
+  (draw-backdrop canvas w h)
   (let* ((rows (entry-rows entries))
          (nslots (+ (length rows)
                     (length (remove-duplicates (map 'list #'lol.widgets:row-group rows)
@@ -3373,7 +3405,7 @@
    while the rest dims — its handles hung off a small element's outline, or ringed
    round CX,CY on a large one (a dot per handle, coloured by what it opens: code, an
    instance, a view), and the caption naming the layers."
-  (draw-browser canvas w h)
+  (draw-backdrop canvas w h)
   (let* ((layer (setf *halo-layer* (nth depth layers)))
          (rect (and (getf layer :rect) (clamp-rect (getf layer :rect) w h)))
          (n (length entries))
@@ -3775,7 +3807,7 @@
   "The browser, dimmed, and the history as a card: the filter line, one row per
    entry (newest first, numbered by its place in the history), the current one
    marked. RESULTS is (INDEX . STRING) pairs from CLIP-FILTER."
-  (draw-browser canvas w h)
+  (draw-backdrop canvas w h)
   (let* ((cw (min (+ 40 (* 120 (char-w))) (- w 80)))      ; 760 at 6x15
          (cx (floor (- w cw) 2))
          (cy (+ +bar-h+ 14))

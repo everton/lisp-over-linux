@@ -921,7 +921,7 @@
         (dolist (p (conversation-panes conv)) (ignore-errors (refresh-conversation-pane p conv))))
       (ignore-errors
         (when (boundp '*fb-canvas*)
-          (draw-browser (symbol-value '*fb-canvas*) (symbol-value '*fb-xres*) (symbol-value '*fb-yres*))))
+          (draw-backdrop (symbol-value '*fb-canvas*) (symbol-value '*fb-xres*) (symbol-value '*fb-yres*))))
       (let* ((w (if (boundp '*fb-xres*) (symbol-value '*fb-xres*) 1280))
              (h (if (boundp '*fb-yres*) (symbol-value '*fb-yres*) 800))
              (e (funcall *chooser* :menu entries (floor w 3) (floor h 3))))

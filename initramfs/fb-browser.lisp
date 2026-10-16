@@ -1232,6 +1232,7 @@
   (draw-tray canvas w)
   (when *tray-rect*
     (destructuring-bind (x y tw th) *tray-rect*
+      (recomposite-windows canvas (list *tray-rect*))   ; a window over the tray stays on top
       (lol.fb:present-fb-rect canvas x y tw th)
       (when (and *fb-mouse* (not *cursor-hidden*)
                  (< (- x +cursor-w+) *cursor-x* (+ x tw))
@@ -1374,6 +1375,7 @@
    that can be updated this way; the caller then redraws the whole frame."
   (let ((rects (terminal-paint-dirty canvas)))
     (when rects
+      (recomposite-windows canvas rects)                ; a window over the rows stays on top
       (dolist (r rects) (apply #'lol.fb:present-fb-rect canvas r))
       (when (and *fb-mouse* (not *cursor-hidden*)
                  (some (lambda (r) (destructuring-bind (x y w h) r
@@ -1552,7 +1554,10 @@
                            (when (and ms (not (lol.morph:world-damaged-p *world*))
                                       (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
                              (move-cursor canvas ox oy)
-                             (fb-service-call :motion *cursor-x* *cursor-y*)))
+                             ;; (a page in a WINDOW gets no hover: the services see
+                             ;; the shell's geometry, and its page rect is not that)
+                             (unless (focused-window)
+                               (fb-service-call :motion *cursor-x* *cursor-y*))))
                          ;; a run's reader thread may have collected output: copy it
                          ;; into its pane (cheap when nothing changed — a compare)
                          (when (tick-runs) (environment-changed))
@@ -1561,9 +1566,16 @@
                          (when (or kb ms kev) (terminal-sweep))
                          ;; the services (a web page's frames, …): every turn, since
                          ;; they also react to what input just did (a click's page)
+                         ;; With a WINDOW focused they are told a full redraw is
+                         ;; coming, so none of them paints a fast path of its own:
+                         ;; their geometry is the shell's, and the focused pane is
+                         ;; not in the shell. A window showing something live is
+                         ;; redrawn whenever a service's fd woke the poll.
                          (when (member :redraw (fb-service-call :run canvas
-                                                                (lol.morph:world-damaged-p *world*)))
+                                                                (or (lol.morph:world-damaged-p *world*)
+                                                                    (focused-window))))
                            (environment-changed))
+                         (when xs (service-woke))
                          ;; Nothing was ready: a deadline fired. Which one? A running
                          ;; stage advances the world; an idle pointer hides.
                          (unless (or kb ms kev xs)
@@ -2155,6 +2167,18 @@
      ("Super-w"            "close the current tab")
      ("Super-o"            "focus list <-> side pane")
      ("Super-Left"         "back in the trail"))
+    ("Windows  (doc/morphic.org)"
+     ("Super-g"            "tear this tab off into a window;")
+     (""                   "  on a window: grab it (keys below)")
+     ("  arrows / S-arrows" "move it a cell / eight cells")
+     ("  C-arrows"         "resize it")
+     ("  t / Super-g"      "re-tile: back into the tab strip")
+     ("  Enter / Esc"      "done grabbing")
+     ("drag a tab down"    "tear it off, carried by the pointer")
+     ("drag the title bar" "move;  drop it on the tabs: re-tile")
+     ("drag the corner"    "resize")
+     ("click x / Super-w"  "close the window's trail")
+     ("Super-Tab / 1..9"   "reach windows too (raises them)"))
     ("Text size  (doc/fonts.org)"
      ("Super-= / Super-+"  "bigger text, everywhere")
      ("Super--"            "smaller text")

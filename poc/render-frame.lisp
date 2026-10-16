@@ -514,7 +514,10 @@ OPTIONS
               out w h (view-title (pane-view (current-pane))) script))
     0))
 
-(handler-case (sb-ext:exit :code (main (rest sb-ext:*posix-argv*)))
-  (serious-condition (c)
-    (format *error-output* "~&render-frame: ~a~%" c)
-    (sb-ext:exit :code 1)))
+;; A host test may LOAD this file for its stack and helpers (poc/morphic-test.lisp)
+;; by binding CL-USER::*RENDER-FRAME-LIBRARY* first: then there is no main.
+(unless (and (boundp '*render-frame-library*) (symbol-value '*render-frame-library*))
+  (handler-case (sb-ext:exit :code (main (rest sb-ext:*posix-argv*)))
+    (serious-condition (c)
+      (format *error-output* "~&render-frame: ~a~%" c)
+      (sb-ext:exit :code 1))))

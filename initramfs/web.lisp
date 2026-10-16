@@ -1588,6 +1588,9 @@ window.__lolPickerApply = function(id, v){
   (let ((tab (web-visible-tab)))
     (when (and tab *web-page-rect* (web-tab-frame-px tab))
       (web-blit canvas tab)
+      ;; a window over the page stays on top (poc/morphic.lisp)
+      (when (fboundp 'recomposite-windows)
+        (funcall 'recomposite-windows canvas (list *web-page-rect*)))
       (destructuring-bind (x y w h) *web-page-rect*
         ;; by name: lol.fb (poc/fb.lisp) exists in the image, not in a host test
         (funcall (find-symbol "PRESENT-FB-RECT" "LOL.FB") canvas x y w h)

@@ -326,7 +326,8 @@
            :documentation "Rects invalidated since the last repair, newest first.")
    (last-repair :initform nil :accessor world-last-repair
                 :documentation "What the last WORLD-REPAIR did: (:rects R :full F :ms MS
-   :drawn ((morph . times) …)) — for the tests and for measuring.")
+   :drawn ((morph . times) …) :per-rect ((rect morph …) …)) — for the tests and for
+   measuring: which morphs drew, and in which rect.")
    (repairs :initform 0 :accessor world-repairs
             :documentation "How many repairs drew anything, ever."))
   (:documentation "The root morph: the screen. Its children are the z-order."))
@@ -376,7 +377,7 @@
     (if (null damage)
         (values nil nil)
       (multiple-value-bind (rects full) (merge-damage damage (morph-bounds world))
-        (let ((t0 (get-internal-real-time)) (drawn '())
+        (let ((t0 (get-internal-real-time)) (drawn '()) (per-rect '())
               (all (morph-descendants world)))
           (dolist (r rects)
             (let* ((over (remove-if-not (lambda (m) (rect-overlap-p (morph-bounds m) r)) all))
@@ -384,6 +385,7 @@
                                                        (rect-contains-p (morph-bounds m) r)))
                                       over :from-end t))
                    (todo (if base (nthcdr base over) over)))
+              (push (cons r todo) per-rect)
               (destructuring-bind (x y w h) r
                 (lol.canvas:with-clip (canvas x y w h)
                   (dolist (m todo)
@@ -395,7 +397,7 @@
                 (list :rects rects :full full
                       :ms (/ (round (* 10000 (- (get-internal-real-time) t0))
                                     internal-time-units-per-second) 10.0)
-                      :drawn (nreverse drawn)))
+                      :drawn (nreverse drawn) :per-rect (nreverse per-rect)))
           (values rects full))))))
 
 (defun bubble (m event)

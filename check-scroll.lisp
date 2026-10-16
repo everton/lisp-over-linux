@@ -83,7 +83,10 @@
   ;; Reach a LONG definition on purpose, through the Spotter — see the header.
   (format t "~&~%== B. source pane (a long definition, via the Spotter) ==~%")
   (qmp-hold "meta_l" "spc") (sleep 2.0)
-  (qmp-type "draw-brow") (sleep 1.5)
+  ;; a definition LONGER than the pane, or the wheel has nothing to scroll: this was
+  ;; DRAW-BROWSER until Morphic step 2 cut it to a few lines (its body is now
+  ;; DRAW-TRAIL-AREA), and the wheel checks failed for want of text, not of scrolling
+  (qmp-type "draw-trail-are") (sleep 1.5)
   (qmp-key "ret") (sleep 3.5)
   (let ((b0 (state "fresh source")))
     (qmp-wheel "down" 3) (sleep 0.5)
