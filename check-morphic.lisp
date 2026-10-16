@@ -1,4 +1,4 @@
-;;;; check-morphic.lisp — the World, in the booted guest (doc/morphic.org, steps 1–2).
+;;;; check-morphic.lisp — the World, in the booted guest (doc/morphic.org, steps 1–5).
 ;;;;
 ;;;;     sbcl --script check-morphic.lisp        ; LOL_PORT=4111 to run beside another
 ;;;;
@@ -23,6 +23,20 @@
 ;;;; C. A live pane in a window: a terminal (on a diskless guest it runs the image's
 ;;;;    own REPL) torn off; keys reach its program, the answer comes back through the
 ;;;;    terminal service and redraws the window; SuperL-w closes it and hangs it up.
+;;;;
+;;;; D. The halo acts on the window (step 3): the middle button and Up reach its layer;
+;;;;    Move and Resize follow QEMU's pointer with no button held and a click / Return
+;;;;    puts it down; Inspect, the BOUNDS row, C-c C-c and a typed list move it, and the
+;;;;    screendump shows it there; the handles are in the cheatsheet.
+;;;;
+;;;; E. The overlays are morphs (step 4): the old modal loops are gone; a terminal
+;;;;    printing on its own keeps printing behind an open Spotter and an open menu (the
+;;;;    screendump shows its grid changing under the menu); keys reach the overlay.
+;;;;
+;;;; F. Stepping (step 5): idle, the loop turns about once a second (the clock); a
+;;;;    running stage steps by itself and each of its repairs is its body alone; paused,
+;;;;    the step deadline is -1 again. Prints what a body-only step costs against a full
+;;;;    repair.
 ;;;;
 ;;;; Evidence is read back over the net REPL — the world's own counters (each morph's
 ;;;; MORPH-DRAWS, the world's LAST-REPAIR) — and input is real: QMP keys and pointer
@@ -308,12 +322,213 @@
       (check "SuperL-w in the window closes its trail and hangs the terminal up"
              (and n nw (eql n1 (1- n)) (eql nw1 (1- nw)) (string= left "NIL"))))))
 
+;;; ---- steps 3-5 -------------------------------------------------------------------
+
+(defun type-expr (string)
+  "Type STRING, the parentheses as the Shift chords a keyboard makes of them."
+  (loop for ch across string
+        do (case ch
+             (#\( (qmp-hold "shift" "9"))
+             (#\) (qmp-hold "shift" "0"))
+             (t (qmp-type (string ch))))
+           (sleep 0.05)))
+
+(defun halo-to-window ()
+  "Open the halo with QEMU's middle button where the pointer is, and walk OUT (Up)
+   until it is about the window. -> T when it got there."
+  (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"middle\"}}")
+  (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"middle\"}}")
+  (sleep 1.2)
+  (loop repeat 12
+        until (string= (probe "(type-of (getf *halo-layer* :object))") "TRAIL-WINDOW")
+        do (qmp-key "up") (sleep 0.5))
+  (string= (probe "(type-of (getf *halo-layer* :object))") "TRAIL-WINDOW"))
+
+(defun qmp-chord (modifier qcode)
+  "MODIFIER+QCODE in one send-key — a chord the TTY spells as one byte (C-c is 3)."
+  (qmp (format nil "{\"execute\":\"send-key\",\"arguments\":{\"keys\":[{\"type\":\"qcode\",\"data\":\"~a\"},{\"type\":\"qcode\",\"data\":\"~a\"}]}}"
+               modifier qcode))
+  (sleep 0.4))
+
+(defun right-click ()
+  (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"right\"}}")
+  (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"right\"}}")
+  (sleep 1.0))
+
+(defun carrying () (probe "(and (lol.morph:hand-carrying (lol.morph:world-hand *world*)) t)"))
+
+(defun section-d ()
+  "Step 3: the halo's handles act on the window; Inspect sets its bounds."
+  (format t "~&~%== D. the halo acts on morphs ==~%")
+  (when (eql (nwin) 0)                                    ; a window to act on
+    (qmp-hold "meta_l" "m") (sleep 2.0) (qmp-hold "meta_l" "g") (sleep 1.0) (qmp-key "esc") (sleep 0.5))
+  (destructuring-bind (x y w h) (wbounds)
+    (glide-to (+ x (floor w 2)) (+ y (floor h 2)))
+    (check "the middle button, then Up: the halo reaches the window's layer" (halo-to-window))
+    (let ((labels (read-list (probe "(mapcar (lambda (e) (getf e :label)) (halo-entries *halo-layer*))"))))
+      (format t "~&  the window's handles: ~a~%" labels)
+      (check "... whose first handles are Move, Resize, Raise, Close, Re-tile"
+             (equal (subseq labels 0 (min 5 (length labels))) '("Move" "Resize" "Raise" "Close" "Re-tile"))))
+    (qmp-key "1") (sleep 1.0)                                  ; Move
+    (check "1 (Move): the hand carries the window, no button held" (string= (carrying) "T"))
+    (let ((b0 (wbounds)))
+      (glide-to (+ x (floor w 2) 90) (+ y (floor h 2) 45))
+      (let ((b1 (wbounds)))
+        (format t "~&  halo Move: ~a -> ~a~%" b0 b1)
+        (check "... the pointer's travel moves it" (and b0 b1 (= (first b1) (+ (first b0) 90))
+                                                        (= (second b1) (+ (second b0) 45)))))
+      (button t) (button nil) (sleep 0.6)
+      (check "a click puts it down, and ends the grab"
+             (and (string= (carrying) "NIL") (string= (probe "(desk-grab *world*)") "NIL"))))
+    ;; Resize by the halo, finished with Return
+    (destructuring-bind (x y w h) (wbounds)
+      (glide-to (+ x (floor w 2)) (+ y (floor h 2)))
+      (halo-to-window)
+      (qmp-key "2") (sleep 1.0)                                ; Resize
+      (glide-to (+ x (floor w 2) 60) (+ y (floor h 2) 30))
+      (qmp-key "ret") (sleep 0.8)
+      (let ((b (wbounds)))
+        (format t "~&  halo Resize: ~a -> ~a~%" (list x y w h) b)
+        (check "2 (Resize): the pointer's travel resizes it; Return ends it"
+               (and b (= (third b) (+ w 60)) (= (fourth b) (+ h 30)) (string= (carrying) "NIL")))))
+    ;; Inspect: the window's own fields, BOUNDS set with C-c C-c
+    (destructuring-bind (x y w h) (wbounds)
+      (glide-to (+ x (floor w 2)) (+ y (floor h 2)))
+      (halo-to-window)
+      (let ((i (probe-int "(1+ (position \"Inspect\" (halo-entries *halo-layer*) :key (lambda (e) (getf e :label)) :test (function string=)))")))
+        (qmp-key (princ-to-string i)) (sleep 1.5))
+      (check "Inspect: the window shows the TRAIL-WINDOW instance itself"
+             (string= (probe "(eq (subject-value (pane-subject (window-pane (first (desk-windows))))) (first (desk-windows)))") "T"))
+      (let ((row (probe-int "(position-if (lambda (it) (search \"BOUNDS\" (princ-to-string (item-label it)))) (view-items (pane-view (window-pane (first (desk-windows))))))")))
+        (qmp-key "home") (sleep 0.3)
+        (dotimes (k (or row 0)) (qmp-key "down") (sleep 0.15))
+        (sleep 0.5)
+        (check "... its BOUNDS row selected"
+               (string= (probe "(let ((it (selected-item (window-pane (first (desk-windows)))))) (and it (search \"BOUNDS\" (princ-to-string (item-label it))) t))") "T"))
+        (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "c") (sleep 1.0)
+        (check "C-c C-c asks for the value in the prompt overlay"
+               (string= (probe "(type-of (top-overlay))") "PROMPT-OVERLAY"))
+        (type-expr "(list 60 90 700 420)") (sleep 0.3)
+        (qmp-key "ret") (sleep 1.5)
+        (let ((b (wbounds)))
+          (format t "~&  bounds set from the inspector: ~a~%" b)
+          (check "... and the window moves and resizes on screen to the typed bounds"
+                 (equal b '(60 90 700 420)))
+          (when (equal b '(60 90 700 420))
+            (let* ((cur (cursor))
+                   (wpts (sample-points b 24 :avoid cur))
+                   (wfresh (read-list (probe (format nil "(let ((b (window-backing (first (desk-windows)))) (o (lol.morph:morph-bounds (first (desk-windows))))) (mapcar (lambda (p) (aref (lol.canvas:canvas-pixels b) (+ (* (- (second p) (second o)) (lol.canvas:canvas-w b)) (- (first p) (first o))))) '~s))" wpts) 10)))
+                   (shown (screen-pixels wpts)))
+              (check "... the screendump shows it there (= its backing store)"
+                     (and wfresh (equal shown wfresh)))))))
+      (qmp-chord "ctrl" "g") (sleep 0.8)))
+  (check "the halo's window handles are in the SuperL-? cheatsheet"
+         (string= (probe "(let ((s (format nil \"~s\" *cheatsheet*))) (and (search \"Move Resize Raise Close Re-tile\" s) (search \"Inspect, bounds\" s) t))") "T")))
+
+(defun section-e ()
+  "Step 4: the overlays are morphs, and the world goes on behind them."
+  (format t "~&~%== E. the overlays are morphs ==~%")
+  (check "the modal loops are gone (RUN-SPOTTER-FB, RUN-CHOOSER-FB, RUN-CLIPBOARD-FB, RUN-CHEATSHEET-FB)"
+         (string= (probe "(notany (function fboundp) '(run-spotter-fb run-chooser-fb run-clipboard-fb run-cheatsheet-fb run-frame-source-fb dbg-prompt-value))") "T"))
+  ;; a terminal printing on its own, tiled; then the Spotter over it
+  (qmp-hold "meta_l" "ret") (sleep 4.0)
+  (type-expr "(dotimes (i 40) (print i) (finish-output) (sleep 0.25))") (qmp-key "ret") (sleep 1.0)
+  (qmp-hold "meta_l" "spc") (sleep 1.5)
+  (check "SuperL-Space: the Spotter is an overlay in the world"
+         (string= (probe "(type-of (top-overlay))") "SPOTTER-OVERLAY"))
+  ;; how far the terminal's output has got: its cursor row plus the lines scrolled off
+  (flet ((term-lines () (probe-int "(let ((term (term-session-term (pane-session (holder-pane (desk-shell *world*)))))) (+ (lol.terminal:term-scrollback-count term) (lol.terminal:term-cy term)))")))
+    (let ((t0 (term-lines)))
+      (sleep 2.5)
+      (let ((t1 (term-lines)))
+        (format t "~&  terminal lines behind the Spotter: ~a -> ~a~%" t0 t1)
+        (check "a terminal behind the open Spotter keeps printing" (and t0 t1 (> t1 t0)))
+        (check "... while the Spotter is still up, taking the keys"
+               (string= (probe "(type-of (top-overlay))") "SPOTTER-OVERLAY"))))
+    (qmp-type "draw") (sleep 1.0)
+    (check "typing reaches the Spotter's query, not the terminal"
+           (string= (probe "(spotter-query (top-overlay))") "\"draw\""))
+    (qmp-key "esc") (sleep 1.0)
+    (check "Esc closes it" (string= (probe "(top-overlay)") "NIL"))
+    ;; a menu waits for its pick, and the terminal goes on behind that too
+    (type-expr "(dotimes (i 40) (print i) (finish-output) (sleep 0.25))") (qmp-key "ret") (sleep 1.0)
+    (glide-to 300 300)
+    (right-click)
+    ;; the screen: the terminal's grid, OFF the menu's card (the Spotter's card covers
+    ;; nearly all of it, so the pixels are looked at here), under the menu's scrim
+    (let* ((t0 (term-lines))
+           ;; the grid's first six columns, every pixel across and every other row
+           ;; down — where the numbers are printed (most of each line is blank)
+           (rect (read-list (probe "(let ((g (term-session-geometry (pane-session (holder-pane (desk-shell *world*)))))) (list (first g) (second g) (* 6 (fifth g)) (* (fourth g) (sixth g))))")))
+           (card (read-list (probe "*menu-rect*")))
+           (cur (cursor))
+           (pts (and rect card
+                     (destructuring-bind (rx ry rw rh) rect
+                       (loop for yy from ry below (+ ry rh) by 2
+                             append (loop for xx from rx below (+ rx rw)
+                                          unless (or (and (<= (- (first card) 2) xx (+ (third card) 8))
+                                                          (<= (- (second card) 2) yy (+ (fourth card) 8)))
+                                                     (and (< (abs (- xx (first cur))) 40)
+                                                          (< (abs (- yy (second cur))) 40)))
+                                            collect (list xx yy))))))
+           (s0 (and pts (screen-pixels pts))))
+      (sleep 2.0)
+      (let ((t1 (term-lines)) (s1 (and pts (screen-pixels pts))))
+        (format t "~&  behind the menu: terminal ~a -> ~a; ~a screen points looked at~%" t0 t1 (length pts))
+        (check "a right-click menu is an overlay that waits; the terminal still prints behind it"
+               (and (string= (probe "(type-of (top-overlay))") "CHOOSER-OVERLAY") t0 t1 (> t1 t0)))
+        (check "... and the screen shows it (the grid's pixels changed under the open menu)"
+               (and s0 s1 (not (equal s0 s1))))))
+    (qmp-key "esc") (sleep 1.0)
+    (check "Esc: the menu has gone" (string= (probe "(top-overlay)") "NIL"))
+    (qmp-hold "meta_l" "w") (sleep 1.5)))
+
+(defun section-f ()
+  "Step 5: a running stage steps, damaging only its body; idle sleeps."
+  (format t "~&~%== F. stepping ==~%")
+  (probe "(progn (defvar *zz-cycles* 0) (setf *zz-cycles* 0) (sb-int:encapsulate 'fb-cycle 'zz (lambda (f &rest a) (incf *zz-cycles*) (apply f a))) t)")
+  (check "nothing steps: the poll's step deadline is -1"
+         (eql (probe-int "(lol.morph:world-step-timeout *world*)") -1))
+  (sleep 0.5) (probe "(setf *zz-cycles* 0)") (sleep 5.0)
+  (let ((n (probe-int "*zz-cycles*")))
+    (format t "~&  loop turns in 5 idle seconds: ~a (the clock's seconds, the pointer's hide)~%" n)
+    (check "idle, the loop wakes only for the clock (about once a second)" (and n (<= n 8))))
+  ;; the stage, running, from the REPL (as check-worker opens its panes)
+  (probe "(progn (new-trail (subj-stage 'lol.examples:collide)) (setf (stage-running (view-data (pane-view (current-pane)))) t) (lol.morph:invalidate *world*) t)" 5.0)
+  (sleep 2.0)
+  (probe "(progn (defvar *zz-reps* nil) (setf *zz-reps* nil) (sb-int:encapsulate 'lol.morph:world-repair 'rec (lambda (f &rest a) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f a) (unless (= n (lol.morph:world-repairs *world*)) (push (lol.morph:world-last-repair *world*) *zz-reps*)))))) (setf *zz-cycles* 0) t)")
+  (let ((s0 (probe-int "(lol.morph:morph-steps (desk-shell *world*))")))
+    (sleep 2.0)
+    (let ((s1 (probe-int "(lol.morph:morph-steps (desk-shell *world*))"))
+          (body (probe "(let ((b *stage-body-rect*) (rs (mapcar (lambda (r) (getf r :rects)) *zz-reps*))) (list (length rs) (count (list b) rs :test (function equal)) (count-if (lambda (r) (getf r :full)) *zz-reps*)))"))
+          (ms (probe "(let ((ms (mapcar (lambda (r) (getf r :ms)) *zz-reps*))) (and ms (/ (round (* 100 (/ (reduce (function +) ms) (length ms)))) 100.0)))")))
+      (format t "~&  stage steps in 2 s: ~a -> ~a; repairs (all, body-only, full): ~a; ~a ms a repair~%" s0 s1 body ms)
+      (check "a running stage on screen steps by itself (~30 a second)"
+             (and s0 s1 (>= (- s1 s0) 30)))
+      (let ((b (read-list body)))
+        (check "... each step repairs only the stage's body, never the whole screen"
+               (and b (plusp (first b)) (>= (second b) (floor (* 9 (first b)) 10)) (zerop (third b)))))))
+  (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'rec)")
+  (format t "~&  a stage step, repaired and sent (body only):  ~a us~%"
+          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (shell-changed *stage-body-rect*) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+  (format t "~&  the same as a full repair (what step 2 did):  ~a us~%"
+          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (shell-changed) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+  (qmp-key "spc") (sleep 1.0)                              ; Space pauses the stage
+  (check "Space pauses it: nothing steps, the deadline is -1 again"
+         (and (string= (probe "(stage-running (view-data (pane-view (current-pane))))") "NIL")
+              (eql (probe-int "(lol.morph:world-step-timeout *world*)") -1)))
+  (probe "(sb-int:unencapsulate 'fb-cycle 'zz)")
+  (qmp-hold "meta_l" "w") (sleep 1.0))
+
 (defun checks ()
   (quiet-kernel-console)
   (wait-for-browser)
   (section-a)
   (section-b)
   (section-c)
+  (section-d)
+  (section-e)
+  (section-f)
   t)
 
 (run-guest-checks "check-morphic" #'checks)

@@ -150,7 +150,7 @@
   ;; Linux (sbcl/src/code/unix.lisp), which only advances once a kernel tick — 4 ms at
   ;; our CONFIG_HZ=250. Ten frames would be timed to the nearest 400 us.
   (format t "~&  full frame (draw + present): ~a us~%"
-          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (draw-browser *fb-canvas* *fb-xres* *fb-yres*) (show-frame *fb-canvas*)) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (draw-browser *fb-canvas* *fb-xres* *fb-yres*) (present-frame *fb-canvas*)) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (format t "~&  pointer move: ~a us~%"
           (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 2000) (move-cursor *fb-canvas* *cursor-x* *cursor-y*)) (round (* 1000000 (- (get-internal-real-time) t0)) (* 2000 internal-time-units-per-second)))" 300))
   t)

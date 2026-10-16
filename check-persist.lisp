@@ -15,12 +15,14 @@
 ;;;;
 ;;;;   boot 1  Accept (defun zz-persist () 42) and an edit to lol.examples::make-counter
 ;;;;           (the Accept-package fix, §1.2); type into the Workspace; open a second
-;;;;           tab; copy to the clipboard (with :desk-clipboard on); File out; then
-;;;;           SuperL-q, "Save and shut down" — QEMU must exit by itself.
+;;;;           tab and tear it off into a window (SuperL-g, moved); copy to the clipboard
+;;;;           (with :desk-clipboard on); File out; then SuperL-q, "Save and shut down"
+;;;;           — QEMU must exit by itself.
 ;;;;   between debugfs: the journal and the desk owned by uid 1000; dumpe2fs: clean;
 ;;;;           the fixture changed in exactly one place.
-;;;;   boot 2  everything is back; the change set lists both; then the CRASH case: one
-;;;;           more Accept, a torn half-record appended, and QEMU killed with -9.
+;;;;   boot 2  everything is back, the window where it was; the change set lists both;
+;;;;           then the CRASH case: one more Accept, a torn half-record appended, and
+;;;;           QEMU killed with -9.
 ;;;;   boot 3  the crash Accept survived (fsync per Accept); the torn tail was cut and
 ;;;;           reported; the journal view opened by itself; replay-off planted, then
 ;;;;           "Shut down without saving".
@@ -103,6 +105,8 @@
   (repl-connect)
   (wait-for-browser 120))
 
+(defvar *window-bounds* nil "The window's bounds as boot 1 left them (a printed list).")
+
 (defun journal-count () (probe-int "(length (read-journal))" 6.0))
 
 (defun boot-1 ()
@@ -121,6 +125,13 @@
          (yes "(and (search \"zzscratch\" (lol.textview:tv-text (pane-tv (first (first *trails*))))) t)"))
   (qmp-hold "meta_l" "m") (sleep 3)
   (check "boot 1: SuperL-m opened a second tab" (eql 2 (row "tabs" (probe-int "(length *trails*)"))))
+  ;; a window (doc/morphic.org): the module index torn off and moved three cells right
+  (qmp-hold "meta_l" "g") (sleep 1.5)
+  (dotimes (i 3) (qmp-key "right") (sleep 0.4))
+  (qmp-key "esc") (sleep 0.8)
+  (setf *window-bounds* (row "the window's bounds" (probe "(lol.morph:morph-bounds (first (desk-windows)))")))
+  (check "boot 1: SuperL-g tore the module index off into a window"
+         (yes "(and (= 1 (length (desk-windows))) (typep (pane-subject (first (window-trail (first (desk-windows))))) 'subj-modules))"))
   (probe "(progn (save-setting :desk-clipboard 3) (lol.clipboard:clip-copy \"zzclip\") t)")
   ;; statuses, not FILE-OUT-SUMMARY: that names ~/.local/…, and the harness refuses
   ;; any answer containing a tilde (it could be the echo of a FORMAT string)
@@ -160,6 +171,10 @@
          (yes "(and (find 'zz-persist (changed-definitions) :key #'first) (find 'lol.examples::make-counter (changed-definitions) :key #'first) t)"))
   (check "boot 2: two tabs, the modules one active"
          (string= "(2 1)" (row "tabs / active" (probe "(list (length *trails*) *active*)"))))
+  (check "boot 2: the module index is a window again, where it was"
+         (and *window-bounds*
+              (string= *window-bounds*
+                       (row "the window's bounds" (probe "(and (= 1 (length (desk-windows))) (typep (pane-subject (first (window-trail (first (desk-windows))))) 'subj-modules) (lol.morph:morph-bounds (first (desk-windows))))")))))
   (check "boot 2: the Workspace text is back"
          (yes "(and (search \"zzscratch\" (lol.textview:tv-text (pane-tv (first (first *trails*))))) t)"))
   (check "boot 2: the clipboard is back (it was asked for)"
