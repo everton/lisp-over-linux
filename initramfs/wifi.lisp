@@ -214,11 +214,14 @@
 
 (defun key-value-lines (text)
   "\"a=1\\nb=2\" -> ((\"a\" . \"1\") (\"b\" . \"2\")) — STATUS and SIGNAL_POLL's shape."
-  (loop for line in (split-lines text)
+  (loop for line in (wpa-split-lines text)
         for eq = (position #\= line)
         when eq collect (cons (subseq line 0 eq) (subseq line (1+ eq)))))
 
-(defun split-lines (text)
+(defun wpa-split-lines (text)
+  "TEXT split at each newline, a trailing empty line kept. Its own name: it was
+   called SPLIT-LINES, which silently replaced fb-browser.lisp's (that one drops the
+   trailing empty line, and the debugger header relies on it) — 2026-10-16."
   (loop with start = 0 for nl = (position #\Newline text :start start)
         collect (subseq text start nl) while nl do (setf start (1+ nl))))
 
@@ -266,7 +269,7 @@
 (defun wifi-scan-results ()
   "The supplicant's current scan table, one plist per SSID (the strongest BSSID of
    each): :ssid :bssid :freq :signal (dBm) :security :flags :known. Strongest first."
-  (let ((rows (loop for line in (rest (split-lines (wpa-request "SCAN_RESULTS")))
+  (let ((rows (loop for line in (rest (wpa-split-lines (wpa-request "SCAN_RESULTS")))
                     for f = (split-tabs line)
                     when (>= (length f) 5)
                       collect (let ((ssid (unescape-ssid (fifth f))))
@@ -410,7 +413,7 @@
 
 (defun supplicant-networks ()
   "LIST_NETWORKS as plists (:id :ssid :flags)."
-  (loop for line in (rest (split-lines (wpa-request "LIST_NETWORKS")))
+  (loop for line in (rest (wpa-split-lines (wpa-request "LIST_NETWORKS")))
         for f = (split-tabs line)
         when (>= (length f) 2)
           collect (list :id (parse-integer (first f)) :ssid (unescape-ssid (second f))
