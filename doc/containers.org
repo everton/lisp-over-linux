@@ -608,7 +608,10 @@ laptop's real disk.
 - *Our =/etc/resolv.conf= and =/etc/hosts= go over the host's*, when we have
   them. When the host's =resolv.conf= is a symlink (systemd's
   =../run/systemd/resolve/…=), =lol-ct= follows it inside the new root and binds
-  over the target. We have none yet, so the host's file is used.
+  over the target. Our =/etc/hosts= is the image's two lines *plus the host's own
+  =/etc/hosts=*, appended by preinit at boot (2026-10-16), so a container terminal
+  resolves the same machine names as Debian; =check-containers.lisp= asserts it
+  with the first non-loopback name in the build host's file.
 - *A UTS namespace* (=hostname= =lol-NAME=), so a prompt says where you are.
 - *Overlay fallbacks, logged.* A state upper, then =userxattr=, then a tmpfs upper
   (the changes vanish), then a read-only bind. The first that mounts wins, and

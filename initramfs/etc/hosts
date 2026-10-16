@@ -1,5 +1,7 @@
 # /etc/hosts of the lisp-over-linux initramfs (doc/networking.org §2c).
-# Read by our resolver (initramfs/dns.lisp) before it asks DNS, and by glibc
-# programs run in a container. Add your own names in ~/.config/lol/hosts.
+# Read by our resolver (initramfs/dns.lisp) before it asks DNS, and bound over
+# every container's own (lol-ct.c), so a terminal in a container sees it too.
+# At boot preinit APPENDS the host's /etc/hosts below these lines, so the names
+# you gave your machines in Debian work here. Add more in ~/.config/lol/hosts.
 127.0.0.1	localhost lol
 ::1		localhost ip6-localhost ip6-loopback

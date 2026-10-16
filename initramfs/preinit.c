@@ -376,6 +376,31 @@ static void give_resolv_conf(uid_t uid, gid_t gid, int to_user) {
     close(fd);
 }
 
+/* ---- /etc/hosts: ours, then the host's -------------------------------------- */
+/*
+ * The image ships a two-line /etc/hosts (localhost, lol). The names you gave your
+ * own machines live in the HOST's /etc/hosts, so append that, once, at boot: our
+ * resolver (dns.lisp) reads /etc/hosts before it asks DNS, and every container
+ * gets this same file bound over its own (lol-ct.c, etc_file) — so a terminal in a
+ * container resolves the same names as Debian does. Read at BOOT, not baked in at
+ * build time, so an edit in Debian needs no rebuild (the rule in AGENTS.md: host
+ * files are used at runtime, from /mnt/host). Root-only: /etc is ours, not the
+ * user's. Duplicates (localhost twice) are harmless: the first match wins.
+ */
+static void merge_host_hosts(void) {
+    static char buf[64 * 1024];
+    int n = slurp("/mnt/host/etc/hosts", buf, sizeof buf);
+    if (n <= 0) return;
+    int fd = open("/etc/hosts", O_WRONLY | O_APPEND | O_CLOEXEC);
+    if (fd < 0) { say("hosts: %s", strerror(errno)); return; }
+    static const char hdr[] = "\n# ---- appended at boot from the host's /etc/hosts (preinit.c) ----\n";
+    if (write(fd, hdr, sizeof hdr - 1) < 0 || write(fd, buf, n) < 0)
+        say("hosts: write: %s", strerror(errno));
+    else
+        say("hosts: appended the host's /etc/hosts (%d bytes)", n);
+    close(fd);
+}
+
 /* ---- lol-rootd: the one process that stays root ------------------------- */
 /*
  * Privilege separation in miniature. The Lisp runs as the user; this child of
@@ -625,6 +650,7 @@ int main(void) {
     /* Storage and identity (doc/storage.org). */
     read_config();
     int have_disk = mount_storage();
+    if (have_disk) merge_host_hosts();
     struct user u = { 0 };
     if (have_disk) {
         u = lookup_user(cfg_user);

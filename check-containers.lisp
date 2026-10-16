@@ -97,6 +97,29 @@
   (let ((r (row "a server on 127.0.0.1:3999, reached by curl"
                 (ct "ip -br addr show lo; python3 -m http.server 3999 --bind 127.0.0.1 -d /tmp >/dev/null 2>&1 & for i in 1 2 3 4 5 6 7 8 9 10; do sleep 0.5; c=$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3999/) && break; done; echo =local=$c=; kill %1" 40))))
     (check "localhost works (lo is up)" (has r "=local=200=")))
+  ;; the HOST's /etc/hosts names (2026-10-16): preinit appends the host's file to
+  ;; ours at boot, and lol-ct binds ours over the container's. Under 9p the host IS
+  ;; this build machine, so a name is taken from our own /etc/hosts — the first IPv4
+  ;; line that is not loopback. Skipped (not passed) when there is none.
+  (let ((entry (with-open-file (s "/etc/hosts" :if-does-not-exist nil)
+                 (and s (loop for line = (read-line s nil) while line
+                              for f = (let ((l (subseq line 0 (or (position #\# line) (length line)))))
+                                        (loop with start = 0 for i from 0 to (length l)
+                                              when (or (= i (length l)) (member (char l i) '(#\Space #\Tab)))
+                                                when (> i start) collect (subseq l start i) end
+                                                and do (setf start (1+ i))))
+                              when (and (second f) (find #\. (first f)) (not (search "127." (first f)))
+                                        (every (lambda (c) (or (digit-char-p c) (char= c #\.))) (first f)))
+                                return (list (first f) (second f)))))))
+    (if (null entry)
+        (format t "~&  (no non-loopback IPv4 line in this host's /etc/hosts: hosts checks skipped)~%")
+        (destructuring-bind (addr name) entry
+          (check (format nil "the image resolves ~a from the host's /etc/hosts" name)
+                 (string= (row "resolve-addresses in the image"
+                               (probe (format nil "(format nil \"~~{~~a~~^.~~}\" (coerce (first (resolve-addresses ~s)) 'list))" name)))
+                          (format nil "~s" addr)))
+          (let ((r (row "getent hosts in a container" (ct (format nil "echo =hosts=$(getent hosts ~a | awk '{print $1}')=" name) 30))))
+            (check (format nil "a container resolves ~a too" name) (has r (format nil "=hosts=~a=" addr)))))))
 
   (format t "~&~%== the host's toolchain ==~%")
   (let ((r (row "ruby openssl" (ct "ruby -e 'require \"openssl\"; puts \"=ssl=#{OpenSSL::VERSION}=\"'" 60))))

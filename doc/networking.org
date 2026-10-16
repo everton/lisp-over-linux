@@ -182,8 +182,10 @@ The counts tell the failures apart: nothing seen means the link is dead; packets
 but no DHCP means no server answered; DHCP replies that were not ours mean another
 client's traffic. Those lines, and every Wi-Fi event, are also appended to
 =~/.lol/log/network.log= ([[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]). That file is on the laptop's =/home=, so
-Debian can read it after a failed boot; =/tmp/lol-wifi= is gone by then. It rotates
-to =.old= at 256 KB, and a diskless boot writes nothing.
+Debian can read it after a failed boot; =/tmp/lol-wifi= is gone by then. Since
+2026-10-16 it is one of the session logs ([[file:diagnostics.org][diagnostics.org]]): set aside at every
+boot, gzipped into =~/.lol/log/archive/= with the newest 30 kept, and cut at 16 MB
+mid-session; a diskless boot writes it to =/tmp/lol-log/= instead.
 
 The test that reproduces the laptop's failure is [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] (§8): a fake
 router that unicasts, one veth cable, no root needed.
@@ -286,7 +288,11 @@ and the user deliberately cannot write it. Instead [[file:../initramfs/preinit.c
 and gives it to the user before dropping root, and the Lisp rewrites it *in place*
 (=O_TRUNC=, no rename — a rename into =/etc= would need write permission on the
 directory). A static =/etc/hosts= and an =/etc/nsswitch.conf= (=hosts: files dns=)
-ship in the cpio from [[file:../initramfs/etc/hosts][=initramfs/etc/=]].
+ship in the cpio from [[file:../initramfs/etc/hosts][=initramfs/etc/=]]. Since 2026-10-16 [[file:../initramfs/preinit.c::static void merge_host_hosts][preinit appends the
+host's =/etc/hosts=]] to ours at boot, while it is still root, so the names you gave
+your machines in Debian resolve here too (and in every container, which gets our
+file — [[file:containers.org][containers.org]]). It is read at boot, not baked in, so an edit in Debian
+needs no rebuild.
 
 ** (d) time: SNTP, and a clock only =lol-rootd= may set — *DONE*
 
