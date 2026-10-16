@@ -309,6 +309,15 @@
 (defvar *conversations* '() "Every conversation this session, newest first.")
 ;; a STALL report (session-log.lisp) says which thread holds which conversation
 (watch-locks (lambda () (mapcar #'conversation-lock *conversations*)))
+;; ...and logs a turn's backtrace when it runs past 5 or 15 minutes — unless it is
+;; waiting on the environment (a posted job, an approval), which is your time, not its
+(watch-busy-threads
+ (lambda ()
+   (loop for c in *conversations*
+         for th = (conversation-thread c)
+         when (and th (funcall 'conversation-busy-p c) (null (conversation-jobs c)))   ; defined below
+           collect (cons (format nil "agent turn ~d" (conversation-id c)) th))))
+
 (defvar *conversation* nil "The current conversation — what a bare ? continues.")
 (defvar *conversation-counter* 0)
 
@@ -834,6 +843,22 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
     (clip-result (format nil "exit ~a~%~a" code (get-output-stream-string out)))))
 
 (defun write-tool-p (name) (let ((tool (find-agent-tool name))) (and tool (agent-tool-write-p tool))))
+
+(defun call-input-for-log (call)
+  "CALL's input as one line for session.log (session-log.lisp). A \"content\" field —
+   file-write's whole file — is reduced to its size: a file is where a secret would
+   be, and 30 archived sessions of it would sit in ~/.lol/log. Forms and commands
+   are kept, clipped: after a freeze, what the agent ran is the evidence."
+  (let ((in (call-input call)))
+    (clip-one-line
+     (or (ignore-errors
+          (let ((content (and in (lol.json:jget in "content"))))
+            (if content
+                (format nil "~@[~a ~](content: ~d chars, not logged)"
+                        (lol.json:jget in "path") (length (princ-to-string content)))
+                (lol.json:to-json in))))
+         "")
+     300)))
 
 ;;; ===========================================================================
 ;;; Approval is a condition, not a dialog (§8.4)
@@ -1648,7 +1673,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                                                          do (touch conv (format nil "running ~a" (call-headline call)))
                                                             (agent-listen :tool call)
                                                             (session-log "agent: conversation ~d calls ~a ~a" (conversation-id conv) (call-name call)
-                                                                         (clip-one-line (or (ignore-errors (lol.json:to-json (call-input call))) "") 300))
+                                                                         (call-input-for-log call))
                                                          collect (let* ((t0 (get-internal-real-time))
                                                                         (r (if *tool-executor*
                                                                               (funcall *tool-executor* conv call

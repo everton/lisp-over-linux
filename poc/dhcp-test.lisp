@@ -33,6 +33,7 @@
     (sb-ext:exit :code (sb-ext:process-exit-code p))))
 
 (defvar *here* (make-pathname :name nil :type nil :defaults *load-truename*))
+(load (merge-pathnames "host-logging.lisp" *here*))   ; the modules log (session-log.lisp)
 (handler-bind ((warning #'muffle-warning))
   (dolist (f '("net" "dhcp"))
     (load (merge-pathnames (format nil "../initramfs/~a.lisp" f) *here*))))

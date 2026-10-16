@@ -41,7 +41,7 @@
 (defpackage :lol.guest
   (:use :cl)
   (:export #:*root* #:*work* #:path
-           #:boot-guest #:kill-guest #:*extra-qemu-args*
+           #:boot-guest #:kill-guest #:*extra-qemu-args* #:*disk-snapshot* #:guest-running-p #:preflight
            #:qmp #:qmp-connect #:qmp-key #:qmp-events #:key-event
            #:qmp-hold #:qmp-wheel #:qmp-type
            #:repl-drain #:repl-connect #:strip-ansi #:between-markers
@@ -77,6 +77,16 @@
    hardware the default guest lacks (check-input.lisp: a USB controller, a second
    mouse, a tablet, a second keyboard).")
 
+(defvar *disk-snapshot* t
+  "Attach LOL_GUEST_DISK with snapshot=on (the default): the guest's writes vanish.
+   NIL attaches it WRITABLE — for a test that must see what one boot left for the
+   next (check-diagnostics.lisp's crash-then-reboot), always on a COPY it made.")
+
+(defun guest-running-p ()
+  "Is QEMU still running? With -no-reboot it EXITS when the guest reboots — which
+   is how a test sees a panic turn into a reboot."
+  (and *qemu* (sb-ext:process-alive-p *qemu*)))
+
 (defun boot-guest (&optional (name "guest"))
   "Boot iso_root headless with a QMP control socket and the net REPL forwarded.
    NAME (plus our pid) names the scratch directory, which holds the QMP socket, so
@@ -102,8 +112,8 @@
                 ;; guest boots diskless, as root — what the older checks expect.
                 (let ((disk (sb-posix:getenv "LOL_GUEST_DISK")))
                   (and disk (plusp (length disk))
-                       (list "-drive" (format nil "file=~a,format=raw,if=virtio,snapshot=on"
-                                              (namestring (merge-pathnames disk *root*))))))
+                       (list "-drive" (format nil "file=~a,format=raw,if=virtio~:[~;,snapshot=on~]"
+                                              (namestring (merge-pathnames disk *root*)) *disk-snapshot*))))
                 ;; LOL_GUEST_HOSTROOT=1 shares the build host's REAL / read-only over
                 ;; virtio-9p, and fw_cfg tells preinit to mount it at /mnt/host instead
                 ;; of looking for a disk — for tests that run the host's programs

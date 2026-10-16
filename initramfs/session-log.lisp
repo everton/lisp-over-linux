@@ -83,6 +83,19 @@
   (sb-alien:alien-funcall
    (sb-alien:extern-alien "fsync" (function sb-alien:int sb-alien:int)) fd))
 
+(defun chmod-path (path mode)
+  (sb-alien:alien-funcall
+   (sb-alien:extern-alien "chmod" (function sb-alien:int sb-alien:c-string sb-alien:unsigned-int))
+   (namestring path) mode))
+
+(defun ensure-private-file (path)
+  "Create PATH 0600 if it does not exist yet: the logs quote what the agent ran and
+   what the network did — readable by you, not by every account on the host."
+  (unless (probe-file path)
+    (let ((fd (sb-unix:unix-open (namestring path)
+                                 (logior sb-unix:o_wronly sb-unix:o_creat sb-unix:o_append) #o600)))
+      (when fd (sb-unix:unix-close fd)))))
+
 (defun set-aside-name (path ut)
   "session.log -> session.20261016T021450Z.log: a finished (or cut) log waiting to
    be archived. UT is when it was last written."
@@ -102,6 +115,7 @@
   (ignore-errors
     (sb-thread:with-recursive-lock (*log-lock*)
       (ensure-directories-exist path)
+      (ensure-private-file path)
       (with-open-file (o path :direction :output :if-exists :append
                               :if-does-not-exist :create :external-format :utf-8)
         (when (> (file-length o) +log-cap+)
@@ -359,11 +373,131 @@
                   told (cons limit told))))))
     state))
 
+;;; ---- other threads that run too long ----------------------------------------
+;;; A STALL is about the environment's thread, because that is what freezes the
+;;; screen. An agent turn stuck in a read that never returns freezes nothing — the
+;;; screen still works — but it is the next thing you would ask about, so a module
+;;; can name threads that are BUSY and should not stay so: agent.lisp names every
+;;; conversation's running turn. Past each of +BUSY-THRESHOLDS+ the thread's
+;;; backtrace is logged, once.
+
+(defparameter +busy-thresholds+ '(300 900)
+  "Seconds a watched thread may stay busy before its backtrace is logged.")
+
+(defvar *busy-sources* '()
+  "Functions of no arguments, each returning a list of (LABEL . THREAD) for threads
+   that are busy right now.")
+
+(defun watch-busy-threads (fn) (pushnew fn *busy-sources*))
+
+(defun watch-busy-step (seen)
+  "One tick: SEEN is a hash table THREAD -> (FIRST-SEEN-ITU . THRESHOLDS-TOLD). A
+   thread no source names any more is forgotten. Returns SEEN."
+  (let ((now-busy '()))
+    (dolist (src *busy-sources*)
+      (dolist (entry (ignore-errors (funcall src)))
+        (destructuring-bind (label . th) entry
+          (when (and th (sb-thread:thread-alive-p th))
+            (push th now-busy)
+            (let ((rec (or (gethash th seen)
+                           (setf (gethash th seen) (cons (get-internal-real-time) '())))))
+              (dolist (limit +busy-thresholds+)
+                (when (and (>= (seconds-since (car rec)) limit) (not (member limit (cdr rec))))
+                  (push limit (cdr rec))
+                  (session-log-block
+                   (format nil "LONG: ~a has been busy ~ds — its backtrace:" label (floor (seconds-since (car rec))))
+                   (thread-backtrace th)))))))))
+    (loop for th being the hash-keys of seen
+          unless (member th now-busy) do (remhash th seen))
+    seen))
+
+;;; ---- the kernel's log ---------------------------------------------------------
+;;; The kernel keeps its messages in a ring buffer that /dev/kmsg hands out one
+;;; record per read: "PRIORITY,SEQUENCE,MICROSECONDS,FLAGS;message". Copying it to
+;;; kernel.log means a driver's complaint, an OOM kill or a hung-task report outlives
+;;; the session. The file can be read by the user (CONFIG_SECURITY_DMESG_RESTRICT is
+;;; off; the node is 0644). Records at "err" or worse (priority & 7 <= 3) are also
+;;; said in session.log, where the rest of the story is.
+;;;
+;;; Drained every 2 s, one fsync per batch: the boot alone is a thousand records.
+;;; So the last two seconds before a hard freeze can be missing — a kernel that is
+;;; still alive keeps them in its buffer, and the next kernel tag's pstore (§6 of
+;;; doc/diagnostics.org) is what catches a dying one.
+
+(defvar *kmsg-thread* nil)
+
+(defun append-log-lines (path texts)
+  "APPEND-LOG-LINE for many lines: one open, one write, one fsync."
+  (when (and texts (not *logs-closed*))
+    (ignore-errors
+      (sb-thread:with-recursive-lock (*log-lock*)
+        (ensure-directories-exist path)
+        (ensure-private-file path)
+        (with-open-file (o path :direction :output :if-exists :append
+                                :if-does-not-exist :create :external-format :utf-8)
+          (let ((stamp (utc-stamp)))
+            (dolist (text texts) (format o "~a ~a~%" stamp text)))
+          (finish-output o)
+          (fsync-fd (sb-sys:fd-stream-fd o))
+          t)))))
+
+(defun kmsg-record (rec)
+  "\"6,1234,5678901,-;usb 1-1: new device\" -> (values LEVEL \"[    5.678901] usb …\"),
+   or NIL for a record that does not parse."
+  (let* ((semi (position #\; rec))
+         (c1 (and semi (position #\, rec :end semi)))
+         (c2 (and c1 (position #\, rec :start (1+ c1) :end semi)))
+         (c3 (and c2 (position #\, rec :start (1+ c2) :end semi))))
+    (when c2
+      (let ((pri (parse-integer rec :end c1 :junk-allowed t))
+            (us (parse-integer rec :start (1+ c2) :end (or c3 semi) :junk-allowed t))
+            (msg (string-right-trim '(#\Newline) (subseq rec (1+ semi)))))
+        (when (and pri us)
+          ;; continuation lines (" SUBSYSTEM=…") follow the newline: keep the first
+          (values (logand pri 7)
+                  (format nil "[~5d.~6,'0d] ~a" (floor us 1000000) (mod us 1000000)
+                          (subseq msg 0 (or (position #\Newline msg) (length msg))))))))))
+
+(defun kmsg-loop ()
+  (multiple-value-bind (fd err)
+      ;; O_NONBLOCK is #o4000 on x86-64; sb-unix exports no name for it (wifi.lisp too)
+      (sb-unix:unix-open "/dev/kmsg" (logior sb-unix:o_rdonly #o4000) 0)
+    (unless fd
+      (session-log "kernel log: cannot open /dev/kmsg: ~a" (sb-int:strerror err))
+      (return-from kmsg-loop))
+    (let ((buf (make-array 8192 :element-type '(unsigned-byte 8))))
+      (loop
+        (let ((all '()) (bad '()))
+          (loop
+            (multiple-value-bind (n errno)
+                (sb-sys:with-pinned-objects (buf)
+                  (sb-unix:unix-read fd (sb-sys:vector-sap buf) (length buf)))
+              (cond ((and n (plusp n))
+                     (multiple-value-bind (level line)
+                         (kmsg-record (sb-ext:octets-to-string
+                                       buf :end n :external-format '(:utf-8 :replacement #\?)))
+                       (when line
+                         (push line all)
+                         (when (<= level 3) (push line bad)))))
+                    ;; EPIPE: records were overwritten before we read them; go on
+                    ((and (null n) (eql errno sb-unix:epipe)))
+                    ((and (null n) (eql errno sb-unix:eintr)))
+                    (t (return)))))       ; EAGAIN (nothing more), EOF, or an error
+          (append-log-lines (log-path "kernel") (nreverse all))
+          (dolist (line (nreverse bad)) (session-log "kernel: ~a" line)))
+        (sleep 2)))))
+
+(defun start-kmsg ()
+  (unless (and *kmsg-thread* (sb-thread:thread-alive-p *kmsg-thread*))
+    (setf *kmsg-thread* (sb-thread:make-thread (lambda () (ignore-errors (kmsg-loop)))
+                                               :name "kmsg"))))
+
 (defun watch-loop ()
-  (let ((state '()) (next-pulse 0))
+  (let ((state '()) (next-pulse 0) (seen (make-hash-table :test #'eq)))
     (loop
       (ignore-errors
         (setf state (watch-step state))
+        (setf seen (watch-busy-step seen))
         (when (>= (get-universal-time) next-pulse)
           (setf next-pulse (+ (get-universal-time) +pulse-seconds+))
           (session-log "~a" (pulse-line))
@@ -426,8 +560,13 @@
   (ignore-errors
     (let* ((path (log-path "stderr"))
            (fd (progn (ensure-directories-exist path)
-                      (sb-unix:unix-open path (logior sb-unix:o_wronly sb-unix:o_creat sb-unix:o_append)
-                                         #o644))))
+                      ;; O_DSYNC (1 << 12, linux/include/uapi/asm-generic/fcntl.h): each write
+                      ;; reaches the disk before it returns. Without it the runtime's
+                      ;; dying words sit in the page cache, and a panic reboots in 10 s,
+                      ;; before the 30 s writeback — found by check-crash.lisp, 2026-10-16.
+                      (sb-unix:unix-open path (logior sb-unix:o_wronly sb-unix:o_creat sb-unix:o_append
+                                                      #o10000)
+                                         #o600))))
       (when fd
         (let ((console (sb-unix:unix-dup 2)))
           (when console
@@ -444,7 +583,7 @@
 ;;; Boot: set the last session aside, start this one
 ;;; ===========================================================================
 
-(defparameter +logs+ '("session" "network" "stderr")
+(defparameter +logs+ '("session" "network" "stderr" "kernel")
   "The live logs, by base name: <dir>/<base>.log.")
 
 (defun file-mtime (path)
@@ -503,7 +642,10 @@
                ;; the stamp sorts as text, so newest first is a string sort
                (let ((sorted (sort files #'string> :key #'file-namestring)))
                  (dolist (old (nthcdr +archive-keep+ sorted))
-                   (ignore-errors (delete-file old)))))
+                   (ignore-errors (delete-file old)))
+                 ;; archives from before the logs were private (2026-10-16) too
+                 (dolist (keep (subseq sorted 0 (min +archive-keep+ (length sorted))))
+                   (ignore-errors (chmod-path keep #o600)))))
              by-base)))
 
 (defun archive-pending (&optional (dir (log-dir)))
@@ -512,10 +654,13 @@
    boot finishes the job (gzip-file writes .tmp and renames)."
   (let ((archive (concatenate 'string dir "archive/")))
     (ensure-directories-exist archive)
+    (chmod-path dir #o700)
+    (chmod-path archive #o700)
     (dolist (p (pending-logs dir))
       (ignore-errors
         (let ((out (format nil "~a~a.log.gz" archive (pathname-name p))))
           (lol.deflate:gzip-file p out :mtime (or (file-mtime (namestring p)) 0))
+          (chmod-path out #o600)
           (delete-file p))))
     (prune-archive archive)))
 
@@ -540,6 +685,7 @@
     (setf *previous-invoke-debugger-hook* sb-ext:*invoke-debugger-hook*
           sb-ext:*invoke-debugger-hook* 'log-unhandled))
   (start-watch)
+  (start-kmsg)
   (sb-thread:make-thread (lambda () (ignore-errors (archive-pending))) :name "log-archive"))
 
 (defun previous-session-unclean-p ()

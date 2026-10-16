@@ -82,6 +82,37 @@
   (check "and its end" (yes "(zz-has \"responsive again (it was busy 1\")"))
   (row "the report" (probe "(let* ((l (zz-log)) (a (search \"STALL\" l))) (and a (subseq l a (min (length l) (+ a 600)))))"))
 
+  (format t "~&~%== a stall inside C: the environment's thread in libc's sleep(3) ==~%")
+  ;; the case the spinning one cannot show: stuck in a FOREIGN call (OpenSSL, a
+  ;; blocking read). Does the backtrace interrupt still get an answer from there?
+  ;; sleep(1) in a loop, because every signal (a GC's, ours) cuts a sleep short.
+  (probe "(defun zz-csleep (secs) (let ((end (+ (get-internal-real-time) (* secs internal-time-units-per-second)))) (loop while (< (get-internal-real-time) end) do (sb-alien:alien-funcall (sb-alien:extern-alien \"sleep\" (function sb-alien:unsigned-int sb-alien:unsigned-int)) 1))))" 20.0)
+  (probe "(sb-thread:interrupt-thread (sb-thread:main-thread) (lambda () (sb-sys:with-interrupts (note-main-busy) (with-main-activity (\"zz in C\") (zz-csleep 13)))))")
+  (sleep 14)
+  (check "a STALL in C is reported" (yes "(zz-has \" zz in C\")"))
+  ;; It does answer — but the walk cannot get back through libc's sleep (built without
+  ;; frame pointers), so the frame that CALLED it (ZZ-CSLEEP) is lost: frame 0 reads
+  ;; "bogus stack frame" and the walk resumes further out. Measured 2026-10-16; this
+  ;; is why a long C call should be named with WITH-MAIN-ACTIVITY (doc/diagnostics.org §3).
+  (check "and its backtrace still came back (an answer, not a timeout)"
+         (yes "(let ((l (zz-log))) (and (>= (count-if (lambda (i) (search \"thread [main] backtrace\" l :start2 i :end2 (min (length l) (+ i 24)))) (loop for i from 0 below (length l) collect i)) 2) (not (search \"no answer in\" l)) t))" 20.0))
+  (row "the C stall's report" (probe "(let* ((l (zz-log)) (a (search \"STALL:\" l :from-end t))) (and a (subseq l a (min (length l) (+ a 900)))))"))
+  (sleep 3)
+
+  (format t "~&~%== the kernel's log, and privacy ==~%")
+  (check "kernel.log holds the kernel's own banner" (yes "(zz-has \"Linux version\" \"kernel\")"))
+  ;; tag #28: what the kernel itself now offers when it, not the Lisp, is stuck
+  (check "#28: pstore registered the EFI backend (a panic's log survives)"
+         (yes "(zz-has \"efi_pstore\" \"kernel\")"))
+  (check "#28: Magic SysRq is on (Alt-SysRq-w/t/s/u/b/c)"
+         (string= (row "/proc/sys/kernel/sysrq" (probe "(with-open-file (s \"/proc/sys/kernel/sysrq\") (read-line s))")) "\"1\""))
+  (check "#28: the hung-task detector is on (120 s)"
+         (string= (row "hung_task_timeout_secs" (probe "(with-open-file (s \"/proc/sys/kernel/hung_task_timeout_secs\") (read-line s))")) "\"120\""))
+  (check "#28: the soft-lockup watchdog is on"
+         (string= (row "/proc/sys/kernel/watchdog" (probe "(with-open-file (s \"/proc/sys/kernel/watchdog\") (read-line s))")) "\"1\""))
+  (check "every log file is 0600"
+         (yes "(every (lambda (b) (= #o600 (logand #o777 (nth-value 3 (sb-unix:unix-stat (log-path b)))))) '(\"session\" \"stderr\" \"kernel\"))"))
+
   (format t "~&~%== an unhandled error on a thread ==~%")
   (check "the thread ends, aborted"
          (string= (row "join-thread"

@@ -24,6 +24,7 @@
 (sb-posix:setenv "HOME" (string-right-trim "/" *scratch*) 1)
 
 (let ((*load-verbose* nil))
+  (load (merge-pathnames "poc/host-logging.lisp" *root*))   ; the modules log (session-log.lisp)
   (handler-bind ((warning #'muffle-warning))
     (load (merge-pathnames "initramfs/registry.lisp" *root*))
     (dolist (m '("initramfs/model.lisp" "initramfs/present.lisp" "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp"

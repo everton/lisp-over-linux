@@ -177,6 +177,51 @@
          (and (search "pulse  main" l) (search " MB, after GC" l) (search " threads" l)))
        (pulse-line))
 
+(format t "~&== watcher: a long-running thread ==~%")
+(reset-dir)
+(defvar *slow* t)
+(defun zz-slow-turn () (loop while *slow* do (sleep 0.05)))
+(let* ((th (sb-thread:make-thread #'zz-slow-turn :name "slow turn"))
+       (source (lambda () (and *slow* (list (cons "agent turn 9" th)))))
+       (seen (make-hash-table :test #'eq))
+       (+busy-thresholds+ '(1)))
+  (declare (special +busy-thresholds+))
+  (watch-busy-threads source)
+  (watch-busy-step seen)
+  (check "not LONG before the threshold" (not (search "LONG" (slurp (log-path "session")))))
+  (sleep 1.1)
+  (watch-busy-step seen)
+  (watch-busy-step seen)
+  (let ((text (slurp (log-path "session"))))
+    (check "a LONG report names the turn and its age, once"
+           (= 1 (count-matches "LONG: agent turn 9 has been busy 1s" text)) text)
+    (check "with the thread's backtrace" (search "ZZ-SLOW-TURN" text)))
+  (setf *slow* nil)
+  (sb-thread:join-thread th)
+  (watch-busy-step seen)
+  (check "a thread no longer busy is forgotten" (zerop (hash-table-count seen)))
+  (setf *busy-sources* (remove source *busy-sources*)))
+
+(format t "~&== the kernel's log ==~%")
+(check "a kmsg record parses to its level and a dmesg-style line"
+       (equal (multiple-value-list (kmsg-record (format nil "3,812,5678901,-;nvme0: I/O timeout~% SUBSYSTEM=nvme")))
+              '(3 "[    5.678901] nvme0: I/O timeout")))
+(check "a malformed record is NIL" (null (kmsg-record "garbage")))
+(append-log-lines (log-path "kernel") '("one" "two"))
+(check "a batch is written with one stamp per line"
+       (let ((k (slurp (log-path "kernel")))) (and (search "Z one
+" k) (search "Z two
+" k) t)))
+
+(format t "~&== privacy ==~%")
+(flet ((mode (p) (logand #o777 (nth-value 3 (sb-unix:unix-stat (namestring p))))))
+  (check "a new log file is 0600" (= #o600 (mode (log-path "kernel"))) (format nil "~o" (mode (log-path "kernel"))))
+  (set-aside-live-logs)
+  (archive-pending)
+  (check "the log directory is 0700" (= #o700 (mode *scratch*)))
+  (check "an archive is 0600"
+         (every (lambda (p) (= #o600 (mode p))) (directory (concatenate 'string *scratch* "archive/*.gz")))))
+
 ;;; ---- dying loudly ---------------------------------------------------------------
 
 (format t "~&== an unhandled error on a thread ==~%")

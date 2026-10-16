@@ -18,6 +18,7 @@
 (require :sb-bsd-sockets)
 (defvar *here* (make-pathname :name nil :type nil :defaults *load-truename*))
 (defun rel (p) (merge-pathnames p *here*))
+(load (rel "host-logging.lisp"))   ; the modules log (session-log.lisp)
 
 (handler-bind ((warning #'muffle-warning))
   (load (rel "../host-client/http-test-server.lisp"))
