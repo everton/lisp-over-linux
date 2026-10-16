@@ -196,6 +196,9 @@
          (and (search "doc/guide/index.html" (or (probe "(web-home-url)") ""))
               (progn (probe "(progn (web-new-tab) t)")
                      (wait-until 60 (lambda () (search "Lisp-over-Linux guide" (title)))))))
+  ;; back to the test page's tab: every check below means IT (the guide tab, focused
+  ;; now, made them all fail from 374c1e6 to 2026-10-16)
+  (probe "(progn (activate-trail (position-if (lambda (tr) (search \"LoL test index\" (trail-title tr))) *trails*)) t)")
   (qmp-key "esc")
   (check "a frame arrived and was decoded"
          (wait-until 30 (lambda () (string= (probe "(and (web-tab-frame-px (web-visible-tab)) t)") "T"))))
@@ -220,6 +223,9 @@
   (type-text "hello web")
   (check "typed keys reach the focused input"
          (wait-until 20 (lambda () (search "hello web" (js "document.getElementById('q').value")))))
+  ;; with two tabs open (the guide's, above), the wheel only scrolls the one Chrome
+  ;; has in front (WEB-ACTIVATE): this check failed for that reason once the index
+  ;; tab was refocused
   (qmp-wheel "down" 3)
   (check "the wheel scrolls the page"
          (wait-until 20 (lambda () (let ((y (ignore-errors (parse-integer (js "window.scrollY") :junk-allowed t))))

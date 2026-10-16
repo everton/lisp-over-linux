@@ -688,6 +688,18 @@
       (setf (web-tab-state tab) :dead (web-tab-session tab) nil (web-tab-screencasting tab) nil
             (web-tab-open-url tab) (web-tab-url tab)))))
 
+(defun web-activate (tab)
+  "Make TAB Chrome's foreground page. Without a window Chrome still keeps ONE page in
+   front, the newest unless told otherwise, and only that one runs its compositor:
+   a background page takes clicks and keys (the main thread handles those) but a
+   mouseWheel sent to it never completes and the page never scrolls. Measured
+   against the host's Chrome 148 on 2026-10-16: a second tab opened, the wheel on
+   the first hung; after Target.activateTarget it scrolled 100 px. Called whenever
+   a tab starts streaming, which is whenever it comes on screen."
+  (when (and *web-chrome* (web-tab-target tab))
+    (ignore-errors (cdp-send *web-chrome* "Target.activateTarget"
+                             (jobj "targetId" (web-tab-target tab))))))
+
 (defun web-sync-screencast (tab visible)
   "Keep TAB streaming exactly while it is VISIBLE, at the size its pane last drew.
    Hidden tabs cost nothing: no frames are encoded, sent or decoded for them."
@@ -710,12 +722,14 @@
                          "deviceScaleFactor" z "mobile" :false))
          ;; THE STREAM, restarted at the new size: maxWidth/maxHeight cap the frame
          (when (web-tab-screencasting tab) (web-send tab "Page.stopScreencast"))
+         (unless (web-tab-screencasting tab) (web-activate tab))
          (web-send tab "Page.startScreencast"
                    (jobj "format" "jpeg" "quality" *web-quality*
                          "maxWidth" w "maxHeight" h "everyNthFrame" 1))
          (setf (web-tab-screencasting tab) t (web-tab-cast-at tab) (get-internal-real-time)
                (web-tab-sent-w tab) w (web-tab-sent-h tab) h (web-tab-sent-zoom tab) z))))
     ((not (web-tab-screencasting tab))
+     (web-activate tab)
      (web-send tab "Page.startScreencast"
                (jobj "format" "jpeg" "quality" *web-quality*
                      "maxWidth" (web-tab-want-w tab) "maxHeight" (web-tab-want-h tab)

@@ -19,7 +19,7 @@ over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
 [[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (39 checks, about a
-minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (24 checks). Both pass.
+minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
 cannot see them (§4.4).
@@ -185,6 +185,18 @@ text larger. It does not enlarge a picture.
 
 Only the tab on screen streams. When you switch to another tab, =Page.stopScreencast=
 stops the one you left.
+
+*The tab on screen is also Chrome's foreground page* (2026-10-16). With no window,
+headless Chrome still keeps one page "in front", the newest unless told otherwise,
+and only that one runs its compositor. A page behind it takes clicks and keys,
+because the main thread handles those, but a =mouseWheel= sent to it never
+completes, so the page never scrolls. Its frames also come back seconds late. So a
+tab that starts streaming is first made the front page with =Target.activateTarget=
+([[file:../initramfs/web.lisp::defun web-activate][=web-activate=]]). Found by =check-web.lisp=. Since 2026-10-13 it opened a second
+tab, the guide, and left it in front. Reproduced against the host's Chrome 148 with
+a pipe-driven script: after a second =createTarget=, the wheel on the first page
+hung; after =activateTarget=, it scrolled 100 px. In the guest the latency from
+input to the next frame fell from 2.4–43 s to 20–96 ms.
 
 ** 3.4 Input
 
@@ -573,7 +585,11 @@ option, an =onchange= that writes the title) and, with real QMP clicks and keys,
 asserts that our chooser opens (read from =*CHOOSER-STATE*=; the screendump changes)
 on the current option, that Down skips the disabled one, that Enter changes the
 value and runs =onchange=, that Esc changes nothing, and that Space opens it from
-the keyboard. Whether Chrome's own popup stayed shut is asked only on the host: the
+the keyboard. *From 2026-10-13 to 2026-10-16, five of its checks failed.* The check
+that a tab with no URL shows the guide opened a second tab and left it focused, so
+the tab-title, link, back, typing and wheel checks all ran against the guide. The
+check now refocuses the test page's tab, and the wheel check also exposed the
+foreground-page bug in §3.3. Whether Chrome's own popup stayed shut is asked only on the host: the
 net REPL's =WEB-JS= waits for the browser's loop, which is inside the modal chooser. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
 
 ** 8.2 Numbers
