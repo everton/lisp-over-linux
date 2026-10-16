@@ -42,6 +42,7 @@
   (:use :cl)
   (:export #:*root* #:*work* #:path
            #:boot-guest #:kill-guest #:*extra-qemu-args* #:*disk-snapshot* #:guest-running-p #:preflight
+           #:*disk-copy* #:wait-guest-exit
            #:qmp #:qmp-connect #:qmp-key #:qmp-events #:key-event
            #:qmp-hold #:qmp-wheel #:qmp-type
            #:repl-drain #:repl-connect #:strip-ansi #:between-markers
@@ -87,6 +88,12 @@
    is how a test sees a panic turn into a reboot."
   (and *qemu* (sb-ext:process-alive-p *qemu*)))
 
+(defvar *disk-copy* nil
+  "When set, a disk IMAGE FILE to attach WRITABLE — no snapshot=on — so a second boot
+   sees what the first wrote: check-persist.lisp's two-boot test. It must be a COPY
+   the caller made (of test-disk.img), never the pristine image and never a real
+   disk (doc/storage.org §8); LOL_GUEST_DISK is ignored while it is set.")
+
 (defun boot-guest (&optional (name "guest"))
   "Boot iso_root headless with a QMP control socket and the net REPL forwarded.
    NAME (plus our pid) names the scratch directory, which holds the QMP socket, so
@@ -110,8 +117,10 @@
                 ;; writes go to a throwaway overlay, so a test can mkdir and delete
                 ;; freely and the image is identical for the next run. Without it the
                 ;; guest boots diskless, as root — what the older checks expect.
+                (when *disk-copy*
+                  (list "-drive" (format nil "file=~a,format=raw,if=virtio" *disk-copy*)))
                 (let ((disk (sb-posix:getenv "LOL_GUEST_DISK")))
-                  (and disk (plusp (length disk))
+                  (and disk (plusp (length disk)) (not *disk-copy*)
                        (list "-drive" (format nil "file=~a,format=raw,if=virtio~:[~;,snapshot=on~]"
                                               (namestring (merge-pathnames disk *root*)) *disk-snapshot*))))
                 ;; LOL_GUEST_HOSTROOT=1 shares the build host's REAL / read-only over
@@ -146,6 +155,13 @@
 
 (defun kill-guest ()
   (when *qemu* (ignore-errors (sb-ext:process-kill *qemu* 9))))
+
+(defun wait-guest-exit (&optional (seconds 120))
+  "Wait for QEMU to exit by itself — the guest powered off, and -no-reboot turned
+   that into QEMU quitting. True when it did within SECONDS."
+  (loop repeat (* 2 seconds)
+        unless (and *qemu* (sb-ext:process-alive-p *qemu*)) do (return t)
+        do (sleep 0.5)))
 
 (defun host-port-free-p ()
   "True when nothing is listening on the host port (*HOST-PORT*). A previous guest that has not finished
