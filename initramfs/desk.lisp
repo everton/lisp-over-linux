@@ -13,7 +13,8 @@
 ;;;;   (:version 1 :build "…" :saved 3970000000
 ;;;;    :trails (((:ref (:workspace) :text ";; my scratch…" :point (12 4)))
 ;;;;             ((:ref (:modules) :sel 3) (:ref (:module "poc/textview")) …))
-;;;;    :active 0 :recents (…) :settings (:file-sort :name …) :clipboard nil)
+;;;;    :active 0 :windows ((1 200 120 768 500)) :recents (…)
+;;;;    :settings (:file-sort :name …) :clipboard nil)
 ;;;;
 ;;;; A SUBJECT IS WRITTEN AS A REFERENCE, never as itself. DESK-REF turns a subject
 ;;;; into a small list of strings and keywords — (:dir "/home/…"), (:defn ("LOL.FB"
@@ -160,6 +161,13 @@
     (list :version +desk-version+ :build *build-stamp*
           :trails kept
           :active (min active (max 0 (1- (length kept))))
+          ;; the windows (doc/morphic.org): ((TRAIL-INDEX x y w h) …), back to front,
+          ;; the index counting the KEPT trails; a window whose trail was cut away goes
+          :windows (and (boundp '*world*) *world*
+                        (loop for (root . bounds) in (desk-window-layout)
+                              for i = (position root *trails* :key #'first)
+                              when (and i (nth i records))
+                                collect (cons (count-if #'identity (subseq records 0 i)) bounds)))
           :recents (loop for c in *spotter-recents*
                          for ref = (ignore-errors (desk-ref (getf c :subject)))
                          when ref collect (list :label (getf c :label) :detail (getf c :detail)
@@ -281,6 +289,11 @@
                 *active* (let ((a (getf desk :active)))
                            (if (and (integerp a) (< -1 a (length trails))) a 0))
                 *desk-restored-from* (if auto (desk-autosave-path) (desk-path)))
+          ;; the windows: torn off again when the environment makes its world
+          (setf *windows-to-restore*
+                (loop for w in (getf desk :windows)
+                      when (and (consp w) (integerp (first w)) (< -1 (first w) (length trails)))
+                        collect (cons (first (nth (first w) trails)) (rest w))))
           (session-log "desk restored from ~a: ~d tab~:p" *desk-restored-from* (length trails))))))
   ;; replay left something for you (a failure, a pending entry, a torn tail): put the
   ;; journal in a tab beside whatever came back, focus unchanged

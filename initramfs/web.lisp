@@ -987,8 +987,8 @@
 ;;; handlers, before Chrome's default action — cancels it, and reports the control
 ;;; through a BINDING: Runtime.addBinding puts a function on the page's window whose
 ;;; every call becomes a Runtime.bindingCalled event on our pipe, carrying one string.
-;;; We show our own chooser (the right-button menu's card, fb-browser.lisp's
-;;; RUN-CHOOSER-FB with kind :SELECT) or the minibuffer, and write the answer back with
+;;; We show our own chooser (the right-button menu's card, poc/overlays.lisp:
+;;; RUN-CHOOSER with kind :SELECT) or the minibuffer, and write the answer back with
 ;;; Runtime.evaluate IN THE SAME FRAME (the event names its execution context), firing
 ;;; the input and change events a real choice fires.
 
@@ -1582,20 +1582,22 @@ window.__lolPickerApply = function(id, v){
 ;;; ---- the event-loop service, for fb-browser.lisp ----------------------------------
 
 (defun web-present-frame (canvas)
-  "Only the page's pixels changed: blit the new frame and send that rectangle to the
-   screen, the economy the systray and the pointer already use — no full redraw, so a
-   scrolling page costs a JPEG decode and one rectangle, not a whole-screen repaint."
+  "Only the page's pixels changed: blit the new frame and hand that rectangle to the
+   world as painted — it composites whatever lies over the page (a window, an
+   overlay's scrim) and sends just that rect (poc/morphic.lisp, SHELL-PAINTED): the
+   economy the systray and the pointer already use, so a scrolling page costs a JPEG
+   decode and one rectangle, not a whole-screen repaint. With no world (a host test),
+   it is sent straight away."
   (let ((tab (web-visible-tab)))
     (when (and tab *web-page-rect* (web-tab-frame-px tab))
       (web-blit canvas tab)
-      ;; a window over the page stays on top (poc/morphic.lisp)
-      (when (fboundp 'recomposite-windows)
-        (funcall 'recomposite-windows canvas (list *web-page-rect*)))
-      (destructuring-bind (x y w h) *web-page-rect*
-        ;; by name: lol.fb (poc/fb.lisp) exists in the image, not in a host test
-        (funcall (find-symbol "PRESENT-FB-RECT" "LOL.FB") canvas x y w h)
-        (when (and (fb-var "*FB-MOUSE*") (not (fb-var "*CURSOR-HIDDEN*")))
-          (funcall 'put-cursor canvas (fb-var "*CURSOR-X*") (fb-var "*CURSOR-Y*")))))))
+      (if (and (fboundp 'shell-painted) (boundp '*world*) (symbol-value '*world*))
+          (funcall 'shell-painted (list *web-page-rect*))
+          (destructuring-bind (x y w h) *web-page-rect*
+            ;; by name: lol.fb (poc/fb.lisp) exists in the image, not in a host test
+            (funcall (find-symbol "PRESENT-FB-RECT" "LOL.FB") canvas x y w h)
+            (when (and (fb-var "*FB-MOUSE*") (not (fb-var "*CURSOR-HIDDEN*")))
+              (funcall 'put-cursor canvas (fb-var "*CURSOR-X*") (fb-var "*CURSOR-Y*"))))))))
 
 (defun web-loop-service (canvas dirty)
   "fb-browser.lisp's per-turn hook (see *FB-SERVICES*). -> :REDRAW to redraw the

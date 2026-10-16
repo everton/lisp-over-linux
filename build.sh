@@ -108,6 +108,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/agent-store.lisp"  # conversations saved to ~/.lol/agent/conversations, reopened from the Spotter
   "$POC_DIR/terminal-pane.lisp"      # SUBJ-TERMINAL: the terminal as a pane (uses shell + terminal + pty)
   "$POC_DIR/morphic.lisp"            # the desk: the tiled shell as a morph, trail windows (uses morph + shell)
+  "$POC_DIR/overlays.lisp"           # the modal cards as morphs: Spotter, menus/halo, clipboard, value prompt
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
   "$INITRAMFS_DIR/meminfo.lisp"      # report-memory (the "m" menu action)

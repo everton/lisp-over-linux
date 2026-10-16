@@ -630,10 +630,12 @@
 
 (defun browser-panes (&key visible)
   "Every pane the shell holds — each trail's panes and their side panes, and the
-   nav-split preview — or, with VISIBLE, only those of the focused trail (and the
-   preview), which is what is on screen."
+   nav-split preview — or, with VISIBLE, only those on screen: the tiled trail's and
+   every window's (poc/morphic.lisp, VISIBLE-TRAILS), and the preview."
   (let ((out '()))
-    (dolist (trail (if visible (list (current-trail)) *trails*))
+    (dolist (trail (if visible
+                       (if (fboundp 'visible-trails) (funcall 'visible-trails) (list (current-trail)))
+                       *trails*))
       (dolist (p trail)
         (push p out)
         (when (pane-side p) (push (pane-side p) out))))
@@ -657,8 +659,8 @@
 (defun refresh-remote-panes (conn handles)
   "Give every pane showing one of HANDLES on CONN (all of them when HANDLES is :ALL)
    the view that just arrived. The pane keeps its place: same selection index
-   (clamped), same scroll. -> T when one of those panes is ON SCREEN."
-  (let ((visible (browser-panes :visible t)) (seen nil))
+   (clamped), same scroll. -> the refreshed panes that are ON SCREEN."
+  (let ((visible (browser-panes :visible t)) (seen '()))
     (dolist (p (browser-panes))
       (let ((s (pane-remote p)))
         (when (and s (eq (subj-remote-conn s) conn)
@@ -668,7 +670,7 @@
                   (pane-sel p) (max 0 (min (pane-sel p) (1- (length (view-items v))))))
             (when (and (pane-tv p) (view-text v))
               (lol.textview:tv-set-text (pane-tv p) (view-text v)))
-            (when (member p visible) (setf seen t))))))
+            (when (member p visible) (push p seen))))))
     seen))
 
 (defun conn-shown-p (conn &key visible)
@@ -701,14 +703,19 @@
   "The service's :RUN, every turn of the loop. Drain each child; refresh the panes
    whose views arrived; ask again for whatever went stale AND is on screen (a stale
    handle nobody is looking at is just remembered — it is asked for when its tab
-   comes back); let go of children nobody shows. -> :REDRAW when the screen changed."
+   comes back); let go of children nobody shows. Each refreshed pane on screen
+   damages just the morph that shows it (DAMAGE-PANE, poc/morphic.lisp — the shell, or
+   one window); with no world, -> :REDRAW when the screen changed."
   (declare (ignore canvas dirty))
   (let ((redraw nil))
     (dolist (c (copy-list *worker-conns*))
       (multiple-value-bind (arrived changed) (conn-pump c)
         (when (or arrived changed)
-          (when (refresh-remote-panes c (if changed :all arrived))
-            (setf redraw t))))
+          (let ((shown (refresh-remote-panes c (if changed :all arrived))))
+            (cond ((null shown))
+                  ((and (fboundp 'damage-pane) (boundp '*world*) (symbol-value '*world*))
+                   (mapc (symbol-function 'damage-pane) shown))
+                  (t (setf redraw t))))))
       (when (conn-live-p c)
         (let ((on-screen (loop for p in (browser-panes :visible t)
                                for s = (pane-remote p)

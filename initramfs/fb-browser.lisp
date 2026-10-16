@@ -4,8 +4,10 @@
 ;;;; the dev host runs here on the bare framebuffer, launched from the supervisor
 ;;;; menu. Output is lol.fb:present-fb into /dev/fb0 (under KD_GRAPHICS so fbcon
 ;;;; stops scribbling); input is BOTH the raw console keyboard AND the evdev mouse,
-;;;; multiplexed with poll(2). It returns to the menu when you leave (C-g at the
-;;;; root). Esc is left free for a future Meta prefix, so it does not quit.
+;;;; multiplexed with poll(2), decoded into the world's events (poc/morph.lisp) and
+;;;; routed there; one turn of that loop is FB-CYCLE, which a waiting overlay turns
+;;;; too (doc/morphic.org). It returns to the menu when you leave (SuperL-q). Esc is
+;;;; the Meta prefix, so it does not quit.
 ;;;;
 ;;;; Keyboard: raw fd 0, signals OFF (so C-c C-c Accepts). Mouse: /dev/input/eventN
 ;;;; (the pointer, found via /proc/bus/input/devices) — relative (PS/2 / USB), absolute
@@ -1161,13 +1163,6 @@
   (lol.fb:present-fb canvas)
   (when (and *fb-mouse* (not *cursor-hidden*)) (put-cursor canvas *cursor-x* *cursor-y*)))
 
-(defun show-frame (canvas)
-  "PRESENT-FRAME for the modal loops (the Spotter, the menus, the debugger …), which
-   draw whole frames of their own behind the world's back: say so, so that the world
-   repairs everything once the modal is gone (*SCREEN-OVERDRAWN*, morphic.lisp)."
-  (setf *screen-overdrawn* t)
-  (present-frame canvas))
-
 (defun cursor-over-rect-p (r)
   "Does the arrow, drawn at the cursor, overlap rect R (x y w h)?"
   (destructuring-bind (x y w h) r
@@ -1227,17 +1222,11 @@
             (floor usec 1000)))))
 
 (defun tick-tray (canvas w)
-  "Repaint the tray strip and send just that rectangle; put the pointer back on top
-   if it was over it."
+  "Repaint the tray strip into the canvas and hand it to the world as painted: the
+   next repair composites whatever lies over it (a window, an overlay's scrim) and
+   sends just that rectangle (SHELL-PAINTED, LOL.MORPH:NOTE-PAINTED)."
   (draw-tray canvas w)
-  (when *tray-rect*
-    (destructuring-bind (x y tw th) *tray-rect*
-      (recomposite-windows canvas (list *tray-rect*))   ; a window over the tray stays on top
-      (lol.fb:present-fb-rect canvas x y tw th)
-      (when (and *fb-mouse* (not *cursor-hidden*)
-                 (< (- x +cursor-w+) *cursor-x* (+ x tw))
-                 (< *cursor-y* (+ y th)))
-        (put-cursor canvas *cursor-x* *cursor-y*)))))
+  (when *tray-rect* (shell-painted (list *tray-rect*))))
 
 (defun earliest-timeout (&rest timeouts)
   "The soonest of several poll timeouts in ms, where -1 means 'no deadline'."
@@ -1247,82 +1236,12 @@
 ;;; ---- the stage's heartbeat (§3b) -----------------------------------------
 ;;; The browser has always been a pure function of state that only input changes, and
 ;;; the poll that sleeps forever is how it stays at zero CPU on an idle console. A
-;;; stage breaks that, so it is allowed to — but ONLY while one is actually on screen
-;;; and running. The moment you drill away from it the loop is back to sleeping until
-;;; a key, which is why the timeout is computed per iteration rather than set once.
-
-(defparameter +stage-frame-ms+ 33
-  "Milliseconds between stage ticks — about thirty a second. Fast enough that motion
-   reads as motion, slow enough that a whole repaint in Lisp keeps up on the guest.")
-
-(defun current-stage ()
-  "The stage on screen right now, or NIL. Reaches through the shell rather than
-   holding its own reference, so closing the tab really does stop the clock."
-  (let ((p (ignore-errors (current-pane))))
-    (when (and p (eq (view-kind (pane-view p)) :stage))
-      (view-data (pane-view p)))))
-
-(defun live-stage-timeout ()
-  "The poll timeout for this iteration: a frame deadline when a running stage is on
-   screen, -1 (sleep until input) otherwise."
-  (let ((st (current-stage)))
-    (if (and st (stage-running st)) +stage-frame-ms+ -1)))
-
-(defvar *stage-last-tick* 0
-  "Internal-real-time at the previous tick, so the stage advances by WALL CLOCK.")
-
-(defparameter +stage-max-catchup+ 6
-  "Most ticks one frame may run. Without a cap, a stage left behind a modal debugger
-   would try to replay the whole pause in a single frame the moment it came back.")
-
-(defun tick-live-stage ()
-  "Advance the on-screen stage by however many ticks the wall clock says are due.
-
-   Not one tick per frame: a full 1280x800 repaint in Lisp costs more than a frame
-   period, so one-per-frame would make the world's speed a function of how expensive
-   the pane is to draw — motion that slows down when you open a bigger window. Taking
-   the elapsed time and stepping the arrears keeps the simulation rate fixed at
-   +STAGE-FRAME-MS+ regardless of what the renderer manages.
-
-   A contact here can signal — that is the point of the whole view — and the signal
-   reaches RUN-DEBUGGER-FB through the HANDLER-BIND below exactly as one from the
-   Workspace does (WORKSPACE-DEBUG-IT), with the stack still standing and the stage's own restarts on the
-   rail. Nothing special is needed to make that work, which is the best evidence that
-   the stage belongs in this browser rather than beside it."
-  (let ((st (current-stage)))
-    (when (and st (stage-running st))
-      (let* ((now (get-internal-real-time))
-             (elapsed (round (* 1000 (- now *stage-last-tick*))
-                             internal-time-units-per-second))
-             (due (max 1 (min +stage-max-catchup+ (floor elapsed +stage-frame-ms+)))))
-        (setf *stage-last-tick* now)
-        ;; ARMED, exactly as workspace-debug-it arms an eval, and for the same reason:
-        ;; HANDLER-BIND runs its handler BEFORE the unwind, so run-debugger-fb sees the
-        ;; live restarts and the standing stack. The outer handler-case around
-        ;; run-browser-fb would catch this too — but it catches by UNWINDING, which
-        ;; drops you out of the browser to the supervisor menu with the error printed,
-        ;; and by then the stack the debugger exists to show is gone.
-        (restart-case
-            (handler-bind ((serious-condition
-                             (lambda (c) (funcall 'run-debugger-fb c))))
-              (dotimes (i due) (step-stage st)))
-          (abort ()
-            :report "Return to the stage (paused)"
-            ;; Pausing is the honest outcome: nothing resolved the contact, and the two
-            ;; bodies are still overlapping. Resuming without pausing would re-signal a
-            ;; second later and keep re-signalling — a modal that reopens on a timer is
-            ;; not a debugger, it is a trap. The rail's other restarts (pass-through,
-            ;; remove-both, use-value, define-method) are the ways to actually settle it.
-            (setf (stage-running st) nil)
-            (stage-log st "aborted — stage paused; the contact is unresolved" :warn)))
-        ;; [define-method] left a template behind: hand it to the Workspace beside the
-        ;; stage. Done HERE rather than inside the restart because the restart's job is
-        ;; to unwind, and the pane it wants does not exist until we are back in the
-        ;; browser's own world.
-        (let ((p (current-pane)))
-          (when (and p (eq (view-kind (pane-view p)) :stage))
-            (stage-take-template p)))))))
-
+;;; running stage breaks that, so it is allowed to — but ONLY while one is actually on
+;;; screen and running. It is a STEP now (doc/morphic.org step 5): the morph that shows
+;;; the stage asks to be stepped every +STAGE-FRAME-MS+ (poc/morphic.lisp,
+;;; STEP-STAGE-PANE), the poll's deadline is the world's next step
+;;; (LOL.MORPH:WORLD-STEP-TIMEOUT), and the moment nothing on screen steps that
+;;; deadline is -1 again: sleep until a key.
 
 ;;; ---- services: other things that can wake the loop -------------------------
 ;;; Input and a stage's clock were, for a long time, the only reasons the loop woke.
@@ -1347,13 +1266,27 @@
   (setf *fb-services* (cons (list* :name name functions)
                             (remove name *fb-services* :key (lambda (s) (getf s :name))))))
 
+(defvar *services-running* '()
+  "The services whose :RUN is on the stack right now. A :RUN can open an overlay that
+   waits (a web page's <select> becomes our menu) and so turn the loop again from
+   inside itself; that inner turn must not run the same service again, nor poll its
+   fd — it would read the pipe the outer call is in the middle of, and an fd nobody
+   reads would wake the poll at once, forever. So a running service sits the inner
+   turns out, exactly as it did when the menu was a loop of its own.")
+
 (defun fb-service-call (key &rest args)
   "Call every service's KEY function with ARGS; -> the list of their non-NIL values.
-   A service that signals is reported in the status line, not allowed to kill PID 1."
+   A service that signals is reported in the status line, not allowed to kill PID 1.
+   A service already inside its :RUN is skipped (*SERVICES-RUNNING*)."
   (loop for s in *fb-services*
         for fn = (getf s key)
         for v = (and fn (fboundp fn)
-                     (handler-case (apply fn args)
+                     (not (member (getf s :name) *services-running*))
+                     (handler-case
+                         (if (eq key :run)
+                             (let ((*services-running* (cons (getf s :name) *services-running*)))
+                               (apply fn args))
+                             (apply fn args))
                        (serious-condition (c)
                          (setf *browser-status* (format nil "~(~a~): ~a" (getf s :name) c))
                          nil)))
@@ -1368,30 +1301,16 @@
   (loop for v in (fb-service-call :fd)
         if (listp v) append v else collect v))
 
-(defun show-terminal-rows (canvas)
-  "Repaint the rows a terminal's program changed and send only those rectangles to
-   the screen — a shell echoing a key costs one row, not a frame. The pointer goes
-   back on top if a row ran under it. NIL when the current pane is not a terminal
-   that can be updated this way; the caller then redraws the whole frame."
-  (let ((rects (terminal-paint-dirty canvas)))
-    (when rects
-      (recomposite-windows canvas rects)                ; a window over the rows stays on top
-      (dolist (r rects) (apply #'lol.fb:present-fb-rect canvas r))
-      (when (and *fb-mouse* (not *cursor-hidden*)
-                 (some (lambda (r) (destructuring-bind (x y w h) r
-                                     (and (< (- x +cursor-w+) *cursor-x* (+ x w))
-                                          (< (- y +cursor-h+) *cursor-y* (+ y h)))))
-                       rects))
-        (put-cursor canvas *cursor-x* *cursor-y*))
-      t)))
-
 ;;; The terminals (doc/terminal.org) are a service: their pty masters wake the poll,
 ;;; and :RUN drains every live one (non-blocking, so cheap when nothing came) and
-;;; repaints only the ROWS their programs changed — unless a full frame is coming.
+;;; repaints only the ROWS their programs changed — a shell echoing a key costs one
+;;; row, not a frame — the tiled terminal's straight onto the screen, a window's into
+;;; its backing store (TERMINAL-ROWS-TO-WORLD, poc/morphic.lisp).
 (defun terminal-service-run (canvas dirty)
+  (declare (ignore dirty))
   (let ((r (terminal-service (terminal-fds))))
     (cond ((eq r :full) :redraw)
-          ((and (eq r :rows) (not dirty)) (unless (show-terminal-rows canvas) :redraw)))))
+          ((eq r :rows) (terminal-rows-to-world canvas) nil))))
 
 (fb-register-service :terminals :fd 'terminal-fds :run 'terminal-service-run)
 
@@ -1415,14 +1334,16 @@
       ;; refresh Ctrl/Shift/Super first; the Menu key opens the context menu where
       ;; the caret (or selected row) is
       (let ((ev (and kev (read-keyboard-evdev *fb-kbd*))))
+        ;; (:EVDEV marks a key the console never saw: the modal overlays ignore those,
+        ;; as the loops they replaced never read them — poc/overlays.lisp)
         (cond ((eq ev :menu) (emit :menu))
               ;; seen only on the evdev: the console keeps them for its own
               ;; scrollback (a terminal pane's history)
-              ((eq ev :shift-page-up) (emit :key :key :page-up :state 1))
-              ((eq ev :shift-page-down) (emit :key :key :page-down :state 1))
+              ((eq ev :shift-page-up) (emit :key :key :page-up :state 1 :data '(:evdev t)))
+              ((eq ev :shift-page-down) (emit :key :key :page-down :state 1 :data '(:evdev t)))
               ;; a Ctrl chord the console sends no byte for
               ((characterp ev)
-               (emit :key :key ev :state (logior 4 (if *super-down* 64 0))))))
+               (emit :key :key ev :state (logior 4 (if *super-down* 64 0)) :data '(:evdev t)))))
       (when kb
         (multiple-value-bind (key state) (fb-read-key 0)
           ;; Ctrl-/ reaches the tty as DEL, Backspace's own byte (defkeymap:
@@ -1443,6 +1364,11 @@
         (let ((ox *cursor-x*) (oy *cursor-y*) (was-down *button-down*))
           (multiple-value-bind (clicked wheel button)
               (read-mouse *fb-mouse* xres yres)        ; every ready pointer
+            ;; a bare move (no button held before or now): it changes nothing on
+            ;; screen, but a menu's hover follows it and a carried window moves
+            (when (and (not was-down) (not *button-down*)
+                       (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
+              (emit :move))
             ;; wheel first: a notch scrolls the pane under focus a few lines
             (unless (zerop wheel) (emit :wheel :notches wheel))
             ;; Alt-click is the middle button, for a pointer that has none
@@ -1462,6 +1388,81 @@
             (when (and was-down (not *button-down*))
               (emit :up))))))
     (nreverse events)))
+
+;;; ---- the cycle ------------------------------------------------------------------
+;;; One turn of the environment's loop. RUN-BROWSER-FB turns it until you leave; a
+;;; blocking overlay turns it too while it waits for its answer (RUN-OVERLAY), so
+;;; everything below goes on behind a menu or the debugger — except the steps and the
+;;; agent's tick, which wait with it (poc/morphic.lisp says why).
+
+(defun fb-cycle ()
+  "Repair what is damaged and send it; sleep in poll until something happens — input,
+   a service's fd, the earliest deadline (a morph's step, the pointer's idle hide, the
+   clock, a service); turn what happened into events and let the world route them;
+   then the things that change the screen without an event (the services, the steps,
+   the clock). -> :QUIT when the environment must end. A held modifier or a bare
+   pointer move damages nothing, so neither redraws."
+  (let* ((canvas *fb-canvas*) (xres *fb-xres*) (yres *fb-yres*)
+         (waiting (plusp *blocking-overlays*)))
+    ;; the agent (agent-ui.lisp): stream a reply into its panes and run the tool calls
+    ;; its turn posted — on THIS thread, so not while something below is waiting
+    (when (and (not waiting) (fboundp 'agent-ui-tick) (funcall 'agent-ui-tick))
+      (environment-changed))
+    (multiple-value-call #'present-repair canvas (lol.morph:world-repair *world* canvas))
+    (multiple-value-bind (kb ms kev xs)
+        (fbb-wait 0 *fb-mouse* *fb-kbd*
+                  (apply #'earliest-timeout
+                         ;; a running stage, a live run pane: the morph that shows it
+                         ;; steps; nothing stepping is -1, sleep until input
+                         (lol.morph:world-step-timeout *world*)
+                         (cursor-idle-timeout)
+                         (tray-timeout)
+                         (runs-timeout)              ; a stop waiting for its SIGKILL
+                         ;; a conversation streaming (agent-ui.lisp)
+                         (if (and (not waiting) (fboundp 'agent-ui-timeout))
+                             (funcall 'agent-ui-timeout) -1)
+                         (fb-service-call :timeout))
+                  (fb-service-fds))
+      (let ((ox *cursor-x*) (oy *cursor-y*)
+            (was-hidden (and ms (pointer-activity))))
+        ;; what happened, as events, routed by the world: keys to the focus (or the
+        ;; overlay on top), the pointer to the morph under it
+        (dolist (e (input-events kb ms kev xres yres))
+          (when (or (eq e :eof)
+                    (eq :quit (lol.morph:world-dispatch *world* e))
+                    *world-quit*)
+            (return-from fb-cycle :quit)))
+        ;; a bare move: the frame is still right, only the arrow is in the wrong place
+        ;; (a repair would move it anyway)
+        (when (and ms (not (lol.morph:world-damaged-p *world*))
+                   (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
+          (move-cursor canvas ox oy)
+          ;; (a page in a WINDOW, or under an overlay, gets no hover: the services see
+          ;; the shell's geometry)
+          (unless (or (focused-window) (top-overlay))
+            (fb-service-call :motion *cursor-x* *cursor-y*))))
+      ;; a run asked to stop that has not: SIGKILL after the grace
+      (escalate-run-stops)
+      ;; a closed tab or a popped pane may have taken a terminal with it: hang its
+      ;; program up (SIGHUP, as closing a window)
+      (when (or kb ms kev) (terminal-sweep))
+      ;; the services (a web page's frames, the terminals, the live workers): every
+      ;; turn, since they also react to what input just did. With a WINDOW focused the
+      ;; web page is told a full redraw is coming: it paints at the shell's geometry.
+      (when (member :redraw (fb-service-call :run canvas
+                                             (or (lol.morph:world-damaged-p *world*)
+                                                 (focused-window))))
+        (environment-changed))
+      (when xs (service-woke))
+      ;; the morphs that change on their own: each damages only what it changed
+      (lol.morph:world-step *world*)
+      ;; nothing was ready: a deadline fired. An idle pointer hides; the clock is cheap,
+      ;; so it simply ticks on every timeout (a step's frame repaints an unchanged tray)
+      (unless (or kb ms kev xs)
+        (when (zerop (cursor-idle-timeout))
+          (hide-cursor canvas))
+        (tick-tray canvas xres)))
+    nil))
 
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
@@ -1486,10 +1487,10 @@
           (set-browser-font
            (open-browser-font (list +guest-font+) "/cozette.lolf"
                               :size (let ((s (setting :font-size))) (and (integerp s) s)))))
-        ;; installed by NAME, not by #', because run-browser-fb is compiled before
-        ;; fb-prompt-value is defined further down this same file
-        (setf *value-prompt* 'fb-prompt-value)    ; the shell asks; this backend reads
-        (setf *chooser* 'run-chooser-fb)          ; ... and shows its menus and halos
+        ;; installed by NAME, not by #', so that redefining one at the REPL takes
+        ;; effect at once (both are overlays, poc/overlays.lisp)
+        (setf *value-prompt* 'run-value-prompt)   ; the shell asks; an overlay reads
+        (setf *chooser* 'run-chooser)             ; ... and shows its menus and halos
         (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
         ;; the touchpad: does a tap click? Off unless the settings say so.
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
@@ -1504,93 +1505,25 @@
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
                   *cursor-hidden* nil *pointer-active-at* (get-internal-real-time)
+                  ;; the windows of the last time round (the console and back), unless
+                  ;; the desk file just gave some (desk.lisp, at boot)
+                  *windows-to-restore* (or *windows-to-restore*
+                                           (and *world* (desk-window-layout)))
                   ;; the world: the tiled shell as one full-screen morph, all damaged
-                  *world* (make-desk xres yres) *screen-overdrawn* nil)
+                  *world* (make-desk xres yres))
             (unwind-protect
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
                    (with-raw-mode (0 nil)
-                     ;; THE CYCLE (doc/morphic.org §4.2): repair what is damaged, sleep
-                     ;; in poll until something happens, turn what happened into
-                     ;; events, let the world route them, then the things that change
-                     ;; the screen without an event (services, the stage, the clock).
+                     ;; THE CYCLE (doc/morphic.org §4.2), one turn at a time: FB-CYCLE.
                      ;; The world starts wholly damaged, so the first turn draws the
-                     ;; frame. A held modifier or a bare pointer move damages nothing,
-                     ;; so neither redraws.
-                     (block environment
-                      (loop do
-                       ;; the agent (agent-ui.lisp): stream a reply into its panes and
-                       ;; run the tool calls its turn posted — on THIS thread
-                       (when (and (fboundp 'agent-ui-tick) (funcall 'agent-ui-tick))
-                         (environment-changed))
-                       (multiple-value-call #'present-repair canvas
-                         (lol.morph:world-repair *world* canvas))
-                       ;; A running stage (§3b) is the one thing on screen that changes
-                       ;; without being asked, so it — and only it — makes the loop
-                       ;; wake on a deadline rather than sleeping until input.
-                       (multiple-value-bind (kb ms kev xs)
-                           (fbb-wait 0 *fb-mouse* *fb-kbd*
-                                     (apply #'earliest-timeout
-                                            (live-stage-timeout)
-                                            (cursor-idle-timeout)
-                                            (tray-timeout)
-                                            ;; a live run pane (runs.lisp)
-                                            (runs-timeout)
-                                            ;; a conversation streaming (agent-ui.lisp)
-                                            (if (fboundp 'agent-ui-timeout)
-                                                (funcall 'agent-ui-timeout) -1)
-                                            (fb-service-call :timeout))
-                                     (fb-service-fds))
-                         (let ((ox *cursor-x*) (oy *cursor-y*)
-                               (was-hidden (and ms (pointer-activity))))
-                           ;; what happened, as events, routed by the world: keys to
-                           ;; the focus, the pointer to the morph under it
-                           (dolist (e (input-events kb ms kev xres yres))
-                             (when (or (eq e :eof)
-                                       (eq :quit (lol.morph:world-dispatch *world* e)))
-                               (return-from environment)))
-                           ;; a bare move: the frame is still right, only the arrow is
-                           ;; in the wrong place (a repair would move it anyway)
-                           (when (and ms (not (lol.morph:world-damaged-p *world*))
-                                      (or was-hidden (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                             (move-cursor canvas ox oy)
-                             ;; (a page in a WINDOW gets no hover: the services see
-                             ;; the shell's geometry, and its page rect is not that)
-                             (unless (focused-window)
-                               (fb-service-call :motion *cursor-x* *cursor-y*))))
-                         ;; a run's reader thread may have collected output: copy it
-                         ;; into its pane (cheap when nothing changed — a compare)
-                         (when (tick-runs) (environment-changed))
-                         ;; a closed tab or a popped pane may have taken a terminal
-                         ;; with it: hang its program up (SIGHUP, as closing a window)
-                         (when (or kb ms kev) (terminal-sweep))
-                         ;; the services (a web page's frames, …): every turn, since
-                         ;; they also react to what input just did (a click's page)
-                         ;; With a WINDOW focused they are told a full redraw is
-                         ;; coming, so none of them paints a fast path of its own:
-                         ;; their geometry is the shell's, and the focused pane is
-                         ;; not in the shell. A window showing something live is
-                         ;; redrawn whenever a service's fd woke the poll.
-                         (when (member :redraw (fb-service-call :run canvas
-                                                                (or (lol.morph:world-damaged-p *world*)
-                                                                    (focused-window))))
-                           (environment-changed))
-                         (when xs (service-woke))
-                         ;; Nothing was ready: a deadline fired. Which one? A running
-                         ;; stage advances the world; an idle pointer hides.
-                         (unless (or kb ms kev xs)
-                           (when (/= -1 (live-stage-timeout))
-                             (tick-live-stage) (environment-changed))
-                           (when (zerop (cursor-idle-timeout))
-                             (hide-cursor canvas))
-                           ;; the clock: cheap, so simply on every timeout — a
-                           ;; stage frame or a hide repaints an unchanged tray
-                           (unless (lol.morph:world-damaged-p *world*) (tick-tray canvas xres)))
-                         ;; a modal loop (the Spotter, a menu, the debugger) drew whole
-                         ;; frames of its own: what is on the glass is no longer what
-                         ;; the world drew, so repair all of it
-                         (when (shiftf *screen-overdrawn* nil)
-                           (lol.morph:invalidate *world*)))))))
+                     ;; frame. A blocking overlay (a menu, the debugger) turns the same
+                     ;; function while it waits (RUN-OVERLAY, poc/morphic.lisp).
+                     (unwind-protect
+                          (progn
+                            (setf *world-cycle* 'fb-cycle *world-quit* nil)
+                            (loop until (or (eq :quit (fb-cycle)) *world-quit*)))
+                       (setf *world-cycle* nil))))
               (close-input-devices)))))
     (serious-condition (c)
       (log-condition "the environment died" c)
@@ -1616,11 +1549,12 @@
          (or (eq key :escape) (and (logbitp 2 state) (member key '(#\g #\G)))))))
 
 ;;; ---- the debugger: a condition made interactive (§3) ---------------------
-;;; Entered from a HANDLER-BIND handler (WORKSPACE-DEBUG-IT, TICK-LIVE-STAGE) — not
-;;; from *DEBUGGER-HOOK*, which nothing sets — with the stack STILL STANDING, so the restarts are
-;;; live and invoking one actually transfers control. It is a nested modal loop over
-;;; the same framebuffer + input the browser owns; it never returns without invoking
-;;; a restart (there is no standard debugger to fall through to as PID 1).
+;;; Entered from a HANDLER-BIND handler (WORKSPACE-DEBUG-IT, STEP-STAGE-PANE) — not
+;;; from *DEBUGGER-HOOK*, which nothing sets — with the stack STILL STANDING, so the
+;;; restarts are live and invoking one actually transfers control. It is an OVERLAY
+;;; (poc/morphic.lisp) that its caller waits in, turning the environment's own loop —
+;;; so a terminal behind it keeps printing — and it is left only by invoking a restart
+;;; (there is no standard debugger to fall through to as PID 1).
 
 (defvar *dbg-restart-top* 0 "screen-y of the first restart row, for click hit-testing.")
 (defvar *dbg-frame-top* 0 "screen-y of the first backtrace row, for click hit-testing.")
@@ -1837,13 +1771,22 @@
 
 (defparameter +src-page+ 20 "Lines the frame-source viewer moves on PageUp/PageDown.")
 
-(defun run-frame-source-fb (name)
-  "M-. from the debugger: show NAME's definition source in a read-only modal OVER the
-   debugger — the erroring stack stays standing, so you look and come back. Scroll
-   with up/down, PageUp/Down, or the wheel; Esc / q / Enter returns to the debugger.
-   Reuses PRESENT (subj-defn NAME), so a recorded definition shows its source and a
-   built-in shows whatever PRESENT falls back to (or a plain 'no source' note)."
-  (let* ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
+;;; M-. from the debugger: NAME's definition source in a read-only overlay OVER the
+;;; debugger — the erroring stack stays standing, so you look and come back. Nobody
+;;; waits for it: it is opened and the debugger's own wait goes on underneath.
+
+(defclass source-overlay (overlay)
+  ((name :initarg :name :reader source-name)
+   (tv   :initarg :tv :reader source-tv))
+  (:default-initargs :opaque t)
+  (:documentation "A definition's source, read-only, over the debugger."))
+
+(defun open-frame-source (name)
+  "Show NAME's definition source over the debugger. Scroll with up/down, PageUp/Down,
+   or the wheel; Esc / q / Enter returns to the debugger. Reuses PRESENT (subj-defn
+   NAME), so a recorded definition shows its source and a built-in shows whatever
+   PRESENT falls back to (or a plain 'no source' note)."
+  (let* ((w *fb-xres*) (h *fb-yres*)
          (view (ignore-errors (present (subj-defn name))))
          (text (or (and view (view-text view))
                    (format nil "(no source recorded for ~(~a~) — a built-in or anonymous frame)"
@@ -1851,83 +1794,30 @@
          (tv (lol.textview:make-textview :font *bfont* :focus nil)))
     (lol.textview:tv-set-text tv text)
     (lol.textview:tv-geometry tv 12 (+ (dbg-band-h) 8) (- w 24) (- h (dbg-band-h) 20))
-    (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
-      (when dirty
-        (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-        (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *ui-hi*)
-        (lol.canvas:draw-string canvas *bfont*
-          (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" name)
-          12 (text-dy (dbg-band-h)) *ui-accent*)
-        (lol.textview:tv-draw canvas tv)
-        (show-frame canvas)
-        (setf dirty nil))
-      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-        (when kev (read-keyboard-evdev *fb-kbd*))
-        (when kb
-          (setf dirty t)
-          (multiple-value-bind (key state) (fb-read-key 0)
-            (declare (ignore state))
-            (case key
-              (:up        (lol.textview:tv-wheel tv -1))
-              (:down      (lol.textview:tv-wheel tv 1))
-              (:page-up   (lol.textview:tv-wheel tv (- +src-page+)))
-              (:page-down (lol.textview:tv-wheel tv +src-page+))
-              ((:escape #\q #\Q :return #\Return) (return)))))
-        (when (and *fb-mouse* ms)
-          (let ((ox *cursor-x*) (oy *cursor-y*))
-            (multiple-value-bind (clicked wheel) (read-mouse *fb-mouse* w h)
-              (declare (ignore clicked))
-              (cond ((/= wheel 0)
-                     (lol.textview:tv-wheel tv (* (- wheel) +wheel-lines+))
-                     (setf dirty t))
-                    ((and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                     (move-cursor canvas ox oy))))))))))
+    (open-overlay (make-instance 'source-overlay :name name :tv tv))))
 
-(defun dbg-prompt-value (name)
-  "A modal input line over the debugger for a restart that needs a value: read the Lisp
-   expression the user types (Enter accepts, Esc cancels). Returns the typed STRING, or
-   NIL if cancelled. Draws its bar over the current debugger frame (already on canvas)."
-  (let* ((buf "") (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
-         (band (+ 14 (* 2 (line-h)))))        ; two lines of text: 44 at 6x15
-    (loop with dirty = t do
-      (when dirty
-        (lol.canvas:fill-rect canvas 0 (- h band) w band *ui-hi*)
-        (lol.canvas:fill-rect canvas 0 (- h band) w 2 *ui-amber*)
-        (lol.canvas:draw-string canvas *bfont*
-          ;; "accepts", not "invokes": this line is shared now — a restart INVOKES with
-          ;; the value, the inspector SETS a field to it (shell.lisp's set-field)
-          (format nil "value for [~(~a~)] — an expression, Enter accepts, Esc cancels:" name)
-          12 (+ (- h band) 6) *ui-amber*)
-        (lol.canvas:draw-string canvas *bfont* (format nil "~a_" buf) 12 (- h (line-h) 3) *ui-text*)
-        (show-frame canvas)
-        (setf dirty nil))
-      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-        (when kev (read-keyboard-evdev *fb-kbd*))
-        ;; The mouse must be READ even though a click means nothing here: an unread
-        ;; mouse fd stays readable, and poll would then return at once forever — this
-        ;; loop used to spin, repainting, from the first twitch of the pointer on.
-        (when (and *fb-mouse* ms)
-          (let ((ox *cursor-x*) (oy *cursor-y*))
-            (read-mouse *fb-mouse* w h)
-            (when (or (/= ox *cursor-x*) (/= oy *cursor-y*))
-              (move-cursor canvas ox oy))))
-        (when kb
-          (setf dirty t)
-          (multiple-value-bind (key state) (fb-read-key 0)
-            (declare (ignore state))
-            (cond
-              ((eq key :escape) (return nil))
-              ((member key '(:return #\Return)) (return buf))
-              ((member key '(:backspace #\Backspace #\Rubout))
-               (when (plusp (length buf)) (setf buf (subseq buf 0 (1- (length buf))))))
-              ((and (characterp key) (graphic-char-p key))
-               (setf buf (concatenate 'string buf (string key)))))))))))
+(defmethod overlay-draw ((o source-overlay) canvas w h)
+  (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+  (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *ui-hi*)
+  (lol.canvas:draw-string canvas *bfont*
+    (format nil "source of ~(~a~)   —   scroll;  Esc / q / Enter  back to the debugger" (source-name o))
+    12 (text-dy (dbg-band-h)) *ui-accent*)
+  (lol.textview:tv-draw canvas (source-tv o)))
 
-(defun fb-prompt-value (label)
-  "The shell's *VALUE-PROMPT* on this backend: read one expression, modally, over
-   whatever is on screen. The debugger's restart prompt and the inspector's \"set this
-   field\" want exactly the same thing, so they are the same loop."
-  (dbg-prompt-value label))
+(defmethod overlay-event ((o source-overlay) e)
+  (let ((tv (source-tv o)) (key (overlay-key e)))
+    (cond
+      (key
+       (case key
+         (:up        (lol.textview:tv-wheel tv -1))
+         (:down      (lol.textview:tv-wheel tv 1))
+         (:page-up   (lol.textview:tv-wheel tv (- +src-page+)))
+         (:page-down (lol.textview:tv-wheel tv +src-page+))
+         ((:escape #\q #\Q :return #\Return) (close-overlay o)))
+       (overlay-changed o))
+      ((eq (lol.morph:event-kind e) :wheel)
+       (lol.textview:tv-wheel tv (* (- (lol.morph:event-notches e)) +wheel-lines+))
+       (overlay-changed o)))))
 
 (defun dbg-invoke-with-value (restarts i)
   "Prompt for a value and invoke restart I with it — the way to answer a restart that
@@ -1935,7 +1825,7 @@
    so both a literal (=120=) and an expression (=(* 2 60)=) work; a read/eval error just
    cancels (the debugger must not error while reporting one). A non-local exit on success."
   (let* ((r (nth i restarts))
-         (line (and r (dbg-prompt-value (getf r :name)))))
+         (line (and r (run-value-prompt (getf r :name)))))
     (when (and line (plusp (length (string-trim '(#\Space #\Tab) line))))
       (multiple-value-bind (val ok)
           (ignore-errors (values (eval (read-from-string line)) t))
@@ -1986,7 +1876,7 @@
       ((null (getf place :set))
        (format nil "~a cannot be set: ~a" name (or (getf place :why) "no setter")))
       (t
-       (let ((text (dbg-prompt-value name)))
+       (let ((text (run-value-prompt name)))
          (if (or (null text) (zerop (length (string-trim '(#\Space #\Tab) text))))
              nil                                   ; cancelled: clear the note
              (handler-case
@@ -2025,109 +1915,211 @@
       (ignore-errors (funcall 'agent-ask-about-condition condition))
       (run-debugger-fb condition))))
 
+(defclass debugger-overlay (overlay)
+  ((condition :initarg :condition :reader dbg-condition)
+   (restarts  :initarg :restarts :reader dbg-restarts)
+   (frames    :initarg :frames :reader dbg-frames)       ; sb-di frame objects
+   (backtrace :initarg :backtrace :reader dbg-backtrace) ; their labels
+   (rsel :initform 0 :accessor dbg-rsel)
+   (fsel :initform 0 :accessor dbg-fsel)
+   (lsel :initform 0 :accessor dbg-lsel)
+   (focus :initform :restarts :accessor dbg-focus)
+   (pending-meta :initform nil :accessor dbg-pending-meta)
+   (pending-cc :initform nil :accessor dbg-pending-cc)
+   (note :initform nil :accessor dbg-note)
+   (places :initform nil :accessor dbg-places))
+  (:default-initargs :opaque t)
+  (:documentation "The debugger as an overlay: CONDITION, its restarts, the standing
+   stack and the selected frame's locals. Opened by %RUN-DEBUGGER-FB, which WAITS in
+   it — the erroring stack must stay standing under it — and is left only by a restart
+   (a non-local exit straight through the wait)."))
+
+(defun dbg-refresh (o)
+  "Read the selected frame's locals afresh — as PLACES: the value and, for a settable
+   local, how to write it — and publish what is shown in *DBG-STATE*. After every
+   event: cheap, and only input changes it."
+  (setf (dbg-places o) (frame-local-places (nth (dbg-fsel o) (dbg-frames o)))
+        (dbg-lsel o) (min (dbg-lsel o) (max 0 (1- (length (dbg-places o))))))
+  (setf *dbg-state*
+        (list :condition (ignore-errors (princ-to-string (dbg-condition o)))
+              :restarts (mapcar (lambda (r) (getf r :name)) (dbg-restarts o))
+              :frames (dbg-backtrace o) :fsel (dbg-fsel o) :focus (dbg-focus o)
+              :locals (mapcar (lambda (p) (list (getf p :name) (getf p :value)
+                                                (and (getf p :set) t)))
+                              (dbg-places o))
+              :lsel (dbg-lsel o) :note (dbg-note o)))
+  (overlay-changed o))
+
+(defmethod overlay-draw ((o debugger-overlay) canvas w h)
+  (draw-debugger canvas w h (dbg-condition o) (dbg-restarts o) (dbg-backtrace o) (dbg-places o)
+                 (dbg-rsel o) (dbg-fsel o) (dbg-focus o) (dbg-lsel o) (dbg-note o)))
+
 (defun %run-debugger-fb (condition)
-  "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
-   a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
-   the browser's live canvas + input (published in *fb-*). Returns only by invoking a
-   restart (a non-local exit out of here). Tab moves focus round the restart column
-   (Enter/0-9/click invoke), the backtrace (up-dn/click walk frames) and the selected
-   frame's LOCALS, always shown along the bottom: there up-dn/click pick one and Enter
-   or C-c C-c sets it in the standing frame (DBG-SET-LOCAL). R re-enters the selected
-   frame with the arguments it now holds (DBG-RESTART-FRAME); so set, then CONTINUE or
-   R, is how a fix is tried without leaving the error. M-. opens the selected frame's
-   definition source in a modal viewer without unwinding the stack."
+  "Show CONDITION, its restarts and backtrace, and let the user pick a restart to
+   invoke — and walk the backtrace to inspect any frame's locals. Returns only by
+   invoking a restart (a non-local exit out of here). Tab moves focus round the
+   restart column (Enter/0-9/click invoke), the backtrace (up-dn/click walk frames)
+   and the selected frame's LOCALS, always shown along the bottom: there up-dn/click
+   pick one and Enter or C-c C-c sets it in the standing frame (DBG-SET-LOCAL). R
+   re-enters the selected frame with the arguments it now holds (DBG-RESTART-FRAME);
+   so set, then CONTINUE or R, is how a fix is tried without leaving the error. M-.
+   opens the selected frame's definition source over it without unwinding the stack."
   (let* ((restarts (let ((rs (restart-list condition)))   ; ASK last: Enter keeps meaning
                      (flet ((ask-p (r) (eq (getf r :name) 'ask-the-agent)))   ; the condition's own first
                        (append (remove-if #'ask-p rs) (remove-if-not #'ask-p rs)))))
-         (frame-objs (backtrace-frame-objects 40 4))    ; skip our own hook machinery
-         (backtrace (mapcar #'frame-label frame-objs))
-         (rsel 0) (fsel 0) (lsel 0) (focus :restarts) (pending-meta nil)
-         (pending-cc nil) (note nil) (places nil)
-         (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
+         (frame-objs (backtrace-frame-objects 40 4)))   ; skip our own hook machinery
     (when (null restarts) (return-from %run-debugger-fb))  ; nothing to do; let it pass
-    (unwind-protect                         ; however we leave, *DBG-STATE* goes too
-     (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
-      (when dirty
-        ;; locals read fresh on each redraw — cheap, and a redraw only follows input
-        ;; read as PLACES: the value and, for a settable local, how to write it
-        (setf places (frame-local-places (nth fsel frame-objs))
-              lsel (min lsel (max 0 (1- (length places)))))
-        (draw-debugger canvas w h condition restarts backtrace places rsel fsel focus
-                       lsel note)
-        (setf *dbg-state*
-              (list :condition (ignore-errors (princ-to-string condition))
-                    :restarts (mapcar (lambda (r) (getf r :name)) restarts)
-                    :frames backtrace :fsel fsel :focus focus
-                    :locals (mapcar (lambda (p) (list (getf p :name) (getf p :value)
-                                                      (and (getf p :set) t)))
-                                    places)
-                    :lsel lsel :note note))
-        (show-frame canvas)
-        (setf dirty nil))
-      (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-        (when kev (read-keyboard-evdev *fb-kbd*))
-        (when kb
-          (setf dirty t)
-          (multiple-value-bind (key state) (fb-read-key 0)
-           (let ((meta (or (lol.canvas:meta-p state) pending-meta))
-                 (ctrl (lol.canvas:ctrl-p state))
-                 (cc   pending-cc))
-            (setf pending-meta nil pending-cc nil note nil)
-            (cond
-              ;; C-c C-c — set the selected local (as on an inspector field); the
-              ;; first C-c only arms the chord
-              ((and ctrl (member key '(#\c #\C)))
-               (if cc
-                   (setf focus :locals
-                         note (dbg-set-local (nth fsel frame-objs) (nth lsel places)))
-                   (setf pending-cc t)))
-              ;; R — restart the selected frame with the arguments it holds now
-              ((and (not ctrl) (not meta) (member key '(#\r #\R)))
-               (setf note (dbg-restart-frame (nth fsel frame-objs))))
-              ;; M-. — view the selected frame's definition source (stack stays up).
-              ((and meta (eql key #\.))
-               (let ((name (frame-defn-name (nth fsel frame-objs))))
-                 (when name (run-frame-source-fb name))))
-              ;; Esc = the Meta prefix (sticky); it must NOT quit the debugger.
-              ((eq key :escape) (setf pending-meta t))
-              ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G))) (dbg-abort restarts))
-              ((eq key :tab)                      ; restarts -> stack -> locals -> ...
-               (setf focus (case focus (:restarts :backtrace) (:backtrace :locals)
-                             (t :restarts))))
-              ((eq key :up)
-               (case focus
-                 (:backtrace (setf fsel (max 0 (1- fsel)) lsel 0))
-                 (:locals    (setf lsel (max 0 (1- lsel))))
-                 (t          (setf rsel (max 0 (1- rsel))))))
-              ((eq key :down)
-               (case focus
-                 (:backtrace (setf fsel (min (max 0 (1- (length frame-objs))) (1+ fsel)) lsel 0))
-                 (:locals    (setf lsel (min (max 0 (1- (length places))) (1+ lsel))))
-                 (t          (setf rsel (min (1- (length restarts)) (1+ rsel))))))
-              ;; Enter on a local sets it; elsewhere it still invokes the restart
-              ((and (eq focus :locals) (member key '(:return #\Return)))
-               (setf note (dbg-set-local (nth fsel frame-objs) (nth lsel places))))
-              ;; type a restart's number to select it (0-9) — the count is small
-              ((and (characterp key) (char<= #\0 key #\9))
-               (let ((i (- (char-code key) (char-code #\0))))
-                 (when (< i (length restarts)) (setf rsel i))))
-              ;; v — force a value even when Enter wouldn't ask (override an :interactive
-              ;; default, or supply args to any restart)
-              ((and (characterp key) (char-equal key #\v)) (dbg-invoke-with-value restarts rsel))
-              ((member key '(:return #\Return)) (dbg-enter restarts rsel))))))
-        (when (and *fb-mouse* ms)
-          (let ((ox *cursor-x*) (oy *cursor-y*))
-            (if (read-mouse *fb-mouse* w h)
-                (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
-                      (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs)))
-                      (li (dbg-local-at *cursor-x* *cursor-y* (length places))))
-                  (setf dirty t)
-                  (cond (ri (dbg-enter restarts ri))  ; a restart click invokes (asks if needed)
-                        (fi (setf focus :backtrace fsel fi lsel 0))  ; a frame click selects it
-                        (li (setf focus :locals lsel li))))  ; a local click selects it
-                (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                  (move-cursor canvas ox oy)))))))
-      (setf *dbg-state* nil))))
+    (let ((o (make-instance 'debugger-overlay :condition condition :restarts restarts
+                                              :frames frame-objs
+                                              :backtrace (mapcar #'frame-label frame-objs))))
+      (dbg-refresh o)
+      (unwind-protect (run-overlay o)          ; however we leave, *DBG-STATE* goes too
+        (setf *dbg-state* nil)))))
+
+(defmethod overlay-event ((o debugger-overlay) e)
+  (let* ((restarts (dbg-restarts o)) (frame-objs (dbg-frames o))
+         (places (dbg-places o)) (fsel (dbg-fsel o)) (lsel (dbg-lsel o)))
+    (multiple-value-bind (key state) (overlay-key e)
+      (cond
+        (key
+         (let ((meta (or (lol.canvas:meta-p state) (dbg-pending-meta o)))
+               (ctrl (lol.canvas:ctrl-p state))
+               (cc (dbg-pending-cc o)))
+           (setf (dbg-pending-meta o) nil (dbg-pending-cc o) nil (dbg-note o) nil)
+           (cond
+             ;; C-c C-c — set the selected local (as on an inspector field); the first
+             ;; C-c only arms the chord
+             ((and ctrl (member key '(#\c #\C)))
+              (if cc
+                  (setf (dbg-focus o) :locals
+                        (dbg-note o) (dbg-set-local (nth fsel frame-objs) (nth lsel places)))
+                  (setf (dbg-pending-cc o) t)))
+             ;; R — restart the selected frame with the arguments it holds now
+             ((and (not ctrl) (not meta) (member key '(#\r #\R)))
+              (setf (dbg-note o) (dbg-restart-frame (nth fsel frame-objs))))
+             ;; M-. — view the selected frame's definition source (stack stays up)
+             ((and meta (eql key #\.))
+              (let ((name (frame-defn-name (nth fsel frame-objs))))
+                (when name (open-frame-source name))))
+             ;; Esc = the Meta prefix (sticky); it must NOT quit the debugger
+             ((eq key :escape) (setf (dbg-pending-meta o) t))
+             ((and ctrl (member key '(#\g #\G))) (dbg-abort restarts))
+             ((eq key :tab)                      ; restarts -> stack -> locals -> ...
+              (setf (dbg-focus o) (case (dbg-focus o) (:restarts :backtrace) (:backtrace :locals)
+                                    (t :restarts))))
+             ((eq key :up)
+              (case (dbg-focus o)
+                (:backtrace (setf (dbg-fsel o) (max 0 (1- fsel)) (dbg-lsel o) 0))
+                (:locals    (setf (dbg-lsel o) (max 0 (1- lsel))))
+                (t          (setf (dbg-rsel o) (max 0 (1- (dbg-rsel o)))))))
+             ((eq key :down)
+              (case (dbg-focus o)
+                (:backtrace (setf (dbg-fsel o) (min (max 0 (1- (length frame-objs))) (1+ fsel))
+                                  (dbg-lsel o) 0))
+                (:locals    (setf (dbg-lsel o) (min (max 0 (1- (length places))) (1+ lsel))))
+                (t          (setf (dbg-rsel o) (min (1- (length restarts)) (1+ (dbg-rsel o)))))))
+             ;; Enter on a local sets it; elsewhere it still invokes the restart
+             ((and (eq (dbg-focus o) :locals) (member key '(:return #\Return)))
+              (setf (dbg-note o) (dbg-set-local (nth fsel frame-objs) (nth lsel places))))
+             ;; type a restart's number to select it (0-9) — the count is small
+             ((and (characterp key) (char<= #\0 key #\9))
+              (let ((i (- (char-code key) (char-code #\0))))
+                (when (< i (length restarts)) (setf (dbg-rsel o) i))))
+             ;; v — force a value even when Enter wouldn't ask (override an :interactive
+             ;; default, or supply args to any restart)
+             ((and (characterp key) (char-equal key #\v)) (dbg-invoke-with-value restarts (dbg-rsel o)))
+             ((member key '(:return #\Return)) (dbg-enter restarts (dbg-rsel o)))))
+         (dbg-refresh o))
+        ((eq (lol.morph:event-kind e) :down)
+         (let* ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
+                (ri (dbg-restart-at x y (length restarts)))
+                (fi (dbg-frame-at x y (length frame-objs)))
+                (li (dbg-local-at x y (length places))))
+           (cond (ri (dbg-enter restarts ri))  ; a restart click invokes (asks if needed)
+                 (fi (setf (dbg-focus o) :backtrace (dbg-fsel o) fi (dbg-lsel o) 0))  ; a frame click selects it
+                 (li (setf (dbg-focus o) :locals (dbg-lsel o) li)))  ; a local click selects it
+           (dbg-refresh o)))))))
+
+;;; ---- the ASK restart's view: the agent's answer, over the debugger -------------
+;;; (doc/agent.org §8.8.) Opened by AGENT-ASK-ABOUT-CONDITION (agent-ui.lisp, through
+;;; RUN-AGENT-DEBUGGER-VIEW), which waits in it; Esc goes back to the restarts. It fills
+;;; in as the answer streams: it STEPS while the turn runs (a frame period), so the wait
+;;; wakes for it without a key.
+
+(defclass agent-view-overlay (overlay)
+  ((conv   :initarg :conv :reader agent-view-conv)
+   (tv     :initarg :tv :reader agent-view-tv)
+   (seen   :initform -1 :accessor agent-view-seen)
+   (busy   :initform nil :accessor agent-view-busy)
+   (prefix :initform nil :accessor agent-view-prefix)
+   (note   :initform nil :accessor agent-view-note))
+  (:default-initargs :opaque t))
+
+(defun agent-view-band () (+ (line-h) 9))   ; 24 px under the old 6x15 font
+
+(defun run-agent-view (conv)
+  "A modal view of CONV over the debugger: it fills in as the answer streams, arrows
+   and PageUp/Down move the caret, C-c C-c accepts the form before it, C-g stops the
+   turn, Esc returns to the rail."
+  (let* ((w *fb-xres*) (h *fb-yres*) (band (agent-view-band))
+         (tv (lol.textview:make-textview :font *bfont* :focus t :tint #'conversation-tint))
+         (o (make-instance 'agent-view-overlay :conv conv :tv tv)))
+    (lol.textview:tv-geometry tv 12 (+ band 8) (- w 24) (- h band 8 (line-h) 9))
+    (agent-view-sync o)
+    (run-overlay o)))
+
+(defun agent-view-sync (o)
+  "Bring the view up to the conversation's latest revision (and its busy flag)."
+  (let* ((conv (agent-view-conv o)) (rev (conversation-revision conv))
+         (busy (conversation-busy-p conv)))
+    (when (or (/= rev (agent-view-seen o)) (not (eq busy (agent-view-busy o))))
+      (setf (agent-view-seen o) rev (agent-view-busy o) busy)
+      (let ((lines (coerce (conversation-lines conv) 'simple-vector)))
+        (lol.textview:tv-replace (agent-view-tv o) lines (1- (length lines)) 0))
+      (overlay-changed o))))
+
+(defmethod lol.morph:morph-step-ms ((o agent-view-overlay))
+  ;; a frame period while the answer streams; idle, still catch the last touch
+  (if (conversation-busy-p (agent-view-conv o)) +agent-frame-ms+ 500))
+
+(defmethod lol.morph:step-morph ((o agent-view-overlay) now)
+  (declare (ignore now))
+  (agent-view-sync o))
+
+(defmethod overlay-draw ((o agent-view-overlay) canvas w h)
+  (let ((band (agent-view-band)) (note (agent-view-note o)))
+    (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
+    (lol.canvas:fill-rect canvas 0 0 w band *ui-hi*)
+    (lol.canvas:draw-string canvas *bfont*
+      (format nil "ASK — ~a   ·   C-c C-c accept the form before the caret · C-g stop · Esc back to the restarts"
+              (if (agent-view-busy o) "answering..." "done"))
+      12 (text-dy band) *ui-accent*)
+    (lol.textview:tv-draw canvas (agent-view-tv o))
+    (when note (lol.canvas:draw-string canvas *bfont* note 12 (- h (line-h) 5) *ui-amber*))))
+
+(defmethod overlay-event ((o agent-view-overlay) e)
+  (multiple-value-bind (key state) (overlay-key e)
+    (when key
+      (let ((ctrl (or (lol.canvas:ctrl-p state) *ctrl-down*))
+            (conv (agent-view-conv o)) (tv (agent-view-tv o)))
+        (cond
+          ((eq key :escape) (close-overlay o))
+          ((and ctrl (member key '(#\g #\G)))
+           (cancel-conversation conv) (setf (agent-view-note o) "stopping..."))
+          ((and (agent-view-prefix o) ctrl (member key '(#\c #\C)))
+           (setf (agent-view-prefix o) nil)
+           (let ((text (form-text-before-point tv)))
+             (setf (agent-view-note o)
+                   (if (null text) "no form before the caret"
+                       (handler-case (format nil "Accepted ~(~a~) — Esc, then a restart to retry"
+                                             (let ((*read-eval* nil)) (accept-source text)))
+                         (serious-condition (c) (format nil "Accept failed: ~a" c)))))))
+          ((and ctrl (member key '(#\c #\C))) (setf (agent-view-prefix o) t))
+          ((member key '(:up :down :left :right :page-up :page-down :home :end))
+           (setf (agent-view-prefix o) nil)
+           (lol.textview:tv-key tv key 0))
+          (t (setf (agent-view-prefix o) nil)))
+        (overlay-changed o)))))
 
 ;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------
 ;;; The keys are deliberately NOT shown as permanent chrome — SuperL-? summons this
@@ -2178,7 +2170,10 @@
      ("drag the title bar" "move;  drop it on the tabs: re-tile")
      ("drag the corner"    "resize")
      ("click x / Super-w"  "close the window's trail")
-     ("Super-Tab / 1..9"   "reach windows too (raises them)"))
+     ("Super-Tab / 1..9"   "reach windows too (raises them)")
+     ("halo, Up to window" "Move Resize Raise Close Re-tile")
+     ("  Move / Resize"    "the pointer carries it; click: down")
+     ("  Inspect, bounds"  "C-c C-c a (x y w h): it moves"))
     ("Text size  (doc/fonts.org)"
      ("Super-= / Super-+"  "bigger text, everywhere")
      ("Super--"            "smaller text")
@@ -2348,291 +2343,37 @@
                  (incf y (- (line-h) 6)))))
     pages))
 
-(defun run-cheatsheet-fb ()
-  "Draw the cheatsheet over the browser's live canvas and block until any key or
-   click dismisses it — or, when it runs to several pages, PageDown / Space / Right
-   turn the page and PageUp / Left turn it back. Reuses the *fb-* I/O the browser owns
-   (like the debugger)."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (page 0) (pages 1))
-    (when canvas
-      (setf pages (draw-cheatsheet canvas w h page))
-      (show-frame canvas)
-      (loop
-        (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-          (when kev (read-keyboard-evdev *fb-kbd*))
-          (when kb
-            (let ((key (fb-read-key 0)))
-              (cond ((and (> pages 1) (member key '(:page-down :right #\Space)))
-                     (draw-cheatsheet canvas w h (incf page)) (show-frame canvas))
-                    ((and (> pages 1) (member key '(:page-up :left)))
-                     (draw-cheatsheet canvas w h (decf page)) (show-frame canvas))
-                    (t (return)))))                     ; any other key dismisses
-          (when (and *fb-mouse* ms)
-            (let ((ox *cursor-x*) (oy *cursor-y*))
-              (when (read-mouse *fb-mouse* w h) (return))   ; a click dismisses
-              (when (or (/= ox *cursor-x*) (/= oy *cursor-y*))
-                (move-cursor canvas ox oy)))))))))
+(defclass cheatsheet-overlay (overlay)
+  ((page  :initform 0 :accessor sheet-page)
+   (pages :initform 1 :accessor sheet-pages))
+  (:default-initargs :opaque t)
+  (:documentation "The SuperL-? cheatsheet, over everything until a key dismisses it."))
 
-;;; ---- menus and halos: one modal chooser -----------------------------------
-;;; The right-button menu and the middle-button halo are the same interaction — a
-;;; short list of things you can do, pick one or leave — drawn two ways. The shell
-;;; decides WHAT is offered (context-menu-entries, halo-entries) and how each looks
-;;; (draw-context-menu, draw-halo); this loop only reads input, the same way the
-;;; Spotter's does. It is installed as the shell's *CHOOSER* hook.
+(defun open-cheatsheet ()
+  "Put the cheatsheet up over the screen and return. Any key or click dismisses it —
+   or, when it runs to several pages, PageDown / Space / Right turn the page and
+   PageUp / Left turn it back."
+  (when (and *world* *fb-canvas*)
+    (open-overlay (make-instance 'cheatsheet-overlay))))
 
-(defvar *chooser-state* nil
-  "While a chooser is up: (:kind K :sel I :label L :count N), refreshed on every draw;
-   NIL otherwise. Only for looking at from outside — the guest checks read it over the
-   net REPL (check-web.lisp), since the chooser's loop owns the screen and the input.")
+(defmethod overlay-draw ((o cheatsheet-overlay) canvas w h)
+  (setf (sheet-pages o) (draw-cheatsheet canvas w h (sheet-page o))))
 
-(defun run-chooser-fb (kind entries x y &optional layers)
-  "Show ENTRIES as a :MENU card at X,Y or a :HALO round it, and return the entry
-   picked, or NIL. Keys: up/down move (left/right for the ring), Return picks, 1-9
-   pick directly, Esc leaves. A click picks what is under it; a click anywhere else
-   leaves. A press of the button that opened it, on the same spot, does not count —
-   only a new click does.
+(defmethod overlay-event ((o cheatsheet-overlay) e)
+  (let ((key (overlay-key e)) (pages (sheet-pages o)))
+    (cond
+      (key
+       (cond ((and (> pages 1) (member key '(:page-down :right #\Space)))
+              (incf (sheet-page o)) (overlay-changed o))
+             ((and (> pages 1) (member key '(:page-up :left)))
+              (decf (sheet-page o)) (overlay-changed o))
+             (t (close-overlay o))))                    ; any other key dismisses
+      ((eq (lol.morph:event-kind e) :down) (close-overlay o)))))   ; a click dismisses
 
-   A halo is about one of LAYERS (shell.lisp's HALO-LAYERS: the word, the element
-   holding it, the pane, the screen). Up, Tab and the middle button walk OUT to the
-   thing around the current one, Down walks back IN — Morphic's repeated middle-click
-   — and each step rebuilds the handles for the new layer.
-
-   A :SELECT is the menu card standing in for a web page's <select> popup
-   (doc/web-browser.org §4.4): it opens on the entry marked :SELECTED, never lands on
-   or picks one marked :DISABLED, and TYPING jumps to the next entry whose label
-   starts with what was typed (within a second, letters accumulate: \"ba\" finds
-   Banana past Apple), the way every desktop's list box behaves — so digits are
-   text here, not the 1-9 shortcuts of a menu. Home/End and PageUp/PageDown move
-   too, and Space picks when nothing is being typed."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (n (length entries))
-        (sel 0) (depth 0) (typed "") (typed-at 0))
-    (when (and canvas entries)
-      (labels ((halo-p () (eq kind :halo))
-               (select-p () (eq kind :select))
-               (enabled-p (i) (and (< -1 i n) (not (getf (nth i entries) :disabled))))
-               (step-to (from delta)        ; the next ENABLED entry from FROM, or FROM
-                 (loop for i = (+ from delta) then (+ i delta)
-                       while (< -1 i n)
-                       when (enabled-p i) return i
-                       finally (return from)))
-               (pick (i) (and (enabled-p i) (nth i entries)))
-               (type-ahead (ch)
-                 (let ((now (get-internal-real-time)))
-                   (setf typed (if (< (- now typed-at) internal-time-units-per-second)
-                                   (concatenate 'string typed (string ch))
-                                   (string ch))
-                         typed-at now)
-                   ;; a fresh first letter searches from the entry AFTER the current
-                   ;; one, so pressing b again walks Banana -> Blueberry; a longer
-                   ;; prefix keeps the current entry if it still matches
-                   (let ((start (if (= 1 (length typed)) (1+ sel) sel)))
-                     (loop for k below n
-                           for i = (mod (+ start k) n)
-                           when (and (enabled-p i)
-                                     (let ((l (string-left-trim " " (getf (nth i entries) :label))))
-                                       (and (>= (length l) (length typed))
-                                            (string-equal typed l :end2 (length typed)))))
-                             do (setf sel i) (return)))))
-               (draw ()
-                 (setf *chooser-state* (list :kind kind :sel sel :count n
-                                             :label (getf (nth sel entries) :label)))
-                 (if (halo-p)
-                     (draw-halo canvas w h layers depth entries sel x y)
-                     (draw-context-menu canvas w h entries sel x y)))
-               (hit (px py)
-                 (if (halo-p) (halo-handle-at px py) (menu-entry-at px py)))
-               (walk (delta)                 ; to another layer: new handles, first one lit
-                 (setf depth (mod (+ depth delta) (length layers))
-                       entries (halo-entries (nth depth layers))
-                       n (length entries) sel 0)))
-        (setf sel (or (position-if (lambda (e) (getf e :selected)) entries) 0))
-        (unless (enabled-p sel) (setf sel (step-to sel 1)))
-        (unwind-protect
-        (loop with dirty = t do
-          (when dirty (draw) (show-frame canvas) (setf dirty nil))
-          (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-            (when kev (read-keyboard-evdev *fb-kbd*))
-            (when kb
-              (setf dirty t)
-              (multiple-value-bind (key state) (fb-read-key 0)
-                ;; C-p / C-n move the selection; in a halo they go round the
-                ;; handles, since Up and Down there walk the layers
-                (let ((k (emacs-arrow key state)))
-                  (unless (eq k key)
-                    (setf key (if (halo-p) (if (eq k :up) :left :right) k))))
-                (cond
-                  ((member key '(:escape :eof)) (return nil))
-                  ((and (select-p) (logbitp 2 state) (member key '(#\g #\G))) (return nil))
-                  ((member key '(:return #\Return)) (return (if (select-p) (pick sel) (nth sel entries))))
-                  ((select-p)
-                   (case key
-                     ((:up :left) (setf sel (step-to sel -1)))
-                     ((:down :right) (setf sel (step-to sel 1)))
-                     (:home (setf sel (step-to -1 1)))
-                     (:end (setf sel (step-to n -1)))
-                     (:page-up (setf sel (step-to (max -1 (- sel 10)) 1)))
-                     (:page-down (setf sel (step-to (min n (+ sel 10)) -1)))
-                     (:tab (return (pick sel)))
-                     (t (cond ((and (eql key #\Space)
-                                    (> (- (get-internal-real-time) typed-at)
-                                       internal-time-units-per-second))
-                               (return (pick sel)))
-                              ((and (characterp key) (graphic-char-p key)
-                                    (not (logbitp 2 state)))
-                               (type-ahead key))))))
-                  ((and (halo-p) (eq key :tab)) (walk (if (logbitp 0 state) -1 1)))
-                  ((and (halo-p) (eq key :up)) (walk 1))
-                  ((and (halo-p) (eq key :down)) (walk -1))
-                  ((member key '(:up :left))    (setf sel (mod (1- sel) n)))
-                  ((member key '(:down :right :tab)) (setf sel (mod (1+ sel) n)))
-                  ((and (characterp key) (digit-char-p key) (<= 1 (digit-char-p key) n))
-                   (return (nth (1- (digit-char-p key)) entries))))))
-            (when (and *fb-mouse* ms)
-              (let ((ox *cursor-x*) (oy *cursor-y*))
-                (multiple-value-bind (clicked wheel button) (read-mouse *fb-mouse* w h)
-                  (declare (ignore wheel))
-                  ;; Alt-click is the touchpad's middle button, as in the main loop
-                  (when (and clicked *alt-down*) (setf clicked nil button :middle *button-down* nil))
-                  (cond
-                    ((and (halo-p) (eq button :middle))
-                     (walk 1) (setf dirty t))
-                    ((or clicked button)
-                     (let ((i (hit *cursor-x* *cursor-y*)))
-                       (cond ((eq i :outside) (return nil))
-                             ;; a disabled option is not a choice: the card stays up
-                             ((and (integerp i) (select-p))
-                              (when (pick i) (return (pick i))))
-                             ((integerp i) (return (nth i entries))))))
-                    ((or (/= ox *cursor-x*) (/= oy *cursor-y*))
-                     ;; hovering a menu row selects it, the way every menu behaves
-                     (let ((i (hit *cursor-x* *cursor-y*)))
-                       (if (and (integerp i) (/= i sel) (or (not (select-p)) (enabled-p i)))
-                           (setf sel i dirty t)
-                           (move-cursor canvas ox oy))))))))))
-          (setf *chooser-state* nil))))))
-
-;;; ---- the clipboard manager: SuperL-h (doc/clipboard.org) -------------------
-;;; Parcellite's history window as a palette, the Spotter's shape: type to filter,
-;;; arrows to move, Enter makes the entry current and pastes it where the caret was,
-;;; Delete forgets it, Esc leaves. Drawing: draw-clipboard-card in shell.lisp.
-
-(defun run-clipboard-fb ()
-  "The clipboard history, modal over the browser."
-  (let ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*) (query "") (sel 0))
-    (when canvas
-      (loop with dirty = t
-            for results = (lol.clipboard:clip-filter query) do
-        (setf sel (max 0 (min sel (1- (length results)))))
-        (when dirty
-          (draw-clipboard-card canvas w h query results sel)
-          (show-frame canvas)
-          (setf dirty nil))
-        (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-          (when kev (read-keyboard-evdev *fb-kbd*))
-          (when kb
-            (setf dirty t)
-            (multiple-value-bind (key state) (fb-read-key 0)
-              (let ((ctrl (logbitp 2 state)))
-                (cond
-                  ((or (member key '(:escape :eof)) (and ctrl (eql key #\g))) (return))
-                  ((member key '(:return #\Return))
-                   (when results (clipboard-choose (car (nth sel results))))
-                   (return))
-                  ((or (eq key :up) (and ctrl (eql key #\p))) (decf sel))
-                  ((or (eq key :down) (and ctrl (eql key #\n))) (incf sel))
-                  ((eq key :delete)
-                   (when results (lol.clipboard:clip-delete (car (nth sel results)))))
-                  ((eq key :backspace)
-                   (when (plusp (length query))
-                     (setf query (subseq query 0 (1- (length query))) sel 0)))
-                  ((and (characterp key) (graphic-char-p key) (not ctrl))
-                   (setf query (concatenate 'string query (string key)) sel 0))))))
-          (when (and *fb-mouse* ms)
-            (let ((ox *cursor-x*) (oy *cursor-y*))
-              (if (read-mouse *fb-mouse* w h)
-                  (let ((i (clipboard-row-at *cursor-x* *cursor-y*)))
-                    (cond ((eq i :outside) (return))
-                          ((and (integerp i) (< i (length results)))
-                           (clipboard-choose (car (nth i results))) (return))))
-                  (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                    (move-cursor canvas ox oy))))))))))
-
-;;; ---- the Spotter: SuperL-Space fuzzy finder (§4¾) -------------------------
-;;; A modal overlay over the browser's live canvas + input, like the debugger and
-;;; the cheatsheet, but LIVE: it accumulates a query string and re-filters the
-;;; candidate set (spotter-candidates in present.lisp, ranked and banded by
-;;; spotter-results in shell.lisp) on every keystroke. Enter opens the selected hit in
-;;; a NEW trail (new-trail, shell.lisp).
-
-(defparameter +spotter-cap+ 60 "Max results to rank/show — a few screenfuls.")
-
-;;; The Spotter's DRAWING lives in poc/shell.lisp (draw-spotter-card), with the rest
-;;; of the shell's drawing — only the modal input loop below is backend-specific.
-;;; That split is what lets poc/render-frame.lisp render the palette on the host:
-;;;   sbcl --script poc/render-frame.lisp modules --spotter coll
-;;; The card's own scrim, hit map and dismissal box come back through
-;;; lol.widgets:scrim / spotter-row-at* / spotter-outside-p*.
-
-(defun emacs-arrow (key state)
-  "C-p / C-n as :UP / :DOWN, any other KEY as itself — for the modal lists (the
-   Spotter, the menus), where nothing is edited so the Emacs line keys are free. A
-   control byte reaches us as its letter plus the Ctrl bit (FB-READ-KEY), so without
-   this C-n would type an n into the Spotter's query."
-  (cond ((not (logbitp 2 state)) key)
-        ((member key '(#\p #\P)) :up)
-        ((member key '(#\n #\N)) :down)
-        (t key)))
-
-(defun run-spotter-fb ()
-  "The Spotter (SuperL-Space): fuzzy-find any definition, package or surface and open
-   it in a new trail. Modal over the browser's canvas + input; live-filters on each
-   keystroke. Returns after Enter (opens the hit) or Esc (dismiss)."
-  (let* ((canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*)
-         (cands (ignore-errors (spotter-candidates)))
-         (query "")
-         (results (ignore-errors (spotter-results query cands +spotter-cap+)))
-         (sel 0))
-    (when canvas
-      (loop with dirty = t do               ; redraw only on a change (see run-browser-fb)
-        (when dirty
-          (draw-spotter-card canvas w h query results sel)
-          (show-frame canvas)
-          (setf dirty nil))
-        (flet ((refilter () (setf results (ignore-errors (spotter-results query cands +spotter-cap+))
-                                  sel 0)))
-          (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
-            (when kev (read-keyboard-evdev *fb-kbd*))
-            (when kb
-              (setf dirty t)
-              (multiple-value-bind (key state) (fb-read-key 0)
-                (setf key (emacs-arrow key state))
-                (cond
-                  ((eq key :escape) (return))
-                  ((member key '(:return #\Return))
-                   (let ((hit (nth sel results)))
-                     (when (and hit (getf hit :subject)) (new-trail (getf hit :subject))))
-                   (return))
-                  ;; Tab completes a PATH query the way a shell does (common prefix;
-                  ;; a single folder gets its slash) — SPOTTER-COMPLETE, shell.lisp
-                  ((eq key :tab)
-                   (let ((new (spotter-complete query)))
-                     (unless (string= new query) (setf query new) (refilter))))
-                  ((eq key :up)   (setf sel (max 0 (1- sel))))
-                  ((eq key :down) (setf sel (min (max 0 (1- (length results))) (1+ sel))))
-                  ((eq key :backspace)
-                   (when (plusp (length query))
-                     (setf query (subseq query 0 (1- (length query)))) (refilter)))
-                  ((and (characterp key) (graphic-char-p key) (not (logbitp 2 state)))
-                   (setf query (concatenate 'string query (string key))) (refilter)))))
-            (when (and *fb-mouse* ms)
-              (let ((ox *cursor-x*) (oy *cursor-y*))
-                (if (read-mouse *fb-mouse* w h)
-                    (let ((i (spotter-row-at* *cursor-x* *cursor-y*)))
-                      (cond ((and i (< i (length results)))
-                             (new-trail (getf (nth i results) :subject)) (return))
-                            ((spotter-outside-p* *cursor-x* *cursor-y*) (return)))) ; click-away dismisses
-                    (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                      (move-cursor canvas ox oy)))))))))))
+;;; The menus and halos (RUN-CHOOSER), the clipboard manager (RUN-CLIPBOARD-MANAGER),
+;;; the Spotter (OPEN-SPOTTER) and the value prompt (RUN-VALUE-PROMPT) are overlays
+;;; that need nothing of this backend: poc/overlays.lisp. They used to be loops here
+;;; (RUN-CHOOSER-FB, RUN-CLIPBOARD-FB, RUN-SPOTTER-FB, DBG-PROMPT-VALUE).
 
 ;;; ---- what the environment sees: the input devices as a subject (§4¾) -------
 ;;; "My mouse does nothing" has four different answers — the kernel has no driver

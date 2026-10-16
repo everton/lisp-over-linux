@@ -1142,52 +1142,8 @@
     (run-agent-debugger-view conv)))
 
 (defun run-agent-debugger-view (conv)
-  "A modal view of CONV over the debugger: it fills in as the answer streams (waking
-   at the frame budget while the turn runs), arrows and PageUp/Down move the caret,
-   C-c C-c accepts the form before it, C-g stops the turn, Esc returns to the rail."
-  (let* ((canvas (symbol-value '*fb-canvas*)) (w (symbol-value '*fb-xres*)) (h (symbol-value '*fb-yres*))
-         (tv (lol.textview:make-textview :font *bfont* :focus t :tint #'conversation-tint))
-         (seen -1) (prefix nil) (note nil)
-         ;; the title band and the note line follow the current font (doc/fonts.org §6):
-         ;; 24 and 20 px under the old 6x15 font
-         (band (+ (line-h) 9)))
-    (lol.textview:tv-geometry tv 12 (+ band 8) (- w 24) (- h band 8 (line-h) 9))
-    (loop
-      (let ((rev (conversation-revision conv)))
-        (when (/= rev seen)
-          (setf seen rev)
-          (let ((lines (coerce (conversation-lines conv) 'simple-vector)))
-            (lol.textview:tv-replace tv lines (1- (length lines)) 0))))
-      (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
-      (lol.canvas:fill-rect canvas 0 0 w band *ui-hi*)
-      (lol.canvas:draw-string canvas *bfont*
-        (format nil "ASK — ~a   ·   C-c C-c accept the form before the caret · C-g stop · Esc back to the restarts"
-                (if (conversation-busy-p conv) "answering..." "done"))
-        12 (text-dy band) *ui-accent*)
-      (lol.textview:tv-draw canvas tv)
-      (when note (lol.canvas:draw-string canvas *bfont* note 12 (- h (line-h) 5) *ui-amber*))
-      (funcall 'show-frame canvas)
-      (multiple-value-bind (kb ms kev)
-          (funcall 'fbb-wait 0 (symbol-value '*fb-mouse*) (symbol-value '*fb-kbd*)
-                   (if (conversation-busy-p conv) +agent-frame-ms+ 500))   ; idle: still catch the last touch
-        (declare (ignore ms))
-        (when kev (funcall 'read-keyboard-evdev (symbol-value '*fb-kbd*)))
-        (when kb
-          (multiple-value-bind (key state) (funcall 'fb-read-key 0)
-            (let ((ctrl (or (lol.canvas:ctrl-p state) (symbol-value '*ctrl-down*))))
-              (cond
-                ((eq key :escape) (return))
-                ((and ctrl (member key '(#\g #\G))) (cancel-conversation conv) (setf note "stopping..."))
-                ((and prefix ctrl (member key '(#\c #\C)))
-                 (setf prefix nil)
-                 (let ((text (form-text-before-point tv)))
-                   (setf note
-                         (if (null text) "no form before the caret"
-                             (handler-case (format nil "Accepted ~(~a~) — Esc, then a restart to retry"
-                                                   (let ((*read-eval* nil)) (accept-source text)))
-                               (serious-condition (c) (format nil "Accept failed: ~a" c)))))))
-                ((and ctrl (member key '(#\c #\C))) (setf prefix t))
-                ((member key '(:up :down :left :right :page-up :page-down :home :end))
-                 (setf prefix nil)
-                 (lol.textview:tv-key tv key 0))
-                (t (setf prefix nil))))))))))
+  "A modal view of CONV over the debugger: it fills in as the answer streams, arrows
+   and PageUp/Down move the caret, C-c C-c accepts the form before it, C-g stops the
+   turn, Esc returns to the rail. An overlay the caller waits in (RUN-AGENT-VIEW,
+   fb-browser.lisp — the framebuffer debugger's own file, loaded after this one)."
+  (funcall 'run-agent-view conv))

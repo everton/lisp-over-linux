@@ -335,33 +335,31 @@
     (remove-if-not (lambda (x) (and x (typep (pane-subject x) 'run)))
                    (list p (and p (pane-side p))))))
 
-(defun runs-timeout ()
-  "The poll timeout runs need: +RUN-TICK-MS+ while any run is live or a visible run
-   pane is behind its run, else -1 (no deadline: the loop may sleep until input)."
-  (if (or (some #'run-live-p *runs*)
-          (some (lambda (p) (let ((d (view-data (pane-view p))))
-                              (and (listp d) (/= (getf d :generation)
-                                                 (run-generation (pane-subject p))))))
-                (visible-run-panes)))
-      +run-tick-ms+
-      -1))
+(defun run-panes-of (pane)
+  "PANE and its side pane, those of them that show a run."
+  (remove-if-not (lambda (x) (and x (typep (pane-subject x) 'run)))
+                 (list pane (and pane (pane-side pane)))))
 
-(defun tick-runs ()
-  "Called by the browser's poll loop when a deadline fires: escalate overdue stops,
-   refresh the visible run panes. True when the frame needs redrawing."
-  (dolist (run *runs*)
-    (when (and (run-live-p run) (run-term-sent run)
-               (> (- (get-internal-real-time) (run-term-sent run))
-                  (* +run-kill-grace+ internal-time-units-per-second)))
-      (ignore-errors (sb-ext:process-kill (run-process run) sb-unix:sigkill))
-      (setf (run-term-sent run) (get-internal-real-time))))
+(defun run-pane-behind-p (p)
+  (let ((d (view-data (pane-view p))))
+    (and (listp d) (/= (getf d :generation) (run-generation (pane-subject p))))))
+
+(defun run-pane-step-ms (pane)
+  "How often whoever shows PANE must step it (doc/morphic.org step 5): +RUN-TICK-MS+
+   while one of its run panes is live or behind its run's output, else NIL — a
+   finished run that is up to date is still, and costs nothing."
+  (and (some (lambda (p) (or (run-live-p (pane-subject p)) (run-pane-behind-p p)))
+             (run-panes-of pane))
+       +run-tick-ms+))
+
+(defun step-run-panes (pane)
+  "One step of PANE's run panes: copy any new output in, and the age in the title
+   when its whole seconds changed — not every tick: a full frame ten times a second
+   for a quiet server's pane would be a busy loop wearing a clock. True if anything
+   shown changed."
   (let ((changed nil))
-    (dolist (p (visible-run-panes))
-      (when (refresh-run-pane p) (setf changed t)))
-    ;; a live run's title carries its age in whole seconds: redraw when THAT changes,
-    ;; not on every tick — a full frame ten times a second for a quiet server's pane
-    ;; would be a busy loop wearing a clock
-    (dolist (p (visible-run-panes))
+    (dolist (p (run-panes-of pane))
+      (when (refresh-run-pane p) (setf changed t))
       (let ((run (pane-subject p)) (data (view-data (pane-view p))))
         (when (and (run-live-p run) (listp data)
                    (/= (floor (run-seconds run)) (or (getf data :age) -1)))
@@ -369,6 +367,32 @@
                 (view-title (pane-view p)) (run-view-title run)
                 changed t))))
     changed))
+
+(defun escalate-run-stops ()
+  "A run asked to stop (SIGTERM) that has not after +RUN-KILL-GRACE+ seconds gets
+   SIGKILL."
+  (dolist (run *runs*)
+    (when (and (run-live-p run) (run-term-sent run)
+               (> (- (get-internal-real-time) (run-term-sent run))
+                  (* +run-kill-grace+ internal-time-units-per-second)))
+      (ignore-errors (sb-ext:process-kill (run-process run) sb-unix:sigkill))
+      (setf (run-term-sent run) (get-internal-real-time)))))
+
+(defun runs-timeout ()
+  "The poll deadline the runs themselves need: a tick while a stop is pending its
+   SIGKILL, else -1. Showing their output is the job of whoever shows them — the
+   pane's holder steps (RUN-PANE-STEP-MS) — so a hidden run costs nothing."
+  (if (some (lambda (r) (and (run-live-p r) (run-term-sent r))) *runs*)
+      +run-tick-ms+
+      -1))
+
+(defun tick-runs ()
+  "Escalate overdue stops and refresh the visible run panes; true when one changed.
+   The environment's loop no longer calls this as a whole — the panes are stepped by
+   the morphs that show them (poc/morphic.lisp) — but a REPL, or a backend without a
+   world, still can."
+  (escalate-run-stops)
+  (step-run-panes (ignore-errors (current-pane))))
 
 ;;; ---- every run, as a list ----------------------------------------------------------
 

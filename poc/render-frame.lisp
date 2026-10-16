@@ -85,6 +85,7 @@
     "initramfs/agent-ui.lisp"     ; a conversation as a Workspace pane, the tray item
     "poc/terminal-pane.lisp"      ; the terminal pane
     "poc/morphic.lisp"            ; the desk: the shell as a morph, trail windows
+    "poc/overlays.lisp"           ; the modal cards as morphs (the Spotter, menus, halo)
     "initramfs/framebuffer.lisp"  ; draw-alien — a definition worth drilling to
     "initramfs/meminfo.lisp")     ; report-memory — likewise
   "The modules to load-record, in dependency order (a subset of build.sh's list).

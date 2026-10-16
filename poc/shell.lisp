@@ -367,11 +367,12 @@
     new))
 (defvar *value-prompt* nil
   "A hook: (funcall *value-prompt* LABEL) -> the string the user typed, or NIL if they
-   cancelled. Reading a line is a modal input loop, which only a BACKEND can run — so
-   the backend installs one (fb-browser.lisp does) and the shell merely asks. Same
-   shape as *COMPLETER*, which repl.lisp fills in for Tab completion. When no backend
-   has set it, a gesture that needs a value says so in the status line instead of
-   silently doing nothing.")
+   cancelled. The caller WAITS for the answer, which only a backend with a loop to
+   turn meanwhile can arrange — so the backend installs one (fb-browser.lisp: the
+   value prompt overlay, poc/overlays.lisp) and the shell merely asks. Same shape as
+   *COMPLETER*, which repl.lisp fills in for Tab completion. When no backend has set
+   it, a gesture that needs a value says so in the status line instead of silently
+   doing nothing.")
 (defvar *editing-side* nil
   "T when keyboard focus is on the current pane's editable SIDE pane (⇧↵ beside) rather
    than the list. SuperL-o toggles it; guarded everywhere by (pane-side (current-pane)).")
@@ -863,6 +864,9 @@
    under the old 6x15 font, when it was the constant +STAGE-TRANSCRIPT-H+)."
   (+ 7 (* 6 (line-h))))
 (defvar *stage-rect* nil "The viewport rect (x y w h) of the last stage drawn, for clicks.")
+(defvar *stage-body-rect* nil
+  "The whole stage body (viewport, heads-up line, transcript) as last drawn: all that
+   a tick can change, so a stepping stage damages only this (poc/morphic.lisp).")
 
 (defun stage-sprite-points (b)
   "The silhouette of body B in model space, as a list of (x . y) — scaled to its own
@@ -985,7 +989,7 @@
          (vh (- h (stage-transcript-h)))
          (ox x) (oy y))
     (stage-resize stage (max 80 w) (max 80 vh))
-    (setf *stage-rect* (list x y w vh))
+    (setf *stage-rect* (list x y w vh) *stage-body-rect* (list x y w h))
     (lol.canvas:fill-rect canvas x y w vh !#0E1013)
     (dolist (b (stage-bodies stage))
       (draw-stage-sprite canvas b stage ox oy))
@@ -1802,9 +1806,10 @@
 ;;; ---- the minibuffer: a one-line prompt that is not modal ------------------
 ;;; Emacs's answer to "ask the user something": one line at the bottom of the frame,
 ;;; edited in place, while everything above stays live and drawn. The other prompt in
-;;; this browser, *VALUE-PROMPT*, is a MODAL loop the framebuffer backend runs — fine
-;;; for a debugger restart, but it exists only on /dev/fb0, it cannot redraw what is
-;;; behind it, and a frame rendered by poc/render-frame.lisp can never show it.
+;;; this browser, *VALUE-PROMPT*, is MODAL: its caller waits for the answer (an overlay
+;;; the backend's loop turns under — poc/overlays.lisp), which is right for a debugger
+;;; restart but needs a backend with a loop, and a frame rendered by
+;;; poc/render-frame.lisp can never wait for one.
 ;;;
 ;;; This one is STATE, not a loop: *MINIBUFFER* holds the prompt; BROWSER-KEY hands it
 ;;; every key while it is up; DRAW-STATUS-LINE draws it. So it works identically on the
@@ -2431,7 +2436,7 @@
          ((member key '(#\w #\W)) (close-trail) nil)                           ; close this tab
          ((member key '(#\o #\O)) (toggle-side-focus) nil)                     ; focus list <-> side
          ((eql key #\Space)                                                    ; the Spotter
-          (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)) nil)
+          (when (fboundp 'open-spotter) (funcall 'open-spotter)) nil)
          ;; SuperL-Return: a terminal (a shell — doc/terminal.org), the binding tiling
          ;; window managers taught every hand. SuperL-Shift-Return keeps the old
          ;; meaning: open the selection in a NEW tab (SuperL-click does the same).
@@ -2462,7 +2467,7 @@
          ((eql key #\-) (change-font-size :smaller) nil)
          ((eql key #\0) (change-font-size :reset) nil)
          ((member key '(#\? #\/))                                              ; Super-? — every binding
-          (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)) nil)
+          (when (fboundp 'open-cheatsheet) (funcall 'open-cheatsheet)) nil)
          ((member key '(#\q #\Q)) (leave-menu))                             ; shut down / console
          (t nil)))
       ;; --- ⇧↵ editable SIDE pane has focus: its keys edit it (Accept, verbs, typing);
@@ -3111,11 +3116,11 @@
   (list (menu-entry "New Workspace" (lambda () (new-trail (subj-workspace))) :group "environment")
         (menu-entry "Module index" (lambda () (open-modules)) :key "SuperL-m" :group "environment")
         (menu-entry "Files" (lambda () (funcall 'open-files)) :key "SuperL-f" :group "environment")
-        (menu-entry "Find anything..." (lambda () (when (fboundp 'run-spotter-fb) (funcall 'run-spotter-fb)))
+        (menu-entry "Find anything..." (lambda () (when (fboundp 'open-spotter) (funcall 'open-spotter)))
                     :key "SuperL-spc" :group "environment")
         (menu-entry "Clipboard history..." (lambda () (open-clipboard-manager))
                     :key "SuperL-h" :group "environment")
-        (menu-entry "Keys" (lambda () (when (fboundp 'run-cheatsheet-fb) (funcall 'run-cheatsheet-fb)))
+        (menu-entry "Keys" (lambda () (when (fboundp 'open-cheatsheet) (funcall 'open-cheatsheet)))
                     :key "SuperL-?" :group "environment")))
 
 (defun context-menu-entries (target)
@@ -3272,6 +3277,11 @@
                                                        (view-title (pane-view obj)))
                                                (pane-subject obj) rect :subject)))))))))
 
+(defvar *halo-extra-entries* nil
+  "A function (LAYER) -> handles that come FIRST on that layer: poc/morphic.lisp
+   installs a morph's affordances (a window's Move, Resize, Raise, Close, Re-tile —
+   doc/morphic.org step 3). NIL: none.")
+
 (defvar *halo-outer-layers* nil
   "A function (X Y) -> more layers, OUTSIDE everything drawn: poc/morphic.lisp
    installs the morphs under the point, so the halo's outermost layer is the shell
@@ -3325,7 +3335,8 @@
                              inspect))))
          (own (if (member role '(:element)) '()
                   (and (not (stringp object)) (command-entries object :halo g)))))
-    (append base
+    (append (and *halo-extra-entries* (funcall *halo-extra-entries* layer))
+            base
             (remove-if (lambda (e) (find (getf e :label) base :key (lambda (b) (getf b :label))
                                                               :test #'string-equal))
                        own)
@@ -3465,14 +3476,15 @@
     (if hit (first hit) :outside)))
 
 ;;; ---- the gestures, backend-blind ------------------------------------------
-;;; The backends own the modal loops (fb-browser.lisp: RUN-CHOOSER-FB); these decide
-;;; WHAT to show. *CHOOSER* is the hook a backend installs, like *VALUE-PROMPT*.
+;;; These decide WHAT to show; the chooser overlay (poc/overlays.lisp, RUN-CHOOSER)
+;;; shows it and waits for the pick while the backend's loop turns. *CHOOSER* is the
+;;; hook a backend installs, like *VALUE-PROMPT*.
 
 (defvar *chooser* nil
   "A hook: (funcall *chooser* KIND ENTRIES X Y &optional LAYERS) shows a modal menu
    (:menu) or halo (:halo, about LAYERS — see HALO-LAYERS) and returns the chosen
-   entry, or NIL. Installed by the
-   framebuffer backend; NIL elsewhere, and then the gestures say so.")
+   entry, or NIL. Installed by the framebuffer backend (RUN-CHOOSER); NIL elsewhere,
+   and then the gestures say so.")
 
 (defun choose-and-run (kind entries x y &optional layers)
   "Offer ENTRIES through *CHOOSER* and run the one picked."
@@ -3863,7 +3875,11 @@
         (clip-status "current" (lol.clipboard:clip-current)))))
 
 (defun open-clipboard-manager ()
-  "SuperL-h, or the tray's clipboard icon."
-  (if (fboundp 'run-clipboard-fb)
-      (funcall 'run-clipboard-fb)
-      (setf *browser-status* "the clipboard manager needs the framebuffer backend")))
+  "SuperL-h, or the tray's clipboard icon: the history as an overlay that waits for
+   a pick (poc/overlays.lisp); the pick is pasted HERE, in the caller's context — the
+   editor that had the caret, a window's included."
+  (let ((i (and (fboundp 'run-clipboard-manager) (funcall 'run-clipboard-manager))))
+    (cond ((integerp i) (clipboard-choose i))
+          ((not (and (fboundp 'run-clipboard-manager) (boundp '*world-cycle*)
+                     (symbol-value '*world-cycle*)))
+           (setf *browser-status* "the clipboard manager needs a backend with a loop (the framebuffer)")))))
