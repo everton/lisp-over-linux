@@ -4,7 +4,8 @@
 *STATUS (2026-10-16): all six steps (0–5) BUILT*, and the windows kept in the desk file
 (§10 tracks each step: what shipped, what changed against the plan, and the measured
 costs; what is still owed is said there; §11 compares one view built before and
-after). Written first as a design for
+after). §12 is the next step, *designed*: every pane its own morph, so that the shell
+has one way to be on screen instead of two. Written first as a design for
 the user to review; the user answered §9 the same day, and the answers are recorded
 there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
 claim about /our/ code below was checked against the tree on that date; claims about
@@ -845,3 +846,243 @@ rectangles to send.
 - *The Hand.* It carries a window during Move/Resize, and the one drop it knows is a
   window let go over the tab strip, which re-tiles it ([[file:../poc/morphic.lisp::defmethod lol.morph:drop-morph][=drop-morph=]]). Nothing
   else can be dropped /into/ a morph yet — no dragging a value from one view to another.
+
+* 12. Panes as morphs: one abstraction
+
+*STATUS (2026-10-16): DESIGN*, written before the code, at the user's request: "make
+each pane its own morph, we should end up with a single abstraction, not having two
+ways of doing it." Where a choice was genuinely open it is taken the way most
+consistent with §9 and marked /decided by default, pending the user's review/.
+
+** 12.1 The two ways, as they stand
+
+Steps 1–5 put a Morphic world /around/ the browser and left its inside alone (§11, "what
+this comparison leaves out"). So there are two ways to be on screen:
+
+1. *The world's way*: a CLOS object with bounds that draws itself and takes events in
+   a tree — the desk, the shell morph, a trail window, an overlay.
+2. *The shell's old way*, inside =shell-morph=: plain structs (=PANE=) drawn by one
+   function (=draw-browser= → =draw-tabs=, =draw-trail-area=, =draw-status-line=) that
+   lays everything out from fixed offsets and leaves what it drew where in a score of
+   per-frame specials — =*tab-rects*=, =*crumb-rects*=, =*content-top*=, =*split-x*=,
+   =*list-rows*=, =*side-rows*=, =*matrix-cells*=, =*stage-rect*=, =*tray-rect*=,
+   =*web-page-rect*= … — which the click handlers (=browser-click=, =pointer-target=) and
+   the halo (=note-drawn= into =*drawn*=) read back.
+
+The second way leaks into the first wherever they meet. A window can only show a trail
+by drawing it into a canvas of its own with its /own copy/ of those specials
+(=with-window-context=, a =progv= over =+window-specials+=); a menu opened inside a window
+must set those copies aside (=call-at-top-level=); a click in a window is translated to
+window coordinates (=local-event=) so that =browser-click= never learns where it is; and
+damage inside the shell is all-or-nothing, because nothing smaller than the shell knows
+it is on screen: a key in a tiled pane redraws the tab strip, every breadcrumb and the
+status line too.
+
+** 12.2 The end state: everything on screen is a morph
+
+#+begin_example
+lol.morph (poc/morph.lisp)           CL-USER (poc/shell.lisp, poc/morphic.lisp)
+morph ──┬─ world ─────────────────── desk                    the screen
+        ├─ hand
+        ├─ surface  (new) ─────────── trail-window          a window: draws into its own canvas
+        └──────────────────────────┬─ pane                  ← was (defstruct pane)
+                                   ├─ shell-morph           the tiled shell: fixed bands
+                                   ├─ tab-strip
+                                   ├─ tray                  (a child of the tab strip)
+                                   ├─ status-line           the status line / the minibuffer
+                                   ├─ trail-area            ONE trail, laid out as the accordion
+                                   ├─ title-bar             a window's
+                                   ├─ window-frame          a window's outline and resize grip
+                                   └─ overlay + subclasses  unchanged (step 4)
+
+desk
+├── shell-morph                  bounds = the screen
+│   ├── tab-strip                    (0 0 w bar)            tabs, +
+│   │   └── tray                     right end              clipboard icon, battery, clock
+│   ├── trail-area                   between strip and status line
+│   │   ├── pane  (collapsed)        a breadcrumb bar, per ancestor
+│   │   ├── pane  (collapsed)
+│   │   └── pane  (expanded)         the panel and its body
+│   │       └── pane  (side)         the pinned side pane, or the nav split's preview
+│   └── status-line                  (0 h-s w s)
+├── trail-window  (a surface)
+│   ├── title-bar
+│   ├── trail-area                   the SAME class, laying out the same panes
+│   │   └── pane …
+│   └── window-frame                 drawn last: the outline and the grip over the pane
+└── overlay …                    the Spotter, a menu, the debugger
+#+end_example
+
+*=PANE= is the morph.* =(defstruct pane …)= becomes =(defclass pane (lol.morph:morph) …)=
+with the same slot names and accessors (=pane-subject=, =pane-view=, =pane-sel=, =pane-top=,
+=pane-tv=, =pane-side= …, and =make-pane= / =pane-p= as functions), so =*trails*= is still a
+list of lists of panes, every caller is unchanged and the net-REPL-reading checks still
+read =(pane-top (current-pane))=. The morph's =subject= slot and the pane's are /one/ slot
+(a CLOS slot specifier of the same name merges), so there is no wrapper beside the
+struct and no second record of what a pane shows. A pane on screen is a child of a
+trail area; a pane in a hidden tab has no owner, draws nothing and costs nothing. What
+the specials held becomes the pane's own slots, written when it draws and read when it
+takes an event — in its own coordinates:
+
+| was a special                         | is now                                                        |
+|---------------------------------------+---------------------------------------------------------------|
+| =*crumb-rects*=                         | each ancestor /is/ a collapsed pane morph: its bounds         |
+| =*content-top*=, =*split-x*=              | =pane-body-top=, =pane-split-x=                                 |
+| =*list-rows*=, =*side-rows*=              | =pane-rows=: the main pane's, and the side pane's /own/          |
+| =*matrix-cells*=, =*stage-rect*=, =*stage-body-rect*= | =pane-cells=, =pane-stage-rect=, =pane-stage-body=      |
+| =*preview-pane*=, =*preview-subject*=     | =pane-preview= (a pane, the side child), per list pane        |
+| =*editing-side*=                        | =pane-editing-side= — decided by default (below)               |
+| =*tab-rects*=, =*tab-close-rects*=, =*tab-plus-rect*= | slots of the =tab-strip=                              |
+| =*tray-rect*=, =*tray-clip-rect*=         | the =tray='s bounds, and a slot                                 |
+| =*mb-clear-rect*=                       | a slot of the =status-line=                                     |
+| =*web-page-rect*=, =*web-bar-rects*=, =*web-bar-y*= | slots of the =WEB-TAB= the pane shows (web.lisp)       |
+| =*drawn*=, =note-drawn=                   | gone: the halo walks the morph tree (§12.5)                   |
+| =+window-specials+=, =with-window-context=, =*window-context*=, =*shell-specials*=, =local-event=, =window-chooser=, =offset-layer= | gone: nothing is shared any more, so nothing needs a copy |
+| =*status-pane*=, =draw-shell-now=, =render-window=, =draw-trail-area= | gone: each morph draws itself                 |
+
+What stays global is what there is one of. The /hand's/ drag state — =*drag-tv*=,
+=*drag-origin*=, =*last-press*= (double-click counting), =*term-drag*=, =*term-pointer*=,
+=*web-press*= — describes the one press in progress, and the press and its drag go to the
+same morph (the hand's capture), so its coordinates are that morph's.
+
+*Decided by default, pending the user's review — =*editing-side*= becomes per pane.* It
+says "the keyboard is in the right-hand column", and it was one special for the whole
+screen, which is why every window had to keep its own copy. As a slot of the pane it
+says it /about that pane/: switching tabs no longer carries a side focus from one tab to
+another (it used to, harmlessly, since every use was guarded by =(pane-side p)=).
+=*editing-side*= stays readable and settable as a symbol macro over the current pane, so
+=agent-ui.lisp= and =check-agent.lisp= read as before.
+
+** 12.3 Layout is a policy of a container; drawing is per morph
+
+The geometry =draw-trail-area= computed in passing — where each breadcrumb sits, where
+the panel starts, where the split falls — moves into a *layout pass* that runs before
+every repair and after every event (=desk-sync=). It asks the trails what should be on
+screen and makes the tree agree: a =trail-area= takes its trail's panes as children —
+ancestors /collapsed/ to a bar each, the last one /expanded/ to the rest of its height —
+and the expanded pane takes its side pane or its preview as a child in the right-hand
+column (the four cases of the old =cond=: a text pane with a list beside, the stage with
+its Workspace, a pinned side pane, the nav-split preview). A morph that is added,
+removed or given new bounds is damaged by =add-morph= / =remove-morph= / =set-morph-bounds=
+as it already is. Tiling is that one policy; the =shell-morph= puts its trail area
+between the tab strip and the status line, a window puts the same class under its
+title bar. Nothing else changes layout.
+
+Each morph then draws only itself, at its bounds, with the functions the old
+monolith called — =draw-tabs=, =draw-tray=, =draw-crumb=, =draw-panel= + =draw-pane-body=,
+=draw-status-line= — split, not rewritten, and back to front in the same order, so a full
+repair is the old frame byte for byte (checked as step 0 checked, §12.7). A pane draws
+with =*active*= bound to /its/ trail, as =render-window= did, so the code inside that asks
+for the current pane still gets its own. =draw-browser= stays, as a name tests and
+probes use, and is now only "repair the whole world".
+
+** 12.4 Windows are surfaces holding the same morphs
+
+A *surface* (new in =lol.morph=) is a morph that draws its subtree into a canvas of its
+own — the backing store step 2 gave windows, now general: the world's repair stops at a
+surface, which repairs its own damaged rects into its canvas (the same back-to-front,
+from-the-opaque-cover walk, in its own coordinates) and is then copied to the screen.
+Its descendants draw and take events in /surface coordinates/ — the window's top-left is
+their 0,0 — while their bounds stay in world coordinates (§3.1's rule): =morph-at= and
+damage still compare plain rectangles, and moving a window offsets its subtree's bounds
+and changes nothing in its canvas or in any slot recorded in it. That is why a moved
+window is still a copy, never a redraw — the step-2 economy, now from the general rule.
+
+A =trail-window= is a surface with three children: a =title-bar=, a =trail-area= and a
+=window-frame= (the outline and the grip, drawn last, over the pane). *Tearing off* a
+trail makes a window whose trail area lays out that trail: its pane morphs leave the
+shell's trail area for the window's (=add-morph= reparents). *Re-tiling* moves them
+back. No trail is ever drawn "in a different context" again.
+
+=invalidate= on a morph inside a surface damages its rect on screen /and/ in the
+surface's canvas, so a key in a window's pane redraws that pane in the backing store
+and copies that rect — not the whole window.
+
+** 12.5 Events go to the deepest morph; the halo walks the tree
+
+=world-dispatch= already sends a key to the focus and a press to the topmost morph under
+the point, bubbling up the owners. Two additions make that the /only/ hit testing:
+
+- *Each morph receives events in its own surface's coordinates.* The event carries its
+  world point too, for what is placed on the screen (a menu card, the halo).
+- *=morph-hit-p=* (default: the bounds) lets a morph be under the point in less than its
+  bounds — the window frame only at its grip.
+
+So the click that =browser-click= dispatched by testing a dozen hit maps in turn becomes
+the method of the morph it lands on: a tab or the =+= (the tab strip), the clipboard icon
+(the tray), the minibuffer's clear box (the status line), a breadcrumb (a collapsed
+pane: back to that level), the title bar, the grip — and everything inside an expanded
+pane (=pane-click=: the old function's body with the pane's slots for the specials). A
+side pane lets a click bubble to its expanded owner, which knows the split, exactly as
+=browser-click= treated the right-hand column. A press in a gutter (between breadcrumbs,
+beside the panel, on the status line) reaches the trail area or the shell, which hand
+it to the expanded pane as the old code did, so no click changes meaning. The focus
+change a press makes (=*active*= to that trail, a window raised) is the desk's, before
+routing, as the shell morph and the window each did for themselves.
+
+*The keyboard focus is the expanded pane* of the focused trail — in the shell or in a
+window — and =browser-key= is its =handle-event=. The desk still sees every key first
+(=SuperL-g= and the grab mode).
+
+*The halo* is the morph under the point and its owners: =halo-layers= becomes the target
+under the pointer (the word, the row, the sprite — =target-layers= as before), then for
+each morph from the deepest out to the shell or the window, the layers that morph
+offers: a pane its body (the text view, the list, the matrix, the stage, the page, the
+terminal) when the point is on it, then the pane itself, then what it shows; a
+breadcrumb itself; the tab strip a tab and itself; the tray the clipboard icon and
+itself; the status line the minibuffer and itself; a window its title bar and itself.
+=note-drawn= and =*drawn*= go: there is nothing left that is drawn but is not a morph.
+/Decided by default:/ the old outermost element, "the screen" (the canvas, Code:
+=draw-browser=), goes with them — the shell morph and the window are now the outermost
+things, and their =Code= handles open the drawing that is really theirs.
+
+** 12.6 Damage per morph
+
+- *An event damages the morph it reached*: a key in a pane, that pane (and its side
+  column, its child); a click, the pane clicked.
+- *Every other change is found, not announced.* Each chrome morph has a /signature/ —
+  the few values its picture is a function of: the tab strip's titles, tints, numbers,
+  agent dots and focused tab; the tray's items (the clock aside — it ticks on its own, as
+  now); the status line's text, minibuffer or hints; a breadcrumb's title and pick; a
+  window's title and focus. A pane's signature is its view, side, preview, selection,
+  side focus and its text's buffer and point (the buffer is a persistent vector, so "did
+  it change?" is one =EQ=), plus what its subject adds (a web tab's address, load state
+  and title). The layout pass compares each morph's signature with the one it had and
+  damages only the morphs whose picture changed. So the agent streaming into a
+  conversation damages that conversation's pane, a web page's title its pane and its
+  tab, a file saved in one folder pane the other folder panes that show it — and no
+  =environment-changed= has to guess.
+- *The fast paths paint into whichever surface the pane is in*: a terminal's dirty rows
+  and a web page's frame go straight onto the screen for a tiled pane (=note-painted=, as
+  now) and into the backing store for a window's, with only those rects damaged — so a
+  web page in a window no longer redraws the window per frame, and gets its hover and
+  wheel at the right place.
+- *Stepping belongs to the pane.* A running stage steps itself and damages its body
+  rect, and the repair draws only that pane (the panel under a clip, the stage body) —
+  not the tab strip, the breadcrumbs or the status line, which no longer lie under any
+  "shell" draw. A run pane steps itself and damages itself.
+- *World-wide damage only for what is world-wide*: the font size (every metric), the
+  screen's geometry, a new world.
+
+** 12.7 Migration, each step leaving every check green
+
+1. *The core* (=poc/morph.lisp=): surfaces, events in surface coordinates with their
+   world point, =morph-hit-p=, repair that stops at a surface, =world-paint= (draw the
+   whole tree once). A host test of its own; nothing in the browser changes.
+2. *=PANE= becomes a CLOS morph*, and the pane-scoped specials become its slots (and the
+   web tab's). The monolithic draw still runs; =+window-specials+= shrinks to the
+   chrome's.
+3. *The tiled shell becomes a tree*: tab strip, tray, trail area, panes, status line;
+   the layout pass; per-morph drawing and routing; the halo from the tree; =note-drawn=,
+   =*drawn*= and the chrome's specials gone; =draw-browser= = a full repair. Damage stays
+   whole-shell in this step.
+4. *Windows become surfaces* holding a trail area of the same pane morphs; tear-off and
+   re-tile move morphs; =with-window-context= and its machinery, =render-window=,
+   =draw-trail-area= and =call-at-top-level='s juggling gone.
+5. *Damage per morph*: event damage, signatures, the fast paths into any surface, panes
+   that step; =environment-changed= reduced to what is truly global.
+6. Tests and docs: =poc/morphic-test.lisp= keeps "incremental repair = full repair, pixel
+   for pixel, after every step" and adds per-pane damage (a key in a pane repairs that
+   pane and, if it changed, the status line); =render-frame.lisp= frames before/after;
+   =check-morphic.lisp= extended; the guest measured against §10's numbers.
+
