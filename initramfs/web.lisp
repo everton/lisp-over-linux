@@ -949,15 +949,15 @@
   (destructuring-bind (x y w h) *web-page-rect*
     (let* ((fw (web-tab-frame-w tab)) (fh (web-tab-frame-h tab))
            (src (web-tab-frame-px tab))
-           (dst (lol.canvas:canvas-pixels canvas))
            (cw (lol.canvas:canvas-w canvas))
            (cols (max 0 (min fw w (- cw x))))
            (rows (max 0 (min fh h (- (lol.canvas:canvas-h canvas) y)))))
-      (declare (type (simple-array (unsigned-byte 32) (*)) src dst)
+      (declare (type (simple-array (unsigned-byte 32) (*)) src)
                (type fixnum fw cols rows cw x y))
-      (dotimes (r rows)
-        (replace dst src :start1 (+ (* (+ y r) cw) x) :end1 (+ (* (+ y r) cw) x cols)
-                         :start2 (* r fw)))
+      ;; through BLIT-PIXELS, so the copy honours the canvas's clip (a damage repair,
+      ;; a window over the page — doc/morphic.org §4.1); row by row it is the same
+      ;; REPLACE this used to do itself
+      (lol.canvas:blit-pixels canvas src fw fh x y :w cols :h rows)
       (when (< cols w) (lol.canvas:fill-rect canvas (+ x cols) y (- w cols) h !#FFFFFF))
       (when (< rows h) (lol.canvas:fill-rect canvas x (+ y rows) cols (- h rows) !#FFFFFF)))))
 

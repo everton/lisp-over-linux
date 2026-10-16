@@ -369,17 +369,26 @@
   "Darken every pixel of CANVAS to FACTOR/256 of its brightness — a modal scrim. The
    canvas has no alpha channel (one pixel format, no compositor — poc/README.org), so
    \"behind a floating panel\" is spelled by multiplying the whole buffer down. Only
-   ever run when an overlay is up, so a full-buffer pass is affordable."
+   ever run when an overlay is up, so a full-buffer pass is affordable.
+
+   \"Every pixel\" means every pixel inside the canvas's CLIP (lol.canvas:with-clip),
+   which is the whole canvas unless a damage repair narrowed it: this indexes the
+   pixel vector itself, so it must honour the clip by hand, as the primitives do."
   (declare (type (integer 0 256) factor))
-  (let ((px (lol.canvas:canvas-pixels canvas)))
+  (let ((px (lol.canvas:canvas-pixels canvas))
+        (cw (lol.canvas:canvas-w canvas))
+        (x0 (lol.canvas:canvas-clip-x0 canvas)) (x1 (lol.canvas:canvas-clip-x1 canvas))
+        (y0 (lol.canvas:canvas-clip-y0 canvas)) (y1 (lol.canvas:canvas-clip-y1 canvas)))
     (declare (type (simple-array (unsigned-byte 32) (*)) px)
+             (fixnum cw x0 x1 y0 y1)
              (optimize (speed 3) (safety 0)))
-    (dotimes (i (length px))
-      (let ((p (aref px i)))
-        (setf (aref px i)
-              (logior (ash (ash (* (ldb (byte 8 16) p) factor) -8) 16)
-                      (ash (ash (* (ldb (byte 8 8) p) factor) -8) 8)
-                      (ash (* (ldb (byte 8 0) p) factor) -8)))))))
+    (loop for y of-type fixnum from y0 below y1 do
+      (loop for i of-type fixnum from (+ (* y cw) x0) below (+ (* y cw) x1) do
+        (let ((p (aref px i)))
+          (setf (aref px i)
+                (logior (ash (ash (* (ldb (byte 8 16) p) factor) -8) 16)
+                        (ash (ash (* (ldb (byte 8 8) p) factor) -8) 8)
+                        (ash (* (ldb (byte 8 0) p) factor) -8))))))))
 
 (defun draw-card (canvas x y w h &key title right dim)
   "A raised surface — the Spotter, the cheatsheet, a modal. With DIM (a 0..256

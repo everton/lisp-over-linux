@@ -1,13 +1,14 @@
 #+TITLE: Morphic — the browser becomes the first window of a Lisp window system
 #+STARTUP: showall
 
-*STATUS (2026-10-16): DESIGN, REVIEWED — nothing here is built yet.* Written for
-the user to review before any code; the user answered §9 the same day, and the
-answers are recorded there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points
-here. Every claim about *our* code below was checked against the tree on that date;
-claims about Self and Squeak come from the literature (cited where used) and were
-*not* checked against a running Squeak image — there is none on this machine.
-Open questions for the user are collected in §9.
+*STATUS (2026-10-16): step 0 of 6 BUILT* (§10 tracks each step: what shipped, what
+changed against the plan, and the measured costs). Written first as a design for
+the user to review; the user answered §9 the same day, and the answers are recorded
+there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
+claim about /our/ code below was checked against the tree on that date; claims about
+Self and Squeak come from the literature (cited where used) and were /not/ checked
+against a running Squeak image — there is none on this machine. §§0–9 are the design
+as reviewed and are left as written; where the build went another way, §10 says so.
 
 * 0. What Morphic is, in one page
 
@@ -290,3 +291,58 @@ did — early X window managers such as twm, Windows 95 on modest hardware — b
 repainting what the window uncovered was too expensive. Squeak's Morphic drags the
 morph itself. At ~2.5 ms per step (§4.3) we are on the cheap side of that trade.
 These are general facts about those systems, not checked here against their source.
+
+* 10. Status, step by step
+
+** Step 0 — the clip rectangle: BUILT (2026-10-16)
+
+[[file:../poc/canvas.lisp::defmacro with-clip][=with-clip=]] in [[file:../poc/canvas.lisp][canvas.lisp]]. The canvas carries four more slots — the clip's
+edges, half-open (=x0 <= x < x1=), because that is the form a fill loop wants — and a
+fresh canvas clips to itself, so a caller that never says =with-clip= gets exactly
+the old behaviour. Clips *nest by intersection* (a body cannot widen the clip it was
+given) and are put back by =unwind-protect=, so a debugger restart out of a drawing
+function cannot leave the screen half-clipped.
+
+Every pixel writer honours it — the plan's list (=fill-rect=, =draw-rect=, =draw-line=,
+=draw-poly=, =draw-circle=, =blit-rgba=, both glyph blitters) and the ones a =grep= for
+=canvas-pixels= found /outside/ canvas.lisp, which the plan had not listed:
+
+| writer                  | where                         | now                                                     |
+|-------------------------+-------------------------------+---------------------------------------------------------|
+| the modal scrim         | [[file:../poc/widgets.lisp::defun scrim][=scrim=]], widgets.lisp         | loops over the clip's rows only                         |
+| a web page's frame      | [[file:../initramfs/web.lisp::defun web-blit][=web-blit=]], web.lisp           | through the new =blit-pixels=                           |
+| an image pane's picture | [[file:../poc/shell.lisp::defun draw-image-body][=draw-image-body=]], shell.lisp  | through =blit-pixels= with =:mask #xFFFFFF=             |
+| the halo's spotlight    | [[file:../poc/shell.lisp::defun spotlight][=spotlight=]], shell.lisp        | unchanged: it scrims (clipped) and puts back rows it copied itself — rewriting a pixel's own old value is harmless |
+| the pointer patch       | [[file:../initramfs/fb-browser.lisp::defun put-cursor][=put-cursor=]], fb-browser.lisp | unchanged: it /reads/ the canvas into a scratch canvas of its own |
+
+So there is now one rule for code outside canvas.lisp: *copy pixel vectors with
+=blit-pixels= (or =blit-canvas=), never by indexing =canvas-pixels=* — a writer that
+indexes the vector itself escapes the clip. =blit-pixels= is a =REPLACE= per row, the
+same copy =web-blit= always did, so it costs nothing.
+
+One small speed-up rides along, because damage repair draws a whole frame's text
+through a narrow clip: a =draw-string= whose line lies wholly above or below the clip
+returns its pen at once without touching a glyph. The margin is a full cell either
+side, so no glyph a clip would have shown is skipped.
+
+*Proof.* [[file:../poc/clip-test.lisp][poc/clip-test.lisp]] (34 checks): each writer drawn once unclipped and once
+through an awkward clip rect must agree pixel for pixel inside the rect and leave
+the background untouched outside it (with a "the drawing really reached the rect"
+guard, so no check passes vacuously); clips nest, survive a non-local exit, and an
+empty one draws nothing; and twelve clipped tiles of a picture reproduce the picture.
+=render-frame.lisp= frames before and after, with the tray's clock and battery frozen
+so that two runs of the /same/ tree are byte-identical: 9 of 13 subjects identical
+(=matrix:COLLIDE=, =stage:120=, =defn:draw-alien=, =workspace=, the Spotter, the halo,
+an onion, =workspace= at 800×500 and 12 px, =package:CL-USER= drilled at 30 px); the
+other 4 (=modules=, =class:STREAM=, =tour=, =modules= in the bitmap font) differ only
+where they show the /code itself/ — a definition count, a =file:line=, the live
+instances' addresses — which the change necessarily moved. Every regression check
+passed on the step-0 image.
+
+*Not a finding, recorded so nobody repeats it:* =render-frame.lisp= did not load at
+all on this tree before the step began (=WATCH-LOCKS is undefined=). That was the
+session-log work of the same day: =agent.lisp= names its locks to the stall watcher
+at load time, and the harness did not load =poc/host-logging.lisp=. Fixed in the
+harness; nothing to do with the clip. Likewise =poc/web-test.lisp= fails "a frame
+arrived and was decoded" on this host with or without the clip (checked on the
+untouched tree) — a host matter, not this step.

@@ -96,6 +96,10 @@
 
 (let ((*load-verbose* nil) (*load-print* nil))
   (handler-bind ((warning #'muffle-warning))
+    ;; the session log first: agent.lisp names its locks to the stall watcher at
+    ;; load time (WATCH-LOCKS), and without session-log.lisp that is an undefined
+    ;; function — this harness stopped loading on 2026-10-16 until this line
+    (load (merge-pathnames "poc/host-logging.lisp" *root-dir*))
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
     (dolist (m *stack*)
       (funcall 'load-recording (merge-pathnames m *root-dir*)))))

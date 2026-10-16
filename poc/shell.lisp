@@ -1403,10 +1403,8 @@
                          (setf (getf (view-data (pane-view pane)) :scaled) (list nw nh p))
                          p))))
              (ox (+ x (floor (- w nw) 2)))
-             (oy (+ y (floor (- bh nh) 2)))
-             (dst (lol.canvas:canvas-pixels canvas))
-             (cw (lol.canvas:canvas-w canvas)) (ch (lol.canvas:canvas-h canvas)))
-        (declare (type (simple-array (unsigned-byte 32) (*)) px dst))
+             (oy (+ y (floor (- bh nh) 2))))
+        (declare (type (simple-array (unsigned-byte 32) (*)) px))
         (lol.canvas:fill-rect canvas x y w bh !#101216)
         ;; the checkerboard, under the image only
         (loop for cy from 0 below nh by 8 do
@@ -1414,17 +1412,11 @@
             (when (evenp (+ (floor cx 8) (floor cy 8)))
               (lol.canvas:fill-rect canvas (+ ox cx) (+ oy cy) (min 8 (- nw cx)) (min 8 (- nh cy))
                                     !#1E2228))))
-        ;; the copy, clipped to the canvas. Pixels whose top byte is zero are opaque in
-        ;; the canvas layout; a decoder that keeps alpha there marks transparency with
-        ;; #xFF000000-free words, which we cannot tell from black — so draw them all.
-        (dotimes (r nh)
-          (let ((dy (+ oy r)))
-            (when (< -1 dy ch)
-              (dotimes (c nw)
-                (let ((dx (+ ox c)))
-                  (when (< -1 dx cw)
-                    (setf (aref dst (+ (* dy cw) dx))
-                          (logand #xFFFFFF (aref px (+ (* r nw) c))))))))))
+        ;; the copy, clipped to the canvas's clip (BLIT-PIXELS). Pixels whose top byte
+        ;; is zero are opaque in the canvas layout; a decoder that keeps alpha there
+        ;; marks transparency with #xFF000000-free words, which we cannot tell from
+        ;; black — so draw them all, with the alpha byte masked off.
+        (lol.canvas:blit-pixels canvas px nw nh ox oy :mask #xFFFFFF)
         (lol.canvas:draw-rect canvas (1- ox) (1- oy) (+ nw 2) (+ nh 2) *ui-rule*)
         (lol.canvas:draw-string canvas *bfont*
                                 (format nil "~dx~d~@[ ~a~]   shown at ~d%"

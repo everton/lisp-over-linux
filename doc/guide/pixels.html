@@ -68,9 +68,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 <code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:64</span></a>,
-    <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:373</span></a>: for each character, paint the pixels the glyph
-    covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:327</span></a> reads
+  <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:78</span></a>,
+    <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:464</span></a>: for each character, paint the pixels the glyph
+    covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:418</span></a> reads
     the fallback <code>.lolf</code> blob (magic <code>LF</code>, width, height, then 256 glyphs).</li>
   <li><a class="ref" data-ref="poc/widgets.lisp#draw-list" href="../../poc/widgets.lisp"><code>draw-list</code><span class="loc">poc/widgets.lisp:324</span></a> returns <code>(values top hits)</code>. <em>hits</em> is
     an alist of the screen y of each painted row and its index. A click is resolved against that map
@@ -143,7 +143,7 @@ touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry 
   <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:419</span></a>). A touchpad's motion is integrated as relative
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:547</span></a>), and a tap is a click.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2746</span></a> decides what was under the pointer from the hit maps of the
+  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2738</span></a> decides what was under the pointer from the hit maps of the
     <em>last drawn frame</em>: tabs, crumbs, list rows, text, matrix cells.</li>
 </ul>
 

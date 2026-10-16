@@ -15,6 +15,9 @@
   (:use :cl)
   (:export #:canvas #:make-canvas #:canvas-w #:canvas-h #:canvas-pixels
            #:fill-rect #:draw-rect #:draw-line #:draw-poly #:draw-circle #:blit-rgba
+           #:with-clip #:call-with-clip #:canvas-clip #:clip-visible-p
+           #:canvas-clip-x0 #:canvas-clip-y0 #:canvas-clip-x1 #:canvas-clip-y1
+           #:blit-pixels #:blit-canvas
            #:font #:load-psf #:load-font #:font-cw #:font-ch #:draw-string #:string-px
            #:load-ttf-font #:font-outline-p #:font-size #:font-default-size #:font-ascent
            #:font-face #:font-description #:set-font-size #:reset-font-size
@@ -56,31 +59,80 @@
 
 (deftype pixmap () '(simple-array (unsigned-byte 32) (*)))
 
+;;; The CLIP RECTANGLE (doc/morphic.org §4.1). Every primitive below writes only
+;;; inside it. It is stored as four half-open edges — x0 <= x < x1, y0 <= y < y1 —
+;;; because that is the form the loops want: a fill is then "from the larger left
+;;; edge to the smaller right edge", with no +1/-1 anywhere. A fresh canvas clips to
+;;; itself, which is exactly what every primitive did before the clip existed
+;;; ("clip to the canvas, so callers never have to check"); WITH-CLIP narrows it for
+;;; the duration of a body. Damage repair is the reason it exists: a window
+;;; repainting the rectangle it uncovered must not scribble over the window above,
+;;; and a morph redrawn for one damaged rect must leave every pixel outside alone.
 (defstruct (canvas (:constructor %make-canvas))
   (w 0 :type fixnum)
   (h 0 :type fixnum)
-  (pixels (make-array 0 :element-type '(unsigned-byte 32)) :type pixmap))
+  (pixels (make-array 0 :element-type '(unsigned-byte 32)) :type pixmap)
+  (clip-x0 0 :type fixnum) (clip-y0 0 :type fixnum)   ; the clip's top-left (inclusive)
+  (clip-x1 0 :type fixnum) (clip-y1 0 :type fixnum))  ; ... and bottom-right (exclusive)
 
 (defun make-canvas (w h)
-  (%make-canvas :w w :h h
+  (%make-canvas :w w :h h :clip-x1 w :clip-y1 h
                 :pixels (make-array (* w h) :element-type '(unsigned-byte 32)
                                             :initial-element 0)))
+
+(defun canvas-clip (canvas)
+  "The clip as a rect list (x y w h) — for looking at; WITH-CLIP is how to change it."
+  (list (canvas-clip-x0 canvas) (canvas-clip-y0 canvas)
+        (- (canvas-clip-x1 canvas) (canvas-clip-x0 canvas))
+        (- (canvas-clip-y1 canvas) (canvas-clip-y0 canvas))))
+
+(defun call-with-clip (canvas x y w h fn)
+  "Run FN with CANVAS's clip narrowed to its intersection with the rect X,Y,W,H, then
+   put the old clip back (even on a non-local exit — a debugger restart, say). Clips
+   NEST by intersecting: a body cannot widen the clip it was given, which is what lets
+   a window clip to its own bounds inside a damage rect and still stay in the rect.
+   An empty intersection is legal and makes every primitive a no-op."
+  (declare (fixnum x y w h))
+  (let ((ox0 (canvas-clip-x0 canvas)) (oy0 (canvas-clip-y0 canvas))
+        (ox1 (canvas-clip-x1 canvas)) (oy1 (canvas-clip-y1 canvas)))
+    (let* ((nx0 (max ox0 x)) (ny0 (max oy0 y))
+           (nx1 (max nx0 (min ox1 (+ x w)))) (ny1 (max ny0 (min oy1 (+ y h)))))
+      (unwind-protect
+           (progn (setf (canvas-clip-x0 canvas) nx0 (canvas-clip-y0 canvas) ny0
+                        (canvas-clip-x1 canvas) nx1 (canvas-clip-y1 canvas) ny1)
+                  (funcall fn))
+        (setf (canvas-clip-x0 canvas) ox0 (canvas-clip-y0 canvas) oy0
+              (canvas-clip-x1 canvas) ox1 (canvas-clip-y1 canvas) oy1)))))
+
+(defmacro with-clip ((canvas x y w h) &body body)
+  "Draw BODY into CANVAS with every pixel write confined to the rect X,Y,W,H (and to
+   whatever clip was already in force). (with-clip (c 10 10 100 50) (fill-rect c 0 0 999 999 red))
+   paints exactly the 100x50 rect."
+  `(call-with-clip ,canvas ,x ,y ,w ,h (lambda () ,@body)))
+
+(declaim (inline clip-visible-p))
+(defun clip-visible-p (canvas x y)
+  "Is pixel X,Y inside CANVAS's clip? The per-pixel test the line and circle use."
+  (declare (fixnum x y))
+  (and (<= (canvas-clip-x0 canvas) x) (< x (canvas-clip-x1 canvas))
+       (<= (canvas-clip-y0 canvas) y) (< y (canvas-clip-y1 canvas))))
 
 (declaim (inline rgb))
 (defun rgb (r g b) (logior (ash r 16) (ash g 8) b))
 
 ;;; ---- primitives ----------------------------------------------------------
-;;; Every one of these clips to the canvas, so callers never have to check.
+;;; Every one of these clips to the canvas's CLIP RECTANGLE (the whole canvas unless
+;;; WITH-CLIP narrowed it), so callers never have to check.
 
 (defun fill-rect (canvas x y w h color)
   "Solid rectangle, clipped."
   (declare (optimize (speed 3) (safety 1))
            (fixnum x y w h) ((unsigned-byte 32) color))
-  (let* ((cw (canvas-w canvas)) (ch (canvas-h canvas))
+  (let* ((cw (canvas-w canvas))
          (px (canvas-pixels canvas))
-         (x0 (max 0 x)) (y0 (max 0 y))
-         (x1 (min cw (+ x w))) (y1 (min ch (+ y h))))
-    (declare (type pixmap px) (fixnum cw ch x0 y0 x1 y1))
+         (x0 (max (canvas-clip-x0 canvas) x)) (y0 (max (canvas-clip-y0 canvas) y))
+         (x1 (min (canvas-clip-x1 canvas) (+ x w))) (y1 (min (canvas-clip-y1 canvas) (+ y h))))
+    (declare (type pixmap px) (fixnum cw x0 y0 x1 y1))
     (loop for yy of-type fixnum from y0 below y1 do
       (let ((row (* yy cw)))
         (declare (fixnum row))
@@ -102,14 +154,16 @@
    short and the loop is already a bounds check away from being one."
   (declare (optimize (speed 3) (safety 1)) (fixnum x0 y0 x1 y1)
            ((unsigned-byte 32) color))
-  (let* ((cw (canvas-w canvas)) (ch (canvas-h canvas))
+  (let* ((cw (canvas-w canvas))
+         (kx0 (canvas-clip-x0 canvas)) (ky0 (canvas-clip-y0 canvas))
+         (kx1 (canvas-clip-x1 canvas)) (ky1 (canvas-clip-y1 canvas))
          (px (canvas-pixels canvas))
          (dx (abs (- x1 x0))) (dy (- (abs (- y1 y0))))
          (sx (if (< x0 x1) 1 -1)) (sy (if (< y0 y1) 1 -1))
          (err (+ dx dy)))
-    (declare (type pixmap px) (fixnum cw ch dx dy sx sy err))
+    (declare (type pixmap px) (fixnum cw kx0 ky0 kx1 ky1 dx dy sx sy err))
     (loop
-      (when (and (< -1 x0 cw) (< -1 y0 ch))
+      (when (and (<= kx0 x0) (< x0 kx1) (<= ky0 y0) (< y0 ky1))
         (setf (aref px (+ (* y0 cw) x0)) color))
       (when (and (= x0 x1) (= y0 y1)) (return))
       (let ((e2 (* 2 err)))
@@ -119,7 +173,8 @@
 
 (defun draw-poly (canvas points color &key (close t))
   "Outline through POINTS — a list of (x . y) conses — closing the loop unless
-   :CLOSE NIL. The stage's sprites are all one call to this."
+   :CLOSE NIL. The stage's sprites are all one call to this. (Clipped because
+   DRAW-LINE is.)"
   (loop for (p . rest) on points
         while rest
         do (draw-line canvas (car p) (cdr p) (car (first rest)) (cdr (first rest)) color))
@@ -145,7 +200,7 @@
                              (cons (- cx x) (- cy y)) (cons (- cx y) (- cy x))
                              (cons (+ cx y) (- cy x)) (cons (+ cx x) (- cy y))))
               (let ((px* (car p)) (py (cdr p)))
-                (when (and (< -1 px* (canvas-w canvas)) (< -1 py (canvas-h canvas)))
+                (when (clip-visible-p canvas px* py)
                   (setf (aref (canvas-pixels canvas) (+ (* py (canvas-w canvas)) px*)) color)))))
         (incf y)
         (incf err (1+ (* 2 y)))
@@ -160,16 +215,18 @@
            (type (simple-array (unsigned-byte 8) (*)) bytes)
            (fixnum iw ih x y threshold))
   (let ((px (canvas-pixels canvas))
-        (cw (canvas-w canvas)) (ch (canvas-h canvas)))
-    (declare (type pixmap px) (fixnum cw ch))
+        (cw (canvas-w canvas))
+        (kx0 (canvas-clip-x0 canvas)) (ky0 (canvas-clip-y0 canvas))
+        (kx1 (canvas-clip-x1 canvas)) (ky1 (canvas-clip-y1 canvas)))
+    (declare (type pixmap px) (fixnum cw kx0 ky0 kx1 ky1))
     (dotimes (row ih)
       (let ((dy (+ y row)))
         (declare (fixnum dy))
-        (when (and (>= dy 0) (< dy ch))
+        (when (and (>= dy ky0) (< dy ky1))
           (dotimes (col iw)
             (let ((dx (+ x col)))
               (declare (fixnum dx))
-              (when (and (>= dx 0) (< dx cw))
+              (when (and (>= dx kx0) (< dx kx1))
                 (let ((si (* 4 (+ (* row iw) col))))
                   (declare (fixnum si))
                   (when (>= (aref bytes (+ si 3)) threshold)
@@ -177,6 +234,40 @@
                           (rgb (aref bytes si)
                                (aref bytes (+ si 1))
                                (aref bytes (+ si 2))))))))))))))
+
+(defun blit-pixels (canvas src sw sh x y &key (sx 0) (sy 0) (w sw) (h sh) (mask #xFFFFFFFF))
+  "Copy the W x H block at SX,SY of the pixel vector SRC (SW x SH, rows of SW words)
+   to X,Y of CANVAS, clipped — a row at a time with REPLACE, so a whole window's
+   backing store composites at memory speed. MASK is LOGANDed into each word (#xFFFFFF
+   strips a decoder's alpha byte, as an image pane wants); the default copies words as
+   they are and takes the fast path.
+
+   The one OPAQUE copy every pixel-vector writer outside this file should go through
+   — a web frame, a decoded image, a window's backing store — so that the clip binds
+   them too. A writer that indexes CANVAS-PIXELS itself escapes the clip."
+  (declare (optimize (speed 3) (safety 1)) (type pixmap src)
+           (fixnum sw sh x y sx sy w h) ((unsigned-byte 32) mask))
+  (let* ((dst (canvas-pixels canvas)) (cw (canvas-w canvas))
+         ;; the source block, cut to the source vector ...
+         (w (min w (- sw sx))) (h (min h (- sh sy)))
+         ;; ... and its destination, cut to the clip
+         (x0 (max x (canvas-clip-x0 canvas))) (y0 (max y (canvas-clip-y0 canvas)))
+         (x1 (min (+ x w) (canvas-clip-x1 canvas))) (y1 (min (+ y h) (canvas-clip-y1 canvas))))
+    (declare (type pixmap dst) (fixnum cw w h x0 y0 x1 y1))
+    (when (and (< x0 x1) (< y0 y1))
+      (loop for dy of-type fixnum from y0 below y1
+            for srow of-type fixnum = (+ (* (+ sy (- dy y)) sw) sx (- x0 x))
+            for drow of-type fixnum = (+ (* dy cw) x0)
+            do (if (= mask #xFFFFFFFF)
+                   (replace dst src :start1 drow :end1 (+ drow (- x1 x0)) :start2 srow)
+                   (loop for i of-type fixnum from 0 below (- x1 x0)
+                         do (setf (aref dst (+ drow i)) (logand mask (aref src (+ srow i))))))))
+    canvas))
+
+(defun blit-canvas (canvas src x y)
+  "Composite the whole canvas SRC at X,Y of CANVAS, clipped (a window's backing store
+   onto the screen)."
+  (blit-pixels canvas (canvas-pixels src) (canvas-w src) (canvas-h src) x y))
 
 
 ;;; ---- fonts: one FONT object, two kinds of glyph source -----------------------
@@ -385,14 +476,23 @@
   (declare (optimize (speed 3) (safety 1)) (fixnum x y scale)
            ((unsigned-byte 32) color))
   (let* ((px (canvas-pixels canvas))
-         (cw (canvas-w canvas)) (chh (canvas-h canvas))
+         (cw (canvas-w canvas))
+         (kx0 (canvas-clip-x0 canvas)) (ky0 (canvas-clip-y0 canvas))
+         (kx1 (canvas-clip-x1 canvas)) (ky1 (canvas-clip-y1 canvas))
          (size (* scale (font-size font)))
          (adv (* scale (font-cw font)))
          (base (+ y (* scale (font-ascent font))))
          (fr (ldb (byte 8 16) color)) (fg (ldb (byte 8 8) color)) (fb (ldb (byte 8 0) color))
          (pen x))
-    (declare (type pixmap px) (fixnum cw chh size adv base pen)
+    (declare (type pixmap px) (fixnum cw kx0 ky0 kx1 ky1 size adv base pen)
              ((unsigned-byte 8) fr fg fb))
+    ;; A whole line outside the clip draws nothing, so skip it without touching a
+    ;; glyph — the common case when a damage rect repaints a strip of a busy frame.
+    ;; The margin is a full cell above and below: no glyph reaches that far out of its
+    ;; cell, so nothing the clip would have shown is skipped.
+    (let ((cell (* scale (font-ch font))))
+      (when (or (<= (+ y cell cell) ky0) (>= (- y cell) ky1))
+        (return-from draw-string-outline (+ x (* adv (length string))))))
     (loop for c across string do
       (unless (char= c #\Space)
         (let* ((g (font-glyph font (char-code c) size))
@@ -403,14 +503,14 @@
           (dotimes (row gh)
             (let ((dy (+ oy row)))
               (declare (fixnum dy))
-              (when (and (>= dy 0) (< dy chh))
+              (when (and (>= dy ky0) (< dy ky1))
                 (let ((src (* row gw)) (dst (* dy cw)))
                   (declare (fixnum src dst))
                   (dotimes (col gw)
                     (let ((a (aref cov (+ src col)))
                           (dx (+ ox col)))
                       (declare ((unsigned-byte 8) a) (fixnum dx))
-                      (when (and (plusp a) (>= dx 0) (< dx cw))
+                      (when (and (plusp a) (>= dx kx0) (< dx kx1))
                         (let ((i (+ dst dx)))
                           (declare (fixnum i))
                           (if (= a 255)
@@ -431,12 +531,17 @@
    as a SCALE x SCALE block. Background pixels are left alone."
   (declare (optimize (speed 3) (safety 1)) (fixnum x y scale))
   (let* ((px (canvas-pixels canvas))
-         (cw (canvas-w canvas)) (chh (canvas-h canvas))
+         (cw (canvas-w canvas))
+         (kx0 (canvas-clip-x0 canvas)) (ky0 (canvas-clip-y0 canvas))
+         (kx1 (canvas-clip-x1 canvas)) (ky1 (canvas-clip-y1 canvas))
          (fw (font-bw font)) (fh (font-bh font))
          (glyphs (font-glyphs font))
          (pen x))
-    (declare (type pixmap px) (fixnum cw chh fw fh pen)
+    (declare (type pixmap px) (fixnum cw kx0 ky0 kx1 ky1 fw fh pen)
              ((unsigned-byte 32) color))
+    ;; a bitmap glyph never leaves its cell: a line wholly outside the clip is skipped
+    (when (or (<= (+ y (* fh scale)) ky0) (>= y ky1))
+      (return-from draw-string-bitmap (+ x (* fw scale (length string)))))
     (loop for c across string do
       (let ((g (svref glyphs (glyph-index (char-code c)))))
         (declare (type (simple-array (unsigned-byte 8) (*)) g))
@@ -447,13 +552,13 @@
               (dotimes (sy scale)
                 (let ((dy (+ y (* row scale) sy)))
                   (declare (fixnum dy))
-                  (when (and (>= dy 0) (< dy chh))
+                  (when (and (>= dy ky0) (< dy ky1))
                     (dotimes (col fw)
                       (when (logbitp (- 7 col) bits)
                         (dotimes (sx scale)
                           (let ((dx (+ pen (* col scale) sx)))
                             (declare (fixnum dx))
-                            (when (and (>= dx 0) (< dx cw))
+                            (when (and (>= dx kx0) (< dx kx1))
                               (setf (aref px (+ (* dy cw) dx)) color))))))))))))
         (incf pen (* fw scale))))
     pen))
