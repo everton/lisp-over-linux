@@ -1541,6 +1541,11 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 ;;; A turn: question → (reply → tools)* → done
 ;;; ===========================================================================
 
+(defvar *turn-end-hooks* '()
+  "Functions of (CONVERSATION TURN), called when a turn ends however it ended — done,
+   failed or stopped. agent-store.lisp saves the conversation here. Each is called
+   under IGNORE-ERRORS: a hook that fails must not take the turn's cleanup with it.")
+
 (defvar *agent-listener* nil
   "A function (KIND &rest ARGS) told what happens during a turn, or NIL — the REPL
    doorway binds one to print as it streams.")
@@ -1718,7 +1723,8 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
         (touch conv (if (turn-failure turn)
                         (format nil "failed: ~a" (getf (turn-failure turn) :headline))
                         (format nil "done · ~a" (format-cost (conversation-cost conv)))))
-        (agent-listen :done turn)))
+        (agent-listen :done turn)
+        (dolist (hook *turn-end-hooks*) (ignore-errors (funcall hook conv turn)))))
     conv))
 
 (defun cancel-conversation (conv)

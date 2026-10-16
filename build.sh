@@ -104,6 +104,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/agent.lisp"        # the agent: conversation, Messages client, tools, approval, (ask ...)
   "$INITRAMFS_DIR/agent-ui.lisp"     # the agent in the environment: conversation panes, C-c C-a, tick
   "$INITRAMFS_DIR/agent-tools.lisp"  # more tools: lisp-inspect/-applicable/-backtrace, browse, web-fetch (uses agent-ui)
+  "$INITRAMFS_DIR/agent-store.lisp"  # conversations saved to ~/.lol/agent/conversations, reopened from the Spotter
   "$POC_DIR/terminal-pane.lisp"      # SUBJ-TERMINAL: the terminal as a pane (uses shell + terminal + pty)
   "$INITRAMFS_DIR/process.lisp"      # worker-main, spawn-worker, power-off
   "$INITRAMFS_DIR/framebuffer.lisp"  # draw-alien
