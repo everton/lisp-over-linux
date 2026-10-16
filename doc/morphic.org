@@ -3,7 +3,8 @@
 
 *STATUS (2026-10-16): all six steps (0–5) BUILT*, and the windows kept in the desk file
 (§10 tracks each step: what shipped, what changed against the plan, and the measured
-costs; what is still owed is said there). Written first as a design for
+costs; what is still owed is said there; §11 compares one view built before and
+after). Written first as a design for
 the user to review; the user answered §9 the same day, and the answers are recorded
 there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
 claim about /our/ code below was checked against the tree on that date; claims about
@@ -759,6 +760,88 @@ new one, where step 2 re-tiled everything.
   its "q on an opened image" failed on main because journal.lisp's =entry-label=
   shadowed the file manager's — fixed alongside, as =journal-record-label=.
   check-web (hostroot) fails the same 5 checks, from "the tab strip shows the page
-  title" on, that it fails on main before this work. One change that is *not a
+  title" on, that it fails on main before this work. *Both since fixed on main, and
+  neither was Morphic:* the remount by fc2ba67 (fd 2 held =stderr.log= open), check-web
+  by 0321f96 (a check left the guide tab in front; then a background tab never scrolled
+  because headless Chrome composites only its foreground page). One change that is *not a
   finding*: =check-pointer.lisp= timed "a full frame" with =show-frame=, which is
   gone; it uses =present-frame=.
+
+* 11. Before and after: one view, built both ways
+
+The same view, the clipboard manager (=SuperL-h=), as it was before Morphic and as it
+is now. Nothing about how it /looks/ changed — [[file:../poc/shell.lisp::defun draw-clipboard-card][=draw-clipboard-card=]] draws the card
+in both — only who calls that drawing, when, and for which rectangle.
+
+** Before: a view was a function with its own loop
+
+=run-clipboard-fb= in =initramfs/fb-browser.lisp=, as it stood at commit 198fe92
+(=git show 198fe92:initramfs/fb-browser.lisp=), abridged:
+
+#+begin_src lisp
+(loop with dirty = t do
+  (when dirty
+    (draw-clipboard-card canvas w h query results sel)   ; repaint the whole screen
+    (show-frame canvas)                                  ; send all of it to /dev/fb0
+    (setf dirty nil))
+  (fbb-wait 0 *fb-mouse* *fb-kbd*)                       ; its own poll(2)
+  (cond ((eq key :escape) (return)) ...))                ; its own keys, its own clicks
+#+end_src
+
+The view owned the poll, the input decoding and the redraw. While it was open the
+rest of the system stood still: a terminal's output, a web page's frames, the stage
+and the clock all waited, because only this loop was running. Any change set =dirty=
+and the whole screen was drawn and sent again. =run-browser-fb='s own loop and the six
+other modal loops (§1's table) each repeated this pattern.
+
+** After: a view is an object, and the World runs the one loop
+
+[[file:../poc/overlays.lisp::defclass clipboard-overlay][=clipboard-overlay=]] in =poc/overlays.lisp=, abridged:
+
+#+begin_src lisp
+(defclass clipboard-overlay (overlay) (query sel))
+
+(defmethod overlay-draw ((o clipboard-overlay) canvas w h)   ; how to draw it
+  (draw-clipboard-card canvas w h (clip-query o) ...))
+
+(defmethod overlay-event ((o clipboard-overlay) e)           ; what an event does
+  (cond ((eq key :escape) (close-overlay o))
+        ((eq key :down) (incf (clip-sel o))
+                        (overlay-changed o (card-damage-rect *clip-rect*))) ...))
+
+(run-overlay (make-instance 'clipboard-overlay))             ; into the World; wait for the pick
+#+end_src
+
+The view says only how to draw itself and what an event does to it. The World does
+the rest: one poll, each event to the morph on top ([[file:../poc/morph.lisp::defun world-dispatch][=world-dispatch=]]), and the
+repair. [[file:../poc/morphic.lisp::defun run-overlay][=run-overlay=]] waits for the answer by turning that same loop
+(=*world-cycle*=), so everything behind the card keeps running. A change is reported
+as a rectangle ([[file:../poc/morph.lisp::defun invalidate][=invalidate=]]; here only the card); [[file:../poc/morph.lisp::defun world-repair][=world-repair=]] redraws just
+that rectangle under a clip, drawing only the morphs that overlap it — and none
+beneath the topmost opaque one that covers it — and hands the backend just those
+rectangles to send.
+
+** Side by side
+
+| | Before | After |
+|---+--------+-------|
+| a view is | a function with a loop | a CLOS object (a morph) |
+| event loops | 1 main + 6 modal | 1, the World's |
+| a change means | =dirty=: draw and send the whole screen | =invalidate= a rect: draw and send that rect |
+| an open modal | everything else freezes | everything else keeps running (except stepping and the agent's tick, §10 step 4) |
+| overlap | none: a fixed paint order | z-order: windows and overlays are the World's children |
+| things that move on their own | each one a special case in the main loop | =step-morph= on a per-morph deadline; idle sleeps |
+| the tiled browser | the whole program | one opaque morph, =shell-morph=, unchanged inside |
+
+** What this comparison leaves out
+
+- *Windows.* A [[file:../poc/morphic.lisp::defclass trail-window][=trail-window=]] draws into its own backing store, so moving it
+  is a copy, not a redraw (§10, step 2). An overlay draws straight onto the screen.
+- *Inside the tiled shell nothing is a morph yet.* Its panes, lists and text views are
+  still plain structs drawn by =draw-browser=, so a key in the shell still redraws
+  the whole shell. Only the stage body and the terminal's rows are finer (§10, step 5).
+  Making a pane its own morph is the next step for damage, and the protocol does not
+  need to change for it.
+- *The Hand.* It carries a window during Move/Resize, and the one drop it knows is a
+  window let go over the tab strip, which re-tiles it ([[file:../poc/morphic.lisp::defmethod lol.morph:drop-morph][=drop-morph=]]). Nothing
+  else can be dropped /into/ a morph yet — no dragging a value from one view to another.
