@@ -229,6 +229,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/agent-wire.lisp][=agent-wire.lisp=]]  | Server-Sent Events framing for the streamed replies =http-request= hands over ([[file:agent.org][agent.org]] §3) |
   | [[file:../initramfs/agent.lisp][=agent.lisp=]]       | the agent: the conversation object, the streamed Messages client, the tool surface, gated writes as a condition with restarts, a preflight + every failure described in words, =(ask "…")= ([[file:agent.org][agent.org]], §14.8 for failures) |
   | [[file:../initramfs/agent-ui.lisp][=agent-ui.lisp=]]    | the agent in the environment: a conversation as a Workspace pane, =C-c C-a= Ask it (and, on an empty draft after a failure, ask again), the red =;; !!= error block, the frame tick, the approval chooser, tray + tab indicators, the debugger's ASK restart (uses shell) |
+  | [[file:../initramfs/agent-tools.lisp][=agent-tools.lisp=]] | the rest of the agent's tools: =lisp-inspect=, =lisp-applicable=, =lisp-backtrace= (over a snapshot the ASK restart takes), =browse= (a subject shown beside the conversation) and the gated =web-fetch= ([[file:agent.org][agent.org]] §14.10; uses agent-ui) |
+  | [[file:../initramfs/agent-store.lisp][=agent-store.lisp=]] | a conversation saved to =~/.lol/agent/conversations/= after every turn (0600, atomic, never the key, nothing on a diskless boot) and reopened from the Spotter ([[file:agent.org][agent.org]] §14.10) |
   | [[file:../poc/terminal-pane.lisp][=poc/terminal-pane.lisp=]] | =subj-terminal=: the terminal as a pane — drawing, keys, mouse, =open-terminal=, =SuperL-↵= (uses shell + terminal + pty) |
   | [[file:../initramfs/process.lisp][=process.lisp=]]     | =worker-main=, =spawn-worker=, =power-off=                 |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]] | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)    |
@@ -257,7 +259,9 @@ they are compiled) and, by convention, =shell= (it only *calls* =token-start= /
 derived graph in [[file:guide/modules.html][the guide's module map]] lists every such edge); =canvas=
 precedes =textview=/=fb=/=shell=; =model= precedes =present=; =json= and
 =agent-wire= precede =agent=, which precedes =agent-ui=, which follows =shell=
-(it defines methods on the shell's subjects and calls its pane functions); =net= precedes
+(it defines methods on the shell's subjects and calls its pane functions);
+=agent-tools= and =agent-store= follow =agent-ui= (an =:around= method on its Activity
+subject; the store hangs on =agent='s =*turn-end-hooks*=); =net= precedes
 =dhcp=, which precedes =dns= / =sntp= / =wifi= (they hang on its =*lease-hooks*= and
 =*netd-hooks*=); =tls= precedes =http=; =net-views= comes after =shell= and =wifi=; =logcount-fix= goes first so the image is repaired before anything else
 lands (nothing at build time needs it — the build host has POPCNT — but first is

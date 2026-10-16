@@ -402,6 +402,9 @@
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"
      "initramfs/fb-browser.lisp" "initramfs/repl.lisp" "initramfs/supervisor.lisp"
      "initramfs/session-log.lisp")
+    ("agent" "the LLM client living in the image: the wire, the conversation, its tools over the model, its panes, its store"
+     "initramfs/json.lisp" "initramfs/agent-wire.lisp" "initramfs/agent.lisp" "initramfs/agent-ui.lisp"
+     "initramfs/agent-tools.lisp" "initramfs/agent-store.lisp")
     ("host tools" "never in the image: the X11 backend, runners, the frame renderer, converters"
      "poc/x11.lisp" "poc/run-browser.lisp" "poc/run-editor.lisp" "poc/run-host.lisp"
      "poc/run-guest.lisp" "poc/scene.lisp" "poc/render-frame.lisp" "poc/bdf2font.lisp")))

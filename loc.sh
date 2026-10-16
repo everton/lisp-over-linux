@@ -51,6 +51,8 @@ CATS=(
 # Persistence (journal.lisp, file-out.lisp, desk.lisp) is "ours": the record shape,
 # the replay rules and the desk's reference whitelist are designs
 # (doc/session-persistence.org), even though they print with the Lisp printer.
+# agent-tools.lisp is "ours" although it carries html-text: a skimmer for the
+# model, not an HTML parser; agent-store.lisp (the conversation file) is ours too.
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp host-client/mock-anthropic.lisp"

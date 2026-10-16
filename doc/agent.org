@@ -844,6 +844,8 @@ image that exercises them.
 - *A conversation dies at power-off.* The image is frozen at build time; runtime
   state is not persistent. The broker's transcript log covers development; a
   guest-side answer waits on the same storage decision as file-out persistence.
+  /Answered (2026-10-16): the storage decision was =/home= (tag #25), and a
+  conversation is now saved there at the end of every turn — §14.10./
 - *Token cost is invisible unless we show it.* Hence the usage footer — the
   system prompt plus a few =lisp-source= calls is not free, and an agent that
   browses the image can browse a lot of it.
@@ -873,7 +875,7 @@ image that exercises them.
 | Phase | Ships                                                              | Kernel work |
 |-------+--------------------------------------------------------------------+-------------|
 | 3     | TLS 1.3 client (§9) — the broker is deleted                        | =RTC_CLASS= optional (N3 covers it) |
-| 4     | on-image transcript persistence (blocked on the storage decision)   | maybe       |
+| 4     | transcript persistence — *DONE* (2026-10-16): =~/.lol/agent/=, §14.10 | none        |
 
 The tracks are independent, so they can run in either order or interleave. N4 is
 the /the machine can reach the outside world on its own/ milestone; A0 is the
@@ -901,20 +903,23 @@ is the /this could not have been the CLI/ one.
 
 * 14. What was built (2026-10-12) — and where it departs from the plan
 
-The agent track, A0 to A2, in four files loaded after the shell (=LISP_SOURCES=, see
+The agent track, A0 to A2, in four files loaded after the shell — six since §14.10 (=LISP_SOURCES=, see
 [[file:sbcl-init.org][sbcl-init.org]]):
 
 | File | Lines | What it is |
 |------+-------+------------|
 | [[file:../initramfs/json.lisp][json.lisp]] | 341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
 | [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?) |
-| [[file:../initramfs/agent.lisp][agent.lisp]] | 1642 | settings, the conversation object, the tools, the gate, the streamed Messages client, the preflight and the failure descriptions (§14.8), the turn loop, the system prompt, the REPL doorway |
-| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 789 | =present= on conversations / tool calls / the agent, Ask it, the error block and asking again (§14.8), the frame tick, the approval chooser, the indicators, the debugger doorway |
+| [[file:../initramfs/agent.lisp][agent.lisp]] | 1932 | settings, the conversation object, the tools, the gate, the streamed Messages client, the preflight and the failure descriptions (§14.8), the turn loop, the system prompt, the REPL doorway |
+| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 1193 | =present= on conversations / tool calls / the agent, Ask it, the error block and asking again (§14.8), the frame tick, the approval chooser, the indicators, the debugger doorway |
+| [[file:../initramfs/agent-tools.lisp][agent-tools.lisp]] | 475 | the rest of §2.2's tools — =lisp-inspect=, =lisp-applicable=, =lisp-backtrace= — plus §8.5's =browse= and a gated =web-fetch= (§14.10) |
+| [[file:../initramfs/agent-store.lisp][agent-store.lisp]] | 441 | a conversation saved to =~/.lol/agent/conversations/= after every turn and reopened from the Spotter (§14.10) |
 
-Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (79 checks since
-§14.8, the whole client against the mock on loopback, with =HOME= pointed at a scratch
-directory), and the guest check [[file:../check-agent.lisp][check-agent.lisp]] (41 assertions since §14.8; 22
-before). The mock is
+Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (127 checks since
+§14.10, 79 after §14.8; the whole client against the mock on loopback, with =HOME=
+pointed at a scratch directory), and the guest check [[file:../check-agent.lisp][check-agent.lisp]] (50
+assertions diskless and 56 with =LOL_GUEST_DISK=test-disk.img= since §14.10; 41 after
+§14.8; 22 before). Line counts measured 2026-10-16. The mock is
 [[file:../host-client/mock-anthropic.lisp][host-client/mock-anthropic.lisp]]: a host-side stand-in for the Messages API that
 streams the way the real one does (chunked, in 7-byte pieces, thinking signatures,
 tool input as =input_json_delta= fragments cut inside strings) and *refuses with a 400*
@@ -1009,9 +1014,10 @@ didactic sub-project it always was.
 | =file-write= (write) | =write-file-atomically= (temp file + rename) | the file |
 | =container-run= (write) | =run-in-container= — offered only when it is =fboundp= | — |
 
-Not built from §2.2: =lisp-specializers=, =lisp-applicable=, =lisp-inspect=,
+Not built from §2.2 at first: =lisp-specializers=, =lisp-applicable=, =lisp-inspect=,
 =lisp-backtrace= (the debugger doorway seeds the backtrace instead), and §8.5's
-=browse=. =lisp-eval= exists (§13 asked); the gate carries the weight, as §13 warned.
+=browse=. All but =lisp-specializers= shipped on 2026-10-16 (§14.10); =lisp-describe-class=
+already lists the methods specialised on a class, which was its job. =lisp-eval= exists (§13 asked); the gate carries the weight, as §13 warned.
 
 Name lookup never interns: a model's typo must not litter the image with symbols, so
 names go through =find-symbol=, never =read=.
@@ -1064,8 +1070,8 @@ names go through =find-symbol=, never =read=.
   unasked* — the dial is in place for when something does. Indicators built: the
   tray's =agent ask $0.01= (colour = authority: teal read-only, amber ask, red allow,
   dim off; =...= while working, =?= while waiting) and a dot over the =·= of a
-  conversation's tab (hollow / filled, pulsing while it works). Not built: the 16×16
-  alien glyph. The agent is also a subject — Spotter "agent" — whose rows are settable
+  conversation's tab (hollow / filled, pulsing while it works). Not built at first: the 16×16
+  alien glyph — since drawn, as the tray's orange creature (=draw-agent-icon=, §14.8¾). The agent is also a subject — Spotter "agent" — whose rows are settable
   with =C-c C-c= and whose commands set the dials.
 - *How do you know that* (§8.6): every tool call is a =;; #N name argument -> summary=
   line; =C-c C-o= on it opens the subject that call was about, the same view you would
@@ -1309,14 +1315,133 @@ The tray's agent item now draws a small orange creature before its text
 (=draw-agent-icon=, =poc/shell.lisp=), dimmed when its initiative is =:off=.
 
 Not yet covered by a test. =poc/agent-test.lisp= still passes with the new tools
-offered, but nothing asserts the panel, the folding, or a subagent's round trip.
-Those belong in =check-agent.lisp= (owed).
+offered, but nothing asserted the panel, the folding, or a subagent's round trip.
+Since §14.10 =check-agent.lisp= asserts one Activity row (browse's "shown to you") and
+one folded steps line (=evaluated 1=); the plan, the folding toggle and a subagent's
+round trip are still untested.
 
 ** 14.9 Still owed
 
-- §8.5's =browse= tool, the =lisp-inspect= / =lisp-applicable= / =lisp-backtrace=
-  tools, the REPL prompt mark, the alien glyph, anything for =:interacting= to do.
-- Persistence (§12 phase 4): a conversation still dies at power-off.
+- The REPL prompt's agent mark (§14.4: the line editor colours the whole prompt with
+  one SGR, so a mark in another colour needs a change to =refresh-line=).
+- Anything for =:interacting= to do: the dial exists, nothing acts unasked.
+- =lisp-specializers= (§2.2) — covered in practice by =lisp-describe-class=.
+- A web page shown to the user: =web-fetch= returns a page's words to the model;
+  opening the page in the web pane ([[file:web-browser.org][web-browser.org]]) is not wired to =browse=.
+- Tests for the plan, the steps toggle and a subagent's round trip (§14.8¾).
+- A real power-off between saving and reopening. The guest check reopens in the same
+  boot, after the session has forgotten the conversation: =test-disk.img= is attached
+  =snapshot=on=, so a second boot would not see the file. A two-boot test needs a
+  writable copy of the disk, as [[file:session-persistence.org][session-persistence.org]] plans for its own.
+
+Done since this list was first written: the first real call, on the laptop (§14.8½);
+the alien glyph (§14.8¾); the tools and persistence (§14.10).
+
+** 14.10 The rest of the tools, and a conversation that survives power-off (2026-10-16)
+
+*** The tools ([[file:../initramfs/agent-tools.lisp][agent-tools.lisp]])
+
+Each is a =define-agent-tool= like the first ones, so each goes through the same
+=execute-tool-call=: its input checked against its schema, a gated one through
+=tool-approval-request=, any error an =is_error= result. They reach the model in
+conversations begun after the image has them, because a conversation's tools are
+frozen at its first request (§14.8½).
+
+| Tool | Behind it | Opens (C-c C-o) |
+|------+-----------+-----------------|
+| =lisp-inspect= | =inspect-places= on a symbol's value / function / class, or on an earlier call's value (=call=: N); =path= drills by field label or position | the object |
+| =lisp-applicable= | =effective-method-onion=: :around, :before, the primary chain, :after, for one class per required argument | the onion view |
+| =lisp-backtrace= | a *snapshot* of the debugger's stack: condition, restarts, frames; =frame=: N gives its locals and source | the frame's definition |
+| =browse= | =present= on a subject (definition, senders, class, generic, onion, module, file, folder, value, an earlier call), shown beside the conversation | the subject |
+| =web-fetch= (gated) | =http-request= GET; HTML reduced to its words by =html-text= | — |
+
+Three decisions worth keeping:
+
+- *=lisp-backtrace= reads a copy, not the stack.* The conversation that the debugger's
+  ASK restart opens runs its tools on a thread of its own (§14.4). An sb-di frame is a
+  pointer into the debugger thread's control stack. So the ASK restart copies the stack
+  first, on the debugger's own thread, with =note-debugger-context=: every frame's name,
+  definition and locals, as strings. The debugger is modal, so the stack cannot change
+  while the copy is in use. In any other conversation the tool says there is no
+  condition and lists the image's threads.
+- *=browse= is §8.5's tool, not a web browser.* §8.5 asks for a tool that puts a
+  /subject/ in front of you (the senders view, rather than a list of names) and opens
+  it "beside, never steal focus". A conversation pane's side is already its Activity
+  panel, so a browsed subject becomes a row there, in a "shown to you" group, one Enter
+  away. That is a =present :around= on the Activity subject, so =agent-ui.lisp= did not
+  change for it. With no Activity panel on screen, the subject opens in a tab behind
+  the current one, the way an answer asked from elsewhere does. It touches the screen
+  only from the main thread, where the environment runs. Fetching a URL is the
+  separate =web-fetch=.
+- *=web-fetch= is gated like a write*, though it changes nothing here: a GET carries
+  its URL out, and a URL can carry anything the conversation has read. So it asks
+  under =:ask= and is not offered under =:read-only=, which also means a subagent
+  cannot fetch.
+
+Found on the way, and fixed: =lisp-describe= of =*agent-api-key*= printed the key,
+because CL's =describe= prints a variable's value. Every tool result now passes
+[[file:../initramfs/agent.lisp::defun redact-api-key][=redact-api-key=]] (inside =clip-result=), and =lisp-inspect= prints the key as
+=[the API key — never shown]=. Tested with the mock's =showkey= word.
+
+*** Persistence ([[file:../initramfs/agent-store.lisp][agent-store.lisp]])
+
+A conversation is written to =~/.lol/agent/conversations/<UTC stamp>-<id>.json= at the
+end of every turn, however the turn ended. That is the new =*turn-end-hooks*= list,
+called in =run-turn='s cleanup — with the redaction, the only change to =agent.lisp=.
+The file holds what it takes to *continue* the conversation, not only to read it:
+
+- every message, each content block exactly as the API knows it, thinking signatures
+  byte for byte;
+- the tools array as first sent. A thinking signature is bound to the request that
+  produced it, tools included (§14.8½), so a reopened conversation must send the same
+  tools, not today's;
+- the turns (question, notes, failure, cost), the tool calls (input, result, summary)
+  and the plan.
+
+The format is JSON because the messages and the tools already are JSON: they go back
+out as they came in, with no second mapping to get wrong.
+
+The promises are those of =settings.lisp=: nothing is written without a real home (a
+diskless boot's =HOME= is =/=), a write is atomic (=write-file-atomically=), and nothing
+signals (a failure goes to the session log, through =log-condition=). Two more:
+
+- the file is the user's alone (=0600= in a =0700= folder), because a conversation
+  quotes whatever its tools read;
+- *the API key is never written.* It travels in a header, never in a message; every
+  tool result has it taken out; and a file whose text would still contain it is not
+  written at all.
+
+What is not saved: the endpoint (a setting); each call's live subject (the common ones
+are found again from the call's input, so =C-c C-o= still works on a reopened
+=lisp-source=); subagents (a subagent's report is already in its parent's transcript).
+
+*Reopening.* The Spotter lists "saved conversations" and, for each one not already
+open, "saved conversation: TITLE". Its preview reads the file and loads nothing.
+Drilling it reopens the conversation: it becomes a live conversation again, made
+current, and the next question continues it into the same file. Its earlier spend is
+kept apart, so the tray's session cost stays this session's; the file's =cost= is the
+total.
+
+*Tested.* =poc/agent-test.lisp= saves a conversation, checks the modes and that the key
+is absent, has the session forget it, reopens it from the file, and asks again. The mock
+accepts the restored history, thinking signatures included, and the tools sent are
+byte-equal to the ones the conversation began with. =check-agent.lisp= with
+=LOL_GUEST_DISK=test-disk.img= does the same in the guest as uid 1000, reopening
+through the Spotter by typing (section 5b). Without the disk, section 5b is skipped.
+
+*Ruled out (2026-10-16).*
+- =session-log.lisp=, merged meanwhile, defines =UTC-STAMP= in =CL-USER=. This file's
+  first draft did too, with another signature, which would have silently redefined it;
+  the store's helper is now =STORE-STAMP=.
+- Two =check-agent.lisp= failures seen on =main= at the same time were stale checks,
+  not bugs: the tray's text no longer says "agent" (the creature icon replaced the
+  word), and a tool call's =;; #0= line is folded into a steps line under =:concise=
+  (§14.8¾). Both checks were updated.
+- Section 3's occasional "no stopped note" was the harness typing into a pane that was
+  still read-only, because a turn was streaming. The check now waits for the turn to end
+  first (=ready-to-type=).
+- =poc/agent-test.lisp= could not load on =main= after =f4f44bf=: =agent.lisp= calls
+  =watch-locks= from =session-log.lisp=, which the test did not load. It loads it now.
 
 * Appendix — measurements taken for this doc
 
