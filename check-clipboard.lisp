@@ -145,7 +145,7 @@
   (check "SuperL-m opens the module index in a new tab"
          (and (eql (probe-int "(length *trails*)") 2)
               (yes "(typep (pane-subject (current-pane)) 'subj-modules)")))
-  (let ((top (probe-int "*content-top*")))
+  (let ((top (probe-int "(pane-body-top (current-pane))")))
     (glide-to 120 (+ top 12)))
   (probe "(setf *halo-handles* nil)")
   (click "middle")

@@ -86,7 +86,8 @@
   (when (and pane (subj-dir-p (pane-subject pane)))
     (when select (setf (subj-dir-select (pane-subject pane)) select))
     (represent-pane pane))
-  (setf *preview-subject* nil *preview-pane* nil))
+  (dolist (trail *trails*)                       ; every list pane's preview cache
+    (dolist (p trail) (setf (pane-preview-subject p) nil (pane-preview p) nil))))
 
 (defmacro with-fs-errors ((verb) &body body)
   "Run BODY; an FS-ERROR (or anything else) becomes the status line — rule 1 above."

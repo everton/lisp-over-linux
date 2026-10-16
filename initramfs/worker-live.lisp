@@ -629,28 +629,29 @@
 ;;; ---- the poll-loop service ---------------------------------------------------
 
 (defun browser-panes (&key visible)
-  "Every pane the shell holds — each trail's panes and their side panes, and the
-   nav-split preview — or, with VISIBLE, only those on screen: the tiled trail's and
-   every window's (poc/morphic.lisp, VISIBLE-TRAILS), and the preview."
+  "Every pane the shell holds — each trail's panes, their side panes and their
+   nav-split previews — or, with VISIBLE, only those on screen: the tiled trail's and
+   every window's (poc/morphic.lisp, VISIBLE-TRAILS)."
   (let ((out '()))
     (dolist (trail (if visible
                        (if (fboundp 'visible-trails) (funcall 'visible-trails) (list (current-trail)))
                        *trails*))
       (dolist (p trail)
         (push p out)
-        (when (pane-side p) (push (pane-side p) out))))
-    ;; The preview pane is a CACHE: it keeps the last selection's pane after you
-    ;; switch tabs, so it is "on screen" only while it previews the selection of a
-    ;; pane we are counting. (Counting it always made a hidden ticker redraw the
-    ;; screen every second — the guest test caught that, the host test could not:
-    ;; nothing draws there, so nothing fills the cache.)
-    (when (and (boundp '*preview-pane*) *preview-pane*
-               (or (not visible)
-                   (some (lambda (p)
-                           (let ((it (and (pane-view p) (selected-item p))))
-                             (and it (eq (item-subject it) (pane-subject *preview-pane*)))))
-                         out)))
-      (push *preview-pane* out))
+        (when (pane-side p) (push (pane-side p) out))
+        ;; A preview is a CACHE: it keeps the last selection's pane after the
+        ;; selection moves on, so it is "on screen" only while its list is the
+        ;; trail's expanded pane and it previews what that list has selected now.
+        ;; (Counting it always made a hidden ticker redraw the screen every second —
+        ;; the guest test caught that, the host test could not: nothing draws there,
+        ;; so nothing fills the cache.)
+        (let ((pv (pane-preview p)))
+          (when (and pv
+                     (or (not visible)
+                         (and (eq p (car (last trail)))
+                              (let ((it (and (pane-view p) (selected-item p))))
+                                (and it (eq (item-subject it) (pane-subject pv)))))))
+            (push pv out)))))
     out))
 
 (defun pane-remote (p)

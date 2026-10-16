@@ -395,8 +395,8 @@ OPTIONS
 (defun replay-keys (script canvas w h)
   "Replay SCRIPT (space-separated tokens) through the real input entry points — the
    world's event routing (poc/morph.lisp), exactly as the guest's loop feeds it. The
-   world is repaired between steps because clicks hit-test against geometry that
-   DRAW-BROWSER records (*crumb-rects*, *content-top*, *matrix-cells*) — without a
+   world is repaired between steps because clicks hit-test against geometry the
+   drawing records (*crumb-rects*, a pane's PANE-BODY-TOP and PANE-CELLS) — without a
    draw in between, a scripted click would test against a stale layout, which is
    precisely the class of bug this harness exists to catch."
   (declare (ignore w h))

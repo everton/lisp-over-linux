@@ -227,15 +227,14 @@
 ;;; It also makes an opaque drag cheap: moving a window re-renders nothing in it.
 
 (defparameter +window-specials+
-  '(*crumb-rects* *content-top* *split-x* *preview-pane* *preview-subject*
-    *tab-rects* *tab-close-rects* *tab-plus-rect* *list-rows* *side-rows* *drawn*
-    *matrix-cells* *stage-rect* *stage-body-rect* *editing-side* *drag-tv* *drag-origin* *term-drag*
-    *last-press*)
+  '(*crumb-rects* *tab-rects* *tab-close-rects* *tab-plus-rect* *drawn*
+    *drag-tv* *drag-origin* *term-drag* *last-press*)
   "The shell's per-frame specials — hit maps, caches and focus-within-a-pane state —
-   of which every window keeps its own values.")
+   of which every window keeps its own values. (What a PANE drew — its rows, its body's
+   top, its split, its preview — is the pane's own now: doc/morphic.org §12.)")
 
 (defparameter +window-specials-late+
-  '("*WEB-PAGE-RECT*" "*WEB-BAR-RECTS*" "*WEB-BAR-Y*" "*WEB-PRESS*" "*TERM-POINTER*")
+  '("*WEB-PRESS*" "*TERM-POINTER*")
   "The same, from modules that load after this one (web.lisp): found by name.")
 
 (defun window-special-symbols ()
@@ -246,7 +245,8 @@
 
 (defun fresh-special-value (sym)
   "What a new window starts with for SYM: the empty value, not the shell's."
-  (if (eq sym '*content-top*) 0 nil))
+  (declare (ignore sym))
+  nil)
 
 (defclass trail-window (lol.morph:morph)
   ((root     :initarg :root :accessor window-root
@@ -382,7 +382,7 @@
             (when i
               (let ((*active* i))
                 (with-window-context (win)
-                  (setf *crumb-rects* '() *split-x* nil *drawn* '())
+                  (setf *crumb-rects* '() *drawn* '())
                   (note-drawn 0 0 w h win '(render-window) "the window")
                   (draw-window-title c w win focused)
                   (draw-trail-area c w h (+ +bar-h+ 4) 6)
@@ -1028,13 +1028,6 @@
   (cond ((typep m 'shell-morph) (and *trails* (nth (tiled-index) *trails*)))
         ((typep m 'trail-window) (window-trail m))))
 
-(defun holder-special (m sym)
-  "MORPH's value of the shell special SYM: the shell's at the top level, a window's
-   from its own saved set."
-  (if (typep m 'trail-window)
-      (cdr (assoc sym (window-specials m)))
-      (and (boundp sym) (symbol-value sym))))
-
 (defun holder-changed (m &optional rect)
   "Damage RECT (the holder's own coordinates; NIL = all) of a pane holder."
   (if (typep m 'trail-window) (window-changed m rect) (shell-changed rect m)))
@@ -1115,7 +1108,7 @@
           ((pane-running-stage p)
            (if (eq :layout (step-stage-pane p))
                (holder-changed m)
-               (holder-changed m (holder-special m '*stage-body-rect*))))
+               (holder-changed m (pane-stage-body p))))
           ((step-run-panes p) (holder-changed m)))))
 
 (defmethod lol.morph:step-morph ((m shell-morph) now)
@@ -1135,8 +1128,8 @@
       (list (current-trail))))
 
 (defun holder-shows-pane-p (m p)
-  (or (eq p (holder-special m '*preview-pane*))
-      (some (lambda (q) (or (eq q p) (eq (pane-side q) p))) (holder-trail m))))
+  (some (lambda (q) (or (eq q p) (eq (pane-side q) p) (eq (pane-preview q) p)))
+        (holder-trail m)))
 
 (defun damage-pane (p)
   "P changed on its own (a live worker's view arrived): redraw whichever morph shows

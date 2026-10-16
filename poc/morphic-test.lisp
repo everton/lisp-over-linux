@@ -472,8 +472,8 @@
 ;; a menu opened from INSIDE a window: the loop it turns draws the shell with the
 ;; shell's hit maps, and the window keeps its own
 (let* ((w (first (windows)))
-       (wtop (cdr (assoc '*content-top* (window-specials w))))
-       (stop *content-top*))
+       (wtop (pane-body-top (window-pane w)))
+       (stop (pane-body-top (holder-pane (desk-shell *world*)))))
   (setf *active* (window-trail-index w)) (repair)
   (destructuring-bind (x y ww wh) (bounds w)
     (setf *script* (list (check-inside) '(:key :key :escape :state 0)) *nested-right* '())
@@ -481,8 +481,8 @@
   (check "a right click in a window opens its menu, Esc closes it"
          (and (equal *nested-right* '(t)) (null (top-overlay))))
   (check "... the window's hit maps and the shell's both kept"
-         (and (eql wtop (cdr (assoc '*content-top* (window-specials w))))
-              (eql stop *content-top*)))
+         (and (eql wtop (pane-body-top (window-pane w)))
+              (eql stop (pane-body-top (holder-pane (desk-shell *world*))))))
   (check "the screen is right" (screen-right-p)))
 ;; the clipboard manager and the value prompt answer through the same wait
 (lol.clipboard:clip-copy "zz-one") (lol.clipboard:clip-copy "zz-two")
@@ -515,7 +515,7 @@
     (check "a due step steps it" (= (1+ n) (lol.morph:morph-steps (desk-shell *world*)))))
   (repair)
   (check "the step damaged only the stage's body, not the shell around it"
-         (let ((body *stage-body-rect*))
+         (let ((body (pane-stage-body p)))
            (equal (getf (lol.morph:world-last-repair *world*) :rects) (list body))))
   (check "the screen is right after a step" (screen-right-p))
   ;; the same stage in a window: only that part of its backing store is drawn again
@@ -528,7 +528,7 @@
     (repair)
     (check "a step damages the window's stage body only"
            (let ((rects (getf (lol.morph:world-last-repair *world*) :rects))
-                 (b (holder-special w '*stage-body-rect*)))
+                 (b (pane-stage-body (window-pane w))))
              (and (= 1 (length rects)) b
                   (= (lol.morph:rect-area (first rects)) (lol.morph:rect-area b)))))
     (check "the screen is right" (screen-right-p))

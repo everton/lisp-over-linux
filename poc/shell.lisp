@@ -44,23 +44,91 @@
 (defvar *trails* '() "The open trails — a list of trails, each a list of PANEs.")
 (defvar *active* 0    "Index into *trails* of the focused trail.")
 
-(defstruct pane
-  subject view
-  (sel 0)                 ; selected item index (list views)
-  (top 0)                 ; first visible LAYOUT SLOT (section headers occupy one too)
-  (follow t)              ; should the viewport chase the selection on the next draw?
-                          ; Arrow keys say yes (move the selection, bring it into view);
-                          ; the wheel says no, because scrolling is LOOKING — the whole
-                          ; point of a viewport independent of the selection.
-  tv                      ; a lol.textview for :source/:reference panes, else NIL
-  side                    ; a pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL
-  side-stash              ; a side pane HIDDEN rather than closed, so re-opening it
-                          ; restores the buffer instead of a blank one. Hiding an
-                          ; EDITABLE pane must not destroy what you typed into it.
-  side-pinned)            ; did the USER pin that side pane (⇧↵), or did -> merely
-                          ; focus the preview? A pinned side outlives losing focus;
-                          ; a focused preview must not, or leaving it would strand you
-                          ; in a different layout from the one you arrived in.
+;;; A PANE is a MORPH (doc/morphic.org §12): the object that holds a subject and its
+;;; view IS the thing on screen that draws it and takes its events. It used to be a
+;;; DEFSTRUCT drawn by one big function that left what it drew where in specials
+;;; (*LIST-ROWS*, *CONTENT-TOP* …), which every window then had to keep its own copy
+;;; of. Now each pane keeps its own: the slots under "where it drew" below are written
+;;; when the pane draws and read when it takes a click, in the coordinates it drew in
+;;; (its surface's — the screen's, or a window's).
+;;;
+;;; The accessors and MAKE-PANE / PANE-P are what they were, so every caller — and
+;;; every check that reads (pane-top (current-pane)) over the net REPL — is unchanged.
+;;; The morph's SUBJECT slot and the pane's are ONE slot (a slot specifier of the same
+;;; name merges with the inherited one): there is no second record of what it shows.
+
+(defclass pane (lol.morph:morph)
+  ((lol.morph::subject :accessor pane-subject)
+   (view :initarg :view :initform nil :accessor pane-view)
+   (sel  :initarg :sel :initform 0 :accessor pane-sel
+         :documentation "Selected item index (list views).")
+   (top  :initarg :top :initform 0 :accessor pane-top
+         :documentation "First visible LAYOUT SLOT (section headers occupy one too).")
+   (follow :initarg :follow :initform t :accessor pane-follow
+           :documentation "Should the viewport chase the selection on the next draw?
+   Arrow keys say yes (move the selection, bring it into view); the wheel says no,
+   because scrolling is LOOKING — the whole point of a viewport independent of the
+   selection.")
+   (tv :initarg :tv :initform nil :accessor pane-tv
+       :documentation "A lol.textview for :source/:reference panes, else NIL.")
+   (side :initarg :side :initform nil :accessor pane-side
+         :documentation "A pinned, EDITABLE pane shown BESIDE this list (⇧↵), or NIL.")
+   (side-stash :initarg :side-stash :initform nil :accessor pane-side-stash
+               :documentation "A side pane HIDDEN rather than closed, so re-opening it
+   restores the buffer instead of a blank one. Hiding an EDITABLE pane must not
+   destroy what you typed into it.")
+   (side-pinned :initarg :side-pinned :initform nil :accessor pane-side-pinned
+                :documentation "Did the USER pin that side pane (⇧↵), or did -> merely
+   focus the preview? A pinned side outlives losing focus; a focused preview must not,
+   or leaving it would strand you in a different layout from the one you arrived in.")
+   (editing-side :initform nil :accessor pane-editing-side
+                 :documentation "Is the keyboard in this pane's right-hand column (its
+   side pane) rather than in the pane itself? SuperL-o toggles it; every use is
+   guarded by (pane-side p). It was one special for the whole screen (*EDITING-SIDE*)
+   until each pane became a morph.")
+   (preview :initform nil :accessor pane-preview
+            :documentation "The cached read-only pane the nav split shows beside this
+   list — what the selection opens — rebuilt only when the selection's subject
+   changes (PREVIEW-FOR).")
+   (preview-subject :initform nil :accessor pane-preview-subject
+                    :documentation "The subject PREVIEW was built for (EQ-compared).")
+   ;; ---- where it drew, for its clicks (in its surface's coordinates) -----------
+   (body-top :initform 0 :accessor pane-body-top
+             :documentation "The y where the expanded pane's body starts.")
+   (split-x :initform nil :accessor pane-split-x
+            :documentation "The left x of the right-hand column (the nav-split preview, a
+   side pane) when the pane is split, else NIL: a click at x >= this is the column's.")
+   (rows :initform '() :accessor pane-rows
+         :documentation "The hit map LOL.WIDGETS:DRAW-LIST returned when this pane's
+   list was drawn last — ((y . index) …). A click reads it back rather than computing
+   an index from y, because with section headers in the layout screen row N is no
+   longer item N.")
+   (list-rect :initform nil :accessor pane-list-rect
+              :documentation "The rect (x y w h) its list was drawn in: the halo outlines a
+   row across it.")
+   (cells :initform '() :accessor pane-cells
+          :documentation "The hit map LOL.WIDGETS:DRAW-GRID returned for its dispatch grid.")
+   (stage-rect :initform nil :accessor pane-stage-rect
+               :documentation "The stage's viewport (x y w h), for clicks.")
+   (stage-body :initform nil :accessor pane-stage-body
+               :documentation "The whole stage body (viewport, heads-up line, transcript)
+   as last drawn: all that a tick can change, so a stepping stage damages only this."))
+  (:documentation "A subject, presented: its view, where you are in it, and — being a
+   morph — where it is on screen and what it drew there."))
+
+(defun make-pane (&rest initargs &key subject view sel top follow tv side side-stash side-pinned)
+  "A new pane (the constructor DEFSTRUCT used to provide, same keywords)."
+  (declare (ignore subject view sel top follow tv side side-stash side-pinned))
+  (apply #'make-instance 'pane initargs))
+
+(defun pane-p (x) (typep x 'pane))
+
+(defmethod print-object ((p pane) stream)
+  "#<PANE workspace> — what it shows, which is how you tell two apart (the halo's
+   caption prints a trail as its panes). No address: a printed pane reads the same in
+   every run, so a rendered frame that shows one does too."
+  (print-unreadable-object (p stream :type t)
+    (princ (if (pane-view p) (short-title (view-title (pane-view p))) "-") stream)))
 
 (defun open-pane (subject &key preview)
   "Build a PANE for SUBJECT: present it, and for text views wrap the body in a
@@ -282,11 +350,6 @@
    differently: the guest decodes an evdev REL_WHEEL record, the X11 host receives
    a ButtonPress on button 4/5 (doc/input.org §6-7).")
 (defvar *crumb-rects* '() "alist (pane-index . y-top) for the collapsed bars, set on draw.")
-(defvar *content-top* 0  "screen-y where the expanded pane's body starts, set on draw.")
-(defvar *split-x* nil    "left screen-x of the nav-split preview column when a list pane is
-   split, else NIL. Clicks at x >= this land in the read-only preview, not the list.")
-(defvar *preview-pane* nil    "cached read-only pane rendered in the nav-split right column.")
-(defvar *preview-subject* nil "the subject *PREVIEW-PANE* was built for (EQ-compared).")
 (defvar *tab-rects* '()  "alist (trail-index . (x0 . x1)) for the top tab strip, set on draw.")
 (defvar *pending-prefix* nil
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
@@ -373,10 +436,6 @@
    *COMPLETER*, which repl.lisp fills in for Tab completion. When no backend has set
    it, a gesture that needs a value says so in the status line instead of silently
    doing nothing.")
-(defvar *editing-side* nil
-  "T when keyboard focus is on the current pane's editable SIDE pane (⇧↵ beside) rather
-   than the list. SuperL-o toggles it; guarded everywhere by (pane-side (current-pane)).")
-
 (defun open-beside (pane)
   "⇧↵ on a list row: open the selected item BESIDE the list — a pinned, editable pane in
    the right column that does NOT follow the selection (unlike the read-only preview). A
@@ -386,10 +445,10 @@
       (if (and (pane-side pane)
                (eq (pane-subject (pane-side pane)) (item-subject it)))
           (setf (pane-side pane) nil (pane-side-pinned pane) nil
-                *editing-side* nil)                          ; toggle closed
+                (pane-editing-side pane) nil)                ; toggle closed
           (setf (pane-side pane) (open-pane (item-subject it))
                 (pane-side-pinned pane) t                    ; ⇧↵ pins it
-                *editing-side* t)))))
+                (pane-editing-side pane) t)))))
 
 (defun focus-side (pane)
   "-> on a list row: move focus INTO the right-hand column and make it usable.
@@ -409,7 +468,7 @@
                    (eq (pane-subject (pane-side pane)) (item-subject it)))
         (setf (pane-side pane) (open-pane (item-subject it))
               (pane-side-pinned pane) nil))     ; focused, not pinned — see UNFOCUS-SIDE
-      (setf *editing-side* t)
+      (setf (pane-editing-side pane) t)
       t)))
 
 (defun unfocus-side (pane)
@@ -417,7 +476,7 @@
    goes away again and you are looking at the read-only preview you started from —
    the identical frame, down to the pixel. If you PINNED it with <S-Return>, it stays:
    pinning is a decision, and C-g should not quietly undo one."
-  (setf *editing-side* nil)
+  (setf (pane-editing-side pane) nil)
   (unless (pane-side-pinned pane)
     (setf (pane-side pane) nil)))
 
@@ -438,15 +497,16 @@
     ((eq key :return)
      (let ((it (selected-item side)))
        (when (and it (item-subject it))
-         (setf *editing-side* nil)               ; the trail moves; focus comes home
+         (setf (pane-editing-side pane) nil)     ; the trail moves; focus comes home
          (trail-push (item-subject it)))))
     (t nil))
   nil)
 
 (defun toggle-side-focus ()
   "SuperL-o: move keyboard focus between the list and its editable side pane."
-  (when (pane-side (current-pane))
-    (setf *editing-side* (not *editing-side*))))
+  (let ((p (current-pane)))
+    (when (pane-side p)
+      (setf (pane-editing-side p) (not (pane-editing-side p))))))
 
 ;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
 
@@ -748,17 +808,6 @@
                   (if (eq (item-disposition item) :in-place) :dim :bright))
      :group (item-group item))))
 
-(defvar *side-rows* '()
-  "The hit map for a LIST drawn in the right-hand column. Separate from *LIST-ROWS*
-   because the split draws two lists in one frame, and whichever went second used to
-   overwrite the other's map — so a click in the left list hit-tested against the
-   right one's rows. Reachable much more easily now that -> focuses the side.")
-
-(defvar *list-rows* '()
-  "The hit map LOL.WIDGETS:DRAW-LIST returned for the pane drawn last — ((y . index) …).
-   A click reads it back rather than computing an index from y, because with section
-   headers in the layout screen row N is no longer item N.")
-
 (defvar *drawn* '()
   "Everything the last frame drew that you might point at, as
    ((x y w h object drawers label) …): the OBJECT that is on screen there and the
@@ -774,12 +823,14 @@
   "Record that DRAWERS painted OBJECT into the rect X,Y,W,H (see *DRAWN*)."
   (push (list x y w h object drawers label) *drawn*))
 
-(defun draw-list-body (canvas pane x y w h &optional (into :main))
+(defun draw-list-body (canvas pane x y w h)
   "Render a list view: the widget does rows, sections, selection and the scrollbar;
    this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
-   (a layout slot, headers included) and is written back so it persists across frames.
-   INTO says which hit map to record — :MAIN for the expanded pane, :SIDE for the
-   right-hand column, which is drawn in the same frame and must not overwrite it."
+   (a layout slot, headers included) and is written back so it persists across frames,
+   and the rows drawn go into the pane's own hit map (PANE-ROWS): a split draws two
+   lists in one frame, the pane's and its side's, and each keeps its own — when one
+   special held both, whichever went second used to overwrite the other's map, so a
+   click in the left list hit-tested against the right one's rows."
   (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
     (note-drawn x y w h (pane-view pane) '(draw-list-body item->row lol.widgets:draw-list)
                 (format nil "list of ~d rows" (length rows)))
@@ -792,8 +843,9 @@
                                ;; gets its own column and full-strength text
                                :value-col (when (eq (view-kind (pane-view pane)) :inspector)
                                             (min (* 50 (char-w)) (floor w 2))))
-      (setf (pane-top pane) top)
-      (if (eq into :side) (setf *side-rows* hits) (setf *list-rows* hits)))))
+      (setf (pane-top pane) top
+            (pane-rows pane) hits
+            (pane-list-rect pane) (list x y w h)))))
 
 ;;; Layout heights that depend on the text — all derived from the current font, so a
 ;;; font-size change relays them out on the next frame. The comments give the pixel
@@ -827,10 +879,6 @@
 
 ;;; ---- the clickable dispatch matrix (§3) ----------------------------------
 
-(defvar *matrix-cells* '()
-  "The hit map LOL.WIDGETS:DRAW-GRID returned for the dispatch grid drawn last, so a
-   click and the drawing can never disagree (same discipline as *crumb-rects*).")
-
 (defun draw-matrix-body (canvas pane x y w h)
   "Render a 2-axis dispatch matrix as a clickable grid. The widget draws the cells,
    the header band and the overflow notes; this turns the model's cell CONTENTS
@@ -845,7 +893,7 @@
          (counts (mapcar (lambda (cellrow) (mapcar #'length cellrow)) (getf m :cells))))
     (multiple-value-bind (hits bottom)
         (lol.widgets:draw-grid canvas x y (- w 2) (- h (line-h) 5) rows cols counts)
-      (setf *matrix-cells* hits)
+      (setf (pane-cells pane) hits)            ; a click reads it back (MATRIX-CELL-CLICK)
       ;; the caption sits directly under the grid, where the design puts it — at the
       ;; foot of a mostly-empty pane it would be furniture nobody reads
       (draw-hints canvas x (+ bottom 6) w
@@ -863,10 +911,6 @@
   "Height of the transcript strip under the stage: a heading and five lines (92 px
    under the old 6x15 font, when it was the constant +STAGE-TRANSCRIPT-H+)."
   (+ 7 (* 6 (line-h))))
-(defvar *stage-rect* nil "The viewport rect (x y w h) of the last stage drawn, for clicks.")
-(defvar *stage-body-rect* nil
-  "The whole stage body (viewport, heads-up line, transcript) as last drawn: all that
-   a tick can change, so a stepping stage damages only this (poc/morphic.lisp).")
 
 (defun stage-sprite-points (b)
   "The silhouette of body B in model space, as a list of (x . y) — scaled to its own
@@ -989,7 +1033,7 @@
          (vh (- h (stage-transcript-h)))
          (ox x) (oy y))
     (stage-resize stage (max 80 w) (max 80 vh))
-    (setf *stage-rect* (list x y w vh) *stage-body-rect* (list x y w h))
+    (setf (pane-stage-rect pane) (list x y w vh) (pane-stage-body pane) (list x y w h))
     (lol.canvas:fill-rect canvas x y w vh !#0E1013)
     (dolist (b (stage-bodies stage))
       (draw-stage-sprite canvas b stage ox oy))
@@ -1009,8 +1053,8 @@
    body is a subject, so Enter opens the Inspector on the instance itself. NIL when the
    click missed every sprite (which clears the selection)."
   (let ((stage (view-data (pane-view pane))))
-    (when *stage-rect*
-      (destructuring-bind (x y w vh) *stage-rect*
+    (when (pane-stage-rect pane)
+      (destructuring-bind (x y w vh) (pane-stage-rect pane)
         (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
           (let ((hit (find-if (lambda (b)
                                 (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
@@ -1032,7 +1076,7 @@
     (setf (pane-side pane) (or (pane-side-stash pane)
                                (open-pane (subj-stage-workspace)))
           (pane-side-stash pane) nil))
-  (setf *editing-side* t)
+  (setf (pane-editing-side pane) t)
   (when text
     (let ((tv (pane-tv (pane-side pane))))
       (when tv (lol.textview:tv-set-text tv text))))
@@ -1081,7 +1125,7 @@
       (#\w (if (pane-side pane)
                 (setf (pane-side-stash pane) (pane-side pane)
                       (pane-side pane) nil
-                      *editing-side* nil)
+                      (pane-editing-side pane) nil)
                 (stage-open-workspace pane))
            t)
       (#\r (reset-collide-stage)
@@ -1110,7 +1154,7 @@
   "A click on a dispatch-grid cell -> drill the effective-method onion for that
    (row-class, col-class) pair, building the full argument tuple (T elsewhere) from
    the matrix's arity and axis positions. NIL when the click missed every cell."
-  (let ((hit (lol.widgets:hit-cell *matrix-cells* px py)))
+  (let ((hit (lol.widgets:hit-cell (pane-cells pane) px py)))
     (when hit
       (destructuring-bind (r . c) hit
         (let* ((m (view-data (pane-view pane)))
@@ -1317,18 +1361,19 @@
                 (format nil "breadcrumb · ~a" (short-title (view-title (pane-view pane))))))
   (push (cons index y) *crumb-rects*))
 
-(defun preview-for (subject)
-  "The cached read-only PANE for SUBJECT (the nav-split right column), rebuilt only
-   when the selection moves to a different subject. NIL for a nil subject. The preview
-   is never focused — it is a look, not an edit surface; drilling (Enter) is what opens
-   a real editable pane."
+(defun preview-for (pane subject)
+  "The cached read-only PANE that PANE's nav split shows for SUBJECT (its right-hand
+   column), rebuilt only when the selection moves to a different subject. NIL for a nil
+   subject. The preview is never focused — it is a look, not an edit surface; drilling
+   (Enter) is what opens a real editable pane. Each list pane keeps its own (PANE-
+   PREVIEW): a window's list and the tiled one's no longer share one cache."
   (when subject
-    (unless (eq subject *preview-subject*)
-      (setf *preview-subject* subject
-            *preview-pane* (ignore-errors (open-pane subject :preview t)))
-      (let ((tv (and *preview-pane* (pane-tv *preview-pane*))))
+    (unless (eq subject (pane-preview-subject pane))
+      (setf (pane-preview-subject pane) subject
+            (pane-preview pane) (ignore-errors (open-pane subject :preview t)))
+      (let ((tv (and (pane-preview pane) (pane-tv (pane-preview pane)))))
         (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
-    *preview-pane*))
+    (pane-preview pane)))
 
 (defun draw-pane-body (canvas pane x y w h &optional (into :main))
   "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
@@ -1358,7 +1403,7 @@
     ((terminal-pane-p pane)                       ; poc/terminal-pane.lisp
      (note-drawn x y w h (pane-subject pane) '(draw-terminal-body) "terminal")
      (funcall 'draw-terminal-body canvas pane x y w h))
-    (t (draw-list-body canvas pane x y w h into))))
+    (t (draw-list-body canvas pane x y w h))))
 
 (defparameter +non-list-kinds+ '(:matrix :stage :image :web :terminal)
   "View kinds with no textview that are NOT lists either: they draw themselves, and
@@ -1453,7 +1498,6 @@
 
 (defun draw-browser (canvas w h)
   (setf *crumb-rects* '())
-  (setf *split-x* nil)
   (setf *drawn* '())
   (note-drawn 0 0 w h canvas '(draw-browser) "the screen")
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
@@ -1477,7 +1521,8 @@
           do (draw-crumb canvas y w p i) (incf y (+ +bar-h+ 3)))
     ;; the expanded current pane
     (let ((body-y (+ y +bar-h+ 4)) (body-h (- h y +bar-h+ 4 bottom)))
-      (setf *content-top* body-y)                 ; remember it for click hit-testing
+      (setf (pane-body-top cur) body-y            ; remember them for click hit-testing
+            (pane-split-x cur) nil)
       (note-drawn 8 y (- w 16) (- h y bottom) cur '(draw-pane-body lol.widgets:draw-panel)
                   (format nil "pane · ~a" (short-title (view-title (pane-view cur)))))
       (lol.widgets:draw-panel canvas 8 y (- w 16) (- h y bottom)
@@ -1507,14 +1552,14 @@
            (let* ((full-w (- w 24)) (side-w (max 300 (floor (* full-w 34) 100)))
                   (gap 12) (text-w (- full-w side-w gap)) (sx (+ 12 text-w gap))
                   (side (pane-side cur)))
-             (setf *split-x* sx)
+             (setf (pane-split-x cur) sx)
              (draw-pane-body canvas cur 12 body-y text-w body-h)
              (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
              (lol.canvas:draw-string canvas *bfont*
                (format nil "~a~@[   ~a~]" (view-title (pane-view side))
-                       (if *editing-side* "up/dn · ret opens · SuperL-o back" "SuperL-o"))
-               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
-             (if *editing-side*
+                       (if (pane-editing-side cur) "up/dn · ret opens · SuperL-o back" "SuperL-o"))
+               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
+             (if (pane-editing-side cur)
                  (lol.canvas:fill-rect canvas sx (- body-y 2) side-w 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) text-w 2 *ui-accent*))
              (draw-pane-body canvas side sx body-y side-w body-h :side)))
@@ -1525,16 +1570,16 @@
           ((and (eq (view-kind (pane-view cur)) :stage) (pane-side cur))
            (let* ((full-w (- w 24)) (stage-w* (max 300 (floor (* full-w 58) 100)))
                   (gap 12) (sx (+ 12 stage-w* gap)) (sw (- w sx 12)) (side (pane-side cur)))
-             (setf *split-x* sx)
+             (setf (pane-split-x cur) sx)
              (draw-stage-body canvas cur 12 body-y stage-w* body-h)
              (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
              (lol.canvas:draw-string canvas *bfont*
                (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
-                       (if *editing-side*
+                       (if (pane-editing-side cur)
                            "editing — C-c C-c define · SuperL-o stage"
                            "SuperL-o to edit"))
-               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
-             (if *editing-side*
+               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
+             (if (pane-editing-side cur)
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) stage-w* 2 *ui-accent*))
              (draw-pane-body canvas side sx body-y sw body-h :side)))
@@ -1543,15 +1588,15 @@
           ((and is-list (pane-side cur))
            (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
                   (gap 12) (sx (+ 12 list-w gap)) (sw (- w sx 12)) (side (pane-side cur)))
-             (setf *split-x* sx)
+             (setf (pane-split-x cur) sx)
              (draw-list-body canvas cur 12 body-y list-w body-h)
              (lol.canvas:draw-rect canvas (- sx (floor gap 2)) body-y 1 body-h *ui-rule*)
              (lol.canvas:draw-string canvas *bfont*
                (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
-                       (if *editing-side* "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
-               sx (pane-header-text-y body-y) (if *editing-side* *ui-accent* *ui-dim*))
+                       (if (pane-editing-side cur) "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit"))
+               sx (pane-header-text-y body-y) (if (pane-editing-side cur) *ui-accent* *ui-dim*))
              ;; accent top-rule over whichever half has focus
-             (if *editing-side*
+             (if (pane-editing-side cur)
                  (lol.canvas:fill-rect canvas sx (- body-y 2) sw 2 *ui-accent*)
                  (lol.canvas:fill-rect canvas 12 (- body-y 2) list-w 2 *ui-accent*))
              (draw-pane-body canvas side sx body-y sw body-h :side)))
@@ -1559,8 +1604,8 @@
           ((and is-list (selected-item cur) (item-subject (selected-item cur)))
            (let* ((full-w (- w 24)) (list-w (max 260 (floor (* full-w 42) 100)))
                   (gap 12) (prev-x (+ 12 list-w gap)) (prev-w (- w prev-x 12))
-                  (preview (preview-for (item-subject (selected-item cur)))))
-             (setf *split-x* prev-x)
+                  (preview (preview-for cur (item-subject (selected-item cur)))))
+             (setf (pane-split-x cur) prev-x)
              (draw-list-body canvas cur 12 body-y list-w body-h)
              (lol.canvas:draw-rect canvas (- prev-x (floor gap 2)) body-y 1 body-h *ui-rule*)
              (if preview
@@ -1594,7 +1639,7 @@
         (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
         (draw-hints canvas 10 (status-text-y h) w
                     (append
-                     (cond ((and *editing-side* (pane-side cur))
+                     (cond ((and (pane-editing-side cur) (pane-side cur))
                             ;; name the half you go BACK to, and the verb the pane's
                             ;; own header advertises — a stage is not a list, and a
                             ;; Workspace defines rather than accepts an edit.
@@ -2044,7 +2089,7 @@
                  (let ((sel (pane-sel pane)))
                    (setf (pane-view pane) (present (pane-subject pane)))
                    (set-pane-sel pane sel))
-                 (setf *preview-subject* nil)          ; the cached preview is stale
+                 (setf (pane-preview-subject pane) nil) ; the cached preview is stale
                  (setf *browser-status*
                        (let ((*print-length* 20) (*print-level* 3))
                          (format nil "~a = ~s" (item-label it) new))))
@@ -2078,7 +2123,7 @@
                  (let ((sel (pane-sel pane)))
                    (setf (pane-view pane) (present (pane-subject pane)))
                    (set-pane-sel pane sel))
-                 (setf *preview-subject* nil)
+                 (setf (pane-preview-subject pane) nil)
                  (setf *browser-status*
                        (let ((*print-length* 20) (*print-level* 3))
                          (format nil "~a => ~s" (string-trim '(#\Space #\Tab) text) value))))
@@ -2405,7 +2450,7 @@
          ;; focus is in the right column: hand it back to the list and STOP. Popping
          ;; the trail as well would throw away the split you are standing in, when
          ;; all you asked for was to stop editing.
-         ((and *editing-side* (pane-side p)) (unfocus-side p))
+         ((and (pane-editing-side p) (pane-side p)) (unfocus-side p))
          ;; closing a file with unsaved edits: the first C-g only warns. Emacs asks
          ;; "Modified buffer exists; kill anyway?" — the same question, one key cheaper.
          ((and (file-pane-dirty-p p) (not (eq *unsaved-warned* p)))
@@ -2474,7 +2519,7 @@
       ;;     SuperL-o (above) hands focus back to the list/stage. This MUST precede the
       ;;     stage branch: a stage's letters spawn things, and typing "ship" into the
       ;;     Workspace beside it would otherwise launch four objects. ---
-      ((and *editing-side* (pane-side p))
+      ((and (pane-editing-side p) (pane-side p))
        (if (pane-tv (pane-side p))
            (edit-pane-key (pane-side p) key state)
            (side-list-key p (pane-side p) key state)))
@@ -2776,8 +2821,8 @@
   "Click: the top tab strip activates a trail; a breadcrumb bar pops to that level; a
    list item drills (SuperL-click opens it in a NEW trail instead); Ctrl-click on a
    symbol in a source pane jumps to its definition. Uses the geometry DRAW-BROWSER
-   recorded (*tab-rects*, *crumb-rects*, *content-top*), so click and draw can never
-   disagree.
+   recorded (*tab-rects*, *crumb-rects*, and the pane's own PANE-BODY-TOP, PANE-SPLIT-X,
+   PANE-ROWS), so click and draw can never disagree.
 
    In a side-by-side, a plain click in the half that does NOT have keyboard focus is
    a focus move and nothing more — SuperL-o with a pointer. It still positions you
@@ -2811,20 +2856,21 @@
   ;; a breadcrumb bar? each entry is (pane-index . y-top); test its y-top (cdr).
   (let ((hit (find-if (lambda (e) (<= (cdr e) y (+ (cdr e) +bar-h+))) *crumb-rects*))
         (p (current-pane)))
+    (let ((top (pane-body-top p)) (split (pane-split-x p)))
     (cond
       (hit (trail-goto (car hit)))
       ;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
       ((eq (view-kind (pane-view p)) :web)
-       (when (>= y *content-top*) (funcall 'web-click p x y ctrl super)))
+       (when (>= y top) (funcall 'web-click p x y ctrl super)))
       ;; a terminal: the program's click if it asked for the mouse, else a selection
-      ((terminal-pane-p p) (when (>= y *content-top*) (funcall 'terminal-press p x y)))
+      ((terminal-pane-p p) (when (>= y top) (funcall 'terminal-press p x y)))
       ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
       ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
       ;; it is reading, not editing. The caret is simply not drawn there.
       ;; (a text pane's own half only: one with a list beside it — the agent's
       ;; Activity — leaves clicks in the right column to the split clause below)
-      ((and (pane-tv p) (not (and (pane-side p) *split-x* (>= x *split-x*))))
-       (setf *editing-side* nil)
+      ((and (pane-tv p) (not (and (pane-side p) split (>= x split))))
+       (setf (pane-editing-side p) nil)
        (cond
          (ctrl (jump-to-definition (pane-tv p) x y))
          ((lol.textview:tv-hit-p (pane-tv p) x y)
@@ -2840,18 +2886,18 @@
       ;; unreachable by pointer: SuperL-o was the only way in, and clicking to place
       ;; the caret did nothing at all.
       ((and (eq (view-kind (pane-view p)) :stage)
-            (not (and *split-x* (>= x *split-x*))))
+            (not (and split (>= x split))))
        (stage-click p x y)
-       (setf *editing-side* nil))
+       (setf (pane-editing-side p) nil))
       ;; nav-split preview column: a matrix preview is LIVE — clicking a cell drills its
       ;; effective-method onion straight from here (no need to open the matrix first); a
       ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed
       ;; selection for real (SuperL-click in a new trail).
-      ((and *split-x* (>= x *split-x*) (>= y *content-top*))
+      ((and split (>= x split) (>= y top))
        (cond
          ;; ⇧↵ editable side pane: a click focuses it and places the caret (Ctrl jumps).
          ((pane-side p)
-          (setf *editing-side* t)
+          (setf (pane-editing-side p) t)
           (let* ((side (pane-side p)) (tv (pane-tv side)))
             (cond
               ((and tv (lol.textview:tv-hit-p tv x y))
@@ -2859,13 +2905,13 @@
                    (jump-to-definition tv x y)
                    (text-press tv x y)))
               ;; a list in the right column: select the row that was drawn there,
-              ;; read back from its OWN hit map (see *SIDE-ROWS*)
+              ;; read back from its OWN hit map (the side pane's PANE-ROWS)
               ((null tv)
-               (let ((i (lol.widgets:hit-row *side-rows* y)))
+               (let ((i (lol.widgets:hit-row (pane-rows side) y)))
                  (when i (set-pane-sel side i)))))))
          (t
           (let ((sel (selected-item p))
-                (pv *preview-pane*))
+                (pv (pane-preview p)))
             (cond
               ((and pv (eq (view-kind (pane-view pv)) :matrix))
                (or (matrix-cell-click pv x y)               ; a cell -> its onion
@@ -2882,17 +2928,17 @@
                (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))))
       ;; else an item in the current list view — SuperL-click opens it in a NEW trail; a
       ;; plain click here also returns focus to the list (away from any side pane).
-      ((>= y *content-top*)
-       (let ((came-from-side *editing-side*))
-         ;; UNFOCUS-SIDE rather than a bare (setf *editing-side* nil): a side the
+      ((>= y top)
+       (let ((came-from-side (pane-editing-side p)))
+         ;; UNFOCUS-SIDE rather than a bare (setf (pane-editing-side p) nil): a side the
          ;; pointer or -> merely FOCUSED goes away again and you are looking at the
          ;; live preview you started from, while one you PINNED with <S-Return> stays.
          ;; Same rule C-g follows, so the two ways back agree.
          (unfocus-side p)
-         ;; which row was actually painted here? *list-rows* answers; a click on a group
+         ;; which row was actually painted here? PANE-ROWS answers; a click on a group
          ;; header hits no row and is correctly inert.
          (let* ((items (view-items (pane-view p)))
-                (i (lol.widgets:hit-row *list-rows* y)))
+                (i (lol.widgets:hit-row (pane-rows p) y)))
            (when (and i (< i (length items)))
              (set-pane-sel p i)
              ;; If the side pane had focus, taking it back WAS this click's job.
@@ -2903,7 +2949,7 @@
                (let ((it (nth i items)))
                  (when (item-subject it)
                    (if super (new-trail (item-subject it))
-                       (trail-push (item-subject it)))))))))))))
+                       (trail-push (item-subject it))))))))))))))
 
 ;;; ---- what is under the pointer --------------------------------------------
 ;;; The right-button menu and the middle-button halo both start from the same
@@ -2916,8 +2962,8 @@
   "The stage body under PX,PY in PANE's viewport, or NIL. The hit test STAGE-CLICK
    performs, without selecting anything."
   (let ((stage (view-data (pane-view pane))))
-    (when *stage-rect*
-      (destructuring-bind (x y w vh) *stage-rect*
+    (when (pane-stage-rect pane)
+      (destructuring-bind (x y w vh) (pane-stage-rect pane)
         (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
           (find-if (lambda (b)
                      (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
@@ -2961,13 +3007,13 @@
          (let ((tab (find-if (lambda (e) (<= (cadr e) x (cddr e))) *tab-rects*)))
            (and tab (list :kind :tab :index (car tab)))))
         ;; the right-hand column: a pinned side pane, or the read-only preview
-        ((and *split-x* (>= x *split-x*) (>= y *content-top*))
-         (let ((side (or (pane-side p) *preview-pane*)))
+        ((and (pane-split-x p) (>= x (pane-split-x p)) (>= y (pane-body-top p)))
+         (let ((side (or (pane-side p) (pane-preview p))))
            (cond ((null side) (pane-itself p))
                  ((and (pane-tv side) (lol.textview:tv-hit-p (pane-tv side) x y))
                   (text-target side x y))
                  ((null (pane-tv side))
-                  (or (row-target side *side-rows* y) (pane-itself side)))
+                  (or (row-target side (pane-rows side) y) (pane-itself side)))
                  (t (pane-itself side)))))
         ((and (pane-tv p) (lol.textview:tv-hit-p (pane-tv p) x y))
          (text-target p x y))
@@ -2977,7 +3023,7 @@
                (list :kind :sprite :pane p :body b :subject (body-obj b))
                (pane-itself p))))
         ((and (null (pane-tv p)) (not (member (view-kind (pane-view p)) +non-list-kinds+)))
-         (or (row-target p *list-rows* y) (pane-itself p)))
+         (or (row-target p (pane-rows p) y) (pane-itself p)))
         (t (pane-itself p))))))
 
 ;;; ---- running a COMMAND (present.lisp's affordance protocol) ---------------
@@ -3240,8 +3286,7 @@
     (:row
      (let* ((pane (getf target :pane)) (item (getf target :item))
             (rec (drawn-record-of (pane-view pane)))
-            (hit (find (getf target :index) (if (eq pane (current-pane)) *list-rows* *side-rows*)
-                       :key #'cdr))
+            (hit (find (getf target :index) (pane-rows pane) :key #'cdr))
             (rect (if (and rec hit)
                       (list (first rec) (car hit) (third rec) +row-h+)
                       (and rec (subseq rec 0 4))))
@@ -3513,7 +3558,7 @@
   (let ((target (pointer-target x y)))
     (cond
       ;; a terminal is text you can type into, so the paste wins there too
-      ((and (terminal-pane-p (current-pane)) (not force-halo) (>= y *content-top*))
+      ((and (terminal-pane-p (current-pane)) (not force-halo) (>= y (pane-body-top (current-pane))))
        (funcall 'terminal-middle (current-pane)))
       ((and (eq (getf target :kind) :text) (getf target :editable)
             (not force-halo) (primary-selection))
@@ -3599,7 +3644,7 @@
    the caret in a text pane or at the selected row in a list. The keyboard-first rule
    (doc/code-browser.org §1): anything the pointer can reach, a key can too."
   (let* ((p (current-pane))
-         (tv (cond ((and *editing-side* (pane-side p)) (pane-tv (pane-side p)))
+         (tv (cond ((and (pane-editing-side p) (pane-side p)) (pane-tv (pane-side p)))
                    (t (pane-tv p)))))
     (multiple-value-bind (x y)
         (if tv
@@ -3607,8 +3652,8 @@
                     (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) 4
                        (* (- (lol.textview:tv-point-line tv) (lol.textview::tv-scroll tv))
                           (lol.textview:tv-line-height tv))))
-            (let ((hit (find (pane-sel p) *list-rows* :key #'cdr)))
-              (values 40 (if hit (+ (car hit) 4) *content-top*))))
+            (let ((hit (find (pane-sel p) (pane-rows p) :key #'cdr)))
+              (values 40 (if hit (+ (car hit) 4) (pane-body-top p)))))
       (browser-context-menu x y))))
 
 ;;; ---- the clipboard, wired into the editor ---------------------------------
@@ -3807,7 +3852,7 @@
 (defun focused-editor ()
   "The editable text view keyboard focus is in, or NIL — where a paste goes."
   (let* ((p (current-pane))
-         (q (if (and *editing-side* (pane-side p)) (pane-side p) p)))
+         (q (if (and (pane-editing-side p) (pane-side p)) (pane-side p) p)))
     (and (pane-tv q) (editor-pane-p q) (pane-tv q))))
 
 ;;; ---- the clipboard manager (SuperL-h): Parcellite's history, as a palette -----

@@ -139,7 +139,7 @@
 (defun element-center (id)
   "The screen point at the middle of element ID, worked out IN the guest from the
    page's own layout (getBoundingClientRect) and the pane's rect."
-  (let ((s (probe (format nil "(let* ((r (read-json (coerce (web-js \"JSON.stringify(document.getElementById('~a').getBoundingClientRect())\") 'simple-string)))) (list (round (+ (first *web-page-rect*) (* *web-zoom* (+ (jget r \"x\") (/ (jget r \"width\") 2))))) (round (+ (second *web-page-rect*) (* *web-zoom* (+ (jget r \"y\") (/ (jget r \"height\") 2)))))))" id)
+  (let ((s (probe (format nil "(let* ((r (read-json (coerce (web-js \"JSON.stringify(document.getElementById('~a').getBoundingClientRect())\") 'simple-string)))) (list (round (+ (first (web-tab-page-rect (web-visible-tab))) (* *web-zoom* (+ (jget r \"x\") (/ (jget r \"width\") 2))))) (round (+ (second (web-tab-page-rect (web-visible-tab))) (* *web-zoom* (+ (jget r \"y\") (/ (jget r \"height\") 2)))))))" id)
                       15)))
     (ignore-errors (let ((*read-eval* nil)) (read-from-string s)))))
 

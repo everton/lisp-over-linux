@@ -232,7 +232,7 @@
            (and live sync (plusp live) (= live sync))))
 
   (format t "~&~%== J. letting go ==~%")
-  (probe "(progn (setf *trails* (list (list (open-pane (subj-defn 'subj-live)))) *active* 0 *preview-pane* nil) t)")
+  (probe "(progn (setf *trails* (list (list (open-pane (subj-defn 'subj-live)))) *active* 0) t)")
   (sleep 9.0)                                        ; +worker-idle-seconds+ and a margin
   (let ((live (report-row "live connections left" (probe-int "(count-if (function conn-live-p) *worker-conns*)")))
         (zombies (report-row "children not yet reaped" (probe-int "(length *worker-reap*)"))))

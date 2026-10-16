@@ -74,7 +74,7 @@
   "Wait until the current conversation's turn has ended (its pane is read-only while
    one streams, so keys typed then are lost), focus the transcript, caret to the end."
   (wait-until "(not (conversation-busy-p *conversation*))" :seconds 30)
-  (probe "(progn (setf *editing-side* nil) (caret-to-end (current-pane)) t)")
+  (probe "(progn (setf (pane-editing-side (current-pane)) nil) (caret-to-end (current-pane)) t)")
   (sleep 0.3))
 
 (defun checks ()

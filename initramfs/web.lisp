@@ -124,7 +124,12 @@
   input-at                ; when the last input was sent, until a frame answers it
   (latencies '())         ; ms from an input to the frame after it, newest first (≤ 32)
   capturing               ; a Page.captureScreenshot is in flight (WEB-NUDGE)
-  (last-frame-ms nil))    ; ms the last JPEG took to decode + convert
+  (last-frame-ms nil)     ; ms the last JPEG took to decode + convert
+  ;; where the pane showing it last drew it, in that pane's coordinates (its
+  ;; surface's: the screen's, or a window's) — what clicks and frames are placed by
+  page-rect               ; (x y w h) of the page image
+  (bar-rects '())         ; ((:back x0 x1) (:forward …) (:reload …) (:address …))
+  bar-y)                  ; (y0 . y1) of the toolbar
 
 (defstruct (subj-web (:constructor subj-web (tab))) tab)
 
@@ -883,10 +888,6 @@
 
 ;;; ---- drawing ---------------------------------------------------------------------
 
-(defvar *web-page-rect* nil "(x y w h) of the page image in the last frame drawn.")
-(defvar *web-bar-rects* '() "((:back x0 x1) (:forward …) (:reload …) (:address …)), y in *WEB-BAR-Y*.")
-(defvar *web-bar-y* nil "(y0 . y1) of the toolbar.")
-
 (defun web-bar-h () (+ (lol.canvas:font-ch *bfont*) 10))
 
 (defun draw-web-button (canvas label x y h enabled)
@@ -925,10 +926,10 @@
                               (clip-text url (max 4 (floor (- aw 12) cw)))
                               (+ ax 6) (+ y 7) (if secure *ui-text* *ui-dim*))
       (push (list :address ax (+ ax aw)) rects))
-    (setf *web-bar-rects* rects *web-bar-y* (cons y (+ y bh)))
+    (setf (web-tab-bar-rects tab) rects (web-tab-bar-y tab) (cons y (+ y bh)))
     ;; --- the page ---
     (let* ((py (+ y bh 2)) (ph (- h bh 2)))
-      (setf *web-page-rect* (list x py w ph)
+      (setf (web-tab-page-rect tab) (list x py w ph)
             (web-tab-want-w tab) w (web-tab-want-h tab) ph)
       (note-drawn x py w ph tab '(draw-web-body web-blit) "web page")
       (if (web-tab-frame-px tab)
@@ -960,7 +961,7 @@
 (defun web-blit (canvas tab)
   "Copy TAB's frame into the page rect: 1:1, top-left anchored, clipped; whatever the
    frame does not cover (it lags a resize by one frame) is page-white."
-  (destructuring-bind (x y w h) *web-page-rect*
+  (destructuring-bind (x y w h) (web-tab-page-rect tab)
     (let* ((fw (web-tab-frame-w tab)) (fh (web-tab-frame-h tab))
            (src (web-tab-frame-px tab))
            (cw (lol.canvas:canvas-w canvas))
@@ -1152,11 +1153,11 @@ window.__lolPickerApply = function(id, v){
     (cdp-send c "Page.addScriptToEvaluateOnNewDocument" (jobj "source" +web-picker-js+) :session s)
     (cdp-send c "Runtime.evaluate" (jobj "expression" +web-picker-js+) :session s)))
 
-(defun web-pick-anchor (msg)
-  "The screen rectangle of the control MSG reports -> (values x y w h), from its
-   CSS-pixel box: the page's origin on screen plus CSS px times *WEB-ZOOM*, the same
-   mapping WEB-PAGE-POINT inverts."
-  (destructuring-bind (px py pw ph) (or *web-page-rect* (list 0 0 0 0))
+(defun web-pick-anchor (tab msg)
+  "The rectangle of the control MSG reports in TAB -> (values x y w h), from its
+   CSS-pixel box: the page's origin plus CSS px times *WEB-ZOOM*, the same mapping
+   WEB-PAGE-POINT inverts. In the coordinates TAB's page was drawn in."
+  (destructuring-bind (px py pw ph) (or (web-tab-page-rect tab) (list 0 0 0 0))
     (declare (ignore pw ph))
     (flet ((n (k) (let ((v (jget msg k))) (if (realp v) v 0))))
       (values (round (+ px (* *web-zoom* (n "x"))))
@@ -1211,7 +1212,7 @@ window.__lolPickerApply = function(id, v){
          (id (jget msg "id")))
     (when (and msg (integerp id))
       (web-finish-press)
-      (multiple-value-bind (x y w h) (web-pick-anchor msg)
+      (multiple-value-bind (x y w h) (web-pick-anchor tab msg)
         (cond
           ((member kind '("select" "datalist") :test #'equal)
            (let ((entries (web-pick-entries msg)))
@@ -1241,10 +1242,11 @@ window.__lolPickerApply = function(id, v){
   (let ((s (find-symbol name :cl-user)))
     (and s (boundp s) (symbol-value s))))
 
-(defun web-page-point (x y)
-  "Screen X,Y -> CSS pixel coordinates in the page, or NIL outside it."
-  (when *web-page-rect*
-    (destructuring-bind (px py pw ph) *web-page-rect*
+(defun web-page-point (tab x y)
+  "X,Y (where TAB's page was drawn) -> CSS pixel coordinates in the page, or NIL
+   outside it."
+  (when (web-tab-page-rect tab)
+    (destructuring-bind (px py pw ph) (web-tab-page-rect tab)
       (when (and (<= px x (+ px pw -1)) (<= py y (+ py ph -1)))
         (values (/ (- x px) *web-zoom* 1.0) (/ (- y py) *web-zoom* 1.0))))))
 
@@ -1275,8 +1277,8 @@ window.__lolPickerApply = function(id, v){
    touchpad TAP has no release of its own, so it is sent as press + release at once."
   (let ((tab (web-tab-of pane)))
     (cond
-      ((and *web-bar-y* (<= (car *web-bar-y*) y (cdr *web-bar-y*)))
-       (let ((hit (find-if (lambda (r) (<= (second r) x (third r))) *web-bar-rects*)))
+      ((and (web-tab-bar-y tab) (<= (car (web-tab-bar-y tab)) y (cdr (web-tab-bar-y tab))))
+       (let ((hit (find-if (lambda (r) (<= (second r) x (third r))) (web-tab-bar-rects tab))))
          (case (first hit)
            (:back (web-go tab -1))
            (:forward (web-go tab 1))
@@ -1286,7 +1288,7 @@ window.__lolPickerApply = function(id, v){
       ((member (web-tab-state tab) '(:dead :crashed))
        (web-revive tab))
       (t
-       (multiple-value-bind (cx cy) (web-page-point x y)
+       (multiple-value-bind (cx cy) (web-page-point tab x y)
          (when cx
            (let* ((now (get-internal-real-time))
                   (count (if (and *web-last-press*
@@ -1311,8 +1313,8 @@ window.__lolPickerApply = function(id, v){
   (when *web-press*
     (destructuring-bind (tab . rest) *web-press*
       (declare (ignore rest))
-      (when *web-page-rect*
-        (destructuring-bind (px py pw ph) *web-page-rect*
+      (when (web-tab-page-rect tab)
+        (destructuring-bind (px py pw ph) (web-tab-page-rect tab)
           (let ((cx (/ (- (max px (min x (+ px pw -1))) px) *web-zoom* 1.0))
                 (cy (/ (- (max py (min y (+ py ph -1))) py) *web-zoom* 1.0)))
             (web-mouse tab "mouseMoved" cx cy :button "left" :buttons 1))))))
@@ -1323,7 +1325,7 @@ window.__lolPickerApply = function(id, v){
    puts it in PRIMARY (lol.clipboard:clip-select), for a middle-click elsewhere."
   (when *web-press*
     (destructuring-bind (tab cx cy count mods) (shiftf *web-press* nil)
-      (multiple-value-bind (rx ry) (web-page-point (or (fb-var "*CURSOR-X*") -1)
+      (multiple-value-bind (rx ry) (web-page-point tab (or (fb-var "*CURSOR-X*") -1)
                                                    (or (fb-var "*CURSOR-Y*") -1))
         (web-mouse tab "mouseReleased" (or rx cx) (or ry cy) :button "left" :count count :mods mods))
       (web-send tab "Runtime.evaluate"
@@ -1338,7 +1340,7 @@ window.__lolPickerApply = function(id, v){
    cursors-that-highlight. The frame that may follow redraws; we do not."
   (let ((tab (web-visible-tab)))
     (when (and tab (null *web-press*))
-      (multiple-value-bind (cx cy) (web-page-point x y)
+      (multiple-value-bind (cx cy) (web-page-point tab x y)
         (when cx (web-mouse tab "mouseMoved" cx cy))))))
 
 (defun web-wheel (lines)
@@ -1347,7 +1349,7 @@ window.__lolPickerApply = function(id, v){
    One notch (+WHEEL-LINES+ lines) is 100 CSS pixels, Chrome's own step on Linux."
   (let ((tab (web-visible-tab)))
     (when tab
-      (multiple-value-bind (cx cy) (web-page-point (or (fb-var "*CURSOR-X*") 0)
+      (multiple-value-bind (cx cy) (web-page-point tab (or (fb-var "*CURSOR-X*") 0)
                                                    (or (fb-var "*CURSOR-Y*") 0))
         (unless cx (setf cx 10.0 cy 10.0))
         (web-mouse tab "mouseWheel" cx cy :dy (round (* lines 100) (max 1 +wheel-lines+)))))))
@@ -1603,11 +1605,11 @@ window.__lolPickerApply = function(id, v){
    decode and one rectangle, not a whole-screen repaint. With no world (a host test),
    it is sent straight away."
   (let ((tab (web-visible-tab)))
-    (when (and tab *web-page-rect* (web-tab-frame-px tab))
+    (when (and tab (web-tab-page-rect tab) (web-tab-frame-px tab))
       (web-blit canvas tab)
       (if (and (fboundp 'shell-painted) (boundp '*world*) (symbol-value '*world*))
-          (funcall 'shell-painted (list *web-page-rect*))
-          (destructuring-bind (x y w h) *web-page-rect*
+          (funcall 'shell-painted (list (web-tab-page-rect tab)))
+          (destructuring-bind (x y w h) (web-tab-page-rect tab)
             ;; by name: lol.fb (poc/fb.lisp) exists in the image, not in a host test
             (funcall (find-symbol "PRESENT-FB-RECT" "LOL.FB") canvas x y w h)
             (when (and (fb-var "*FB-MOUSE*") (not (fb-var "*CURSOR-HIDDEN*")))

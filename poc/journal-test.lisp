@@ -42,7 +42,7 @@
     (load (merge-pathnames "initramfs/registry.lisp" *root*))
     (dolist (m '("poc/deflate.lisp" "initramfs/session-log.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/tour.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
-                 "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp"
+                 "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
                  "initramfs/sysinfo.lisp" "poc/inflate.lisp" "poc/image.lisp" "initramfs/files.lisp"
                  "initramfs/settings.lisp" "initramfs/file-views.lisp" "poc/terminal.lisp"

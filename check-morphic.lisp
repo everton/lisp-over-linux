@@ -500,7 +500,7 @@
   (let ((s0 (probe-int "(lol.morph:morph-steps (desk-shell *world*))")))
     (sleep 2.0)
     (let ((s1 (probe-int "(lol.morph:morph-steps (desk-shell *world*))"))
-          (body (probe "(let ((b *stage-body-rect*) (rs (mapcar (lambda (r) (getf r :rects)) *zz-reps*))) (list (length rs) (count (list b) rs :test (function equal)) (count-if (lambda (r) (getf r :full)) *zz-reps*)))"))
+          (body (probe "(let ((b (pane-stage-body (holder-pane (desk-shell *world*)))) (rs (mapcar (lambda (r) (getf r :rects)) *zz-reps*))) (list (length rs) (count (list b) rs :test (function equal)) (count-if (lambda (r) (getf r :full)) *zz-reps*)))"))
           (ms (probe "(let ((ms (mapcar (lambda (r) (getf r :ms)) *zz-reps*))) (and ms (/ (round (* 100 (/ (reduce (function +) ms) (length ms)))) 100.0)))")))
       (format t "~&  stage steps in 2 s: ~a -> ~a; repairs (all, body-only, full): ~a; ~a ms a repair~%" s0 s1 body ms)
       (check "a running stage on screen steps by itself (~30 a second)"
@@ -510,7 +510,7 @@
                (and b (plusp (first b)) (>= (second b) (floor (* 9 (first b)) 10)) (zerop (third b)))))))
   (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'rec)")
   (format t "~&  a stage step, repaired and sent (body only):  ~a us~%"
-          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (shell-changed *stage-body-rect*) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+          (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (shell-changed (pane-stage-body (holder-pane (desk-shell *world*)))) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (format t "~&  the same as a full repair (what step 2 did):  ~a us~%"
           (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (shell-changed) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (qmp-key "spc") (sleep 1.0)                              ; Space pauses the stage

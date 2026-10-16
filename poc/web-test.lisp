@@ -26,7 +26,7 @@
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
     (dolist (m '("initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/examples.lisp" "initramfs/stage.lisp"
-                 "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp"
+                 "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
                  "initramfs/sysinfo.lisp" "poc/inflate.lisp" "poc/image.lisp"
                  "initramfs/files.lisp" "initramfs/file-views.lisp"
@@ -89,7 +89,7 @@
   "Screen coordinates of the middle of element ID in the visible tab."
   (let ((r (read-json (coerce (js (format nil "JSON.stringify(document.getElementById('~a').getBoundingClientRect())" id))
                               'simple-string))))
-    (destructuring-bind (px py pw ph) *web-page-rect*
+    (destructuring-bind (px py pw ph) (web-tab-page-rect (tab))
       (declare (ignore pw ph))
       (values (round (+ px (* *web-zoom* (+ (jget r "x") (/ (jget r "width") 2)))))
               (round (+ py (* *web-zoom* (+ (jget r "y") (/ (jget r "height") 2)))))))))
@@ -171,7 +171,7 @@
          (check "the tab strip shows the page title"
                 (pump-until (lambda () (search "LoL test index" (trail-title (current-trail))))))
          (check "the viewport is the pane (innerWidth = page rect width)"
-                (pump-until (lambda () (= (js "innerWidth") (third *web-page-rect*)))))
+                (pump-until (lambda () (= (js "innerWidth") (third (web-tab-page-rect (tab)))))))
          (frame) (write-ppm (format nil "~a/web-index.ppm" *out*))
          ;; a click on a link, through the shell
          (multiple-value-bind (x y) (element-center "go")
@@ -317,9 +317,9 @@
          (check "... and sets the date"
                 (pump-until (lambda () (equal (js "document.getElementById('dt').value") "2026-10-13"))))
          (check "web-pick-anchor maps CSS px through the zoom"
-                (let ((*web-page-rect* (list 10 100 800 600)) (*web-zoom* 2))
+                (let ((tab (%make-web-tab :page-rect (list 10 100 800 600))) (*web-zoom* 2))
                   (equal (multiple-value-list
-                          (web-pick-anchor (read-json "{\"x\":5,\"y\":7.5,\"w\":40,\"h\":20}")))
+                          (web-pick-anchor tab (read-json "{\"x\":5,\"y\":7.5,\"w\":40,\"h\":20}")))
                          '(20 115 80 40))))
          ;; the address bar: C-l, type, Enter
          (setf *active* (position-if (lambda (tr) (web-tab-of (first tr))) *trails*))

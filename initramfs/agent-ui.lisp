@@ -1006,7 +1006,7 @@
     (let ((v (pane-view p)))
       (if (activity-side-p p)
           (setf (getf (view-data v) :activity-hidden) t
-                (pane-side p) nil (pane-side-pinned p) nil *editing-side* nil)
+                (pane-side p) nil (pane-side-pinned p) nil (pane-editing-side p) nil)
           (setf (getf (view-data v) :activity-hidden) nil))))
   (ensure-activity-sides))
 
