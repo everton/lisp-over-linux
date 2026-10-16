@@ -44,7 +44,11 @@
   ((cands   :initarg :cands :accessor spotter-cands)
    (query   :initform "" :accessor spotter-query)
    (results :initform '() :accessor spotter-hits-list)
-   (sel     :initform 0 :accessor spotter-sel))
+   (sel     :initform 0 :accessor spotter-sel)
+   (rect    :initform nil :accessor spotter-rect
+            :documentation "The card (x0 y0 x1 y1) as last drawn.")
+   (rows    :initform '() :accessor spotter-rows-drawn
+            :documentation "Its rows' hit map as last drawn."))
   (:documentation "Fuzzy-find any definition, package or surface and open it in a new
    trail: a card over the dimmed screen, re-filtered on every key."))
 
@@ -68,7 +72,9 @@
       (open-overlay ov))))
 
 (defmethod overlay-draw ((o spotter-overlay) canvas w h)
-  (draw-spotter-card canvas w h (spotter-query o) (spotter-hits-list o) (spotter-sel o)))
+  (multiple-value-bind (rect rows)
+      (draw-spotter-card canvas w h (spotter-query o) (spotter-hits-list o) (spotter-sel o))
+    (setf (spotter-rect o) rect (spotter-rows-drawn o) rows)))
 
 (defun spotter-open-hit (o hit)
   (close-overlay o)
@@ -80,7 +86,7 @@
                                                                        +spotter-cap+))
                  (spotter-sel o) 0)
            (overlay-changed o))
-         (moved () (overlay-changed o (card-damage-rect *spotter-rect*))))
+         (moved () (overlay-changed o (card-damage-rect (spotter-rect o)))))
     (multiple-value-bind (key state) (overlay-key e)
       (if key
           (let ((key (emacs-arrow key state)) (query (spotter-query o)))
@@ -104,10 +110,11 @@
                (setf (spotter-query o) (concatenate 'string query (string key))) (refilter))))
           (when (eq (lol.morph:event-kind e) :down)          ; the left button, as ever
             (let* ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
-                   (i (spotter-row-at* x y)) (results (spotter-hits-list o)))
+                   (i (spotter-row-at* (spotter-rect o) (spotter-rows-drawn o) x y))
+                   (results (spotter-hits-list o)))
               (cond ((and i (< i (length results))) (spotter-open-hit o (nth i results)))
                     ;; a click away dismisses
-                    ((spotter-outside-p* x y) (close-overlay o)))))))))
+                    ((spotter-outside-p* (spotter-rect o) x y) (close-overlay o)))))))))
 
 ;;; ===========================================================================
 ;;; Menus and halos: one chooser, which waits for the pick
@@ -131,7 +138,14 @@
    (sel     :initform 0 :accessor chooser-sel)
    (depth   :initform 0 :accessor chooser-depth)
    (typed   :initform "" :accessor chooser-typed)
-   (typed-at :initform 0 :accessor chooser-typed-at))
+   (typed-at :initform 0 :accessor chooser-typed-at)
+   ;; what it drew where, for its clicks
+   (rect    :initform nil :accessor chooser-rect
+            :documentation "A menu's card (x0 y0 x1 y1) as last drawn.")
+   (rows    :initform '() :accessor chooser-rows
+            :documentation "A menu's rows' hit map as last drawn.")
+   (handles :initform '() :accessor chooser-handles
+            :documentation "A halo's handles ((index cx cy x0 x1) …) as last drawn."))
   (:documentation "A :MENU card at X,Y, a :HALO round it, or a :SELECT (a web page's
    <select> popup drawn as our menu). See RUN-CHOOSER."))
 
@@ -177,15 +191,23 @@
     (setf *chooser-state* (list :kind (chooser-kind o) :sel sel :count (length entries)
                                 :label (getf (nth sel entries) :label)))
     (if (eq (chooser-kind o) :halo)
-        (draw-halo canvas w h (chooser-layers o) (chooser-depth o) entries sel (chooser-x o) (chooser-y o))
-        (draw-context-menu canvas w h entries sel (chooser-x o) (chooser-y o)))))
+        (setf (chooser-handles o)
+              (draw-halo canvas w h (chooser-layers o) (chooser-depth o) entries sel (chooser-x o) (chooser-y o)))
+        (multiple-value-bind (rect rows)
+            (draw-context-menu canvas w h entries sel (chooser-x o) (chooser-y o))
+          (setf (chooser-rect o) rect (chooser-rows o) rows)))))
+
+(defun chooser-layer (o)
+  "The layer a halo chooser O is about now: (nth depth layers) — what the guest
+   checks ask of the open halo."
+  (and o (nth (chooser-depth o) (chooser-layers o))))
 
 (defun chooser-moved (o)
   "Only the selection moved. A menu's card stays where it is, so only the card is
    drawn again; a halo's handles are all over the screen, so all of it is."
   (if (eq (chooser-kind o) :halo)
       (overlay-changed o)
-      (overlay-changed o (card-damage-rect *menu-rect*))))
+      (overlay-changed o (card-damage-rect (chooser-rect o)))))
 
 (defun chooser-type-ahead (o ch)
   (let ((now (get-internal-real-time)) (n (chooser-n o)))
@@ -255,7 +277,9 @@
                  (answer (nth (1- (digit-char-p key)) entries)))))
             (let ((kind (lol.morph:event-kind e))
                   (px (lol.morph:event-x e)) (py (lol.morph:event-y e)))
-              (flet ((hit () (if halo (halo-handle-at px py) (menu-entry-at px py))))
+              (flet ((hit () (if halo
+                                 (halo-handle-at (chooser-handles o) px py)
+                                 (menu-entry-at (chooser-rect o) (chooser-rows o) px py))))
                 (case kind
                   (:middle (if halo
                                (chooser-walk o 1)
@@ -284,7 +308,11 @@
 
 (defclass clipboard-overlay (overlay)
   ((query :initform "" :accessor clip-query)
-   (sel   :initform 0 :accessor clip-sel)))
+   (sel   :initform 0 :accessor clip-sel)
+   (rect  :initform nil :accessor clip-card
+          :documentation "The card (x0 y0 x1 y1) as last drawn.")
+   (rows  :initform '() :accessor clip-rows-drawn
+          :documentation "Its rows' hit map as last drawn.")))
 
 (defun clip-results (o) (lol.clipboard:clip-filter (clip-query o)))
 
@@ -296,7 +324,9 @@
 (defmethod overlay-draw ((o clipboard-overlay) canvas w h)
   (let ((results (clip-results o)))
     (setf (clip-sel o) (max 0 (min (clip-sel o) (1- (length results)))))
-    (draw-clipboard-card canvas w h (clip-query o) results (clip-sel o))))
+    (multiple-value-bind (rect rows)
+        (draw-clipboard-card canvas w h (clip-query o) results (clip-sel o))
+      (setf (clip-card o) rect (clip-rows-drawn o) rows))))
 
 (defmethod overlay-event ((o clipboard-overlay) e)
   (let ((results (clip-results o)))
@@ -308,9 +338,9 @@
               ((member key '(:return #\Return))
                (close-overlay o (and results (car (nth (clip-sel o) results)))))
               ((or (eq key :up) (and ctrl (eql key #\p)))
-               (decf (clip-sel o)) (overlay-changed o (card-damage-rect *clip-rect*)))
+               (decf (clip-sel o)) (overlay-changed o (card-damage-rect (clip-card o))))
               ((or (eq key :down) (and ctrl (eql key #\n)))
-               (incf (clip-sel o)) (overlay-changed o (card-damage-rect *clip-rect*)))
+               (incf (clip-sel o)) (overlay-changed o (card-damage-rect (clip-card o))))
               ((eq key :delete)
                (when results (lol.clipboard:clip-delete (car (nth (clip-sel o) results))))
                (overlay-changed o))
@@ -322,7 +352,8 @@
                (setf (clip-query o) (concatenate 'string query (string key)) (clip-sel o) 0)
                (overlay-changed o))))
           (when (eq (lol.morph:event-kind e) :down)
-            (let ((i (clipboard-row-at (lol.morph:event-x e) (lol.morph:event-y e))))
+            (let ((i (clipboard-row-at (clip-card o) (clip-rows-drawn o)
+                                       (lol.morph:event-x e) (lol.morph:event-y e))))
               (cond ((eq i :outside) (close-overlay o))
                     ((and (integerp i) (< i (length results)))
                      (close-overlay o (car (nth i results)))))))))))

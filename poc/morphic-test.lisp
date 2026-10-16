@@ -505,7 +505,7 @@
   (check "the screen is right" (screen-right-p))
   (keys "down")
   (check "a move of the selection redraws only the card"
-         (let ((card (card-damage-rect *spotter-rect*)))
+         (let ((card (card-damage-rect (spotter-rect o))))
            (<= (shell-area-drawn) (lol.morph:rect-area card))))
   (check "the screen is right" (screen-right-p))
   ;; the clock ticks behind it: painted straight into the canvas, the scrim and the
@@ -525,7 +525,7 @@
                        '(:key :key :down :state 0)
                        (lambda () (setf inside-area (shell-area-drawn)))
                        (check-inside)
-                       (lambda () (destructuring-bind (x0 y0 x1 y1) *menu-rect*
+                       (lambda () (destructuring-bind (x0 y0 x1 y1) (chooser-rect (top-overlay))
                                     (declare (ignore x1 y1))
                                     (ev :move :x (+ x0 30) :y (+ y0 12))))
                        (check-inside)

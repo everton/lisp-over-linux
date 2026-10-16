@@ -106,7 +106,7 @@
     (when n
       (dotimes (i (1- n))
         (qmp-key "up") (sleep 0.4)
-        (push (probe "(type-of (getf *halo-layer* :object))") seen)))
+        (push (probe "(type-of (getf (chooser-layer (top-overlay)) :object))") seen)))
     (format t "~&  ~a layers; walked out through: ~{~a~^ < ~}~%" n (reverse seen))
     (check "walking a real halo OUT ends on the shell morph"
            (equal (first seen) "SHELL-MORPH")))
@@ -353,9 +353,9 @@
   (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"middle\"}}")
   (sleep 1.2)
   (loop repeat 12
-        until (string= (probe "(type-of (getf *halo-layer* :object))") "TRAIL-WINDOW")
+        until (string= (probe "(type-of (getf (chooser-layer (top-overlay)) :object))") "TRAIL-WINDOW")
         do (qmp-key "up") (sleep 0.5))
-  (string= (probe "(type-of (getf *halo-layer* :object))") "TRAIL-WINDOW"))
+  (string= (probe "(type-of (getf (chooser-layer (top-overlay)) :object))") "TRAIL-WINDOW"))
 
 (defun qmp-chord (modifier qcode)
   "MODIFIER+QCODE in one send-key — a chord the TTY spells as one byte (C-c is 3)."
@@ -378,7 +378,7 @@
   (destructuring-bind (x y w h) (wbounds)
     (glide-to (+ x (floor w 2)) (+ y (floor h 2)))
     (check "the middle button, then Up: the halo reaches the window's layer" (halo-to-window))
-    (let ((labels (read-list (probe "(mapcar (lambda (e) (getf e :label)) (halo-entries *halo-layer*))"))))
+    (let ((labels (read-list (probe "(mapcar (lambda (e) (getf e :label)) (halo-entries (chooser-layer (top-overlay))))"))))
       (format t "~&  the window's handles: ~a~%" labels)
       (check "... whose first handles are Move, Resize, Raise, Close, Re-tile"
              (equal (subseq labels 0 (min 5 (length labels))) '("Move" "Resize" "Raise" "Close" "Re-tile"))))
@@ -408,7 +408,7 @@
     (destructuring-bind (x y w h) (wbounds)
       (glide-to (+ x (floor w 2)) (+ y (floor h 2)))
       (halo-to-window)
-      (let ((i (probe-int "(1+ (position \"Inspect\" (halo-entries *halo-layer*) :key (lambda (e) (getf e :label)) :test (function string=)))")))
+      (let ((i (probe-int "(1+ (position \"Inspect\" (halo-entries (chooser-layer (top-overlay))) :key (lambda (e) (getf e :label)) :test (function string=)))")))
         (qmp-key (princ-to-string i)) (sleep 1.5))
       (check "Inspect: the window shows the TRAIL-WINDOW instance itself"
              (string= (probe "(eq (subject-value (pane-subject (window-pane (first (desk-windows))))) (first (desk-windows)))") "T"))
@@ -473,7 +473,7 @@
            ;; the grid's first six columns, every pixel across and every other row
            ;; down — where the numbers are printed (most of each line is blank)
            (rect (read-list (probe "(let ((g (term-session-geometry (pane-session (holder-pane (desk-shell *world*)))))) (list (first g) (second g) (* 6 (fifth g)) (* (fourth g) (sixth g))))")))
-           (card (read-list (probe "*menu-rect*")))
+           (card (read-list (probe "(chooser-rect (top-overlay))")))
            (cur (cursor))
            (pts (and rect card
                      (destructuring-bind (rx ry rw rh) rect

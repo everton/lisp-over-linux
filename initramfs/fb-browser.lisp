@@ -1549,10 +1549,10 @@
 ;;; so a terminal behind it keeps printing — and it is left only by invoking a restart
 ;;; (there is no standard debugger to fall through to as PID 1).
 
-(defvar *dbg-restart-top* 0 "screen-y of the first restart row, for click hit-testing.")
-(defvar *dbg-frame-top* 0 "screen-y of the first backtrace row, for click hit-testing.")
-(defvar *dbg-frame-x0* 0 "left edge of the clickable backtrace column (set at draw).")
-(defvar *dbg-frame-x1* 0 "right edge of the clickable backtrace column (set at draw).")
+;;; What the debugger drew where — the first restart row, the frame column, the
+;;; locals strip — DRAW-DEBUGGER returns as a plist, its GEOMETRY, which the
+;;; debugger's overlay keeps and its clicks read back (DBG-RESTART-AT & co.): like
+;;; every other hit map in the environment, it belongs to the morph that drew it.
 ;;; The debugger's row metrics follow the CURRENT font (doc/fonts.org §5). They were
 ;;; constants (17 and 15 px, for the 6x15 font); kept under their old names as symbol
 ;;; macros — like lol.widgets' +ROW-H+ — so every use below reads unchanged.
@@ -1572,10 +1572,6 @@
           (butlast result)
           result))))
 
-(defvar *dbg-locals-top* 0 "screen-y of the first visible locals row, for click hit-testing.")
-(defvar *dbg-locals-first* 0 "index of the first VISIBLE local (the strip scrolls to the selection).")
-(defvar *dbg-locals-rows* 0 "how many locals rows the strip shows (set at draw).")
-
 (defun draw-dbg-locals (canvas x0 y0 w h locals &optional lsel)
   "Render LOCALS (FRAME-LOCAL-PLACES plists: :name :value :set :why) as one 'name =
    value' line each, starting at X0,Y0 and stopping before the screen bottom. A local
@@ -1584,53 +1580,54 @@
    §5.4): only what sb-di vouches for looks editable. LSEL, when non-NIL, is the
    selected row (the locals have the focus): it is highlighted and the strip scrolls
    to keep it in view. Each line is clipped to the panel's right edge (W).
-   Placeholder when the frame has no debug vars."
-  (setf *dbg-locals-top* y0 *dbg-locals-first* 0
-        *dbg-locals-rows* (max 1 (floor (- h 8 y0) (line-h))))
-  (if (null locals)
-      (lol.canvas:draw-string canvas *bfont* "(no locals — no debug vars here)"
-                              x0 y0 *ui-dim*)
-      (let* ((y y0)
-             (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*))))  ; chars that fit
-             (first (if lsel (max 0 (- lsel (1- *dbg-locals-rows*))) 0)))
-        (setf *dbg-locals-first* first)
-        (loop for v in (nthcdr first locals) for i from first do
-          (when (< y (- h 8))
-            (let* ((val     (getf v :value))
-                   (unavail (eq val :unavailable))
-                   (fixed   (or unavail (null (getf v :set))))   ; shown, but not settable
-                   (name    (princ-to-string (getf v :name)))
-                   (vstr    (if unavail "#<unavailable>" (princ-to-string val)))
-                   (full    (format nil "~a = ~a" name vstr)))
-              (when (eql i lsel)
-                (lol.canvas:fill-rect canvas (- x0 6) (- y 1) (- w x0) (line-h) *ui-sel*)
-                (lol.canvas:fill-rect canvas (- x0 6) (- y 1) 2 (line-h) *ui-accent*))
-              ;; name in teal, value in text (whole line dim when it cannot be set); a
-              ;; line that overruns is clipped with ".." (the … glyph would blit as a stray &).
-              (if (> (length full) maxc)
-                  (lol.canvas:draw-string canvas *bfont*
-                    (concatenate 'string (subseq full 0 (max 1 (- maxc 2))) "..")
-                    x0 y (if fixed *ui-dim* *ui-text*))
-                  (let ((pen (lol.canvas:draw-string canvas *bfont* name x0 y
-                                                     (if fixed *ui-dim* *ui-accent*))))
-                    (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
-                                            (if unavail *ui-dim* *ui-text*))))
-              (incf y (line-h))))))))
+   Placeholder when the frame has no debug vars. Returns where the rows went, as
+   (:locals-top Y :locals-first I :locals-rows N), for clicks."
+  (let ((rows (max 1 (floor (- h 8 y0) (line-h)))) (first 0))
+    (if (null locals)
+        (lol.canvas:draw-string canvas *bfont* "(no locals — no debug vars here)"
+                                x0 y0 *ui-dim*)
+        (let* ((y y0)
+               (maxc (max 1 (floor (- w x0 8) (lol.canvas:font-cw *bfont*)))))  ; chars that fit
+          (setf first (if lsel (max 0 (- lsel (1- rows))) 0))
+          (loop for v in (nthcdr first locals) for i from first do
+            (when (< y (- h 8))
+              (let* ((val     (getf v :value))
+                     (unavail (eq val :unavailable))
+                     (fixed   (or unavail (null (getf v :set))))   ; shown, but not settable
+                     (name    (princ-to-string (getf v :name)))
+                     (vstr    (if unavail "#<unavailable>" (princ-to-string val)))
+                     (full    (format nil "~a = ~a" name vstr)))
+                (when (eql i lsel)
+                  (lol.canvas:fill-rect canvas (- x0 6) (- y 1) (- w x0) (line-h) *ui-sel*)
+                  (lol.canvas:fill-rect canvas (- x0 6) (- y 1) 2 (line-h) *ui-accent*))
+                ;; name in teal, value in text (whole line dim when it cannot be set); a
+                ;; line that overruns is clipped with ".." (the … glyph would blit as a stray &).
+                (if (> (length full) maxc)
+                    (lol.canvas:draw-string canvas *bfont*
+                      (concatenate 'string (subseq full 0 (max 1 (- maxc 2))) "..")
+                      x0 y (if fixed *ui-dim* *ui-text*))
+                    (let ((pen (lol.canvas:draw-string canvas *bfont* name x0 y
+                                                       (if fixed *ui-dim* *ui-accent*))))
+                      (lol.canvas:draw-string canvas *bfont* (format nil " = ~a" vstr) pen y
+                                              (if unavail *ui-dim* *ui-text*))))
+                (incf y (line-h)))))))
+    (list :locals-top y0 :locals-first first :locals-rows rows)))
 
-(defun dbg-local-at (x y n)
-  "The locals-row index at screen X,Y (accounting for the strip's scroll), or NIL."
+(defun dbg-local-at (geometry x y n)
+  "The locals-row index at screen X,Y (accounting for the strip's scroll), by the
+   GEOMETRY DRAW-DEBUGGER returned, or NIL."
   (declare (ignore x))
-  (when (>= y *dbg-locals-top*)
-    (let ((i (+ *dbg-locals-first* (floor (- y *dbg-locals-top*) (line-h)))))
-      (when (and (< i n) (< (- i *dbg-locals-first*) *dbg-locals-rows*)) i))))
+  (let ((top (getf geometry :locals-top 0)) (first (getf geometry :locals-first 0))
+        (rows (getf geometry :locals-rows 0)))
+    (when (>= y top)
+      (let ((i (+ first (floor (- y top) (line-h)))))
+        (when (and (< i n) (< (- i first) rows)) i)))))
 
 ;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
 (defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
 (defparameter *dbg-title-bg* !#5A1C1C "the alarm-red title band.")
 (defparameter *dbg-title-fg* !#FFD0C0 "text on the title band.")
 (define-symbol-macro +dbg-locals-h+ (+ 28 (* 7 (line-h))))   ; the locals strip: 132 at 6x15
-(defvar *dbg-restart-x0* 8 "left edge of the clickable restart rail (set at draw).")
-(defvar *dbg-restart-x1* 0 "right edge of the clickable restart rail (set at draw).")
 
 (defun dbg-fit (s px)
   "Trim S to fit PX pixels of the browser font (…-elided)."
@@ -1651,7 +1648,8 @@
    The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
    :backtrace / :locals) says which list the arrows drive; LSEL is the selected local
    and NOTE, when non-NIL, the outcome of the last set or restart (shown in the strip's
-   header, where the eye already is)."
+   header, where the eye already is). Returns its GEOMETRY — where the restart rail,
+   the frame column and the locals rows went — for the overlay's clicks."
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *dbg-title-bg*)
   (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
@@ -1694,7 +1692,6 @@
       (draw-dbg-rail canvas split top (min bottom (+ top (* +dbg-frame-row+ (length backtrace))))
                      *ui-accent*)
       ;; --- left: the restart rail (amber — invoking is the unwind) ---
-      (setf *dbg-restart-top* top *dbg-restart-x0* 8 *dbg-restart-x1* (- split 12))
       (let ((ry top))
         (loop for r in restarts for i from 0 while (< ry bottom) do
           (when (= i rsel)
@@ -1706,7 +1703,6 @@
             rest-x ry (if (= i rsel) *ui-text* *ui-dim*))
           (incf ry +dbg-row+)))
       ;; --- right: the call stack; frame 0 (innermost) is where it was signalled ---
-      (setf *dbg-frame-top* top *dbg-frame-x0* (- frame-x 6) *dbg-frame-x1* (- w 8))
       (let ((fy top))
         (loop for fr in backtrace for i from 0 while (< fy bottom) do
           (when (= i fsel)
@@ -1734,22 +1730,27 @@
                          "   ·  Tab here · Enter / C-c C-c sets · R restarts the frame")
                      (- w pen 12))
             pen (+ ly 7) (if note *ui-amber* *ui-dim*)))
-        (draw-dbg-locals canvas 12 (+ ly (line-h) 13) w h locals
-                         (and (eq focus :locals) lsel))))))
+        (list* :restart-top top :restart-x0 8 :restart-x1 (- split 12)
+               :frame-top top :frame-x0 (- frame-x 6) :frame-x1 (- w 8)
+               (draw-dbg-locals canvas 12 (+ ly (line-h) 13) w h locals
+                                (and (eq focus :locals) lsel)))))))
 
-(defun dbg-restart-at (x y n)
+(defun dbg-restart-at (geometry x y n)
   "The restart-row index at screen X,Y — only within the restart rail (its left
-   column), so a click in the stack never invokes a restart. NIL otherwise."
-  (when (and (>= y *dbg-restart-top*) (<= *dbg-restart-x0* x *dbg-restart-x1*))
-    (let ((i (floor (- y *dbg-restart-top*) +dbg-row+)))
-      (when (< i n) i))))
+   column), so a click in the stack never invokes a restart. NIL otherwise. GEOMETRY
+   is what DRAW-DEBUGGER returned."
+  (let ((top (getf geometry :restart-top 0)))
+    (when (and (>= y top) (<= (getf geometry :restart-x0 8) x (getf geometry :restart-x1 0)))
+      (let ((i (floor (- y top) +dbg-row+)))
+        (when (< i n) i)))))
 
-(defun dbg-frame-at (x y n)
+(defun dbg-frame-at (geometry x y n)
   "The backtrace-row index at screen X,Y — only within the frame column (its right
    half), so a click in the restart rail never selects a frame. NIL otherwise."
-  (when (and (>= y *dbg-frame-top*) (<= *dbg-frame-x0* x *dbg-frame-x1*))
-    (let ((i (floor (- y *dbg-frame-top*) +dbg-frame-row+)))
-      (when (< i n) i))))
+  (let ((top (getf geometry :frame-top 0)))
+    (when (and (>= y top) (<= (getf geometry :frame-x0 0) x (getf geometry :frame-x1 0)))
+      (let ((i (floor (- y top) +dbg-frame-row+)))
+        (when (< i n) i)))))
 
 (defun dbg-invoke (restarts i)
   "Invoke restart I (a non-local exit — this never returns normally)."
@@ -1920,7 +1921,9 @@
    (pending-meta :initform nil :accessor dbg-pending-meta)
    (pending-cc :initform nil :accessor dbg-pending-cc)
    (note :initform nil :accessor dbg-note)
-   (places :initform nil :accessor dbg-places))
+   (places :initform nil :accessor dbg-places)
+   (geometry :initform '() :accessor dbg-geometry
+             :documentation "Where it drew its rows (DRAW-DEBUGGER's value), for clicks."))
   (:default-initargs :opaque t)
   (:documentation "The debugger as an overlay: CONDITION, its restarts, the standing
    stack and the selected frame's locals. Opened by %RUN-DEBUGGER-FB, which WAITS in
@@ -1944,8 +1947,9 @@
   (overlay-changed o))
 
 (defmethod overlay-draw ((o debugger-overlay) canvas w h)
-  (draw-debugger canvas w h (dbg-condition o) (dbg-restarts o) (dbg-backtrace o) (dbg-places o)
-                 (dbg-rsel o) (dbg-fsel o) (dbg-focus o) (dbg-lsel o) (dbg-note o)))
+  (setf (dbg-geometry o)
+        (draw-debugger canvas w h (dbg-condition o) (dbg-restarts o) (dbg-backtrace o) (dbg-places o)
+                       (dbg-rsel o) (dbg-fsel o) (dbg-focus o) (dbg-lsel o) (dbg-note o))))
 
 (defun %run-debugger-fb (condition)
   "Show CONDITION, its restarts and backtrace, and let the user pick a restart to
@@ -2025,9 +2029,10 @@
          (dbg-refresh o))
         ((eq (lol.morph:event-kind e) :down)
          (let* ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
-                (ri (dbg-restart-at x y (length restarts)))
-                (fi (dbg-frame-at x y (length frame-objs)))
-                (li (dbg-local-at x y (length places))))
+                (g (dbg-geometry o))
+                (ri (dbg-restart-at g x y (length restarts)))
+                (fi (dbg-frame-at g x y (length frame-objs)))
+                (li (dbg-local-at g x y (length places))))
            (cond (ri (dbg-enter restarts ri))  ; a restart click invokes (asks if needed)
                  (fi (setf (dbg-focus o) :backtrace (dbg-fsel o) fi (dbg-lsel o) 0))  ; a frame click selects it
                  (li (setf (dbg-focus o) :locals (dbg-lsel o) li)))  ; a local click selects it
@@ -2271,16 +2276,14 @@
   "The full key map, grouped, for the SuperL-? overlay. Data only — DRAW-CHEATSHEET
    lays it out in columns.")
 
-(defvar *fb-xres-for-sheet* 1280 "The width CHEATSHEET-COLUMNS lays out for (set on draw).")
-
 (defun cheatsheet-col-w ()
   "One cheatsheet column: a 21-character key, about 28 of description, and air — 334 px
    at 6x15 (three columns at 1280), 584 at 18 px (two). A longer description is
    clipped with '..' rather than costing a column."
   (+ 34 (* 50 (char-w))))
 
-(defun cheatsheet-columns (h)
-  "*cheatsheet*'s groups poured into columns for a screen H tall -> a list of columns,
+(defun cheatsheet-columns (w h)
+  "*cheatsheet*'s groups poured into columns for a screen W x H -> a list of columns,
    each a list of groups. A group is never split. When everything fits on one screen the
    columns are BALANCED (each holds about the same number of lines); when it does not —
    a large font on a small screen — each column is filled to the bottom and the overflow
@@ -2288,7 +2291,7 @@
   (let* ((lines (+ (* 2 (length *cheatsheet*))           ; title + gap per group
                    (loop for g in *cheatsheet* sum (length (cdr g)))))
          (fit (max 4 (floor (- h (* 2 (line-h)) 30) (line-h))))  ; lines one column holds
-         (ncols (max 1 (floor (- *fb-xres-for-sheet* 40) (cheatsheet-col-w))))
+         (ncols (max 1 (floor (- w 40) (cheatsheet-col-w))))
          (per-col (min fit (max 4 (ceiling lines ncols))))
          (cols '()) (col '()) (used 0))
     (dolist (g *cheatsheet*)
@@ -2305,8 +2308,7 @@
    titles in amber, the keys in accent, the descriptions in text. Every distance is a
    multiple of the current font's cell, so it scales with SuperL-= (doc/fonts.org);
    what does not fit goes onto further pages. Returns the number of pages."
-  (setf *fb-xres-for-sheet* w)
-  (let* ((cols (cheatsheet-columns h))
+  (let* ((cols (cheatsheet-columns w h))
          (ncols (max 1 (floor (- w 40) (cheatsheet-col-w))))
          (pages (max 1 (ceiling (length cols) ncols)))
          (page (mod page pages))

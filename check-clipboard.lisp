@@ -134,10 +134,9 @@
     (check "and leaves the rest of each line" (ws-text-has (format nil "cd~%gh~%kl"))))
 
   (format t "~&~%== E. the right button: the context menu ==~%")
-  (probe "(setf *menu-rect* nil)")
   (click "right")
   (shot "context-menu")
-  (check "a right click opens the menu" (yes "(and *menu-rect* t)"))
+  (check "a right click opens the menu" (yes "(let ((o (top-overlay))) (and (typep o 'chooser-overlay) (eq (chooser-kind o) :menu) (chooser-rect o) t))"))
   (qmp-key "esc") (sleep 0.8)
 
   (format t "~&~%== F. the middle button on a row: the halo ==~%")
@@ -147,19 +146,19 @@
               (yes "(typep (pane-subject (current-pane)) 'subj-modules)")))
   (let ((top (probe-int "(pane-body-top (current-pane))")))
     (glide-to 120 (+ top 12)))
-  (probe "(setf *halo-handles* nil)")
   (click "middle")
   (shot "halo-row")
-  (check "a middle click on a row opens the halo" (yes "(and *halo-handles* t)"))
+  (check "a middle click on a row opens the halo"
+         (yes "(let ((o (top-overlay))) (and (typep o 'chooser-overlay) (eq (chooser-kind o) :halo) (chooser-handles o) t))"))
   (check "about what the row opens, first"
-         (string= (probe "(getf *halo-layer* :role)") ":THING"))
+         (string= (probe "(getf (chooser-layer (top-overlay)) :role)") ":THING"))
   (qmp-key "up") (sleep 0.8)
   (check "Up walks out to the row itself (an ITEM)"
-         (yes "(and (item-p (getf *halo-layer* :object)) t)"))
+         (yes "(and (item-p (getf (chooser-layer (top-overlay)) :object)) t)"))
   (qmp-key "up") (qmp-key "up") (sleep 0.8)
   (shot "halo-pane")
   (check "then the list, then the PANE instance"
-         (yes "(and (pane-p (getf *halo-layer* :object)) t)"))
+         (yes "(and (pane-p (getf (chooser-layer (top-overlay)) :object)) t)"))
   (qmp-key "1") (sleep 1.5)                         ; Inspect
   (format t "~&  after Inspect: ~a / ~a~%" (probe "(type-of (pane-subject (current-pane)))")
           (probe "(view-title (pane-view (current-pane)))"))
@@ -172,22 +171,21 @@
   (let ((tx (probe-int "(lol.textview::tv-x (pane-tv (current-pane)))"))
         (ty (probe-int "(lol.textview::tv-y (pane-tv (current-pane)))")))
     (glide-to (+ tx 1000) (+ ty 40)))                ; empty space right of the text
-  (probe "(setf *halo-layer* nil)")
   (click "middle")
   (shot "halo-textview")
   (check "a middle click on the Workspace's empty text is about the TEXT VIEW instance"
-         (yes "(and (lol.textview::textview-p (getf *halo-layer* :object)) t)"))
-  (format t "~&  halo layer: ~a~%" (probe "(getf *halo-layer* :title)"))
+         (yes "(and (lol.textview::textview-p (getf (chooser-layer (top-overlay)) :object)) t)"))
+  (format t "~&  halo layer: ~a~%" (probe "(getf (chooser-layer (top-overlay)) :title)"))
   (qmp-key "2") (sleep 1.5)                         ; Code: tv-draw
   (format t "~&  after Code: ~a~%" (probe "(view-title (pane-view (current-pane)))"))
   (check "and its Code handle opens the definition that draws it"
          (yes "(and (subj-defn-p (pane-subject (current-pane))) (eq (subj-defn-name (pane-subject (current-pane))) 'lol.textview:tv-draw) t)"))
 
   (format t "~&~%== G. SuperL-h: the clipboard manager ==~%")
-  (probe "(setf *clip-rect* nil)")
   (qmp-hold "meta_l" "h") (sleep 1.5)
   (shot "clipboard-manager")
-  (check "SuperL-h opens the clipboard history" (yes "(and *clip-rect* t)"))
+  (check "SuperL-h opens the clipboard history"
+         (yes "(let ((o (top-overlay))) (and (typep o 'clipboard-overlay) (clip-card o) t))"))
   (qmp-key "esc") (sleep 0.8)
 
   (format t "~&~%== H. the pointer hides when idle ==~%")
@@ -235,10 +233,9 @@
            (and (eql (probe-int "(length *trails*)") (1+ before))
                 (yes "(equal (view-title (pane-view (current-pane))) (view-title (present (getf (nth 1 (spotter-results \"draw\" (spotter-candidates) 60)) :subject))))"))))
 
-  (probe "(setf *menu-rect* nil)")
   (qmp-hold "meta_l" "q") (sleep 1.5)
   (shot "leave-menu")
-  (check "SuperL-q asks: a menu, and the environment still running" (yes "(and *menu-rect* t)"))
+  (check "SuperL-q asks: a menu, and the environment still running" (yes "(let ((o (top-overlay))) (and (typep o 'chooser-overlay) (eq (chooser-kind o) :menu) (chooser-rect o) t))"))
   (qmp-key "esc") (sleep 1.0)
   (check "Esc keeps you in the environment" (yes "(and *fb-canvas* (eq *leave-action* nil) t)"))
 

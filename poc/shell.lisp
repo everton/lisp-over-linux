@@ -1800,15 +1800,13 @@
           :marker :bright))                    ; every hit opens in a NEW trail
        results))
 
-(defvar *spotter-hits* '() "The hit map of the Spotter's visible rows — see HIT-ROW.")
-(defvar *spotter-rect* nil "The card rect (x0 y0 x1 y1), for click routing / dismissal.")
-
 (defun draw-spotter-card (canvas w h query results sel)
   "The Spotter as a floating palette over the dimmed browser: the browser is drawn as
    the backdrop, scrimmed; the card carries a title, the live match count, the query
    line, the results with the matched characters lit, and a footer of what the keys do.
-   RESULTS must already be banded (see SPOTTER-RESULTS) — this only draws. Records
-   *spotter-rect* / *spotter-hits* so a click routes to the row actually painted there."
+   RESULTS must already be banded (see SPOTTER-RESULTS) — this only draws. Returns
+   (values RECT HITS): the card (x0 y0 x1 y1) and the rows' hit map, which the
+   Spotter's overlay keeps so a click routes to the row actually painted there."
   (draw-backdrop canvas w h)                         ; the browser, as backdrop …
   (let* ((rows   (spotter-rows results query))
          (cw     (min (* 130 (char-w)) (- w 80)))   ; 780 at 6x15
@@ -1821,8 +1819,9 @@
          (chrome  (+ (lol.widgets:card-head-h) +bar-h+ 8 (status-h) 2))  ; 76 at 6x15
          (maxrows (max 3 (min nslots (floor (- h cy chrome 20) +row-h+))))
          (list-h  (* maxrows +row-h+))
-         (ch      (+ chrome list-h)))
-    (setf *spotter-rect* (list cx cy (+ cx cw) (+ cy ch)))
+         (ch      (+ chrome list-h))
+         (rect    (list cx cy (+ cx cw) (+ cy ch)))
+         (hits    '()))
     (let* ((body (lol.widgets:draw-card canvas cx cy cw ch
                                         :title "Spotter"
                                         ;; not ~:p — "match" pluralises to "matches",
@@ -1838,11 +1837,11 @@
           (lol.canvas:draw-string canvas *bfont*
                                   "nothing matches — Backspace to widen the query"
                                   (+ cx 16) (+ ly 4) *ui-dim*)
-          (multiple-value-bind (top hits)
+          (multiple-value-bind (top row-hits)
               (lol.widgets:draw-list canvas (+ cx 6) ly (- cw 12) list-h rows
                                      :sel sel :top 0 :follow-sel t)
             (declare (ignore top))
-            (setf *spotter-hits* hits)))
+            (setf hits row-hits)))
       ;; the footer says what the keys do, because the palette is modal and nothing
       ;; else on screen can say it
       (draw-hints canvas (+ cx 12) (- (+ cy ch) (line-h) 1) (- cw 16)
@@ -1850,19 +1849,21 @@
                       '(("tab" . "complete") ("up/dn" . "move") ("ret" . "open the folder in a new tab")
                         ("Esc" . "close"))
                       '(("up/dn" . "move") ("ret" . "open in a new tab") ("~/ or /" . "a path")
-                        ("Esc" . "close")))))))
+                        ("Esc" . "close")))))
+    (values rect hits)))
 
-(defun spotter-row-at* (x y)
+(defun spotter-row-at* (rect hits x y)
   "The visible Spotter row index at X,Y, or NIL — read back from what the draw
-   recorded, so a banded list's section headers are correctly inert."
-  (and *spotter-rect*
-       (<= (first *spotter-rect*) x (third *spotter-rect*))
-       (lol.widgets:hit-row *spotter-hits* y)))
+   recorded (RECT, HITS: DRAW-SPOTTER-CARD's values), so a banded list's section
+   headers are correctly inert."
+  (and rect
+       (<= (first rect) x (third rect))
+       (lol.widgets:hit-row hits y)))
 
-(defun spotter-outside-p* (x y)
-  "True when X,Y is outside the Spotter card — a click there dismisses the palette."
-  (or (null *spotter-rect*)
-      (destructuring-bind (x0 y0 x1 y1) *spotter-rect*
+(defun spotter-outside-p* (rect x y)
+  "True when X,Y is outside the Spotter card RECT — a click there dismisses the palette."
+  (or (null rect)
+      (destructuring-bind (x0 y0 x1 y1) rect
         (not (and (<= x0 x x1) (<= y0 y y1))))))
 
 ;;; ---- the minibuffer: a one-line prompt that is not modal ------------------
@@ -3214,8 +3215,6 @@
                                        :tint (if (getf e :disabled) *ui-dim* *ui-text*)))
        entries))
 
-(defvar *menu-rect* nil "The context menu card (x0 y0 x1 y1), for click routing.")
-(defvar *menu-hits* '() "The context menu's painted rows — see HIT-ROW.")
 (defvar *menu-width* nil
   "NIL: the menu card's usual width (fifty cells). A number of pixels instead sizes
    the card to its content — what a web page's <select> wants, whose list should be
@@ -3223,7 +3222,9 @@
 
 (defun draw-context-menu (canvas w h entries sel x y)
   "The browser, then the right-button menu as a card whose corner is at X,Y — moved
-   left/up when it would run off the screen, the way every desktop does it."
+   left/up when it would run off the screen, the way every desktop does it. Returns
+   (values RECT HITS): the card (x0 y0 x1 y1) and its rows' hit map, for the chooser
+   overlay to route clicks by."
   (draw-backdrop canvas w h)
   (let* ((rows (entry-rows entries))
          (nslots (+ (length rows)
@@ -3238,21 +3239,21 @@
          (ch (min (- h 40) (+ 32 (* nslots +row-h+))))
          (cx (max 4 (min x (- w cw 8))))
          (cy (max (+ +bar-h+ 2) (min y (- h ch 8)))))
-    (setf *menu-rect* (list cx cy (+ cx cw) (+ cy ch)))
-    (progn (lol.widgets:draw-card canvas cx cy cw ch)        ; no title: the list starts at the top
-      (multiple-value-bind (top hits)
-          (lol.widgets:draw-list canvas (+ cx 4) (+ cy 6) (- cw 8) (- ch 12) rows
-                                 :sel sel :top 0 :follow-sel t)
-        (declare (ignore top))
-        (setf *menu-hits* hits)))))
+    (lol.widgets:draw-card canvas cx cy cw ch)              ; no title: the list starts at the top
+    (multiple-value-bind (top hits)
+        (lol.widgets:draw-list canvas (+ cx 4) (+ cy 6) (- cw 8) (- ch 12) rows
+                               :sel sel :top 0 :follow-sel t)
+      (declare (ignore top))
+      (values (list cx cy (+ cx cw) (+ cy ch)) hits))))
 
-(defun menu-entry-at (x y)
-  "The context menu entry index at X,Y, :OUTSIDE when X,Y is off the card, or NIL."
-  (if (or (null *menu-rect*)
-          (destructuring-bind (x0 y0 x1 y1) *menu-rect*
+(defun menu-entry-at (rect hits x y)
+  "The context menu entry index at X,Y, :OUTSIDE when X,Y is off the card, or NIL —
+   by RECT and HITS, DRAW-CONTEXT-MENU's values."
+  (if (or (null rect)
+          (destructuring-bind (x0 y0 x1 y1) rect
             (not (and (<= x0 x x1) (<= y0 y y1)))))
       :outside
-      (lol.widgets:hit-row *menu-hits* y)))
+      (lol.widgets:hit-row hits y)))
 
 ;;; ---- the halo (middle button) ---------------------------------------------
 ;;; Smalltalk's halo: middle-click a thing and a ring of HANDLES appears round it,
@@ -3386,10 +3387,6 @@
                                                        (prin1-to-string object)))))
                               :group g :tone :macro)))))
 
-(defvar *halo-handles* '() "((index cx cy x0 x1) …) of the handles drawn last.")
-(defvar *halo-layer* nil
-  "The layer the halo drawn last is about (a HALO-LAYER plist). Read by the guest
-   checks, which cannot see the chooser's local state.")
 
 (defun halo-handle-xy (i n cx cy)
   "Where handle I of N sits around CX,CY: evenly round a circle, the first at the top."
@@ -3455,9 +3452,11 @@
   "The browser with layer DEPTH of LAYERS spotlit — bright and outlined in the accent
    while the rest dims — its handles hung off a small element's outline, or ringed
    round CX,CY on a large one (a dot per handle, coloured by what it opens: code, an
-   instance, a view), and the caption naming the layers."
+   instance, a view), and the caption naming the layers. Returns the handles' hit
+   map, ((index cx cy x0 x1) …), for the chooser overlay to route clicks by."
   (draw-backdrop canvas w h)
-  (let* ((layer (setf *halo-layer* (nth depth layers)))
+  (let* ((layer (nth depth layers))
+         (handles '())
          (rect (and (getf layer :rect) (clamp-rect (getf layer :rect) w h)))
          (n (length entries))
          (cx (max (+ +halo-radius+ 90) (min cx (- w +halo-radius+ 90))))
@@ -3468,7 +3467,6 @@
         (lol.canvas:draw-rect canvas x y rw rh *ui-accent*)
         (lol.canvas:draw-rect canvas (1+ x) (1+ y) (max 1 (- rw 2)) (max 1 (- rh 2)) *ui-accent*)))
     (draw-halo-caption canvas w h layers depth (if (> cy (floor h 2)) :top :bottom))
-    (setf *halo-handles* '())
     (flet ((handle (i e hx hy lx)
              ;; one handle: a dot coloured by what it opens, its numbered label at LX
              (let* ((label (format nil "~d ~a" (1+ i) (getf e :label)))
@@ -3482,7 +3480,7 @@
                                      (1+ (line-h)) (if on *ui-hi* *ui-panel*))
                (lol.canvas:draw-string canvas *bfont* label lx (- hy (floor (line-h) 2) -1)
                                        (if on *ui-accent* *ui-text*))
-               (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) *halo-handles*)))
+               (push (list i hx hy (- (min lx hx) 12) (+ (max (+ lx lw) hx) 12)) handles)))
            (label-w (i e) (lol.canvas:string-px *bfont* (format nil "~d ~a" (1+ i) (getf e :label)))))
       (if (and rect (<= (fourth rect) 60))
           ;; a SMALL element (a word, a row, a tab): the handles hang off its outline
@@ -3504,15 +3502,17 @@
                        (handle i e hx hy
                                (if (< hx (- cx 8))         ; labels point away from the centre
                                    (- hx 12 (label-w i e))
-                                   (+ hx 12))))))))))
+                                   (+ hx 12))))))))
+    handles))
 
-(defun halo-handle-at (x y)
-  "The halo handle index at X,Y (its dot or its label), :OUTSIDE elsewhere."
+(defun halo-handle-at (handles x y)
+  "The halo handle index at X,Y (its dot or its label) among HANDLES (DRAW-HALO's
+   value), :OUTSIDE elsewhere."
   (let ((hit (find-if (lambda (h)
                         (destructuring-bind (i hx hy x0 x1) h
                           (declare (ignore i hx))
                           (and (<= x0 x x1) (<= (abs (- y hy)) (max 10 (ceiling (line-h) 2))))))
-                      *halo-handles*)))
+                      handles)))
     (if hit (first hit) :outside)))
 
 ;;; ---- the gestures, backend-blind ------------------------------------------
@@ -3864,13 +3864,11 @@
 
 ;;; ---- the clipboard manager (SuperL-h): Parcellite's history, as a palette -----
 
-(defvar *clip-hits* '() "The clipboard manager's painted rows — see HIT-ROW.")
-(defvar *clip-rect* nil "The manager card (x0 y0 x1 y1).")
-
 (defun draw-clipboard-card (canvas w h query results sel)
   "The browser, dimmed, and the history as a card: the filter line, one row per
    entry (newest first, numbered by its place in the history), the current one
-   marked. RESULTS is (INDEX . STRING) pairs from CLIP-FILTER."
+   marked. RESULTS is (INDEX . STRING) pairs from CLIP-FILTER. Returns (values RECT
+   HITS), the card (x0 y0 x1 y1) and its rows' hit map, for its overlay's clicks."
   (draw-backdrop canvas w h)
   (let* ((cw (min (+ 40 (* 120 (char-w))) (- w 80)))      ; 760 at 6x15
          (cx (floor (- w cw) 2))
@@ -3887,8 +3885,9 @@
                                             :tint *ui-text*
                                             :stripe (if (zerop (car r)) *ui-accent* nil)))
                     results)))
-    (setf *clip-rect* (list cx cy (+ cx cw) (+ cy ch)))
-    (let* ((body (lol.widgets:draw-card canvas cx cy cw ch
+    (let* ((rect (list cx cy (+ cx cw) (+ cy ch)))
+           (hits '())
+           (body (lol.widgets:draw-card canvas cx cy cw ch
                                         :title "Clipboard history"
                                         :right (format nil "~d kept" (lol.clipboard:clip-count))
                                         :dim 105))
@@ -3900,22 +3899,24 @@
                                       "nothing matches — Backspace to widen"
                                       "empty — copy, cut, kill or select something first")
                                   (+ cx 16) (+ ly 4) *ui-dim*)
-          (multiple-value-bind (top hits)
+          (multiple-value-bind (top row-hits)
               (lol.widgets:draw-list canvas (+ cx 6) ly (- cw 12) (* maxrows +row-h+) rows
                                      :sel sel :top 0 :follow-sel t)
             (declare (ignore top))
-            (setf *clip-hits* hits)))
+            (setf hits row-hits)))
       (draw-hints canvas (+ cx 12) (- (+ cy ch) (line-h) 1) (- cw 16)
                   '(("up/dn" . "move") ("ret" . "make current + paste")
-                    ("Del" . "forget it") ("type" . "filter") ("Esc" . "close"))))))
+                    ("Del" . "forget it") ("type" . "filter") ("Esc" . "close")))
+      (values rect hits))))
 
-(defun clipboard-row-at (x y)
-  "The manager's row index at X,Y, :OUTSIDE off the card, or NIL."
-  (if (or (null *clip-rect*)
-          (destructuring-bind (x0 y0 x1 y1) *clip-rect*
+(defun clipboard-row-at (rect hits x y)
+  "The manager's row index at X,Y, :OUTSIDE off the card RECT, or NIL (RECT, HITS:
+   DRAW-CLIPBOARD-CARD's values)."
+  (if (or (null rect)
+          (destructuring-bind (x0 y0 x1 y1) rect
             (not (and (<= x0 x x1) (<= y0 y y1)))))
       :outside
-      (lol.widgets:hit-row *clip-hits* y)))
+      (lol.widgets:hit-row hits y)))
 
 (defun clipboard-choose (index)
   "The manager's Enter: entry INDEX becomes current, and goes in at the caret of
