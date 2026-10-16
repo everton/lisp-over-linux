@@ -94,7 +94,11 @@
   '((#\Space . "spc") (#\- . "minus") (#\. . "dot") (#\, . "comma")
     (#\/ . "slash") (#\; . "semicolon") (#\' . "apostrophe") (#\= . "equal")
     (#\[ . "bracket_left") (#\] . "bracket_right") (#\\ . "backslash")
-    (#\` . "grave_accent"))
+    (#\` . "grave_accent")
+    ;; a newline is Return: drive-scene's multi-line REPL form needs it. Without this
+    ;; entry it became a key named "\n", which QEMU ignored, so the form never closed
+    ;; (found 2026-10-16, in the README shot)
+    (#\Newline . "ret"))
   "The punctuation a qcode does not simply spell. Letters and digits are their own.")
 
 (defun type-string (string &key (cps 0.08) (shifted "()\"*&^%$#@!+_:<>?~|{}"))

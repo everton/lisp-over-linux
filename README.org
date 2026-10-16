@@ -1,55 +1,89 @@
-#+TITLE: lisp-over-linux (LoL) — a UEFI laptop that boots straight into SBCL
+#+TITLE: lisp-over-linux (LoL) — a Lisp Machine–style environment on a bare Linux kernel
 #+STARTUP: showall
 
-A *very* minimal Linux that a UEFI machine boots directly from a USB stick with
-*no bootloader* (the kernel is the EFI application, EFISTUB), whose entire
-userland is *SBCL Common Lisp running as PID 1*. No GRUB, no systemd, no shell —
-firmware → kernel → Lisp. "lisp-over-linux", LoL for short (yes, also a nod to
-the *Land of Lisp* alien this thing paints in the corner of the screen).
+Linux below, *one live Common Lisp image above*. SBCL runs as *PID 1* and is the
+whole userland: no shell, no systemd, no X server, no toolkit. The machine boots
+straight into a pixel-native, Smalltalk-inspired *environment* that SBCL draws on
+the framebuffer itself, and every part of it can show you its own source, inspect
+it, debug it and recompile it while it runs. Linux is there for the drivers.
 
-[[./media/screenshots/screenshot-2026-09-20.png]]
+"lisp-over-linux", LoL for short (yes, also a nod to the *Land of Lisp* alien it
+paints on the console).
 
-/Booted under QEMU/OVMF: SBCL is PID 1 — the supervisor menu (where you land
-on leaving the environment the image boots into), then a colored REPL session
-driven on the framebuffer console (default 8x16 font, 160x50).
-Screenshots are archived per date under =media/screenshots/=; this link tracks
-the latest./
+[[./media/screenshots/desk-2026-10-16.png]]
 
-This is a learning project: prefer reading the =.org= docs below over guessing.
+/What you see when it boots, here under QEMU/OVMF: the *Workspace*, a Lisp scratch
+buffer whose lines are verbs. =C-c C-c= has just defined =greet= live, in the
+running image, and =C-c C-p= printed =(greet "lisp")= under itself. Across the top:
+tabs, then the systray (network, the agent and what it has spent, the clock).
+Every glyph is rasterised from a TrueType outline in Lisp and pushed to =/dev/fb0=
+as bytes./
 
-* The environment: a code browser the image draws for itself
+This is a learning project: the =.org= docs below are the deliverable, written to be
+read, and the code is meant to be understood as much as run.
 
-Past the REPL, the image grows a *graphical environment* — a pixel-native,
-Smalltalk/Pharo-style *code browser*, drawn straight onto =/dev/fb0= by the same
-Lisp it is showing you. There is no X server, no toolkit, no GPU driver: every
-glyph, rule and highlight below was rasterised in Common Lisp and pushed to the
-panel as bytes. What you are looking at is the running system displaying — and
-editing — its own source.
+* What it does
 
-[[./media/screenshots/browser-2026-09-20.png]]
+- *A code browser that is the desktop.* A drill-down accordion over everything in
+  the image: modules, packages, classes, generic functions and their dispatch
+  matrix, conditions, live objects. =↵= opens the next pane on whatever is selected;
+  =Super-Space= (the Spotter) finds anything; a source pane is live — edit it and
+  =C-c C-c= compiles the definition back into the running image.
+- *A real debugger.* An error stops with the stack still standing: restarts, an
+  =sb-di= backtrace, frame locals you can change, =M-.= into any frame's source.
+- *A terminal* (=Super-↵=): a login shell in a user-namespace container over the
+  host's own Debian, so =git=, =ruby=, =rails= and Postgres work without growing the
+  image. The pty, the VT parser and the cell grid are all Lisp.
+- *A web browser* (=Super-b=): the host's Chrome, headless in a container, driven over
+  the DevTools protocol; its frames are decoded and drawn by the Lisp, and our keys
+  and clicks become its input.
+- *A file manager* (=Super-f=) with previews (PNG, GIF, JPEG, archives, ELF, hex),
+  *networking* in Lisp (DHCP, DNS, SNTP, HTTP/HTTPS, Wi-Fi), a clipboard with history,
+  and runtime font scaling.
+- *An agent*: an LLM client written in Lisp and living in the image, whose tools are
+  the image's own introspection; every write it wants is a condition with restarts,
+  which you approve.
+- *It explains its own freezes*: a session log with a heartbeat, stall reports
+  carrying every thread's backtrace, and a kernel log copied to disk
+  ([[file:doc/diagnostics.org][diagnostics.org]]).
 
-/The code browser running as PID 1 on the bare framebuffer — the image boots
-straight into it, on a Workspace (and =b= at the supervisor menu reopens it).
-=Super-m= opens what is shown here, the *module index*: every definition grouped by
-the file it came from, with the selected module's contents kind-coloured beside it.
-That is the only view that shows the whole system: the toolkit lives in its own
-=lol.*= packages, so a single-package root cannot list it at all./
+[[./media/screenshots/browser-2026-10-16.png]]
 
-A few of the affordances, without turning this into a manual: *tabs* across the
-top, each holding an independent navigation *trail*; a *drill-down accordion* —
-press ↵ on anything and the next pane opens on it, =Super-←= steps back; =Super-Space=
-summons the *Spotter* to find any definition, package or object; a source pane is
-*live* — edit it and =C-c C-c= compiles the definition back into the running image;
-and an error opens a real *debugger* with restarts, an =sb-di= backtrace and frame
-locals. The right button opens a context menu, the middle one a Smalltalk *halo*
-(or pastes, X-style, in text) that walks out from the word under the pointer to the
-instance on screen and the code that draws it; the clipboard keeps a Parcellite-style history
-(=Super-h=) and knows the Emacs kill and rectangle keys; a systray shows the battery
-and the clock. =Super-?= lists every key.
+/The module index (=Super-m=): every definition in the image, grouped by the file
+it came from, beside the selected module's contents. It is the only view that shows
+the whole system — the toolkit lives in its own =lol.*= packages./
 
-The full design and the phase-by-phase state live in [[file:doc/code-browser.org][code-browser.org]]; the
-host-runnable prototype (same toolkit, in a window on your desktop, from a plain
-=sbcl=) is [[file:poc/README.org][poc/README.org]].
+[[./media/screenshots/debugger-2026-10-16.png]]
+
+/The debugger, entered from the Workspace's =C-c C-d=: the condition, its restarts
+(the last one asks the agent to explain it), the call stack, and the selected frame's
+locals — =degrees= is settable./
+
+[[./media/screenshots/files-2026-10-16.png]]
+
+/The file manager, filtered to =~/Pictures=, with a JPEG previewed beside the
+listing./
+
+More: the design and phase tracker of the environment is [[file:doc/code-browser.org][code-browser.org]]; a
+guided tour of the code is [[file:doc/tour.org][tour.org]] (and =Super-Space=, "tour", inside the image).
+
+* How it boots
+
+The kernel *is* the EFI application (EFISTUB): firmware → kernel → a small C
+=preinit= → SBCL. It boots from a USB stick with no bootloader, or from an entry in
+the host's GRUB. =preinit= mounts the laptop's disk read-only except for =/home=,
+drops to the user with five capabilities, and =execve=​s the Lisp, which stays PID 1
+for the life of the machine. Leave the environment (=Super-q=) and you land on the
+supervisor's console menu, with a REPL of its own:
+
+[[./media/screenshots/screenshot-2026-10-16.png]]
+
+/The supervisor's menu and its REPL on the framebuffer console, with the Land of
+Lisp alien. Screenshots are archived per date under =media/screenshots/=;
+=./refresh-screenshot.sh= re-captures them from a headless QEMU./
+
+The details are in [[file:doc/micro-distro.org][micro-distro.org]] (the boot chain),
+[[file:doc/sbcl-init.org][sbcl-init.org]] (SBCL as PID 1) and [[file:doc/kernel-config.org][kernel-config.org]] (every kernel option and why).
 
 * What is in this repo (and what is NOT)
 
@@ -160,13 +194,16 @@ Nothing in the project needs editing — only the symlink moves.
 | [[file:doc/background/background.org][background.org]]    | Background theory: UEFI handoff, x86 modes, USB-HID, multicore. |
 | [[file:doc/background/learn-networking.org][learn-networking.org]] | From-scratch networking tutorial (progress tracker + code links). |
 | [[file:doc/line-editing.org][line-editing.org]]  | Readline-class REPL editing in pure Lisp (implemented). |
-| [[file:doc/networking.org][networking.org]]    | The network layer: virtio-net, static IP/DHCP, the TCP REPL (wired path working). |
+| [[file:doc/networking.org][networking.org]]    | The network layer in Lisp: DHCP, the default route, a DNS resolver, SNTP, HTTP/1.1 and HTTPS (the host's OpenSSL, loaded at run time), IPv6, Wi-Fi through the host's =wpa_supplicant=, and the TCP REPL. |
 | [[file:doc/agent.org][agent.org]]         | An LLM client native to the image — JSON/SSE and the Messages protocol in Lisp, the introspection layer as its tool surface, gated writes as a condition with restarts, =C-c C-a= Ask it. BUILT (A0–A2, tested against a mock API); TLS comes from the networking track. |
 | [[file:doc/processes.org][processes.org]]     | Concurrent components sharing the screen: why only one process may write =/dev/fb0=, sending a *view* vs sending *pixels*, two processes and one mouse, fork/exec vs COW — plus the =sb-posix= audit (§6, DONE). |
 | [[file:doc/web-browser.org][web-browser.org]]   | The web browser, BUILT: =SuperL-b= opens a page in a tab of the environment. The host's Google Chrome runs headless in a container and is driven over the DevTools protocol on a pipe; its screencast JPEGs are decoded and drawn by the Lisp, and our keys and clicks become its input events. Why Chrome over WPE; the WPE/Nyxt exploration kept as an appendix. |
 | [[file:doc/containers.org][containers.org]]    | Running a real distro's projects (a Rails app) without growing the image: a user-namespace container over the host's own Debian at =/mnt/host=, per-directory overlays, you inside as yourself. BUILT at tag #26: the =lol-ct= helper, containers in the Spotter, =x= runs a command streamed live into a pane; ruby, rails, a private Postgres, git and curl verified in the guest. The terminal pane is built: [[file:doc/terminal.org][terminal.org]]. |
 | [[file:doc/terminal.org][terminal.org]]      | The terminal pane (=SuperL-↵=): a login shell in the default container, in a tab like any other. What a pseudo-terminal is, sessions and controlling terminals (why =posix_spawn= and not =run-program :pty=), why escape sequences, Williams' parser, the cell grid, keys as bytes, the mouse and bracketed paste, repainting only the rows a program changed. vim, less, htop, readline. |
 | [[file:doc/steps.org][steps.org]]         | *Inspiration.* VPRI's STEPS and Piumarta & Warth's /Open, Extensible Object Models/ (2008): the paper summarised, what LoL shares and doesn't, and the =loc.sh= split of our code into /ours/ vs /conformance/. |
+| [[file:doc/storage.org][storage.org]]       | The laptop's disk: NVMe + ext4, found by reading superblocks, mounted read-only but for =/home=; PID 1 drops to the user with five capabilities, =lol-rootd= keeps root for two jobs. |
+| [[file:doc/file-manager.org][file-manager.org]]  | The file manager (=Super-f=): folders and files as subjects, the operations, safe save, the Spotter's path grammar. Previews: [[file:doc/previews.org][previews.org]]. |
+| [[file:doc/diagnostics.org][diagnostics.org]]   | Why a frozen screen happens and what the machine now writes down about it: the session log, stall reports with every thread's backtrace, the kernel log, crash-then-reboot, Magic SysRq and pstore. How to read it from Debian. |
 | [[file:AGENTS.md][AGENTS.md]]         | Working notes / conventions for AI agents in this repo. |
 
 * Layout

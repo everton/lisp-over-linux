@@ -362,7 +362,7 @@ the experimental-redefine notes), read-only, in a =:reference= pane — so =M-.=
 =mapcar= in the Workspace opens this (=./refresh-screenshot.sh --scene
 sbcl-source=; asserted in the guest by [[file:../check-files.lisp][check-files.lisp]]):
 
-[[file:../media/screenshots/sbcl-source-2026-10-03.png]]
+[[file:../media/screenshots/sbcl-source-2026-10-16.png]]
 
 * 3. The Smalltalk → Lisp concept map
 

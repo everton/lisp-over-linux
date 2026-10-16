@@ -188,7 +188,7 @@ ln -sfn "screenshots/$BASENAME-$STAMP.png" "$LINK"   # relative -> portable
 # would break on github.com — we reference the concrete file and keep it current.
 # Each mode owns its own link line, matched on the basename it writes.
 README="$MICRO/README.org"
-if [ -f "$README" ] && [ "$MODE" != scene ]; then
+if [ -f "$README" ]; then   # scenes too: the README shows some (desk, debugger, files)
   # The date is matched digit-by-digit, not as [^]]*, because scene names share
   # prefixes: with a loose pattern, --scene stage rewrote the link to
   # stage-debugger-<date>.png, silently repointing a different illustration.
