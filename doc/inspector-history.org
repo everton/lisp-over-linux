@@ -19,11 +19,12 @@ arguments.
 project — which of those powers are actually reachable from a frozen SBCL core
 running as PID 1, measured rather than guessed.
 
-STATUS: *five of them now ship.* §5 was written as a costing exercise and then built:
+STATUS: *all of §5 now ships.* §5 was written as a costing exercise and then built:
 the function/closure inspector (§5.5), evaluate-in-the-object's-context (§5.3),
 allInstances (§5.1) and the GC retention path (§5.2) are in the image as of
-2026-09-20. §6 records what building them actually cost and the four things that were
-wrong in the estimate. §5.4 (settable frame locals) is still owed.
+2026-09-20; settable debugger frame locals (§5.4), with *restart frame* alongside,
+since 2026-10-16. §6 records what building them actually cost and what was wrong in
+the estimates — including, for §5.4, an SBCL setter that faults the process.
 
 §5.6 is a *separate and larger* finding the work turned up: *compiling generic
 arithmetic at runtime faults the guest*, which breaks =C-c C-c= live editing for most
@@ -302,7 +303,7 @@ anything used here must already be in the core, not a contrib. Checked:
 | =sb-ext:search-roots=              | EXTERNAL       | [[file:../sbcl/src/code/traceroot.lisp::defun search-roots][=sbcl/src/code/traceroot.lisp=]]                    |
 | =sb-vm:map-allocated-objects=      | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun map-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
 | =sb-vm:list-allocated-objects=     | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun list-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
-| =(setf sb-di:debug-var-value)=     | =fboundp= ⇒ T    | =sb-di= (already used by our debugger)              |
+| =(setf sb-di:debug-var-value)=     | =fboundp= ⇒ T    | [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=sbcl/src/code/debug-int.lisp=]] — *unsafe on an indirect variable*, §5.4 |
 | =sb-ext:make-weak-pointer=         | EXTERNAL       | core                                              |
 
 All in the plain core. None is a contrib, so none runs into the rule from
@@ -486,27 +487,101 @@ answers the Print-it/Inspect-it question three ways, and the inspector reuses th
 vocabulary rather than inventing a fourth. Applying a *function* is the exception and
 pushes its result onto the trail — see §5.5.
 
-** 5.4 Set a local in a debugger frame (#9, partial)
+** 5.4 Set a local in a debugger frame (#9) — and re-enter it
 
-=(setf sb-di:debug-var-value)= is =fboundp= in our core — checked. The debugger already
-walks frames and renders their locals, and =fb-prompt-value= already reads an
-expression modally over the debugger.
+The first version of this section was four paragraphs of plan: =(setf
+sb-di:debug-var-value)= is =fboundp=, the debugger already walks frames and shows their
+locals, =fb-prompt-value= already reads an expression over the debugger — so the gap is
+plumbing, the same "places, not values" change [[file:../initramfs/model.lisp::defun inspect-places][=inspect-places=]] made once, applied to
+a second data source. It was the one estimate on the page never tested against an
+implementation. It held for the plumbing and missed what mattered, which is what the
+*prototype* found before any of the shipped code was written.
 
-The gap is plumbing: the locals list currently carries names and printed values, and
-would need to carry the =debug-var= and its frame so the setter has something to write
-through. That is the same "places, not values" change [[file:../initramfs/model.lisp::defun inspect-places][=inspect-places=]] already made
-once, applied to a second data source.
+*First, what "a local" is to sb-di.* The compiler leaves, for every variable it chose
+to keep debug information about, a /storage class plus offset/ (=SC+OFFSET=): which kind
+of storage the value lives in — a general register, a stack slot, an unboxed
+double-float slot, … — and which one. A frame that is not the innermost is stopped *at a
+call*, and on x86-64 SBCL has no callee-saved registers, so everything still live
+across that call has been saved to the frame's stack (a second location, the
+=SAVE-SC+OFFSET=). Writing a local of a standing frame therefore means writing into that
+save slot — which is exactly what the frame will read back when the call (=ERROR=, say)
+returns. The innermost frame of an /internal/ error (=(car 5)=, a failed type check) is
+different: it was /interrupted/, its registers live in the signal context ("escaped"),
+and sb-di writes into the context instead.
 
-Riskier than §5.1–5.3 because =sb-di= is fiddly — variables can be =:invalid= in a frame
-depending on where the PC is, and optimised-away locals simply are not there. The
-honest version of this feature shows a local as settable only when
-=sb-di:debug-var-validity= says it is valid at the current location.
+*Measured against =./sbcl= 2.6.8,* one function per case, each signalling with =CERROR=
+so that =CONTINUE= could show whether the /frame/ — not just sb-di — saw the write:
 
-Note that *=return-from-frame= and =restart-frame= are a different order of work* and are
-not claimed here — they need the frame's continuation, not just its variables.
+| Case                                  | What sb-di shows                         | After set + CONTINUE |
+|---------------------------------------+------------------------------------------+----------------------|
+| =(debug 0)=                             | =ARG-0=, validity =:UNKNOWN=                 | not settable         |
+| =(debug 1)= — *our image's default*     | the argument =X= only; a =LET= temp is absent | =x=: used, =(21 21)=     |
+| =(debug 2)= and =3=                       | every local, =:VALID=                       | all used             |
+| a =fixnum=-declared local (SC =ANY-REG=)  | valid; a /string/ is accepted              | =(+ n 1)= ⇒ 38663474160 |
+| a =double-float= local                  | valid; =2.5d0= ok, ="str"= refused by sb-di  | used                 |
+| closed over *and* set (a value cell)  | valid; written through the cell          | the closure sees it  |
+| closed over, never set                | valid; the frame's own copy              | the closure does /not/ |
+| closed over and used only by closures | =:INVALID= in the frame                    | not settable         |
+| an internal error's frame (escaped)   | valid; read from the signal context      | (not resumable)      |
+| *an indirect variable*                | valid                                    | *memory fault*       |
 
-*Not shipped.* This is the one of the four still owed, and the only one whose estimate
-was never tested against an implementation.
+(The image's default policy was checked rather than assumed: =examples.lisp= says
+=(declaim (optimize (debug 3)))=, but SBCL's =LOAD= rebinds the policy per file, so that
+declaim ends with the file; code the Workspace evaluates at runtime gets =(debug 1)=.)
+
+*Three traps, each now guarded in the code rather than left to bite:*
+
+1. *The storage class decides what may be written, not the old value.* A variable the
+   compiler keeps as a fixnum lives in =ANY-REG= storage — a raw tagged word. sb-di
+   accepted a string there without complaint, and the frame then added 1 to the
+   string's /address/. A boxed slot can hold anything; an unboxed one only its own
+   kind. [[file:../initramfs/model.lisp::defun sc-value-type][=sc-value-type=]] maps the storage class to a Lisp type, and
+   [[file:../initramfs/model.lisp::defun set-frame-var][=set-frame-var=]] refuses a value of the wrong type with a sentence that says why
+   (=n is stored as a raw fixnum in this frame; "a string" is not one=). What it /cannot/
+   know is a type the compiler derived for a boxed slot; that hazard is the same in
+   SBCL's own debugger and is not claimed away here.
+2. *SBCL's own setter faults on an indirect variable.* A dynamic-extent =FLET= that
+   reads its parent's =LET= does not get its own copy: its frame holds a saved copy of
+   the /parent's frame pointer/, and the debug info gives an =INDIRECT-SC+OFFSET=
+   relative to that. SBCL's read path follows the pointer;
+   [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=(setf debug-var-value)=]] does not — it writes the new value /over the pointer/. The
+   next read of that variable was =Memory fault at 0xa8=, the process gone. As PID 1
+   that is a kernel panic. (SBCL's REPL debugger's =(setf (var 'acc) …)= goes through
+   the same setter.) [[file:../initramfs/model.lisp::defun set-indirect-frame-var][=set-indirect-frame-var=]] mirrors the /read/ path instead —
+   fetch the parent's frame pointer, then write relative to it — and the write lands:
+   =(incf acc x)= in the parent returns 103 after =acc= := 100.
+3. *A copy is not a place.* A variable closed over but never assigned is /copied/ into
+   each closure made from it, so setting the frame's copy changes nothing a closure
+   already holds. That is Lisp's semantics, not a bug, but it reads exactly like one —
+   so it is written here, and the host test asserts it ("FIXED's closure keeps 14").
+
+*Restart frame came almost free.* The doc's first version said =return-from-frame= and
+=restart-frame= were "a different order of work". The prototype showed otherwise: SBCL's
+own REPL debugger implements =RESTART-FRAME= with two functions that are in the core —
+=sb-debug::frame-call= (read the call back out of the frame, with the arguments it holds
+/now/) and =sb-debug::unwind-to-frame-and-call= (unwind to the frame, running every
+=UNWIND-PROTECT= cleanup, and call a thunk in its place). Set =x= to 21, restart, and the
+function runs again from the top with 21 — measured: =(:RESULT 42)=, the function
+called exactly twice. It needs an unwind tag, which =(debug 1)= code has and =(debug 0)=
+code does not; and it calls the /global/ definition, so a definition re-Accepted in the
+meantime is the one that runs — the Smalltalk "fix it and restart" loop.
+
+*Shipped:* in model.lisp, [[file:../initramfs/model.lisp::defun frame-local-places][=frame-local-places=]] (each local as =(:name :value :set
+:why)= — a setter, or the reason there is none), =frame-var-unsettable-reason= (only
+=:VALID= variables, and not one held only in a register), =set-frame-var= (the storage
+guard, the indirect write, and the value *read back* from the frame as its result),
+=eval-in-frame-context= (sb-di's =EVAL-IN-FRAME=, read in the function's home package,
+so the value typed for =y= may be =(* x 3)=, this frame's =x=), =frame-restart-refusal= and
+[[file:../initramfs/model.lisp::defun restart-frame][=restart-frame=]]. In fb-browser.lisp, a third Tab stop in the debugger — the
+selected frame's locals, a settable name in teal and an unsettable one dim — where
+Enter or =C-c C-c= sets the selected local (=dbg-set-local=) and the strip's header shows
+the value read back or the reason; =R= restarts the selected frame
+(=dbg-restart-frame=). Tests: [[file:../poc/frame-locals-test.lisp][poc/frame-locals-test.lisp]] on the host (15 checks,
+every row of the table above that can be asserted, including the indirect write — a
+regression there kills the test rather than failing it) and [[file:../check-debugger.lisp][check-debugger.lisp]] in
+the guest (25, driven with real keys: =x= 7 → 21 then CONTINUE ⇒ 42, the same then =R=
+⇒ 42, the indirect =acc= ⇒ 103 with the guest alive, a =(debug 0)= frame refusing both
+with reasons). One set-and-read-back costs about 1–2 µs on the host.
 
 ** 5.5 A function is not a leaf (#14)
 
@@ -792,7 +867,7 @@ because nobody had asked the question yet.
 | §5.1 all instances          | model =all-instances=, present =subj-instances=         | as estimated     |
 | §5.2 why is this alive      | model =retention-path=, present =subj-retention=        | as estimated     |
 | §5.5 functions/closures     | 6 model functions, a =present= method, =apply-function= | *not estimated*  |
-| §5.4 settable frame locals  | —                                                   | *not built*      |
+| §5.4 settable frame locals  | model =frame-local-places= / =set-frame-var= / =restart-frame=, fb-browser =dbg-set-local= | plumbing as estimated; *three traps not estimated*; restart-frame *cheaper* than claimed |
 
 *Four things the estimate got wrong*, all of them found by running the code rather than
 by reading it, which is the entire argument for the "verify, don't assert" rule:
@@ -809,6 +884,17 @@ by reading it, which is the entire argument for the "verify, don't assert" rule:
    model functions are under 20 lines. The work was in the guards, the labels and the
    two rendering defects that only a pixel render showed: an =…= outside the console
    font's 255-glyph range, and an absolute build path in a window title.
+
+*§5.4, costed separately because it shipped separately (2026-10-16):* 733 insertions
+across four files — 196 in model.lisp, about 160 net in fb-browser.lisp, and two
+tests (the host one and the guest one) that are each as long as the code they test.
+Against the old estimate it was wrong in both directions. The plumbing was as cheap as
+promised. What the estimate did not contain was the three traps — a storage class
+that takes any bit pattern, a setter in SBCL that destroys a frame pointer, and a
+closure copy that ignores the write — every one of which a prototype found in minutes
+and a reading of the code would not have. And it said =restart-frame= was "a different
+order of work", when SBCL's own debugger already had both halves in the core; it is
+twenty lines.
 
 Two constraints held throughout, both already load-bearing elsewhere in this project:
 
@@ -863,6 +949,13 @@ noticing later — a rotted image link is exactly the quiet, nothing-breaks drif
   should show, and became the largest part of the work. §6 replaced the cost *estimate*
   with what it actually cost and four ways the estimate was wrong. Still owed: §5.4,
   settable debugger frame locals. Unlike [[file:processes.org][processes.org]], this one changed the code.
+- *2026-10-16* — §5.4 *shipped*, rewritten from plan to record: prototyped against
+  =./sbcl= first (the table of cases), then built with three guards the plan did not
+  foresee — the storage-class type check, the write through an indirect variable's
+  parent frame pointer (SBCL's own setter overwrites the pointer and faults; found
+  here, not yet reported upstream), and the closure-copy caveat — plus restart-frame,
+  which the plan had ruled out as expensive. Tests: poc/frame-locals-test.lisp,
+  check-debugger.lisp. §6 gained its costing.
 - *2026-10-02* — §5.6 *resolved*: an SBCL 2.6.8 register mismatch in =LOGCOUNT='s
   no-POPCNT path, reached only because QEMU's default CPU has no POPCNT. Bisected
   host-image vs. guest vs. =-cpu max= vs. a hand-cleared feature bit; fixed at build

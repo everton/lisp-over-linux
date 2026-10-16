@@ -2306,6 +2306,16 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   =present (subj-defn …)=, so our code shows its source, a built-in shows the
   reference view (lambda list + where SBCL defines it), an anonymous frame is a no-op.
   A method frame opens its generic function; an flet, the function it lives in.
+  [SETTABLE LOCALS + RESTART FRAME DONE, 2026-10-16 — [[file:../initramfs/model.lisp::defun frame-local-places][=frame-local-places=]] /
+  [[file:../initramfs/model.lisp::defun restart-frame][=restart-frame=]] + =dbg-set-local= / =dbg-restart-frame= in fb-browser.lisp] A
+  third Tab stop: the selected frame's *locals*, now places. A settable one has its
+  name in teal; Enter or =C-c C-c= reads an expression — evaluated *in* the frame, so
+  =(* x 3)= is this frame's =x= — writes it into the standing frame, and the strip's
+  header shows the value read back (or why not: dead here, =(debug 0)=, a raw fixnum
+  slot offered a string). Then CONTINUE runs on with it, or *=R= re-enters the frame*
+  with the arguments it holds now. The design, the measurements and the SBCL setter
+  that faults on an indirect variable: [[file:inspector-history.org][inspector-history.org]] §5.4. /Verified in the
+  guest with real keys by [[file:../check-debugger.lisp][check-debugger.lisp]] (25 checks)./
   [CHANGE SET DONE — [[file:../initramfs/registry.lisp][registry.lisp]] (=changed-definitions=) + [[file:../initramfs/present.lisp][present.lisp]]
   (=subj-change-set=) + supervisor menu =c=] Every definition Accepted this session
   (a non-empty VERSIONS list) is a browsable list, drilling to its current source —
@@ -2342,8 +2352,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   - *Live instances* of a class (a heap walk — CLOS has no =allInstances=), and
   - *Why is this alive?* (=sb-ext:search-roots= — the GC's own answer), every hop
     drillable.
-  Still owed from that doc: *settable debugger frame locals* (§5.4 there), which is
-  the state-side twin of Phase 6's frame inspection.
+  The fifth, *settable debugger frame locals* (§5.4 there) — the state-side twin of
+  Phase 6's frame inspection — shipped 2026-10-16, with *restart frame* alongside
+  (see Phase 6 above).
 - *Not a phase: the desk around the editor* (2026-10-02). [DONE] The environment
   opens on the Workspace alone (the index is =SuperL-m=, the flat CL-USER list
   =SuperL-l=); a *clipboard* with Parcellite's history, X's PRIMARY and the Emacs

@@ -112,11 +112,17 @@ cannot take PID 1 down.</p>
 <code>handler-case</code>, which unwinds first. This is the whole trick, and it is why the restarts listed are live.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:1871</span></a>: a modal loop over the same canvas and the
+  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:1949</span></a>: a modal loop over the same canvas and the
     same three fds, published in <code>*fb-canvas*</code> and friends.</li>
   <li>Data from the model: <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:715</span></a> (<code>compute-restarts</code>),
     <a class="ref" data-ref="initramfs/model.lisp#backtrace-frame-objects" href="../../initramfs/model.lisp"><code>backtrace-frame-objects</code><span class="loc">initramfs/model.lisp:725</span></a> (walks <code>sb-di</code> frames),
     <a class="ref" data-ref="initramfs/model.lisp#frame-locals" href="../../initramfs/model.lisp"><code>frame-locals</code><span class="loc">initramfs/model.lisp:793</span></a>.</li>
+  <li>A frame's locals are places, as an object's fields are: <kbd>Tab</kbd> to them, <kbd>Enter</kbd> or
+    <kbd>C-c C-c</kbd> writes a value into the standing frame
+    (<a class="ref" data-ref="initramfs/model.lisp#set-frame-var" href="../../initramfs/model.lisp"><code>set-frame-var</code><span class="loc">initramfs/model.lisp:915</span></a>), then CONTINUE runs on with it, or <kbd>R</kbd>
+    calls the frame again with the arguments it now holds
+    (<a class="ref" data-ref="initramfs/model.lisp#restart-frame" href="../../initramfs/model.lisp"><code>restart-frame</code><span class="loc">initramfs/model.lisp:994</span></a>). Why only some locals can be set, and the SBCL
+    setter that faults on one kind: <a href="../inspector-history.org">inspector-history.org</a> §5.4.</li>
   <li>The stage arms the same handler around every simulation tick
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#tick-live-stage" href="../../initramfs/fb-browser.lisp"><code>tick-live-stage</code><span class="loc">initramfs/fb-browser.lisp:1245</span></a>), so a collision with no method opens the
     debugger with the stage's own restarts (<code>define-method</code> drops a method template into the Workspace).</li>

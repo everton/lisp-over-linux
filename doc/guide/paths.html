@@ -144,7 +144,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2289</span></a></span>
     <kbd>SuperL</kbd>-<kbd>Space</kbd>: the Super branch calls <code>run-spotter-fb</code> through <code>funcall</code> and
     <code>fboundp</code>, because the shell loads before <code>fb-browser.lisp</code> and also runs without it.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2395</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2512</span></a></span>
     A modal loop over the same canvas and the same input. It collects candidates once and re-filters on each keystroke.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#spotter-candidates" href="../../initramfs/present.lisp"><code>spotter-candidates</code><span class="loc">initramfs/present.lisp:219</span></a></span>
     Surfaces, every module, every package, every registry name (a generic function opens its own view), plus whatever the
@@ -172,7 +172,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     and the screen.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3228</span></a></span>
     The handles: Inspect the object, Code (the function that drew it), Source, and so on. Each one is a command.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2197</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2314</span></a></span>
     The framebuffer's chooser draws the halo and runs the chosen handle. Try it on the host with
     <code>render-frame.lisp modules --halo 300,200</code>.</li>
 </ol>
