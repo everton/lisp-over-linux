@@ -59,7 +59,9 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `check-tour.lisp` | Boot the image and **assert the guided tour points at real code**: every `*tour-stops*` Lisp stop resolves to a definition and presents, the Spotter offers "tour", and `accept-source` opens as our own `:source` (the registry records itself). |
 | `check-font.lisp` | Boot the image and **assert runtime font resizing**: the TTF loaded, the default size, `SuperL-=`/`-`/`0`, `C-x C-=`/`C--`/`C-0` and the bare `+ - 0` repeat, the row height following the cell, `draw-browser` having run and the screendump differing, a letter after the chord not swallowed, and (with `LOL_GUEST_DISK=test-disk.img`) the size saved in `~/.config/lol/settings`. Host-side companion: `poc/font-test.lisp`. |
 | `refresh-screenshot.sh` | Re-capture the screenshots by booting the image headless under QEMU and driving it over QMP: `--mode repl`, `--mode browser`, and `--scene NAME` for the doc illustrations (`--scenes` lists them): `code-browser.org`'s, plus the disk scenes `files`, `files-archive`, `spotter-path` (`file-manager.org`) and `sbcl-source` (`code-browser.org`), which boot with `test-disk.img` attached `snapshot=on` and fail if it is missing. |
-| `initramfs/session-log.lisp` | `~/.lol/log`: `session-log` (fsync'd lines from every thread), the `lol-watch` thread (pulse every 5 s; STALL at 10/60/300 s of the environment's thread being busy — `poll-input-once` marks idle/busy), `log-unhandled` (an error ends only its thread), `disable-ldb`, `capture-stderr`, and `session-boot` (set the last session aside, tell a crash from a shutdown, archive + prune in the background). Loaded right after `logcount-fix.lisp`. Host test `poc/session-log-test.lisp` (31), guest `check-diagnostics.lisp` (21). See `doc/diagnostics.org`. |
+| `initramfs/session-log.lisp` | `~/.lol/log`: `session-log` (fsync'd lines from every thread, files 0600), `kernel.log` (the `kmsg` thread), LONG reports for named busy threads (agent turns), the `lol-watch` thread (pulse every 5 s; STALL at 10/60/300 s of the environment's thread being busy — `poll-input-once` marks idle/busy), `log-unhandled` (an error ends only its thread), `disable-ldb`, `capture-stderr`, and `session-boot` (set the last session aside, tell a crash from a shutdown, archive + prune in the background). Loaded right after `logcount-fix.lisp`. Host test `poc/session-log-test.lisp` (31), guest `check-diagnostics.lisp` (21). See `doc/diagnostics.org`. |
+| `check-crash.lisp` | Boot the image **three times** on a writable copy of `test-disk.img` (`*disk-snapshot*` nil): make the runtime `lose()`, assert the panic reboots it, then that the next boot names the crash (log + status line) and archived its `session`, `stderr` and `kernel` logs; power off, and the third boot calls that clean. 13 checks. |
+| `poc/host-logging.lisp` | Loads `deflate.lisp` + `session-log.lisp` for host tests that load modules one at a time, with the logs pointed at `/tmp` — never the real `~/.lol/log`. |
 | `poc/deflate.lisp` | `lol.deflate`: the DEFLATE/zlib/gzip WRITER (LZ77 + fixed Huffman), shared by the image (log archives) and `host-client/png.lisp`. `poc/inflate.lisp` is the reader. |
 | `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
 | `initramfs/supervisor.lisp` | The Lisp supervisor (PID 1): boots straight into the environment (`run-browser-fb`), and falls back to the REPL / worker / power-off menu when you leave it or it dies. |
@@ -216,7 +218,7 @@ Prefer a few well-placed sections over one-liners scattered about.
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
   doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
-- Kernel build tags are `#NN` (currently **#27**). Always say which tag a claim
+- Kernel build tags are `#NN` (currently **#28**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
   them via those names, never an absolute/`$HOME` path. `build.sh` derives its own
@@ -349,3 +351,22 @@ protocol in a tiled, keyboard-first shell. Progress:
   library loaded at build time would make the saved image refuse to start without
   `/mnt/host`. Container commands get zero capabilities, so anything needing
   `CAP_NET_ADMIN` must be run from PID 1 (ambient caps), not via `lol-ct`.
+- **A frozen screen can be PID 1 dead, and two ways to die silently were found**
+  (2026-10-16, `doc/diagnostics.org`). (1) The image is saved from a
+  `--non-interactive` build, so its `*invoke-debugger-hook*` was SBCL's
+  `DEBUGGER-DISABLED-HOOK`: an unhandled error on ANY background thread quit the
+  whole process — a kernel panic nobody sees under `KD_GRAPHICS`. Now
+  `log-unhandled` (session-log.lisp) logs it and ends only that thread. (2) SBCL's
+  runtime enters LDB on `lose()` (heap exhaustion, GC invariants) unless
+  `--disable-ldb` — `runtime.c` calls `enable_lossage_handler()` by default — and
+  LDB waits on the console forever. Now `disable-ldb` calls
+  `disable_lossage_handler` in every role, and preinit sets `kernel.panic=10`, so a
+  dead PID 1 reboots. Both are proven by `poc/session-log-test.lisp` and
+  `check-crash.lisp`. **Every new module that logs** calls `session-log.lisp`,
+  which build.sh loads early; a host test loading modules one by one must load
+  `poc/host-logging.lisp` first.
+- **A backtrace taken by interrupting a thread that is inside C loses the frames
+  between the C call and the next Lisp frame** (libc has no frame pointers: frame 0
+  reads `bogus stack frame`, the caller is gone; measured 2026-10-16). Name long C
+  calls on the environment's thread with `with-main-activity` so a STALL report
+  still says what it was.

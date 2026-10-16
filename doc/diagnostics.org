@@ -55,10 +55,19 @@ which is what the QEMU test does.
 | =session.log= | [[file:../initramfs/session-log.lisp::defun session-log][=session-log=]], from every thread                | the boot, entering/leaving the environment, every agent turn and tool call (with its input, clipped) and how it ended, retries, errors caught and uncaught, debugger entries, the *pulse*, *STALL* reports, the shutdown |
 | =stderr.log=  | file descriptor 2 — the C runtime, child processes | =lose()='s last words and backtrace, heap-exhaustion reports, Chrome's and =wpa_supplicant='s complaints |
 | =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                    | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b) — unchanged in content |
+| =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])         | the kernel's own log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also said in =session.log= as =kernel: …= |
 
 *Every line is =fsync='d.* A line still in the page cache is lost to a hard reset,
 and a hard reset is exactly when it is wanted. At a few lines a second that costs
-nothing measurable.
+nothing measurable. =kernel.log= is drained every 2 s with one =fsync= per batch
+(the boot alone is a thousand records), so its last two seconds can be missing —
+the EFI pstore of §6 is what catches a dying kernel's last words.
+
+*Private.* The logs are created 0600 and their directories 0700: they quote what
+the agent ran and what the network did. A =file-write= call is logged as its path
+and size, never its content ([[file:../initramfs/agent.lisp::defun call-input-for-log][=call-input-for-log=]]) — a file is where a secret would
+be; forms and commands are kept, clipped, because after a freeze they are the
+evidence.
 
 A line is a UTC stamp, the thread, the event:
 #+begin_example
@@ -78,6 +87,11 @@ synonym for =SB-SYS:*STDERR*=, is pointed at a fresh stream on the kept console
 descriptor, so the supervisor's menu and the REPL still show Lisp's own errors.
 The file is bounded by the watcher: past 16 MB it is truncated (fd 2 is =O_APPEND=,
 so writers carry on at the new end).
+
+*Opened =O_DSYNC=*, so each write reaches the disk before it returns. Found by
+=check-crash.lisp=: without it, =lose()='s dying message reached =stderr.log= only in
+the page cache — and the panic reboots in 10 s, before the kernel's 30 s writeback
+(=vm.dirty_expire_centisecs= = 3000), so it was lost every time.
 
 * 3. The pulse and the stall watcher
 
@@ -124,6 +138,22 @@ argument may be a whole conversation. A real report, from the guest test:
 [lol-watch] the environment's thread is responsive again (it was busy 13.0s)
 #+end_example
 (Frame 0 is the interruption's own entry; the stuck code starts at 1.)
+
+*Stuck inside C, the answer comes back with a hole.* =check-diagnostics.lisp= wedges
+the thread in libc's =sleep(3)=: the interruption still runs, but the walk cannot
+get back /through/ libc, which is built without frame pointers — frame 0 reads
+=bogus stack frame= and the Lisp function that made the call is missing; the walk
+resumes a frame or two further out. Measured 2026-10-16. So for anything that can
+block in C (OpenSSL, a pipe to Chrome, a container), the activity label
+(=with-main-activity=) is what names the culprit.
+
+*LONG: other threads that run too long.* A STALL is about the environment's thread,
+because that is what freezes the screen. An agent turn stuck in a read freezes
+nothing — but it is the next question. A module names its busy threads with
+[[file:../initramfs/session-log.lisp::defun watch-busy-threads][=watch-busy-threads=]]; =agent.lisp= names each conversation's running turn, except
+one waiting on a posted job or an approval (that is your time, not its). Past 5 and
+15 minutes the watcher logs /LONG: agent turn 3 has been busy 300s/ with that
+thread's backtrace.
 
 *Which locks.* A module registers the mutexes worth naming with [[file:../initramfs/session-log.lisp::defun watch-locks][=watch-locks=]]:
 =agent.lisp= its conversations' locks, =tls.lisp= OpenSSL's setup lock. A deadlock
@@ -180,17 +210,27 @@ so even a session that runs for weeks cannot fill the disk.
 fixed Huffman code: about 10% of the text on a real =network.log= (=gzip -9=: 8.4%),
 about 10 MB/s, and every file it writes passes =gzip -t=.
 
-* 6. What this cannot see — next
+* 6. When the kernel is the one stuck — tag #28
 
 A kernel that stops cannot be heard from Lisp: the pulses simply end, the same as a
-whole-process GC deadlock would look. Telling those apart needs the kernel's help
-(a kernel tag, #28, not built yet):
-- =MAGIC_SYSRQ= — Alt-SysRq-w/t dump blocked tasks to the kernel log, Alt-SysRq-s/u/b
-  sync, remount read-only and reboot from a frozen machine;
-- the soft-lockup and hung-task detectors, which notice a stuck CPU or task;
-- =PSTORE= + =EFI_VARS_PSTORE=: a panic's kernel log is kept in an EFI variable and
-  appears in Debian's =/sys/fs/pstore= on the next boot;
-- a thread copying =/dev/kmsg= into =session.log=.
+whole-process GC deadlock would look. Kernel tag #28 ([[file:kernel-config.org][kernel-config.org]] §6) adds the
+kernel's own witnesses:
+- *Magic SysRq.* Hold Alt and SysRq (PrintScreen) and press a letter. It is an input
+  filter inside the kernel ([[file:../linux/drivers/tty/sysrq.c::static struct input_handler sysrq_handler][=drivers/tty/sysrq.c=]]), so it works whatever the Lisp is
+  doing and under =KD_GRAPHICS=. On a freeze, in this order:
+  - =w=: dump the blocked (uninterruptible) tasks to the kernel log; =t=: all tasks;
+  - =s=, =u=: sync the disks, remount them read-only;
+  - =c=: panic on purpose — pstore then keeps the log, and =kernel.panic=10= reboots
+    (=b= reboots at once, without the pstore record).
+- *The lockup and hung-task detectors* report a CPU stuck in the kernel (soft: with
+  interrupts on; hard: with them off, via the perf NMI) and a task in uninterruptible
+  sleep for 120 s. Report only — they never panic. While the Lisp still runs, the
+  =kmsg= thread copies those reports into =kernel.log= and =session.log=.
+- *pstore on EFI variables.* On a panic the kernel writes the tail of its log into
+  EFI variables, which survive the reset. Our image does not read them: Debian does.
+  Its =/sys/fs/pstore= shows them on the next boot, and =systemd-pstore= (enabled on
+  the host) moves them to =/var/lib/systemd/pstore/= and frees the variables —
+  which matters, because the firmware's variable store is small.
 
 * 7. After a freeze, from Debian
 
@@ -198,27 +238,39 @@ whole-process GC deadlock would look. Telling those apart needs the kernel's hel
   ls -t ~/.lol/log/archive/ | head                      # newest first
   zcat "$(ls -t ~/.lol/log/archive/session.*.gz | head -1)" | tail -60
   zcat ~/.lol/log/archive/stderr.*.gz | tail             # the runtime's last words, if any
+  zcat "$(ls -t ~/.lol/log/archive/kernel.*.gz | head -1)" | tail -40
+  sudo ls /var/lib/systemd/pstore/                       # a kernel panic's log (§6)
 #+end_src
 Read it as: *when* did the pulses stop; was the last pulse =busy=, with what
-activity; is there a =STALL= (whose backtrace?), an =UNHANDLED=, a =HEAP HIGH=;
-what was the agent's last call. No stall and no error with pulses that just stop
-points at §6.
+activity; is there a =STALL= (whose backtrace?), a =LONG=, an =UNHANDLED=, a =HEAP
+HIGH=, a =kernel:= line; what was the agent's last call. No stall and no error with
+pulses that just stop points at the kernel: look in pstore, and next time try
+Alt-SysRq-w then -c before holding the power button (§6).
 
 * 8. Tests
 
-- [[file:../poc/session-log-test.lisp][=poc/session-log-test.lisp=]] (host, 31 checks): lines, the cap, set-aside and
+- [[file:../poc/session-log-test.lisp][=poc/session-log-test.lisp=]] (host, 42 checks): lines, the cap, set-aside and
   the clean/crash verdict, archive + read back (our inflate and =gzip -t=), pruning,
-  a STALL naming the stuck function and the lock it holds, an unhandled error
-  ending only its thread, fd 2 captured — and *the LDB freeze itself*: a plain SBCL
-  calling =lose()= is still waiting after 6 s; after =disable_lossage_handler= it
-  exits with the message on stderr.
-- [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 21 checks; with or without
+  a STALL naming the stuck function and the lock it holds, a LONG report, kmsg
+  records, file modes, an unhandled error ending only its thread, fd 2 captured —
+  and *the LDB freeze itself*: a plain SBCL calling =lose()= is still waiting after
+  6 s; after =disable_lossage_handler= it exits with the message on stderr.
+- [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 29 checks; with or without
   =LOL_GUEST_DISK=test-disk.img=): the boot line, the 4 GiB heap,
   =kernel.panic= = 10, fd 2, the pulse, idle while waiting — then the environment's
   thread is made to spin 13 s (an =INTERRUPT-THREAD= into it from the net REPL) and
   the STALL report, its activity, the backtrace through the spinning function and
-  its end are all asserted; an unhandled error on a thread; archiving inside the
-  image read back by the image's inflate.
+  its end are all asserted; the same stuck in libc's =sleep(3)= (§3's hole);
+  =kernel.log=, the 0600 modes, tag #28's SysRq, detectors and =efi_pstore=; an
+  unhandled error on a thread; archiving inside the image.
+- [[file:../check-crash.lisp][=check-crash.lisp=]] (guest, 13 checks, three boots on a writable copy of
+  =test-disk.img=): =lose()= in PID 1 → panic → reset in about 11 s; the next boot
+  says the session ended without a shutdown (log and status line) and its archive
+  holds the dead session's log, its =stderr= (=lose()='s message — this is the test
+  that found the missing =O_DSYNC=) and its kernel log; a power-off is then
+  recognised as clean.
+- Host tests that load modules one by one load [[file:../poc/host-logging.lisp][=poc/host-logging.lisp=]] first: the
+  modules log, and a host test must never write the real =~/.lol/log=.
 
 * 9. Should the agent run in its own process?
 

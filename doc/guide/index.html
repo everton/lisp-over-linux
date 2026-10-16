@@ -168,7 +168,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
     and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
     (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:373</span></a>).
     The kernel's command line is compiled in (
-    <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:397</span></a>). It says
+    <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:398</span></a>). It says
     <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is
     the "separate initrd", and it is why a Lisp change rebuilds in seconds without touching the kernel. More in
     <a href="../micro-distro.org">micro-distro.org</a>.</li>
