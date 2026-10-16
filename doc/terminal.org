@@ -401,8 +401,10 @@ syscall per terminal):
   rows into the canvas and =show-terminal-rows= sends just their rectangles to
   =/dev/fb0= — one row for an echoed key, not a 1280x800 frame. A key typed /into/
   a terminal does not redraw the frame either (=terminal-key-was-cheap-p=): its echo
-  comes back as output. The guest check counts =draw-browser= while typing 8 keys:
-  0-1 full frames.
+  comes back as output. The guest check counts whole draws of the terminal's pane
+  while typing 8 keys: 0-1 (it counted =draw-browser= calls until Morphic's §12 made
+  the pane a morph of its own). In a window the rows go into the window's backing
+  store and only their rectangles are copied out ([[file:morphic.org][morphic.org]] §12.6).
 - *Closing.* Closing the tab (or popping the pane) is noticed by a sweep after every
   input event (=terminal-sweep=): a terminal no longer in any trail is hung up —
   closing the master makes the kernel send SIGHUP to the session (=pty_close= calls

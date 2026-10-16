@@ -56,7 +56,7 @@ layer. It keeps the open trails, routes keys and draws. The full design is in
     <td><a class="ref" data-ref="initramfs/present.lisp#command" href="../../initramfs/present.lisp"><code>command</code><span class="loc">initramfs/present.lisp:56</span></a></td></tr>
   <tr><td><strong>pane</strong></td><td>The shell's wrapper round one presented view: the subject, the view, the
     selection, the scroll position, and a <code>textview</code> if the view has text.</td>
-    <td><a class="ref" data-ref="poc/shell.lisp#pane" href="../../poc/shell.lisp"><code>pane</code><span class="loc">poc/shell.lisp:47</span></a></td></tr>
+    <td><a class="ref" data-ref="poc/shell.lisp#pane" href="../../poc/shell.lisp"><code>pane</code><span class="loc">poc/shell.lisp:65</span></a></td></tr>
   <tr><td><strong>trail</strong></td><td>A list of panes, root first. The deepest pane is expanded and its ancestors are
     the breadcrumb bars above it. Several trails are the tabs.</td>
     <td><a class="ref" data-ref="poc/shell.lisp#*trails*" href="../../poc/shell.lisp"><code>*trails*</code><span class="loc">poc/shell.lisp:44</span></a></td></tr>
@@ -91,15 +91,15 @@ layer. It keeps the open trails, routes keys and draws. The full design is in
 throws the deepest pane away and shows the one beneath, which was never discarded.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:65</span></a> calls <code>present</code>, or
+  <li><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:159</span></a> calls <code>present</code>, or
     <code>present-preview</code> for the right-hand preview column. It gives <code>:source</code>,
     <code>:reference</code>, <code>:workspace</code> and <code>:file</code> views a textview, focused (editable) for
     everything except <code>:reference</code>.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:169</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:174</span></a>,
-    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:180</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
-    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:236</span></a> (the first tabs).</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:263</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:268</span></a>,
+    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:274</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
+    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:330</span></a> (the first tabs).</li>
   <li>The <strong>nav split</strong>: when a list pane's selected item has a subject, the right half shows
-    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1320</span></a>).
+    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1354</span></a>).
     This is how the tour previews each stop's source.</li>
 </ul>
 
@@ -123,7 +123,7 @@ shell draws it.</p>
   <tr><td><code>subj-dir</code> / <code>subj-file</code> / <code>subj-find</code> / <code>subj-file-info</code></td><td>the file manager</td><td><a class="ref" data-ref="initramfs/file-views.lisp#present@subj-file" href="../../initramfs/file-views.lisp"><code>(present subj-file)</code><span class="loc">initramfs/file-views.lisp:729</span></a></td></tr>
   <tr><td><code>subj-worker</code></td><td>a view computed in a <em>second process</em></td><td><a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:189</span></a></td></tr>
   <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a></td></tr>
-  <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:133</span></a></td></tr>
+  <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:135</span></a></td></tr>
   <tr><td><code>subj-containers</code> / <code>subj-container</code></td><td>the host Debian as containers (<code>lol-ct</code>); merged as this guide was finished</td><td><a class="ref" data-ref="initramfs/containers.lisp#present@subj-containers" href="../../initramfs/containers.lisp"><code>(present subj-containers)</code><span class="loc">initramfs/containers.lisp:281</span></a></td></tr>
   <tr><td><code>run</code> / <code>subj-runs</code></td><td>a program's output streamed into a read-only pane</td><td><a class="ref" data-ref="initramfs/runs.lisp#present@run" href="../../initramfs/runs.lisp"><code>(present run)</code><span class="loc">initramfs/runs.lisp:246</span></a></td></tr>
 </table>
@@ -135,19 +135,19 @@ page walks through it.</p>
 
 <h2>Commands: content declares, the shell disposes</h2>
 <p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:346</span></a> returns data. It never opens anything itself.
-The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3011</span></a>), builds menu
-entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3053</span></a>) and runs the chosen one through
-<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:2990</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#browser-context-menu" href="../../poc/shell.lisp"><code>browser-context-menu</code><span class="loc">poc/shell.lisp:3500</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3504</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3489</span></a>. That function calls whatever <code>*chooser*</code> the
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3079</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3121</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3058</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:3540</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:3554</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3529</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser</code> (an overlay, <code>poc/overlays.lisp</code>) on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>
 <p>What happens between pressing <kbd>Enter</kbd> on a list row and the new pane appearing on screen. Every name
 here is a real function. The solid arrows are calls and the dashed ones are returns.</p>
 <figure>
-<svg viewBox="0 0 960 520" role="img" aria-label="Sequence: the kernel makes fd 0 readable; run-browser-fb's poll returns; fb-read-key turns the byte into :return; browser-key routes it to trail-push with the selected item's subject; open-pane calls present, which returns a view; the loop marks the frame dirty and calls draw-browser, which draws with the widgets and textview into the canvas; show-frame calls lol.fb:present-fb, which pwrites the canvas to /dev/fb0.">
+<svg viewBox="0 0 960 520" role="img" aria-label="Sequence: the kernel makes fd 0 readable; run-browser-fb's poll returns; fb-read-key turns the byte into :return; the world routes it to the focused pane, whose browser-key routes it to trail-push with the selected item's subject; open-pane calls present, which returns a view; the desk lays the new pane out and the world repairs what that damaged, each morph drawing itself with the widgets and textview into the canvas; present-repair calls lol.fb:present-fb, which pwrites the repaired rects to /dev/fb0.">
   <defs>
     <marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker>
   </defs>
@@ -159,7 +159,7 @@ here is a real function. The solid arrows are calls and the dashed ones are retu
     <rect class="box k-shell" x="365" y="10" width="105" height="40" rx="5"/><text x="373" y="27" class="title">browser-key</text><text x="373" y="42" class="dim">routing</text>
     <rect class="box k-shell" x="485" y="10" width="125" height="40" rx="5"/><text x="493" y="27" class="title">trail-push</text><text x="493" y="42" class="dim">→ open-pane</text>
     <rect class="box k-present" x="625" y="10" width="95" height="40" rx="5"/><text x="633" y="27" class="title">present</text><text x="633" y="42" class="dim">the protocol</text>
-    <rect class="box k-shell" x="735" y="10" width="105" height="40" rx="5"/><text x="743" y="27" class="title">draw-browser</text><text x="743" y="42" class="dim">widgets, textview</text>
+    <rect class="box k-shell" x="735" y="10" width="105" height="40" rx="5"/><text x="743" y="27" class="title">world-repair</text><text x="743" y="42" class="dim">morphs draw</text>
     <rect class="box k-ui" x="855" y="10" width="95" height="40" rx="5"/><text x="863" y="27" class="title">canvas / fb</text><text x="863" y="42" class="dim">pixels out</text>
   </g>
   <g>
@@ -177,24 +177,25 @@ here is a real function. The solid arrows are calls and the dashed ones are retu
   <path class="edge dash" d="M300,140 H187" marker-end="url(#sa)"/><text x="196" y="154" class="lbl">:return, state 0</text>
   <!-- 3 -->
   <text x="190" y="176" class="lbl">3 OR in Ctrl/Shift/Super from evdev</text>
-  <path class="edge" d="M185,190 H415" marker-end="url(#sa)"/><text x="230" y="186" class="lbl">(browser-key key state)</text>
+  <path class="edge" d="M185,190 H415" marker-end="url(#sa)"/><text x="196" y="186" class="lbl">world-dispatch → the pane: browser-key</text>
   <!-- 4 -->
   <path class="edge" d="M419,222 H545" marker-end="url(#sa)"/><text x="425" y="216" class="lbl">4 list branch:</text><text x="425" y="240" class="lbl">(item-subject it)</text>
   <!-- 5 -->
   <path class="edge hot" d="M549,262 H670" marker-end="url(#sa)"/><text x="555" y="256" class="lbl">5 (present s)</text>
   <path class="edge dash" d="M672,286 H551" marker-end="url(#sa)"/><text x="580" y="300" class="lbl">a VIEW</text>
   <text x="555" y="318" class="lbl">pane appended</text>
-  <path class="edge dash" d="M547,330 H187" marker-end="url(#sa)"/><text x="300" y="324" class="lbl">6 returns; the loop sets dirty</text>
+  <path class="edge dash" d="M547,330 H187" marker-end="url(#sa)"/><text x="230" y="324" class="lbl">6 returns; the pane is damaged</text>
   <!-- 7 -->
-  <path class="edge" d="M185,362 H785" marker-end="url(#sa)"/><text x="420" y="356" class="lbl">7 (draw-browser canvas w h)</text>
+  <path class="edge" d="M185,362 H785" marker-end="url(#sa)"/><text x="330" y="356" class="lbl">7 desk-sync lays it out; (world-repair world canvas)</text>
   <path class="edge" d="M789,392 H900" marker-end="url(#sa)"/><text x="794" y="386" class="lbl">draw-list, tv-draw</text><text x="794" y="408" class="lbl">→ fill-rect, draw-string</text>
   <!-- 8 -->
   <path class="edge hot" d="M185,436 H900" marker-end="url(#sa)"/><text x="420" y="430" class="lbl">8 present-repair → lol.fb:present-fb canvas</text>
   <path class="edge hot" d="M902,466 H62" marker-end="url(#sa)"/><text x="420" y="460" class="lbl">pwrite(fd of /dev/fb0, pixels) — then the pointer on top</text>
   <text x="190" y="500" class="lbl">9 back to poll(2) — sleeps until the next key, click or deadline</text>
 </svg>
-<figcaption>One keypress. The loop draws only when something changed (the <code>dirty</code> flag). A bare mouse
-move does not redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcaption>
+<figcaption>One keypress. The world redraws only what is damaged: here the trail area's panes (the old pane becomes a
+breadcrumb, the new one expands), not the tab strip or the status line unless they changed. A bare mouse move does not
+redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcaption>
 </figure>
 <ol class="stops">
   <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#fbb-wait" href="../../initramfs/fb-browser.lisp"><code>fbb-wait</code><span class="loc">initramfs/fb-browser.lisp:78</span></a></span>
@@ -209,15 +210,19 @@ move does not redraw: <code>move-cursor</code> repairs only the pointer's rectan
     Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
     <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
     This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2345</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2412</span></a></span>
     One <code>cond</code>, in priority order: minibuffer, <kbd>M-.</kbd>/<kbd>M-,</kbd>, Esc as Meta, <kbd>C-g</kbd>,
     the Super layer, the side pane, the stage, editable panes, read-only text, the subject's own keys, and last the
     list keys, where <kbd>Enter</kbd> calls <code>trail-push</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:65</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:159</span></a></span>
     Presents the subject. A :source view's text goes into a new <code>lol.textview</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-browser" href="../../poc/shell.lisp"><code>draw-browser</code><span class="loc">poc/shell.lisp:1454</span></a></span>
-    Clears the canvas, then draws the tabs, the breadcrumb bars, the expanded pane (or the split) and the status line.
-    It records what it drew where (<code>*drawn*</code>, used by the halo) and the hit maps used for clicks.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#layout-trail-area" href="../../poc/morphic.lisp"><code>layout-trail-area</code><span class="loc">poc/morphic.lisp:242</span></a></span>
+    The trail's panes are morphs, the children of a trail area: before the repair the desk lays them out — every
+    ancestor a breadcrumb bar, the last one expanded — and the pane that moved or appeared is damaged by moving.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:601</span></a></span>
+    In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1342</span></a>)
+    and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1543</span></a>), which records where it drew its rows —
+    what its clicks and the halo read back.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1172</span></a></span>
     <code>lol.fb:present-fb</code> of what the world repaired, then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
 </ol>

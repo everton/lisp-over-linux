@@ -92,7 +92,7 @@ exceptions are the interesting part: click <code>poc/shell.lisp</code> and look 
   <li><strong>The spine</strong> runs <code>registry → model → present → shell → fb-browser → supervisor</code>.
     Read those six files in that order and you know how the environment works.</li>
   <li><strong>The toolkit knows nothing about Lisp.</strong> <code>canvas</code>, <code>widgets</code> and <code>textview</code> do
-    not use <code>present</code>. The shell adapts between them (<a class="ref" data-ref="poc/shell.lisp#item-&gt;row" href="../../poc/shell.lisp"><code>item-&gt;row</code><span class="loc">poc/shell.lisp:734</span></a>
+    not use <code>present</code>. The shell adapts between them (<a class="ref" data-ref="poc/shell.lisp#item-&gt;row" href="../../poc/shell.lisp"><code>item-&gt;row</code><span class="loc">poc/shell.lisp:818</span></a>
     converts a protocol <code>item</code> into a widget <code>row</code>). That is why the same widgets draw a package,
     the Spotter and the debugger's restarts.</li>
   <li><strong>The protocol does not know about pixels.</strong> <code>present.lisp</code> uses only <code>model</code> and

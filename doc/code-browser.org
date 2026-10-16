@@ -5,8 +5,10 @@ Status: *IMPLEMENTED AND RUNNING.* Phases 0-6 are all done: the browser runs
 full-screen on =/dev/fb0= as PID 1 (the image boots into it; =b= at the
 supervisor menu reopens it), browses and
 *edits* its own source, scrolls, carries a live debugger, and has a widget
-toolkit under it. Phase 7 (Morphic) is the only one left; it is designed in
-[[file:morphic.org][morphic.org]] (2026-10-16) and not built. §8 tracks it per phase and is the authoritative status.
+toolkit under it. Phase 7 (Morphic) was designed in [[file:morphic.org][morphic.org]] and built the same day
+(2026-10-16): the browser is the first window of a Lisp window system, and everything
+on its screen — every pane among it — is a morph. §8 tracks it per phase and is the
+authoritative status.
 
 /(This line read "PLAN ONLY — nothing implemented" until 2026-08-09, long after
 the fact. The §8 phase list was kept current throughout; the header was not.
@@ -1221,9 +1223,11 @@ subject type gets a =present= method and optionally a =commands-for= method; a n
 ** The right button and the halo  [BUILT 2026-10-02]
 
 Both start from one question — *what* is under the pointer — answered by
-[[file:../poc/shell.lisp::defun pointer-target][=pointer-target=]] from the hit maps the last frame recorded: a *row* (and the
-subject it opens), a *word* in text (and the symbol it names), an *instance* on the
-stage, a *tab*, or the pane itself when nothing smaller was hit.
+[[file:../poc/shell.lisp::defun pane-target][=pane-target=]] (=pointer-target= until Morphic's §12) from what the pane recorded
+when it drew: a *row* (and the subject it opens), a *word* in text (and the symbol it
+names), an *instance* on the stage, or the pane itself when nothing smaller was hit —
+and by the tab strip for a *tab*. Each is asked by the morph the press lands on
+([[file:morphic.org][morphic.org]] §12.5).
 
 - *Right button* → [[file:../poc/shell.lisp::defun context-menu-entries][=context-menu-entries=]]: the obvious verbs for that kind of thing
   first — Cut / Copy / Paste / Paste the selection / Select all in text, then Go to
@@ -1256,29 +1260,37 @@ holding a pane opens the pane's fields), =C-c C-c= sets a field, =C-c C-e= evalu
 with =self= bound to the instance ([[file:../initramfs/present.lisp::defun subject-value][=subject-value=]] unwraps it), and "Open its view" goes
 back to what it normally shows.
 
-*2. Every frame records who drew what.* Morphic gets this for free: there each thing
-on screen /is/ an object that draws itself. Here drawing is plain functions over plain
-structs, so each drawing function notes, the way it already records its hit maps,
-what it drew where and which functions painted it ([[file:../poc/shell.lisp::defun note-drawn][=note-drawn=]] into =*drawn*=,
-reset by =draw-browser=). The screen (the =CANVAS=, =draw-browser=), the tab strip and
-each tab (the trail list, =draw-tabs=), the systray (=draw-tray=, its data from
-=tray-items=), each pane (=PANE=, =draw-pane-body=), a text view (=TEXTVIEW=,
-=tv-draw=), a list (=VIEW=, =draw-list-body= / =item->row= / =draw-list=), the matrix, the
-stage and each sprite, the status line.
+*2. Every thing on screen says who drew it.* Morphic gets this for free: there each
+thing on screen /is/ an object that draws itself. When the halo was built, drawing
+here was plain functions over plain structs, so each drawing function noted what it
+drew where and which functions painted it (=note-drawn= into =*drawn*=, reset by
+=draw-browser=). Since Phase 7's §12 ([[file:morphic.org][morphic.org]]) that record is gone because it
+is no longer needed: every pane, the tab strip, the systray, the status line, the
+trail area and the shell are morphs, and the halo walks the tree under the point —
+each morph offering itself (its instance, its drawing functions) and, for a pane, its
+body when the point is on it (a text view: =TEXTVIEW=, =tv-draw=; a list: =VIEW=,
+=draw-list-body= / =item->row= / =draw-list=; the matrix; the stage and each sprite)
+and then what it shows.
 
 *3. The halo is about one layer at a time, and shows which.*
-[[file:../poc/shell.lisp::defun halo-layers][=halo-layers=]] lists what is under the point, innermost first: the thing the pointer is
+[[file:../poc/morphic.lisp::defun halo-layers][=halo-layers=]] lists what is under the point, innermost first: the thing the pointer is
 *on* (the word and the symbol it names; what a row opens, then the row's own =ITEM=;
-what a sprite stands for), then every drawn element containing the point, smallest
-first, each pane followed by what it *shows*. For a word in the Workspace:
+what a sprite stands for), then each morph from the deepest under the point out to
+the shell (or the window), each pane followed by what it *shows*. For a word in the
+Workspace:
 
 | layer           | object                 | handles ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]])                  |
 |-----------------+------------------------+-----------------------------------------|
 | =greet=          | the symbol =GREET=       | Source, Senders, Inspect, Copy           |
 | text view       | a =LOL.TEXTVIEW:TEXTVIEW= | Inspect, Code: tv-draw, Class: textview, Copy |
-| pane · workspace | a =PANE=                 | Inspect, Code: draw-pane-body, Code: draw-panel, Class: pane, Copy |
+| pane · workspace | a =PANE= (a morph)       | Inspect, Code: draw-pane-expanded, Code: draw-panel, Code: pane-click, Class: pane, Copy |
 | shows           | =SUBJ-WORKSPACE=          | Open its view, Inspect, Copy             |
-| the screen      | the =CANVAS=              | Inspect, Code: draw-browser, Class: canvas, Copy |
+| trail · workspace | the =TRAIL-AREA= morph | Inspect, Code: layout-trail-area, Class: trail-area, Copy |
+| the tiled shell | the =SHELL-MORPH=         | Inspect, Code: layout-shell, Code: draw-morph, Class: shell-morph, Copy |
+
+(Until Morphic's §12 the outermost layer was "the screen", the =CANVAS= with Code:
+=draw-browser=; the shell morph is the outermost thing now, and in a window the walk
+ends on the window.)
 
 =Up=, =Tab= or the middle button again walk *out* to the thing around the current
 layer (Morphic's repeated middle-click), =Down= walks back *in*, =Left=/=Right= move
@@ -1302,7 +1314,7 @@ To look at a halo without booting: =sbcl --script poc/render-frame.lisp workspac
 
 *The middle button had two jobs.* X's select-then-middle-click paste (PRIMARY,
 [[file:clipboard.org][clipboard.org]] §3) and Smalltalk's halo both want it. The split is by *place*, in
-[[file:../poc/shell.lisp::defun browser-middle-click][=browser-middle-click=]]: in /editable/ text, with something selected to paste, the
+[[file:../poc/shell.lisp::defun pane-middle-click][=pane-middle-click=]] (=browser-middle-click= until Morphic's §12): in /editable/ text, with something selected to paste, the
 button pastes at the pointer; anywhere else — a row, a sprite, read-only text, which
 cannot receive a paste — it opens the halo; and =SuperL=-middle forces the halo even
 in editable text. Each place gets the meaning it can use, and the override is one
@@ -2447,8 +2459,19 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   that same loop, so nothing behind them stops ([[file:../poc/overlays.lisp][poc/overlays.lisp]]) (4); and stepping:
   a running stage, a live run pane, a terminal's rows, a live worker each damage only
   what changed, and idle the loop sleeps (5). Windows survive the desk file and a trip
-  to the console. Owed, in morphic.org §10: a stage step still lays out the whole shell
-  under its clip; the agent's tick and a web frame in a window stay coarse.
+  to the console. *Then panes as morphs* (morphic.org §12, the same day, at the user's
+  request: "one abstraction, not two ways of doing it"): the =PANE= is a CLOS morph;
+  the tab strip, the systray, the status line, the trail area that lays out a trail
+  as the accordion, a window's title bar and frame are morphs; a window is a /surface/
+  holding the same pane morphs, so tearing off and re-tiling move morphs between
+  trail areas; hit testing and the halo walk the morph tree, and the score of
+  per-frame hit-map specials, =note-drawn=, =with-window-context= and the monolithic
+  =draw-browser= are gone. Damage is per morph: a key in a pane repairs that pane, and
+  whatever else changed — a tab's title, the status line, a pane the agent streamed
+  into — is found by comparing each morph's /signature/ before the repair. That closed
+  §10's owed items: a stage step draws only its pane, the agent's tick and a web frame
+  in a window are precise. Owed now (morphic.org §12.8): a pane's body — its list, its
+  text view — is still drawn by the pane rather than being a morph of its own.
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 

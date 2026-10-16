@@ -185,7 +185,8 @@ first line.
 
 Not gated on Phase 7 in the technical sense. The *stage* (§3b of
 [[file:code-browser.org][code-browser.org]]) already established all five mechanisms a foreign surface would
-need: a bespoke view kind dispatched from =draw-browser=; a pane that changes
+need: a bespoke view kind dispatched from =draw-browser= (from =draw-pane-body= since
+Morphic's §12, a pane being a morph); a pane that changes
 without input plus a poll timeout to serve it; click routing into pane-local
 coordinates; key routing into the pane; and a subject type that keeps it
 drillable and Spotter-reachable. A =:foreign= view kind is those five things with
@@ -750,7 +751,8 @@ loop. Two readers on one pipe would each get half the frames.
   row.
 - [[file:../check-worker.lisp][check-worker.lisp]] (39 checks, guest; sections E–J are this): *no key is
   sent* — the script never opens QMP. The ticker's ticks advance by 4 in 4 s and
-  =draw-browser= runs 4 times; the drilled object's =TICKS= field moves from 6 to
+  =draw-browser= runs 4 times (the check counts the world's repairs since Morphic's
+  §12 took =draw-browser= out of the loop); the drilled object's =TICKS= field moves from 6 to
   9 in 3 s; hidden, 0 frames and 0 fetches; killed, =:EXITED= and out of the poll;
   the live sweep reads 1,200 of 2,447 definitions in its first 1.5 s and ends
   with the same 15 condition types as the one-shot sweep; with no pane, no live
@@ -808,9 +810,10 @@ first — a replayed definition that would kill PID 1 is refused like a typed on
 
 ** What it does not catch
 
-A definition that is fine to *load* and wrong to *call*. Redefine =draw-browser=
-with an infinite loop in its body and the trial passes — nothing calls it in the
-child — and the next frame hangs PID 1. The child has no screen, no input and no
+A definition that is fine to *load* and wrong to *call*. Redefine
+=draw-pane-expanded= (=draw-browser= when this was written) with an infinite loop in
+its body and the trial passes — nothing calls it in the child — and the next repair
+hangs PID 1. The child has no screen, no input and no
 event loop, so it cannot exercise what the definition will be used for. Catching
 that would mean the child running the *caller* — a frame, headless, the way
 [[file:../poc/render-frame.lisp][render-frame.lisp]] does on the host. Not attempted; it is the obvious next step

@@ -31,10 +31,10 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
-| =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. Drives the real =initramfs/= registry+model+present. |
-| =morph.lisp=     | =lol.morph=: Morphic's core — =morph= / =world= / =hand=, events, damage repair (=invalidate=, =world-repair=) and routing (=world-dispatch=). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]]. |
-| =morphic.lisp=   | the *desk*: the world the environment runs in — the whole tiled shell as one morph, trail windows (=SuperL-g=, a tab dragged out), the grab mode. *Backend-blind.* |
-| =clip-test.lisp= / =morphic-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals a full repair, and the right morphs drew (44 checks). =sbcl --script poc/…=; non-zero on failure. |
+| =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. A =pane= is a morph: it draws itself (breadcrumb, expanded panel, side column) and takes its own clicks. Drives the real =initramfs/= registry+model+present. |
+| =morph.lisp=     | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface= (a backing store its subtree draws into), events, damage repair (=invalidate=, =world-repair=) and routing (=world-dispatch=, each morph in its surface's coordinates). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]]. |
+| =morphic.lisp=   | the *desk*: the world the environment runs in — the tiled shell as a tree of morphs (tab strip, tray, trail area of pane morphs, status line), trail windows holding the same pane morphs (=SuperL-g=, a tab dragged out), the grab mode, the halo over the tree, damage by signature. *Backend-blind.* |
+| =clip-test.lisp= / =morphic-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals the whole tree painted from scratch, and the right morphs drew: a key in a pane repairs that pane (129 checks). =sbcl --script poc/…=; non-zero on failure. |
 | =widgets.lisp=   | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map. |
 | =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
@@ -111,9 +111,11 @@ collapses that to about a second:
 It loads the real stack in the real order — =registry= -> =model= -> =present= ->
 =canvas= -> =textview= -> =shell=, the same modules =build.sh= bakes into the image,
 minus the ones that want hardware — seeds the environment with =open-environment=
-(so tab 1 is your subject and tab 2 the Workspace, exactly as in the guest), and
-calls the *real* =draw-browser=. Nothing is mocked and nothing is re-implemented;
-if a frame looks right here it looks right on the panel.
+(so tab 1 is your subject and tab 2 the Workspace, exactly as in the guest), makes
+the *real* world (=make-desk=: the tab strip, the trail area of pane morphs, the
+status line — [[file:../doc/morphic.org][doc/morphic.org]] §12) and lets it repair itself into a canvas, every
+morph drawing itself as it does on the panel. Nothing is mocked and nothing is
+re-implemented; if a frame looks right here it looks right on the panel.
 
 *Why the pixels are trustworthy.* The guest does not re-render anything: =lol.fb=
 copies this very canvas — =#x00RRGGBB= words — into =/dev/fb0= byte for byte, which
@@ -125,8 +127,9 @@ Output defaults to =poc/out/frame.ppm= (already gitignored). PPM is deliberately
 dependency-free — a short ASCII header and raw RGB — and =pnmtopng= or =convert=
 makes a PNG if your viewer wants one.
 
-*Reaching a state that is not a root.* =-k= replays a script through the real
-=browser-key= / =browser-click=, so a frame can show a drilled pane, a split, or a
+*Reaching a state that is not a root.* =-k= replays a script through the real world's
+event routing (=lol.morph:world-dispatch=: keys to the focused pane's =browser-key=, a
+click to the morph under it), so a frame can show a drilled pane, a split, or a
 matrix cell's onion:
 
 #+begin_src sh
@@ -186,10 +189,11 @@ palette's colours could be fixed by looking at a frame rather than by guessing: 
 matched characters were being lit in the accent, which is also every function row's
 colour, so the highlight was invisible on exactly the rows that matter.
 
-The canvas is redrawn between script steps, because clicks hit-test against
-geometry that =draw-browser= records as it draws (=*crumb-rects*=, =*content-top*=,
-=*matrix-cells*=). That is deliberate: a scripted click therefore exercises the same
-draw/hit-test agreement a real one does, instead of testing a stale layout.
+The canvas is repaired between script steps, because clicks hit-test against
+geometry each morph records as it draws (a pane's =pane-rows=, =pane-body-top=,
+=pane-cells=; the tab strip's tabs). That is deliberate: a scripted click therefore
+exercises the same draw/hit-test agreement a real one does, instead of testing a stale
+layout.
 
 *What it does NOT cover*, and still needs the guest: input plumbing (evdev, the
 wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugger (=fb-browser.lisp=, not loaded

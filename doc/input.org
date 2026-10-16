@@ -130,7 +130,7 @@ Of the ~30 event types, the browser needs four. Constants from
 | =2= =EV_REL=    | =1= =REL_Y=         | delta, signed      | =(incf *cursor-y* val)=, clamped  |
 | =2= =EV_REL=    | =8= =REL_WHEEL=     | notches, ±1        | sum into =wheel= (see §6)         |
 | =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½) |
-| =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: =browser-click=    |
+| =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: a =:down= event, to the morph under the pointer (a pane's =pane-click=) |
 | =1= =EV_KEY=    | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up | a contact changed: forget the last pad position, and open or close a *tap* (§4½) |
 | =1= =EV_KEY=    | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta | =1= down =2= repeat =0= up | set =*ctrl-down*= / =*shift-down*= / =*super-down*= |
 | =0= =EV_SYN=    | =0= =SYN_REPORT=    | —                  | end of packet: apply the gathered position |
@@ -386,9 +386,11 @@ the pad down, and slide.
 - *The button's state, not just its press.* =read-mouse= used to report =BTN_LEFT=
   only as "a click happened". It now also keeps =*button-down*= — value 1 sets it,
   0 clears it — and the loop treats any pointer motion while it is set as a drag.
-- *Which view.* =browser-click= remembers the text view the press placed the caret
-  in (=*drag-tv*=); a drag extends that one even if the pointer wanders over another
-  pane.
+- *Which view.* The press goes to the morph under the pointer — the pane, whose
+  =pane-click= remembers the text view the press placed the caret in (=*drag-tv*=) —
+  and the world sends the drag to that same morph (the hand's capture), so a drag
+  extends that view even if the pointer wanders over another pane
+  ([[file:morphic.org][morphic.org]] §12.5).
 - *A slop of 3 pixels* (=+drag-slop+=) before the first extension. Pressing a
   clickpad rolls the fingertip, which nudges the pointer a pixel or two; without the
   slop, every press would select a character instead of placing the caret.

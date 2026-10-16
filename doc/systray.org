@@ -213,7 +213,8 @@ anything (the stage is the first), and it ticks every second. Redrawing the fram
 for it would be cheap — 3 ms under KVM, 5 ms on the laptop
 ([[file:framebuffer.org][framebuffer.org]] §9.4) — but it does not have to: the browser's loop wakes at
 the next wall-clock second ([[file:../initramfs/fb-browser.lisp::defun tray-timeout][=tray-timeout=]], from =sb-ext:get-time-of-day=), and
-[[file:../initramfs/fb-browser.lisp::defun tick-tray][=tick-tray=]] repaints only the tray's strip of the canvas and sends only that
+[[file:../poc/morphic.lisp::defun tick-tray][=tick-tray=]] repaints only the tray — a morph of its own since Morphic's §12
+([[file:morphic.org][morphic.org]]) — into the canvas and sends only that
 rectangle — the same economy as the pointer (framebuffer.org §9.5). If the pointer
 is parked over the tray it is put back on top. With =*clock-seconds*= nil the wake
 is once a minute.

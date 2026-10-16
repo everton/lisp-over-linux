@@ -39,12 +39,12 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 
 <h2>Rendering: one canvas, three ways out</h2>
 <figure>
-<svg viewBox="0 0 960 400" role="img" aria-label="Rendering pipeline: draw-browser calls the widgets (draw-panel, draw-list, draw-grid) and the textview's tv-draw; all of them write through lol.canvas primitives fill-rect and draw-string into one pixel vector of #x00RRGGBB words. That vector leaves through one of three backends: lol.fb:present-fb pwrites it to /dev/fb0 in the guest, lol.x11:present sends it with PutImage to an X server on the host, and render-frame.lisp writes it to a PPM file headless.">
+<svg viewBox="0 0 960 400" role="img" aria-label="Rendering pipeline: the world repairs what is damaged — each morph over a damaged rect draws itself: the tab strip, the tray, a breadcrumb, an expanded pane, a side pane, the status line, a window, an overlay — calling the widgets (draw-panel, draw-list, draw-grid) and the textview's tv-draw; all of them write through lol.canvas primitives fill-rect and draw-string into one pixel vector of #x00RRGGBB words. That vector leaves through one of three backends: lol.fb:present-fb pwrites it to /dev/fb0 in the guest, lol.x11:present sends it with PutImage to an X server on the host, and render-frame.lisp writes it to a PPM file headless.">
   <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
-  <text x="20" y="20" class="lbl">SHELL (what to draw)</text><text x="260" y="20" class="lbl">TOOLKIT (how)</text><text x="520" y="20" class="lbl">CANVAS (where)</text><text x="760" y="20" class="lbl">BACKEND (out)</text>
+  <text x="20" y="20" class="lbl">MORPHS (what to draw)</text><text x="260" y="20" class="lbl">TOOLKIT (how)</text><text x="520" y="20" class="lbl">CANVAS (where)</text><text x="760" y="20" class="lbl">BACKEND (out)</text>
   <rect class="box k-shell" x="20" y="40" width="200" height="160" rx="6"/>
-  <text x="30" y="62" class="title">draw-browser</text>
-  <text x="30" y="84" class="mono">draw-tabs + draw-tray</text><text x="30" y="100" class="mono">draw-crumb (per ancestor)</text><text x="30" y="116" class="mono">draw-pane-body</text><text x="30" y="132" class="mono">  list | text | matrix |</text><text x="30" y="148" class="mono">  image | stage</text><text x="30" y="164" class="mono">draw-status-line</text>
+  <text x="30" y="62" class="title">world-repair</text>
+  <text x="30" y="84" class="mono">tab strip, tray: draw-tabs</text><text x="30" y="100" class="mono">pane: draw-crumb |</text><text x="30" y="116" class="mono">  draw-pane-expanded</text><text x="30" y="132" class="mono">  (list text matrix image</text><text x="30" y="148" class="mono">   stage) | draw-pane-body</text><text x="30" y="164" class="mono">status line, windows</text>
   <text x="30" y="188" class="dim">overlays: Spotter, menus, halo</text>
   <rect class="box k-ui" x="260" y="40" width="210" height="72" rx="6"/><text x="270" y="62" class="title">lol.widgets</text><text x="270" y="80" class="mono">draw-panel draw-list</text><text x="270" y="96" class="mono">draw-grid draw-card scrim</text>
   <rect class="box k-ui" x="260" y="128" width="210" height="72" rx="6"/><text x="270" y="150" class="title">lol.textview</text><text x="270" y="168" class="mono">tv-draw: gutter, lexer</text><text x="270" y="184" class="mono">colours, caret, selection</text>
@@ -61,13 +61,19 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
   <path class="edge" d="M620,240 V202" marker-end="url(#ar)"/><text x="626" y="226" class="lbl">load-font, once</text>
   <rect class="box" x="260" y="240" width="210" height="60" rx="6"/><text x="270" y="260" class="title">poc/bdf2font.lisp</text><text x="270" y="278" class="dim">BDF → .lolf (host, at</text><text x="270" y="292" class="dim">development time)</text>
   <path class="edge dash" d="M470,270 H518" marker-end="url(#ar)"/>
-  <text x="20" y="340" class="lbl">The shell never calls a backend directly. It draws into the canvas it was given; whoever owns the loop decides where</text>
-  <text x="20" y="356" class="lbl">the canvas goes: run-browser-fb (guest), poc/run-browser.lisp (X11 host), poc/render-frame.lisp (file). Same pixels in all three.</text>
+  <text x="20" y="340" class="lbl">No morph calls a backend. Each draws into the canvas it is given (the screen's, or a window's backing store); whoever owns the loop</text>
+  <text x="20" y="356" class="lbl">decides where the screen's goes: run-browser-fb (guest), poc/run-browser.lisp (X11 host), poc/render-frame.lisp (file). Same pixels.</text>
 </svg>
 <figcaption>One pixel format serves every output. That is why a frame rendered on the host with
 <code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
 </figure>
 <ul>
+  <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §12): an object with bounds that
+    draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:601</span></a> redraws only what is damaged, and in each damaged rect only the
+    morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
+    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1342</span></a>), the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1543</span></a>), or the
+    column beside it. A key in a pane redraws that pane; what else changed is found by each morph's signature
+    (<a class="ref" data-ref="poc/morphic.lisp#desk-sync" href="../../poc/morphic.lisp"><code>desk-sync</code><span class="loc">poc/morphic.lisp:993</span></a>).</li>
   <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:78</span></a>,
     <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:464</span></a>: for each character, paint the pixels the glyph
     covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:418</span></a> reads
@@ -95,9 +101,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 <p>As of the multi-device input work (<a href="../input.org">input.org</a> §4¾, merged 2026-10-12), every keyboard and every
 pointer is open at once, and devices plugged in later are picked up.</p>
 <figure>
-<svg viewBox="0 0 960 430" role="img" aria-label="Input pipeline: keyboards produce cooked bytes on the console tty, fd 0, merged across all keyboards by the kernel, and separately evdev events on one node each; mice and touchpads produce evdev events on their own nodes. An inotify watch on /dev/input reports nodes appearing. poll-input-once polls the tty, the watch and every open device. Tty bytes go through fb-read-key to a key and state; ready keyboards are drained by read-keyboards into per-device modifier state, ORed into shared flags; ready pointers are drained by read-pointers, each through read-mouse with its own state, all moving one cursor. A watch event or a hung-up device is housekeeping: rescan-input-devices or drop-input-dev. Keys go to browser-key; clicks to browser-click; wheel to browser-scroll; right and middle buttons to the context menu and the halo.">
+<svg viewBox="0 0 960 430" role="img" aria-label="Input pipeline: keyboards produce cooked bytes on the console tty, fd 0, merged across all keyboards by the kernel, and separately evdev events on one node each; mice and touchpads produce evdev events on their own nodes. An inotify watch on /dev/input reports nodes appearing. poll-input-once polls the tty, the watch and every open device. Tty bytes go through fb-read-key to a key and state; ready keyboards are drained by read-keyboards into per-device modifier state, ORed into shared flags; ready pointers are drained by read-pointers, each through read-mouse with its own state, all moving one cursor. A watch event or a hung-up device is housekeeping: rescan-input-devices or drop-input-dev. All of it becomes events the world routes: keys to the focused pane's browser-key; a press to the morph under the pointer, a pane's pane-click; the wheel to the pane under it, browser-scroll; right and middle buttons to the context menu and the halo.">
   <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
-  <text x="20" y="20" class="lbl">HARDWARE</text><text x="180" y="20" class="lbl">KERNEL GIVES US</text><text x="410" y="20" class="lbl">DECODE (fb-browser.lisp)</text><text x="720" y="20" class="lbl">SHELL (shell.lisp)</text>
+  <text x="20" y="20" class="lbl">HARDWARE</text><text x="180" y="20" class="lbl">KERNEL GIVES US</text><text x="410" y="20" class="lbl">DECODE (fb-browser.lisp)</text><text x="720" y="20" class="lbl">WORLD → MORPHS</text>
   <rect class="box" x="20" y="40" width="130" height="120" rx="6"/><text x="30" y="62" class="title">keyboards</text><text x="30" y="80" class="dim">laptop's own +</text><text x="30" y="94" class="dim">external USB</text>
   <rect class="box" x="20" y="230" width="130" height="70" rx="6"/><text x="30" y="252" class="title">pointers</text><text x="30" y="270" class="dim">mouse, touchpad,</text><text x="30" y="284" class="dim">usb-tablet</text>
   <rect class="box k-kernel" x="180" y="40" width="200" height="50" rx="6"/><text x="190" y="60" class="title">fd 0: the console tty</text><text x="190" y="78" class="dim">bytes, all keyboards merged</text>
@@ -112,8 +118,8 @@ pointer is open at once, and devices plugged in later are picked up.</p>
   <rect class="box" x="410" y="316" width="275" height="70" rx="5"/><text x="420" y="334" class="title">housekeeping, never returned</text><text x="420" y="350" class="mono">rescan-input-devices</text><text x="420" y="366" class="mono">drop-input-dev (POLLHUP)</text>
   <path class="edge" d="M380,65 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,135 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,265 H408" marker-end="url(#ar2)"/><path class="edge" d="M380,355 H408" marker-end="url(#ar2)"/>
   <path class="edge dash" d="M547,114 V106" marker-end="url(#ar2)"/><text x="555" y="111" class="lbl">ORed into state</text>
-  <rect class="box k-shell" x="720" y="60" width="220" height="44" rx="5"/><text x="730" y="78" class="title">browser-key</text><text x="730" y="94" class="dim">every key, routed by pane kind</text>
-  <rect class="box k-shell" x="720" y="190" width="220" height="40" rx="5"/><text x="730" y="214" class="title">browser-click</text>
+  <rect class="box k-shell" x="720" y="60" width="220" height="44" rx="5"/><text x="730" y="78" class="title">browser-key</text><text x="730" y="94" class="dim">every key, to the focused pane</text>
+  <rect class="box k-shell" x="720" y="190" width="220" height="40" rx="5"/><text x="730" y="214" class="title">a press: pane-click</text>
   <rect class="box k-shell" x="720" y="238" width="220" height="40" rx="5"/><text x="730" y="262" class="title">browser-scroll</text>
   <rect class="box k-shell" x="720" y="286" width="220" height="48" rx="5"/><text x="730" y="304" class="title">context menu / halo</text><text x="730" y="322" class="dim">right / middle (Alt-click)</text>
   <path class="edge hot" d="M685,82 H718" marker-end="url(#ar2)"/>
@@ -123,7 +129,8 @@ pointer is open at once, and devices plugged in later are picked up.</p>
 <figcaption>One <code>poll</code> over the tty, the watch and every device. The kernel keeps one shift state for all
 keyboards, so the browser's modifiers are the OR of every keyboard's held keys too: Ctrl on the external keyboard plus a
 touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry points are fed from X events instead
-(<code>poc/run-browser.lisp</code>).</figcaption>
+(<code>poc/run-browser.lisp</code>). Either way the loop only decodes: the world routes each event to the morph it is
+for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/morph.lisp"><code>world-dispatch</code><span class="loc">poc/morph.lisp:682</span></a>).</figcaption>
 </figure>
 <ul>
   <li>Finding devices without udev: <a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:213</span></a> reads
@@ -143,8 +150,9 @@ touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry 
   <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:421</span></a>). A touchpad's motion is integrated as relative
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:549</span></a>), and a tap is a click.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#browser-click" href="../../poc/shell.lisp"><code>browser-click</code><span class="loc">poc/shell.lisp:2775</span></a> decides what was under the pointer from the hit maps of the
-    <em>last drawn frame</em>: tabs, crumbs, list rows, text, matrix cells.</li>
+  <li>A press goes to the morph under the pointer, in that morph's coordinates: a tab, a breadcrumb, a window's title
+    bar — or a pane, whose <a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:2868</span></a> decides what in it was under the pointer from what
+    <em>that pane</em> recorded when it last drew: its list rows, its text, its matrix cells, its split.</li>
 </ul>
 
 <div class="pager"><a href="present.html">← present and the shell</a><a href="live.html">Live editing →</a></div>

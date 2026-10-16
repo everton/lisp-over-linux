@@ -368,7 +368,8 @@ its =cmap= covers and draws =.notdef= for the rest.
 - *Guest, the machine:* =LOL_GUEST_DISK=test-disk.img sbcl --script check-font.lisp=
   boots the image and presses the keys through QMP: the TTF loaded, the default size,
   =SuperL-= / - / 0=, =C-x C-= / C-- / C-0= and the bare repeat, the row height
-  following the cell, =draw-browser= having run, the screendump differing, the status
+  following the cell, the world having repaired the screen (=draw-browser= having run,
+  before Morphic's §12 made every pane a morph), the screendump differing, the status
   line, a letter typed after the chord not being swallowed, and the size landing in
   =~/.config/lol/settings= (diskless: that nothing is written). 18/18 at tag #26.
   =check-scroll=, =check-clipboard= and =check-pointer= pass at 18 px

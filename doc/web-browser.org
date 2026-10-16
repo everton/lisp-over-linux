@@ -558,7 +558,8 @@ any other file.
 
 [[file:../poc/web-test.lisp][poc/web-test.lisp]] (host, =sbcl --script
 poc/web-test.lisp=) drives the host's Chrome through the shell's own entry points
-(=browser-click=, =browser-key=, =browser-scroll=) and reads every answer back from
+(a press through the world to the page's pane — =browser-click= until Morphic's §12 —
+=browser-key=, =browser-scroll=) and reads every answer back from
 the page with =Runtime.evaluate=, never from pixels. It checks: start and first
 page, a decoded frame, the title in the tab strip, the viewport equal to the pane, a
 link click, back, typing and Backspace, =C-a C-c= into =lol.clipboard=, =C-v= from it,
