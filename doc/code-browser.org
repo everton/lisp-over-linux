@@ -2333,6 +2333,12 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   =changed-definitions= gives the set, each defn's =:source= is the text to write.
   /(2026-10-03: the storage target exists since tag #25 — the plan, with options and
   open questions, is [[file:session-persistence.org][session-persistence.org]].)/
+  [FILE-OUT DONE, 2026-10-16 — no longer deferred] [[file:../initramfs/file-out.lisp][file-out.lisp]] writes each
+  changed definition back into the checkout's own =.lisp= file (verbatim, exactly-once
+  match; the rest to =~/.local/share/lol/changes-unfolded.lisp=), and the change set
+  itself now survives power-off: [[file:../initramfs/journal.lisp][journal.lisp]] appends every Accept to
+  =~/.local/share/lol/changes.lisp= and replays it at boot; the journal view (Spotter
+  "journal") holds =F= file out. Status: [[file:session-persistence.org][session-persistence.org]] §8.
 - *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
   =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; =SuperL-m= — it was the browser's
   default root until 2026-10-02, when the environment started opening on the

@@ -48,6 +48,9 @@ CATS=(
 # requests, when, what to keep — a design, though it speaks wpa_supplicant's
 # control protocol). poc/terminal.lisp (the VT engine) is conformance too — its
 # floor is xterm's behaviour, not our design; pty.lisp and terminal-pane.lisp are ours.
+# Persistence (journal.lisp, file-out.lisp, desk.lisp) is "ours": the record shape,
+# the replay rules and the desk's reference whitelist are designs
+# (doc/session-persistence.org), even though they print with the Lisp printer.
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp host-client/mock-anthropic.lisp"

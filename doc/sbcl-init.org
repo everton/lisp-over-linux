@@ -14,7 +14,7 @@ leave it or it dies — [[file:../initramfs/supervisor.lisp::defun print-menu][s
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the
 Workspace ([[file:../initramfs/fb-browser.lisp::defun run-browser-fb][run-browser-fb]]'s default root; the module index is =SuperL-m=), (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
 (w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
-the network REPL, (s) power off.
+the network REPL, (s) shut down (asking whether to save the desk first).
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -64,6 +64,13 @@ below; =SuperL-↵= opens a shell. It added a =repl= role to =init-toplevel= (th
 image re-executed as a Lisp REPL on a terminal, the shell of last resort) and made
 preinit create =/dev/fd= and =/dev/std{in,out,err}=, which devtmpfs lacks and
 bash's =<(…)= needs.
+Userland, 2026-10-16: *session persistence* ([[file:session-persistence.org][session-persistence.org]]).
+=journal.lisp=, =file-out.lisp=, =desk.lisp= (after =net-views.lisp=, before the
+supervisor). =supervisor-main= calls =boot-replay-journal= just before opening the
+environment; =build.sh= bakes a =*build-stamp*= (the revision, =+dirty=, UTC time)
+into the heap; =SuperL-q= offers "Save and shut down" / "Shut down without saving"
+(or "nothing is kept" without a disk), and the menu's =s= asks the same in text.
+=lol.replay=off= on the cmdline boots without replay.
 Userland, 2026-10-16, after a session froze on the laptop: *crash diagnostics*
 ([[file:diagnostics.org][diagnostics.org]]). =session-log.lisp= keeps =~/.lol/log/= (a session log with a
 pulse, STALL reports with every thread's backtrace, the agent's turns and calls;
@@ -238,6 +245,9 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/http.lisp][=http.lisp=]]        | the HTTP/1.1 client, =http-request= (chunked, redirects, streaming) ([[file:networking.org][networking.org]] §2e) |
   | [[file:../initramfs/wifi.lisp][=wifi.lisp=]]        | Wi-Fi: rfkill, the host's =wpa_supplicant= and its control socket, saved / imported networks, the systray item ([[file:networking.org][networking.org]] §7) |
   | [[file:../initramfs/net-views.lisp][=net-views.lisp=]]   | the network as a subject: =SuperL-n=, the Spotter's "network"/"wifi" (uses shell + wifi) |
+  | [[file:../initramfs/journal.lisp][=journal.lisp=]]     | the change journal: every Accept appended (fsync'd) to =~/.local/share/lol/changes.lisp=, replayed at boot one guarded entry at a time; the journal view ([[file:session-persistence.org][session-persistence.org]]) |
+  | [[file:../initramfs/file-out.lisp][=file-out.lisp=]]    | file-out: write each changed definition back into its =.lisp= file in the checkout, verbatim |
+  | [[file:../initramfs/desk.lisp][=desk.lisp=]]        | the desk: tabs, Workspace text, recents saved to =~/.local/state/lol/= and restored at boot; the autosave service; the console's =s= |
   | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
 Ordering constraints, so you know which moves are safe: =line-editor= must precede
@@ -404,6 +414,8 @@ generates:
   (load-recording ".../initramfs/model.lisp")
   ;;  …
   (load-recording ".../initramfs/supervisor.lisp")
+  (set-utc-offset "+0100")                      ; the build host's zone (doc/systray.org)
+  (setf *build-stamp* "a392d7d+dirty 2026-10-16T10:47:00Z") ; journal.lisp's build stamp
   (sb-ext:save-lisp-and-die ".../initramfs/lisp-init"
     :executable t :toplevel #'init-toplevel)
   LISP

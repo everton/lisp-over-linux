@@ -48,78 +48,78 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     "sticky" Meta for the next key.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1364</span></a></span>
     The loop ORs in the held modifiers from evdev and calls <code>browser-key</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2295</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2316</span></a></span>
     The first real branch: Meta and <code>.</code> in a pane with a textview. It comes before the editing branch, or the
     "." would be typed into the buffer.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#jump-at-point" href="../../poc/shell.lisp"><code>jump-at-point</code><span class="loc">poc/shell.lisp:2571</span></a> →
-    <a class="ref" data-ref="poc/shell.lisp#token-at-point" href="../../poc/shell.lisp"><code>token-at-point</code><span class="loc">poc/shell.lisp:2559</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#jump-at-point" href="../../poc/shell.lisp"><code>jump-at-point</code><span class="loc">poc/shell.lisp:2592</span></a> →
+    <a class="ref" data-ref="poc/shell.lisp#token-at-point" href="../../poc/shell.lisp"><code>token-at-point</code><span class="loc">poc/shell.lisp:2580</span></a></span>
     Takes the token under the caret, or the one just before it, because the caret usually rests after a word. A token
-    is a run of non-delimiter characters (<a class="ref" data-ref="poc/shell.lisp#token-span" href="../../poc/shell.lisp"><code>token-span</code><span class="loc">poc/shell.lisp:2521</span></a>). There is no reader
+    is a run of non-delimiter characters (<a class="ref" data-ref="poc/shell.lisp#token-span" href="../../poc/shell.lisp"><code>token-span</code><span class="loc">poc/shell.lisp:2542</span></a>). There is no reader
     involved, so <code>pkg:name</code> and <code>*var*</code> both work.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#resolve-symbol" href="../../poc/shell.lisp"><code>resolve-symbol</code><span class="loc">poc/shell.lisp:2538</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#resolve-symbol" href="../../poc/shell.lisp"><code>resolve-symbol</code><span class="loc">poc/shell.lisp:2559</span></a></span>
     Finds an <em>existing</em> symbol: with a package prefix, in that package; otherwise CL-USER, then CL. It never interns,
-    so clicking a typo creates nothing. <a class="ref" data-ref="poc/shell.lisp#jumpable-p" href="../../poc/shell.lisp"><code>jumpable-p</code><span class="loc">poc/shell.lisp:2554</span></a> requires a function, a
+    so clicking a typo creates nothing. <a class="ref" data-ref="poc/shell.lisp#jumpable-p" href="../../poc/shell.lisp"><code>jumpable-p</code><span class="loc">poc/shell.lisp:2575</span></a> requires a function, a
     variable or a class.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:169</span></a></span>
     Pushes <code>(subj-defn sym)</code>. The jump is just a drill, so <kbd>C-g</kbd> undoes it.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#present@subj-defn" href="../../initramfs/present.lisp"><code>(present subj-defn)</code><span class="loc">initramfs/present.lisp:431</span></a></span>
-    Two outcomes. If the registry has the source (<a class="ref" data-ref="initramfs/registry.lisp#source-of" href="../../initramfs/registry.lisp"><code>source-of</code><span class="loc">initramfs/registry.lisp:239</span></a>), the view
+    Two outcomes. If the registry has the source (<a class="ref" data-ref="initramfs/registry.lisp#source-of" href="../../initramfs/registry.lisp"><code>source-of</code><span class="loc">initramfs/registry.lisp:262</span></a>), the view
     is <code>:source</code> and editable. If not, it is a builtin, and
-    <a class="ref" data-ref="initramfs/registry.lisp#show-reference" href="../../initramfs/registry.lisp"><code>show-reference</code><span class="loc">initramfs/registry.lisp:256</span></a> prints what the image knows: kind, lambda list,
+    <a class="ref" data-ref="initramfs/registry.lisp#show-reference" href="../../initramfs/registry.lisp"><code>show-reference</code><span class="loc">initramfs/registry.lisp:279</span></a> prints what the image knows: kind, lambda list,
     docstring. When SBCL's source tree is on the mounted disk, it also appends the real source text
     (<a class="ref" data-ref="initramfs/sbcl-source.lisp#sbcl-definition-source" href="../../initramfs/sbcl-source.lisp"><code>sbcl-definition-source</code><span class="loc">initramfs/sbcl-source.lisp:234</span></a>), cut out of the file with a textual
     scanner that never <code>READ</code>s SBCL's code.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:65</span></a></span>
     Wraps the text in a textview, focused only for <code>:source</code>. The loop redraws. <kbd>M-,</kbd> is the same path
-    ending in <code>(subj-xref :senders sym)</code> (<a class="ref" data-ref="poc/shell.lisp#senders-at-point" href="../../poc/shell.lisp"><code>senders-at-point</code><span class="loc">poc/shell.lisp:2583</span></a>), answered by
-    <code>sb-introspect:who-calls</code> (<a class="ref" data-ref="initramfs/registry.lisp#senders" href="../../initramfs/registry.lisp"><code>senders</code><span class="loc">initramfs/registry.lisp:360</span></a>).</li>
+    ending in <code>(subj-xref :senders sym)</code> (<a class="ref" data-ref="poc/shell.lisp#senders-at-point" href="../../poc/shell.lisp"><code>senders-at-point</code><span class="loc">poc/shell.lisp:2604</span></a>), answered by
+    <code>sb-introspect:who-calls</code> (<a class="ref" data-ref="initramfs/registry.lisp#senders" href="../../initramfs/registry.lisp"><code>senders</code><span class="loc">initramfs/registry.lisp:383</span></a>).</li>
 </ol>
 
 <h2 id="doit">2 · How does the Workspace evaluate a form (<kbd>C-x C-e</kbd>)?</h2>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2295</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2316</span></a></span>
     The Workspace is an editor pane (<a class="ref" data-ref="poc/shell.lisp#editor-pane-p" href="../../poc/shell.lisp"><code>editor-pane-p</code><span class="loc">poc/shell.lisp:116</span></a>), so the key goes to
-    <a class="ref" data-ref="poc/shell.lisp#edit-pane-key" href="../../poc/shell.lisp"><code>edit-pane-key</code><span class="loc">poc/shell.lisp:2179</span></a>, which wraps every edit in an undo record.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#edit-pane-command" href="../../poc/shell.lisp"><code>edit-pane-command</code><span class="loc">poc/shell.lisp:2210</span></a></span>
+    <a class="ref" data-ref="poc/shell.lisp#edit-pane-key" href="../../poc/shell.lisp"><code>edit-pane-key</code><span class="loc">poc/shell.lisp:2200</span></a>, which wraps every edit in an undo record.</li>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#edit-pane-command" href="../../poc/shell.lisp"><code>edit-pane-command</code><span class="loc">poc/shell.lisp:2231</span></a></span>
     <kbd>C-x</kbd> only sets <code>*pending-prefix*</code> to <code>:c-x</code> and returns. The next key, <kbd>C-e</kbd>, finds the
     prefix and calls <code>workspace-do-it</code>. This is how every chord works: a tiny state machine of one variable.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#form-before-point" href="../../poc/shell.lisp"><code>form-before-point</code><span class="loc">poc/shell.lisp:568</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#form-before-point" href="../../poc/shell.lisp"><code>form-before-point</code><span class="loc">poc/shell.lisp:587</span></a></span>
     Reads forms from the start of the buffer to the caret and keeps the last complete one. A fresh sentinel tells "read
     nothing" apart from "read <code>NIL</code>". A bare <code>nil</code> in the buffer once hid every form below it.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#ws-eval" href="../../poc/shell.lisp"><code>ws-eval</code><span class="loc">poc/shell.lisp:608</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#ws-eval" href="../../poc/shell.lisp"><code>ws-eval</code><span class="loc">poc/shell.lisp:627</span></a></span>
     <code>eval</code> with <code>*standard-output*</code> bound to a string stream, inside a <code>handler-case</code> on
     <code>serious-condition</code>. It returns success, value and output, and never signals.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#workspace-do-it" href="../../poc/shell.lisp"><code>workspace-do-it</code><span class="loc">poc/shell.lisp:634</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#workspace-do-it" href="../../poc/shell.lisp"><code>workspace-do-it</code><span class="loc">poc/shell.lisp:653</span></a></span>
     Writes <code>form =&gt; value</code> to <code>*browser-status*</code>. The redraw puts it in the status line
-    (<a class="ref" data-ref="poc/shell.lisp#draw-status-line" href="../../poc/shell.lisp"><code>draw-status-line</code><span class="loc">poc/shell.lisp:1539</span></a>). Print it, Inspect it and Debug it share steps 3 and 4
+    (<a class="ref" data-ref="poc/shell.lisp#draw-status-line" href="../../poc/shell.lisp"><code>draw-status-line</code><span class="loc">poc/shell.lisp:1558</span></a>). Print it, Inspect it and Debug it share steps 3 and 4
     and differ only here.</li>
 </ol>
 
 <h2 id="accept">3 · How does <kbd>C-c C-c</kbd> change the running image?</h2>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#edit-pane-command" href="../../poc/shell.lisp"><code>edit-pane-command</code><span class="loc">poc/shell.lisp:2210</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#edit-pane-command" href="../../poc/shell.lisp"><code>edit-pane-command</code><span class="loc">poc/shell.lisp:2231</span></a></span>
     <kbd>C-c</kbd> then <kbd>C-c</kbd> in an editable pane calls <code>accept-pane</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2073</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2092</span></a></span>
     A source pane gives the whole buffer, plus the name, kind and method label from
     <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:797</span></a>. The Workspace gives only the form before point,
     and that form names itself.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/registry.lisp#accept-package" href="../../initramfs/registry.lisp"><code>accept-package</code><span class="loc">initramfs/registry.lisp:172</span></a></span>
     The text is read in the package its original was read in. Without this, an edit of a <code>lol.textview</code> function would
     silently define a CL-USER twin.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:192</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:207</span></a></span>
     <code>(eval form)</code> compiles the form and replaces the function object, so the next call runs the new code. Then the
     bookkeeping: the old text goes onto <code>defn-versions</code>, or a new DEFN is made with <code>born t</code>.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#present@subj-change-set" href="../../initramfs/present.lisp"><code>(present subj-change-set)</code><span class="loc">initramfs/present.lisp:880</span></a></span>
-    The change set is <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:341</span></a>: every DEFN with versions or
+    The change set is <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:364</span></a>: every DEFN with versions or
     born. Find it with <kbd>SuperL</kbd>-<kbd>Space</kbd> "change set", or the supervisor menu's <code>c</code>.</li>
 </ol>
 
 <h2 id="preview">4 · How does a file preview get decoded?</h2>
 <p>Open the file manager (<kbd>SuperL</kbd>-<kbd>f</kbd>), select a PNG, and the right column shows it.</p>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-browser" href="../../poc/shell.lisp"><code>draw-browser</code><span class="loc">poc/shell.lisp:1424</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-browser" href="../../poc/shell.lisp"><code>draw-browser</code><span class="loc">poc/shell.lisp:1443</span></a></span>
     The nav split: the selected row has a subject (<code>subj-file</code>), so the right column needs a preview.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1286</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1305</span></a></span>
     Caches one preview pane per subject and rebuilds it only when the selection moves:
     <code>(open-pane subject :preview t)</code>, which calls <code>present-preview</code>, not <code>present</code>.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#file-view" href="../../initramfs/file-views.lisp"><code>file-view</code><span class="loc">initramfs/file-views.lisp:652</span></a></span>
@@ -133,46 +133,46 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     <code>lol.inflate</code>. JPEG, PSD and HDR go to <a class="ref" data-ref="poc/image.lisp#decode-stbi" href="../../poc/image.lisp"><code>decode-stbi</code><span class="loc">poc/image.lisp:866</span></a>, which loads
     <code>/usr/lib/lol/libstbi.so</code> the first time it is needed (<a class="ref" data-ref="poc/image.lisp#stbi-available-p" href="../../poc/image.lisp"><code>stbi-available-p</code><span class="loc">poc/image.lisp:843</span></a>).
     Either way the result is <code>#x00RRGGBB</code> words, the canvas's own format. It never signals.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-image-body" href="../../poc/shell.lisp"><code>draw-image-body</code><span class="loc">poc/shell.lisp:1372</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-image-body" href="../../poc/shell.lisp"><code>draw-image-body</code><span class="loc">poc/shell.lisp:1391</span></a></span>
     The view's kind is <code>:image</code> and its data holds the pixels. The shell fits them to the pane
-    (<a class="ref" data-ref="poc/shell.lisp#scaled-pixels" href="../../poc/shell.lisp"><code>scaled-pixels</code><span class="loc">poc/shell.lisp:1350</span></a>, using <code>lol.image:scale-to-fit</code> when that package is
+    (<a class="ref" data-ref="poc/shell.lisp#scaled-pixels" href="../../poc/shell.lisp"><code>scaled-pixels</code><span class="loc">poc/shell.lisp:1369</span></a>, using <code>lol.image:scale-to-fit</code> when that package is
     loaded) and copies them into the canvas. Why JPEG is C and the rest is Lisp: <a href="../previews.org">previews.org</a>.</li>
 </ol>
 
 <h2 id="spotter">5 · How does the Spotter find something?</h2>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2295</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2316</span></a></span>
     <kbd>SuperL</kbd>-<kbd>Space</kbd>: the Super branch calls <code>run-spotter-fb</code> through <code>funcall</code> and
     <code>fboundp</code>, because the shell loads before <code>fb-browser.lisp</code> and also runs without it.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2512</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-spotter-fb" href="../../initramfs/fb-browser.lisp"><code>run-spotter-fb</code><span class="loc">initramfs/fb-browser.lisp:2516</span></a></span>
     A modal loop over the same canvas and the same input. It collects candidates once and re-filters on each keystroke.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#spotter-candidates" href="../../initramfs/present.lisp"><code>spotter-candidates</code><span class="loc">initramfs/present.lisp:219</span></a></span>
     Surfaces, every module, every package, every registry name (a generic function opens its own view), plus whatever the
     functions on <a class="ref" data-ref="initramfs/present.lisp#*spotter-sources*" href="../../initramfs/present.lisp"><code>*spotter-sources*</code><span class="loc">initramfs/present.lisp:277</span></a> add. The tour is added there
     (<a class="ref" data-ref="initramfs/tour.lisp#&quot;(pushnew (lambda ()&quot;" data-label="tour's source" href="../../initramfs/tour.lisp"><code>tour's source</code><span class="loc">initramfs/tour.lisp:152</span></a>).</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#spotter-results" href="../../poc/shell.lisp"><code>spotter-results</code><span class="loc">poc/shell.lisp:1632</span></a> →
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#spotter-results" href="../../poc/shell.lisp"><code>spotter-results</code><span class="loc">poc/shell.lisp:1651</span></a> →
     <a class="ref" data-ref="initramfs/present.lisp#spotter-filter" href="../../initramfs/present.lisp"><code>spotter-filter</code><span class="loc">initramfs/present.lisp:309</span></a></span>
     A query that looks like a path completes a folder instead. Otherwise matches are ranked exact &lt; prefix &lt; word
     boundary &lt; subsequence (<a class="ref" data-ref="initramfs/present.lisp#spotter-score" href="../../initramfs/present.lisp"><code>spotter-score</code><span class="loc">initramfs/present.lisp:208</span></a>), then banded into groups.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-spotter-card" href="../../poc/shell.lisp"><code>draw-spotter-card</code><span class="loc">poc/shell.lisp:1697</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#draw-spotter-card" href="../../poc/shell.lisp"><code>draw-spotter-card</code><span class="loc">poc/shell.lisp:1716</span></a></span>
     The drawing lives in the shell, so <code>render-frame --spotter</code> can draw it on the host. <kbd>Enter</kbd> calls
     <code>new-trail</code>, which opens a new tab.</li>
 </ol>
 
 <h2 id="halo">6 · "Who drew this pixel?" — the halo</h2>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#note-drawn" href="../../poc/shell.lisp"><code>note-drawn</code><span class="loc">poc/shell.lisp:753</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#note-drawn" href="../../poc/shell.lisp"><code>note-drawn</code><span class="loc">poc/shell.lisp:772</span></a></span>
     While drawing, each drawing function records what it drew where: <code>(x y w h object drawers label)</code> in
     <code>*drawn*</code>. Morphic gets this for free because every on-screen thing is an object. Here drawing is plain
     functions, so they report it themselves.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3441</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-middle-click" href="../../poc/shell.lisp"><code>browser-middle-click</code><span class="loc">poc/shell.lisp:3462</span></a></span>
     A middle click (or Alt-click) in text you can edit pastes PRIMARY. Anywhere else it opens the halo.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#drawn-layers" href="../../poc/shell.lisp"><code>drawn-layers</code><span class="loc">poc/shell.lisp:3212</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#drawn-layers" href="../../poc/shell.lisp"><code>drawn-layers</code><span class="loc">poc/shell.lisp:3233</span></a></span>
     Every recorded rectangle under the point, smallest first, so you can walk outward from a word to its row, its pane
     and the screen.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3234</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3255</span></a></span>
     The handles: Inspect the object, Code (the function that drew it), Source, and so on. Each one is a command.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2314</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-chooser-fb" href="../../initramfs/fb-browser.lisp"><code>run-chooser-fb</code><span class="loc">initramfs/fb-browser.lisp:2318</span></a></span>
     The framebuffer's chooser draws the halo and runs the chosen handle. Try it on the host with
     <code>render-frame.lisp modules --halo 300,200</code>.</li>
 </ol>

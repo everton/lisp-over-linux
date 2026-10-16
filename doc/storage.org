@@ -331,6 +331,17 @@ and the image is identical for the next run. The older checks don't ask, so they
 keep testing the diskless, root-run system they were written for (all five still
 pass at #25).
 
+*One exception, for persistence (2026-10-16).* A test of "does the next boot see
+what this one saved" cannot use =snapshot=on=. [[file:../check-persist.lisp][=check-persist.lisp=]] therefore
+copies =test-disk.img= (=cp --sparse=always=) into its scratch directory and attaches
+/that copy/ writable (the harness's =*disk-copy*=); the copy is deleted at the end,
+and the pristine image is never opened for writing. What the session keeps lives in
+the user's home, owned by the user like every other write here:
+=~/.local/share/lol/changes.lisp= (the journal), =changes-unfolded.lisp=,
+=changes-damaged.lisp=, and =~/.local/state/lol/desk.lisp= (+ =desk-autosave.lisp=)
+— [[file:session-persistence.org][session-persistence.org]] §3. All of it is written before =release-disk=
+makes =/home= read-only, and none of it on a diskless boot.
+
 The same image backs the file manager's screenshots: [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]]
 attaches it, =snapshot=on=, for its disk scenes (=--scene files=, =files-archive=,
 =spotter-path=) and for no others ([[file:file-manager.org][file-manager.org]] shows them).
