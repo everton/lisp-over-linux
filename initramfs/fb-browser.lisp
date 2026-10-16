@@ -1652,14 +1652,17 @@
   "A SOLID vertical rail from Y0 to Y1 — a stack side that stands, drawn whole (not dashed)."
   (lol.canvas:fill-rect canvas x y0 2 (max 0 (- y1 y0)) color))
 
-(defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus)
+(defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus
+                      &optional (lsel 0) note)
   "Paint the debugger as the two-sided spine of §3: the CONDITION is the header; the
    RESTARTS stand in an amber rail down the LEFT (they are the way out — the first
    thing to read, and invoking one is the unwind); the CALL STACK runs down the RIGHT
    with a teal rail hugging its left (the signal rose here and NOTHING unwound — every
    frame still stands) and the innermost frame marked !.
    The selected frame's locals fill a strip along the bottom. FOCUS (:restarts /
-   :backtrace) says which rail the arrows drive."
+   :backtrace / :locals) says which list the arrows drive; LSEL is the selected local
+   and NOTE, when non-NIL, the outcome of the last set or restart (shown in the strip's
+   header, where the eye already is)."
   (lol.canvas:fill-rect canvas 0 0 w h *ui-bg*)
   (lol.canvas:fill-rect canvas 0 0 w (dbg-band-h) *dbg-title-bg*)
   (lol.canvas:draw-string canvas *bfont* "! DEBUGGER — an unhandled condition"
@@ -1692,7 +1695,7 @@
                                 pen top *ui-dim*))
       (let ((pen (lol.canvas:draw-string canvas *bfont* "CALL STACK" frame-x top
                                          (if (eq focus :backtrace) *ui-accent* *ui-dim*))))
-        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · M-. source" pen top *ui-dim*))
+        (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · R restarts · M-. source" pen top *ui-dim*))
       (incf top (+ (line-h) 5))
       ;; a rule divides the two sides; a dim-amber restart rail (the unwind) faces a
       ;; mirrored SOLID teal signal rail (the stack stands) — §3's two forces, left and right.
@@ -1731,10 +1734,19 @@
       ;; --- bottom strip: the locals of the selected frame ---
       (let ((ly (- h +dbg-locals-h+)))
         (lol.canvas:fill-rect canvas 0 ly w 1 *ui-rule*)
-        (lol.canvas:draw-string canvas *bfont*
-          (dbg-fit (format nil "locals of frame ~d  ·  ~a" fsel (nth fsel backtrace)) (- w 24))
-          12 (+ ly 7) *ui-accent*)
-        (draw-dbg-locals canvas 12 (+ ly (line-h) 13) w h locals)))))
+        (let ((pen (lol.canvas:draw-string canvas *bfont*
+                     (dbg-fit (format nil "LOCALS of frame ~d  ·  ~a" fsel (nth fsel backtrace))
+                              (floor (- w 24) 2))
+                     12 (+ ly 7) (if (eq focus :locals) *ui-accent* *ui-dim*))))
+          ;; the right half of the header: the outcome of the last action, else the keys
+          (lol.canvas:draw-string canvas *bfont*
+            (dbg-fit (if note
+                         (format nil "   ~a" note)
+                         "   ·  Tab here · Enter / C-c C-c sets · R restarts the frame")
+                     (- w pen 12))
+            pen (+ ly 7) (if note *ui-amber* *ui-dim*)))
+        (draw-dbg-locals canvas 12 (+ ly (line-h) 13) w h locals
+                         (and (eq focus :locals) lsel))))))
 
 (defun dbg-restart-at (x y n)
   "The restart-row index at screen X,Y — only within the restart rail (its left
@@ -1891,6 +1903,49 @@
           (dbg-invoke-with-value restarts i)
           (invoke-restart-interactively (getf r :restart))))))
 
+(defvar *dbg-state* nil
+  "While the framebuffer debugger is up: what it shows, as a plist (:condition :restarts
+   :frames :fsel :focus :locals :lsel :note) — names and strings only, refreshed on
+   every redraw, NIL once it has gone. For reading over the net REPL (check-debugger.lisp
+   drives the debugger with real keys and reads its answers here); nothing in the image
+   reads it back. A global rather than a binding, because the REPL is another thread.")
+
+(defun dbg-set-local (frame place)
+  "Ask for a new value for the frame local PLACE (a FRAME-LOCAL-PLACES plist) and write
+   it into the standing FRAME — the debugger's twin of the inspector's SET-FIELD
+   (shell.lisp), and the gesture of doc/inspector-history.org §5.4. The typed text is
+   READ and evaluated IN THE FRAME (EVAL-IN-FRAME-CONTEXT), so the frame's other locals
+   are in scope: (* x 3) means this frame's X. Returns the note for the strip's header:
+   the value READ BACK from the frame, or why nothing was written. Never signals —
+   this runs while an error is already being shown."
+  (let ((name (getf place :name)))
+    (cond
+      ((null place) "no local selected")
+      ((null (getf place :set))
+       (format nil "~a cannot be set: ~a" name (or (getf place :why) "no setter")))
+      (t
+       (let ((text (dbg-prompt-value name)))
+         (if (or (null text) (zerop (length (string-trim '(#\Space #\Tab) text))))
+             nil                                   ; cancelled: clear the note
+             (handler-case
+                 (let* ((new (let ((*standard-output* (make-broadcast-stream))
+                                   (*error-output* (make-broadcast-stream)))
+                               (eval-in-frame-context text frame)))
+                        (back (funcall (getf place :set) new)))
+                   (let ((*print-length* 8) (*print-level* 3))
+                     (format nil "~a = ~s  (read back from the frame)" name back)))
+               (serious-condition (c)
+                 (compact-value (format nil "set failed: ~a" c))))))))))
+
+(defun dbg-restart-frame (frame)
+  "R: unwind to FRAME and call its function again with the arguments it holds now
+   (model.lisp's RESTART-FRAME) — after setting an argument, the way to see the call
+   run again with it. A non-local exit on success; otherwise the note saying why not."
+  (let ((why (and frame (frame-restart-refusal frame))))
+    (cond ((null frame) "no frame selected")
+          (why (format nil "can't restart this frame: ~a" why))
+          (t (restart-frame frame)))))
+
 (defun run-debugger-fb (condition)
   "The debugger, with one more restart when the agent is in the image: ASK — explain
    this, and propose a fix (doc/agent.org §8.8, initramfs/agent-ui.lisp). It is a real
@@ -1912,23 +1967,39 @@
   "Draw CONDITION, its restarts and backtrace on the framebuffer and let the user pick
    a restart to invoke — and walk the backtrace to inspect any frame's locals. Reuses
    the browser's live canvas + input (published in *fb-*). Returns only by invoking a
-   restart (a non-local exit out of here). Tab moves focus between the restart column
-   (Enter/0-9/click invoke) and the backtrace (up-dn/click walk frames); the locals of
-   the selected frame are always shown beside it, and M-. opens the selected frame's
+   restart (a non-local exit out of here). Tab moves focus round the restart column
+   (Enter/0-9/click invoke), the backtrace (up-dn/click walk frames) and the selected
+   frame's LOCALS, always shown along the bottom: there up-dn/click pick one and Enter
+   or C-c C-c sets it in the standing frame (DBG-SET-LOCAL). R re-enters the selected
+   frame with the arguments it now holds (DBG-RESTART-FRAME); so set, then CONTINUE or
+   R, is how a fix is tried without leaving the error. M-. opens the selected frame's
    definition source in a modal viewer without unwinding the stack."
   (let* ((restarts (let ((rs (restart-list condition)))   ; ASK last: Enter keeps meaning
                      (flet ((ask-p (r) (eq (getf r :name) 'ask-the-agent)))   ; the condition's own first
                        (append (remove-if #'ask-p rs) (remove-if-not #'ask-p rs)))))
          (frame-objs (backtrace-frame-objects 40 4))    ; skip our own hook machinery
          (backtrace (mapcar #'frame-label frame-objs))
-         (rsel 0) (fsel 0) (focus :restarts) (pending-meta nil)
+         (rsel 0) (fsel 0) (lsel 0) (focus :restarts) (pending-meta nil)
+         (pending-cc nil) (note nil) (places nil)
          (canvas *fb-canvas*) (w *fb-xres*) (h *fb-yres*))
     (when (null restarts) (return-from %run-debugger-fb))  ; nothing to do; let it pass
-    (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
+    (unwind-protect                         ; however we leave, *DBG-STATE* goes too
+     (loop with dirty = t do                 ; redraw only on a change (see run-browser-fb)
       (when dirty
         ;; locals read fresh on each redraw — cheap, and a redraw only follows input
-        (let ((locals (ignore-errors (frame-locals (nth fsel frame-objs)))))
-          (draw-debugger canvas w h condition restarts backtrace locals rsel fsel focus))
+        ;; read as PLACES: the value and, for a settable local, how to write it
+        (setf places (frame-local-places (nth fsel frame-objs))
+              lsel (min lsel (max 0 (1- (length places)))))
+        (draw-debugger canvas w h condition restarts backtrace places rsel fsel focus
+                       lsel note)
+        (setf *dbg-state*
+              (list :condition (ignore-errors (princ-to-string condition))
+                    :restarts (mapcar (lambda (r) (getf r :name)) restarts)
+                    :frames backtrace :fsel fsel :focus focus
+                    :locals (mapcar (lambda (p) (list (getf p :name) (getf p :value)
+                                                      (and (getf p :set) t)))
+                                    places)
+                    :lsel lsel :note note))
         (show-frame canvas)
         (setf dirty nil))
       (multiple-value-bind (kb ms kev) (fbb-wait 0 *fb-mouse* *fb-kbd*)
@@ -1936,9 +2007,21 @@
         (when kb
           (setf dirty t)
           (multiple-value-bind (key state) (fb-read-key 0)
-           (let ((meta (or (lol.canvas:meta-p state) pending-meta)))
-            (setf pending-meta nil)
+           (let ((meta (or (lol.canvas:meta-p state) pending-meta))
+                 (ctrl (lol.canvas:ctrl-p state))
+                 (cc   pending-cc))
+            (setf pending-meta nil pending-cc nil note nil)
             (cond
+              ;; C-c C-c — set the selected local (as on an inspector field); the
+              ;; first C-c only arms the chord
+              ((and ctrl (member key '(#\c #\C)))
+               (if cc
+                   (setf focus :locals
+                         note (dbg-set-local (nth fsel frame-objs) (nth lsel places)))
+                   (setf pending-cc t)))
+              ;; R — restart the selected frame with the arguments it holds now
+              ((and (not ctrl) (not meta) (member key '(#\r #\R)))
+               (setf note (dbg-restart-frame (nth fsel frame-objs))))
               ;; M-. — view the selected frame's definition source (stack stays up).
               ((and meta (eql key #\.))
                (let ((name (frame-defn-name (nth fsel frame-objs))))
@@ -1946,16 +2029,22 @@
               ;; Esc = the Meta prefix (sticky); it must NOT quit the debugger.
               ((eq key :escape) (setf pending-meta t))
               ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G))) (dbg-abort restarts))
-              ((eq key :tab)                      ; move focus between the two lists
-               (setf focus (if (eq focus :backtrace) :restarts :backtrace)))
+              ((eq key :tab)                      ; restarts -> stack -> locals -> ...
+               (setf focus (case focus (:restarts :backtrace) (:backtrace :locals)
+                             (t :restarts))))
               ((eq key :up)
-               (if (eq focus :backtrace)
-                   (setf fsel (max 0 (1- fsel)))
-                   (setf rsel (max 0 (1- rsel)))))
+               (case focus
+                 (:backtrace (setf fsel (max 0 (1- fsel)) lsel 0))
+                 (:locals    (setf lsel (max 0 (1- lsel))))
+                 (t          (setf rsel (max 0 (1- rsel))))))
               ((eq key :down)
-               (if (eq focus :backtrace)
-                   (setf fsel (min (max 0 (1- (length frame-objs))) (1+ fsel)))
-                   (setf rsel (min (1- (length restarts)) (1+ rsel)))))
+               (case focus
+                 (:backtrace (setf fsel (min (max 0 (1- (length frame-objs))) (1+ fsel)) lsel 0))
+                 (:locals    (setf lsel (min (max 0 (1- (length places))) (1+ lsel))))
+                 (t          (setf rsel (min (1- (length restarts)) (1+ rsel))))))
+              ;; Enter on a local sets it; elsewhere it still invokes the restart
+              ((and (eq focus :locals) (member key '(:return #\Return)))
+               (setf note (dbg-set-local (nth fsel frame-objs) (nth lsel places))))
               ;; type a restart's number to select it (0-9) — the count is small
               ((and (characterp key) (char<= #\0 key #\9))
                (let ((i (- (char-code key) (char-code #\0))))
@@ -1968,12 +2057,15 @@
           (let ((ox *cursor-x*) (oy *cursor-y*))
             (if (read-mouse *fb-mouse* w h)
                 (let ((ri (dbg-restart-at *cursor-x* *cursor-y* (length restarts)))
-                      (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs))))
+                      (fi (dbg-frame-at *cursor-x* *cursor-y* (length frame-objs)))
+                      (li (dbg-local-at *cursor-x* *cursor-y* (length places))))
                   (setf dirty t)
                   (cond (ri (dbg-enter restarts ri))  ; a restart click invokes (asks if needed)
-                        (fi (setf focus :backtrace fsel fi))))  ; a frame click selects it
+                        (fi (setf focus :backtrace fsel fi lsel 0))  ; a frame click selects it
+                        (li (setf focus :locals lsel li))))  ; a local click selects it
                 (when (and (not dirty) (or (/= ox *cursor-x*) (/= oy *cursor-y*)))
-                  (move-cursor canvas ox oy)))))))))
+                  (move-cursor canvas ox oy)))))))
+      (setf *dbg-state* nil))))
 
 ;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------
 ;;; The keys are deliberately NOT shown as permanent chrome — SuperL-? summons this
@@ -2103,7 +2195,9 @@
      ("ret / r  (ended)"   "close / run again"))
     ("Debugger"
      ("0-9 / up-down"      "select a restart")
-     ("Tab"                "focus the backtrace, walk frames")
+     ("Tab"                "restarts -> frames -> the frame's locals")
+     ("Enter / C-c C-c"    "on a local: set it in the frame")
+     ("R"                  "restart the frame (args as they are now)")
      ("M-."                "the selected frame's source")
      ("Enter / click"      "invoke the selected restart")
      ("C-g"                "abort"))
