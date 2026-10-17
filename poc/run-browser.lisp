@@ -13,9 +13,17 @@
 ;;;; Esc does NOT quit — it is the Emacs Meta prefix (so Esc . is M-., jump to
 ;;;; definition, and Esc , is M-, Senders). Quit with q, or SuperL-q from anywhere.
 ;;;;
-;;;; Not available here: the Spotter, the cheatsheet and the debugger are summoned
-;;;; through fb-browser.lisp, which this runner does not load (it wants /dev/fb0).
-;;;; The shell reaches them via (fboundp …) and does nothing if they are absent.
+;;;; Every overlay works here as in the guest — the Spotter, the menus and the halo, the
+;;;; value prompt, the clipboard manager, the cheatsheet, the debugger — because they
+;;;; are morphs in the same world, and the ones that wait for an answer turn THIS
+;;;; backend's loop while they wait: HOST-CYCLE, one turn of it, is installed as
+;;;; *WORLD-CYCLE*, the X11 twin of the guest's FB-CYCLE (doc/morphic.org §13, doc/x11.org).
+;;;; fb-browser.lisp is loaded for the debugger and the cheatsheet it defines; nothing
+;;;; in it touches /dev/fb0 until RUN-BROWSER-FB, which this file never calls.
+;;;;
+;;;; A host test loads this file as a library (CL-USER::*RUN-BROWSER-LIBRARY* bound
+;;;; first): then no display is opened, and HOST-CYCLE can be turned with any event
+;;;; source and presenter (poc/x11-test.lisp).
 
 (require :sb-bsd-sockets) (require :sb-introspect) (require :sb-posix)
 
@@ -28,13 +36,13 @@
       (load (f "../initramfs/registry.lisp"))
       ;; everything else is loaded AND source-captured, so it is all browsable. The
       ;; list is render-frame.lisp's *STACK* (the guest's LISP_SOURCES minus what
-      ;; wants hardware) plus x11.lisp; it had drifted behind the shell, which since
-      ;; reads LOL.EXAMPLES symbols, and stopped loading — keep the two in step.
+      ;; wants hardware) plus x11.lisp, fb.lisp and fb-browser.lisp (for the debugger
+      ;; and the cheatsheet); keep the two in step.
       (dolist (m '("../initramfs/sbcl-source.lisp" "../initramfs/model.lisp"
                    "../initramfs/present.lisp" "../initramfs/tour.lisp"
                    "../initramfs/examples.lisp" "../initramfs/stage.lisp"
                    "ttf.lisp" "canvas.lisp" "x11.lisp" "textview.lisp" "widgets.lisp" "morph.lisp"
-                   "../initramfs/ansi.lisp" "../initramfs/line-editor.lisp"
+                   "fb.lisp" "../initramfs/ansi.lisp" "../initramfs/line-editor.lisp"
                    "clipboard.lisp" "../initramfs/sysinfo.lisp"
                    "inflate.lisp" "image.lisp"
                    "../initramfs/files.lisp" "terminal.lisp" "../initramfs/pty.lisp"
@@ -43,73 +51,118 @@
                    "../initramfs/containers.lisp" "../initramfs/json.lisp"
                    "../initramfs/agent-wire.lisp" "../initramfs/agent.lisp"
                    "../initramfs/agent-ui.lisp" "terminal-pane.lisp" "morphic.lisp"
-                   "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"))
+                   "overlays.lisp" "../initramfs/framebuffer.lisp" "../initramfs/meminfo.lisp"
+                   "../initramfs/fb-browser.lisp"))
         (load-recording (f m))))))
 
-;; the font: $LOL_FONT, else the host's DejaVu Sans Mono, else the committed bitmap —
-;; resizable at run time with SuperL-= / SuperL-- / SuperL-0 (doc/fonts.org)
-(set-browser-font
- (open-browser-font (list (sb-ext:posix-getenv "LOL_FONT")
-                          "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
-                    (merge-pathnames "cozette.lolf"
-                                     (make-pathname :directory
-                                                    (pathname-directory *load-truename*)))))
+(in-package :cl-user)
 
-(let* ((w 1000) (h 720)
-       (canvas (lol.canvas:make-canvas w h))
-       (d (lol.x11:open-display w h :title "lol - code browser")))
-  (open-environment (find-package :cl-user))           ; browser + Workspace tabs
-  (format t "~&Code browser open. up/down move · Enter drill · Backspace back · SuperL-q quits (q is back).~%")
-  (format t "Try: drill DRAW-ALIEN for its source, back out, drill a class, inspect a value.~%")
-  (finish-output)
-  ;; The world (poc/morph.lisp): the tiled shell is one morph in it, and this loop
-  ;; only turns X events into the world's events and sends what it redrew — the same
-  ;; shape as the guest's loop (initramfs/fb-browser.lisp), so the host backend
-  ;; inherits everything the world does (doc/morphic.org §8, "the X11 dev backend").
-  (setf *world* (make-desk w h))
-  (let ((quit nil))
-    (flet ((send (kind e &rest args)
-             (when (eq :quit (lol.morph:world-dispatch
-                              *world* (apply #'lol.morph:make-event :kind kind
-                                             :x (lol.x11:event-x e) :y (lol.x11:event-y e)
-                                             :state (lol.x11:event-state e) args)))
-               (setf quit t))))
-      (flet ((handle (e)
-               (case (lol.x11:event-kind e)
-                 (:key-press
-                  (send :key e :key (lol.x11:decode-key d (lol.x11:event-detail e)
-                                                        (lol.x11:event-state e))))
-                 ;; X has no scroll axis: the wheel is BUTTONS 4 (up) and 5 (down), one
-                 ;; press per notch — the host's counterpart of the guest's evdev
-                 ;; REL_WHEEL record (doc/input.org §7). Button 1 is a real click.
-                 (:button-press
-                  (case (lol.x11:event-detail e)
-                    (1 (send :down e))
-                    ;; 2 is the middle button (paste PRIMARY / the halo), 3 the right
-                    ;; (the context menu — which says so in the status line here, as
-                    ;; this host backend installs no *CHOOSER*)
-                    (2 (send :middle e))
-                    (3 (send :right e))
-                    (4 (send :wheel e :notches 1))
-                    (5 (send :wheel e :notches -1))))
-                 ;; motion with button 1 held (Button1Mask, #x100, in the state) is a
-                 ;; drag: it extends the selection the press started, or carries a window
-                 (:button-release
-                  (when (= 1 (lol.x11:event-detail e)) (send :up e)))
-                 (:motion
-                  (when (logtest #x100 (lol.x11:event-state e)) (send :drag e)))
-                 (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)))
-                 (t nil))))
-        (unwind-protect
-             (loop
-               ;; repair what the events damaged; X takes the whole canvas (PutImage
-               ;; in bands), which on the host is cheap enough not to bother with rects
-               (when (lol.morph:world-repair *world* canvas)
-                 (lol.x11:present d canvas))
-               (let ((e (lol.x11:next-event d :wait t)))
-                 (unless e (return))
-                 (handle e))
-               (loop for e = (lol.x11:next-event d :wait nil) while e do (handle e))
-               (when quit (return)))
-          (lol.x11:close-display d)))))
+;;; ---- the host's loop, one turn at a time ------------------------------------------
+;;; The guest's loop (FB-CYCLE) polls evdev and the console; this one reads X events.
+;;; Otherwise they are the same turn: repair what is damaged and send it, wait for
+;;; something (input, or the earliest step deadline), turn it into the world's events
+;;; and route them, step what steps. The X specifics are three functions, so a test
+;;; can turn the very same cycle with a scripted event source and no display.
+
+(defvar *host-canvas* nil "The canvas the world repairs into: the window's pixels.")
+(defvar *host-next-event* nil
+  "(lambda (wait-ms)) -> the next X event (lol.x11's EVENT), NIL when none came within
+   WAIT-MS (-1: wait for one), or :CLOSED when the display went away.")
+(defvar *host-present* nil "(lambda (canvas)): show the canvas (X: PutImage).")
+(defvar *host-decode* nil "(lambda (keycode state)) -> a key: a character or a keyword.")
+
+(defun x11-world-events (e)
+  "X event E as the world's events (poc/morph.lisp): a key, the buttons (X has no
+   scroll axis: the wheel is BUTTONS 4 (up) and 5 (down), one press per notch — the
+   host's counterpart of the guest's evdev REL_WHEEL record, doc/input.org §7), a
+   release, a drag (motion with button 1 held: Button1Mask, #x100) or a bare move."
+  (flet ((ev (kind &rest args)
+           (list (apply #'lol.morph:make-event :kind kind
+                        :x (or (lol.x11:event-x e) 0) :y (or (lol.x11:event-y e) 0)
+                        :state (lol.x11:event-state e) args))))
+    (case (lol.x11:event-kind e)
+      (:key-press
+       (let ((key (funcall *host-decode* (lol.x11:event-detail e) (lol.x11:event-state e))))
+         (and key (ev :key :key key))))
+      (:button-press
+       (case (lol.x11:event-detail e)
+         (1 (ev :down))
+         (2 (ev :middle))                      ; paste PRIMARY / the halo
+         (3 (ev :right))                       ; the context menu
+         (4 (ev :wheel :notches 1))
+         (5 (ev :wheel :notches -1))))
+      (:button-release (and (= 1 (lol.x11:event-detail e)) (ev :up)))
+      (:motion (if (logtest #x100 (lol.x11:event-state e)) (ev :drag) (ev :move)))
+      (:expose (lol.morph:invalidate *world*) nil)          ; the window was uncovered
+      (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)) nil)
+      (t nil))))
+
+(defun host-cycle ()
+  "One turn of the X11 host's loop (installed as *WORLD-CYCLE*, so an overlay that waits
+   turns it too): repair and present; wait for an X event or the earliest step
+   deadline; route what came, and whatever else is already pending; step. -> :QUIT
+   when the display went away or the environment asked to end."
+  (when (lol.morph:world-repair *world* *host-canvas*)
+    ;; X takes the whole canvas (PutImage in bands): on the host that is cheap enough
+    ;; not to send rects
+    (funcall *host-present* *host-canvas*))
+  (let ((e (funcall *host-next-event* (lol.morph:world-step-timeout *world*))))
+    (loop while e
+          do (when (eq e :closed) (return-from host-cycle :quit))
+             (dolist (we (x11-world-events e))
+               (when (or (eq :quit (lol.morph:world-dispatch *world* we)) *world-quit*)
+                 (return-from host-cycle :quit)))
+             (setf e (funcall *host-next-event* 0))))
+  (lol.morph:world-step *world*)
+  nil)
+
+(defun x11-next-event-fn (d)
+  "*HOST-NEXT-EVENT* over display D. lol.x11 can only block or not, so a wait with a
+   deadline (something steps) polls every few ms — the host's dev loop, not the guest's
+   poll(2)."
+  (lambda (wait-ms)
+    (flet ((one (wait)
+             (let ((e (lol.x11:next-event d :wait wait)))
+               (cond (e e) (wait :closed) (t nil)))))
+      (cond ((minusp wait-ms) (one t))
+            ((zerop wait-ms) (one nil))
+            (t (let ((deadline (+ (get-internal-real-time)
+                                  (round (* wait-ms internal-time-units-per-second) 1000))))
+                 (loop (let ((e (one nil)))
+                         (when e (return e))
+                         (when (>= (get-internal-real-time) deadline) (return nil))
+                         (sleep 0.005)))))))))
+
+(defun install-host-backend (w h)
+  "The world, the overlays' hooks and the loop for a W x H host screen."
+  (setf *host-canvas* (lol.canvas:make-canvas w h)
+        *world* (make-desk w h)
+        *value-prompt* 'run-value-prompt     ; the shell asks; an overlay reads
+        *chooser* 'run-chooser               ; ... and shows its menus and halos
+        *world-cycle* 'host-cycle            ; what a waiting overlay turns
+        *world-quit* nil))
+
+(unless (and (boundp '*run-browser-library*) (symbol-value '*run-browser-library*))
+  ;; the font: $LOL_FONT, else the host's DejaVu Sans Mono, else the committed bitmap —
+  ;; resizable at run time with SuperL-= / SuperL-- / SuperL-0 (doc/fonts.org)
+  (set-browser-font
+   (open-browser-font (list (sb-ext:posix-getenv "LOL_FONT")
+                            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf")
+                      (merge-pathnames "cozette.lolf"
+                                       (make-pathname :directory
+                                                      (pathname-directory *load-truename*)))))
+  (let* ((w 1000) (h 720)
+         (d (lol.x11:open-display w h :title "lol - code browser")))
+    (open-environment (find-package :cl-user))           ; browser + Workspace tabs
+    (format t "~&Code browser open. up/down move · Enter drill · Backspace back · SuperL-q quits (q is back).~%")
+    (format t "Try: drill DRAW-ALIEN for its source, back out, drill a class, inspect a value.~%")
+    (finish-output)
+    (setf *host-next-event* (x11-next-event-fn d)
+          *host-present* (lambda (canvas) (lol.x11:present d canvas))
+          *host-decode* (lambda (code state) (lol.x11:decode-key d code state)))
+    (install-host-backend w h)
+    (unwind-protect
+         (loop until (or (eq :quit (host-cycle)) *world-quit*))
+      (setf *world-cycle* nil)
+      (lol.x11:close-display d)))
   (format t "~&bye.~%"))
