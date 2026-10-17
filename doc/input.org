@@ -386,11 +386,17 @@ the pad down, and slide.
 - *The button's state, not just its press.* =read-mouse= used to report =BTN_LEFT=
   only as "a click happened". It now also keeps =*button-down*= — value 1 sets it,
   0 clears it — and the loop treats any pointer motion while it is set as a drag.
-- *Which view.* The press goes to the morph under the pointer — the pane, whose
-  =pane-click= remembers the text view the press placed the caret in (=*drag-tv*=) —
-  and the world sends the drag to that same morph (the hand's capture), so a drag
-  extends that view even if the pointer wanders over another pane
-  ([[file:morphic.org][morphic.org]] §12.5).
+- *Which view.* The press goes to the morph under the pointer — the text view's own
+  body morph — and the *hand* remembers what it placed the caret in (its press,
+  =(:text :tv … :origin …)=, [[file:../poc/morph.lisp::defclass hand (morph)][the hand]]'s =press= slot); the world sends the drag to
+  that same morph (the hand's capture), so a drag extends that view even if the
+  pointer wanders over another pane ([[file:morphic.org][morphic.org]] §12.5, §13.2). The release
+  clears the press.
+- *A press on a row waits for its release.* A press on a list row that opens
+  something acts when the button comes up; a press that moves first (8 px,
+  =+pick-up-travel+=) is not a click but a *pick-up*: the hand carries the row's
+  subject to be dropped on another morph ([[file:morphic.org][morphic.org]] §13.3). A *tap* has no
+  release of its own, so the loop marks its press =:tap= and it acts at once.
 - *A slop of 3 pixels* (=+drag-slop+=) before the first extension. Pressing a
   clickpad rolls the fingertip, which nudges the pointer a pixel or two; without the
   slop, every press would select a character instead of placing the caret.

@@ -31,12 +31,12 @@ PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
 | =fb.lisp=        | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us). |
 | =run-host.lisp=  | host entry: present via X11.                                      |
 | =run-guest.lisp= | guest entry: present via =/dev/fb0=. PID 1, so it never returns.  |
-| =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. A =pane= is a morph: it draws itself (breadcrumb, expanded panel, side column) and takes its own clicks. Drives the real =initramfs/= registry+model+present. |
-| =morph.lisp=     | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface= (a backing store its subtree draws into), events, damage repair (=invalidate=, =world-repair=) and routing (=world-dispatch=, each morph in its surface's coordinates). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]]. |
-| =morphic.lisp=   | the *desk*: the world the environment runs in — the tiled shell as a tree of morphs (tab strip, tray, trail area of pane morphs, status line), trail windows holding the same pane morphs (=SuperL-g=, a tab dragged out), the grab mode, the halo over the tree, damage by signature. *Backend-blind.* |
-| =clip-test.lisp= / =morphic-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals the whole tree painted from scratch, and the right morphs drew: a key in a pane repairs that pane (129 checks). =sbcl --script poc/…=; non-zero on failure. |
+| =shell.lisp=     | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. A =pane= is a morph that draws its panel; its body — a list, a text view, a grid, a stage … — is a morph of its own (=pane-body=), with its own hit map. Drives the real =initramfs/= registry+model+present. |
+| =morph.lisp=     | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface= (a backing store its subtree draws into), events, damage repair (=invalidate=, =world-repair=), routing (=world-dispatch=, each morph in its surface's coordinates), the hand's press and drag and drop (=hand-press=, =accept-drop=, =world-drop=). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]]. |
+| =morphic.lisp=   | the *desk*: the world the environment runs in — the tiled shell as a tree of morphs (tab strip, tray, trail area of pane morphs and their body morphs, status line), trail windows holding the same pane morphs (=SuperL-g=, a tab dragged out), the grab mode, the halo over the tree, damage by signature (a text view's by its rows), drag and drop. *Backend-blind.* |
+| =clip-test.lisp= / =morphic-test.lisp= / =x11-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals the whole tree painted from scratch, and the right morphs drew: a key in a text view repairs the lines it changed, a dragged row lands where it is dropped (178 checks); the X11 loop turned headless with scripted X events, every overlay waiting in it (26 checks). =sbcl --script poc/…=; non-zero on failure. |
 | =widgets.lisp=   | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map. |
-| =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. |
+| =run-browser.lisp= | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. Its loop is the world's cycle (=host-cycle=), so menus, the halo, the value prompt, the clipboard manager, the cheatsheet and the debugger work there as on the guest ([[file:../doc/x11.org][doc/x11.org]] §9½). |
 | =render-frame.lisp= | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below. |
 | =clipboard.lisp= | =lol.clipboard=: the clipboard core as plain data — history (blank refusal, dedup, bound, Emacs append and yank-pop), PRIMARY, and the =C-x r= rectangle commands. No dependencies. Design: [[file:../doc/clipboard.org][doc/clipboard.org]]. |
 | =clipboard-test.lisp= | its host test: =sbcl --script poc/clipboard-test.lisp=, PASS/FAIL per assertion, non-zero exit on failure. |
@@ -190,8 +190,10 @@ matched characters were being lit in the accent, which is also every function ro
 colour, so the highlight was invisible on exactly the rows that matter.
 
 The canvas is repaired between script steps, because clicks hit-test against
-geometry each morph records as it draws (a pane's =pane-rows=, =pane-body-top=,
-=pane-cells=; the tab strip's tabs). That is deliberate: a scripted click therefore
+geometry each morph records as it draws (a list body's rows, a pane's
+=pane-body-top=, a grid body's cells; the tab strip's tabs). A =click:X,Y= token is a
+press and its release: a press on a row acts on the release (a press that moves would
+pick the row up instead — [[file:../doc/morphic.org][doc/morphic.org]] §13). That is deliberate: a scripted click therefore
 exercises the same draw/hit-test agreement a real one does, instead of testing a stale
 layout.
 

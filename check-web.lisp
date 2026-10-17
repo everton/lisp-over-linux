@@ -20,6 +20,10 @@
 ;;;;     Enter changes the value and runs onchange, Esc changes nothing;
 ;;;;   - a public HTTPS page loads, when the guest has a resolver (it is skipped and
 ;;;;     says so when /etc/resolv.conf is missing — DNS is another track's);
+;;;;   - a page torn off into a window (doc/morphic.org §13.5): an address loads in it,
+;;;;     its viewport is the window's pane, its frames reach the window's store and the
+;;;;     screen, the wheel scrolls it, a click and keys land in it, and after the window
+;;;;     is dragged elsewhere the page and a click follow it;
 ;;;;   - power-off's WEB-SHUTDOWN ends every Chrome process and leaves no zombie.
 ;;;;
 ;;;; It also prints what the doc records: Chrome's memory (PSS over its processes,

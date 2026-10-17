@@ -252,6 +252,32 @@ code masks with =#x7f=.
 response to "this region was damaged" is to redraw that region, but since we
 always send the whole canvas anyway, we can ignore the rectangle entirely.
 
+* 9½. The host's loop is the world's cycle
+
+The client above only moves bytes; what turns X events into the environment is
+[[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]]'s loop, and since [[file:morphic.org][morphic.org]] §13 that loop has the same shape
+as the guest's. One turn, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]], repairs what the world says is damaged and
+presents the canvas, waits for an X event — or for the earliest step deadline, when
+something steps (a running stage) — turns what came into the world's events
+([[file:../poc/run-browser.lisp::defun x11-world-events][=x11-world-events=]]: a key, the buttons, Button1Mask motion as a drag, buttons 4/5 as
+the wheel, an =Expose= as damage of just the exposed rect), lets the world route them,
+and steps. It is installed as =*world-cycle*=, as the guest installs =fb-cycle=, so
+every overlay that waits for an answer — a menu, the halo, the value prompt, the
+clipboard manager, the debugger — waits by turning *this* loop: before, the host had
+no cycle to turn and a menu simply answered NIL ("no menus on this backend"). The
+runner also loads =fb-browser.lisp= for the debugger and the cheatsheet it defines;
+nothing in that file touches =/dev/fb0= until =run-browser-fb=, which the host never
+calls.
+
+lol.x11 can only block on the socket or not, so a wait with a deadline polls every few
+milliseconds — a dev loop, not the guest's =poll(2)=. And the X specifics are three
+functions (=*host-next-event*=, =*host-present*=, =*host-decode*=), which is what lets
+[[file:../poc/x11-test.lisp][poc/x11-test.lisp]] turn the very same cycle with a script of lol.x11's own =EVENT=
+structures and no display: there is no Xvfb on the build host (checked 2026-10-17:
+=which Xvfb= finds nothing), so the overlays are proven against the real cycle that
+way — 26 checks, each overlay waiting in it, the presented canvas equal to a fresh
+paint after each.
+
 * 10. What this proves, and what it deliberately omits
 
 *Proved:* the browser's pixel toolkit is backend-neutral. The identical
@@ -262,7 +288,8 @@ then simply *run* on the machine.
 
 *Omitted, on purpose:*
 
-- *Damage tracking* — we push whole frames (§7).
+- *Sending only damage* — the world repairs only the damaged rects into the canvas
+  (Morphic), but the canvas still goes to the server whole (§7).
 - *Window-manager conversation* — no =WM_PROTOCOLS=, so clicking the ✕ kills the
   connection rather than asking us politely to close. Fine for a dev harness.
 - *Modifier tracking beyond the event's =state= field*, no =xkb=, no compose key,

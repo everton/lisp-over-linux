@@ -235,7 +235,8 @@ the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-ke
 | =C-x r t=               | =string-rectangle=                | =rect-string=, after a one-line prompt        | =editor-rectangle=               |
 | drag, then release      | X PRIMARY                         | =clip-select=, *on release*                   | =browser-drag-end=               |
 | double / triple click   | X: select the word / the line     | =clip-select=, at once                        | =text-press=                     |
-| middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =browser-middle-click=           |
+| middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =pane-middle-click=              |
+| drag a row onto text    | (a drop, not a selection)          | a readable reference, =insert-text= where it lands | =drop-reference-at= (§5½) |
 | =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)      | — (=tv-undo=, §6½)                            | =editor-undo=                    |
 | =SuperL-h=, tray icon   | the manager (§7)                  | =clip-filter= / =clip-promote= / =clip-delete= | =open-clipboard-manager=        |
 
@@ -254,12 +255,29 @@ Where each key comes from, since the console delivers them unevenly:
   =select-active-regions=). Drag-selecting works in *read-only* text too: copying is
   reading.
 - *Middle click already meant something* — the *halo* ([[file:code-browser.org][code-browser.org]]). The
-  resolution in =browser-middle-click= is by place: in /editable/ text with a
+  resolution in [[file:../poc/shell.lisp::defun pane-middle-click][=pane-middle-click=]] is by place: in /editable/ text with a
   PRIMARY to paste, the button pastes; anywhere else, or with =SuperL= held, it
   opens the halo. Read-only text cannot receive a paste, so there the button is
   free.
 - *A touchpad has no middle button.* A two-finger press is one, and so is
   Alt-click ([[file:input.org][input.org]], "Three buttons on a pad with one").
+
+* 5½. Drag and drop is not the clipboard
+
+A row dragged onto a text you can edit inserts text too — but nothing passes through
+the clipboard: neither the history nor PRIMARY changes, and =M-y= does not see it.
+What travels is not text but a *subject*, carried by the hand
+([[file:morphic.org][morphic.org]] §13.3); the text view asks it for a *readable reference*
+([[file:../poc/shell.lisp::defun drop-reference][=drop-reference=]]: ='name=, =#'f=, =(find-class 'c)=, a path as a string) and inserts
+that where it lands, as one undoable edit ([[file:../poc/shell.lisp::defun drop-reference-at][=drop-reference-at=]]). Two reasons it
+stays apart:
+
+- *A drop is about a thing, the clipboard about text.* The same drag dropped on the
+  tab strip opens the thing, and on an inspector field stores its /value/; only a text
+  turns it into characters. Copying would make the text the primary reading.
+- *X keeps them apart too.* X's drag-and-drop (XDND) is a protocol of its own beside
+  the selections, not a use of CLIPBOARD or PRIMARY — from the literature, not checked
+  here against an X server.
 
 * 6½. Undo — the other history beside the kill ring
 

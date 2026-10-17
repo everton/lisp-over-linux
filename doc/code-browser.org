@@ -7,7 +7,8 @@ supervisor menu reopens it), browses and
 *edits* its own source, scrolls, carries a live debugger, and has a widget
 toolkit under it. Phase 7 (Morphic) was designed in [[file:morphic.org][morphic.org]] and built the same day
 (2026-10-16): the browser is the first window of a Lisp window system, and everything
-on its screen — every pane among it — is a morph. §8 tracks it per phase and is the
+on its screen — every pane among it, and every pane's body — is a morph, with drag and
+drop through the hand (§13 there, 2026-10-17). §8 tracks it per phase and is the
 authoritative status.
 
 /(This line read "PLAN ONLY — nothing implemented" until 2026-08-09, long after
@@ -1267,10 +1268,10 @@ drew where and which functions painted it (=note-drawn= into =*drawn*=, reset by
 =draw-browser=). Since Phase 7's §12 ([[file:morphic.org][morphic.org]]) that record is gone because it
 is no longer needed: every pane, the tab strip, the systray, the status line, the
 trail area and the shell are morphs, and the halo walks the tree under the point —
-each morph offering itself (its instance, its drawing functions) and, for a pane, its
-body when the point is on it (a text view: =TEXTVIEW=, =tv-draw=; a list: =VIEW=,
-=draw-list-body= / =item->row= / =draw-list=; the matrix; the stage and each sprite)
-and then what it shows.
+each morph offering itself (its instance, its drawing functions) — since §13 a pane's
+body is a morph of its own and so a layer of its own (a text view: the =TEXT-BODY=,
+=tv-draw=; a list: the =LIST-BODY=, =draw-list-body= / =item->row= / =draw-list=; the
+grid; the stage and each sprite) — and, for a pane, what it shows.
 
 *3. The halo is about one layer at a time, and shows which.*
 [[file:../poc/morphic.lisp::defun halo-layers][=halo-layers=]] lists what is under the point, innermost first: the thing the pointer is
@@ -1282,7 +1283,7 @@ Workspace:
 | layer           | object                 | handles ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]])                  |
 |-----------------+------------------------+-----------------------------------------|
 | =greet=          | the symbol =GREET=       | Source, Senders, Inspect, Copy           |
-| text view       | a =LOL.TEXTVIEW:TEXTVIEW= | Inspect, Code: tv-draw, Class: textview, Copy |
+| text view       | the =TEXT-BODY= morph      | Inspect, Code: tv-draw, Code: tv-row-keys, Class: text-body, Copy |
 | pane · workspace | a =PANE= (a morph)       | Inspect, Code: draw-pane-expanded, Code: draw-panel, Code: pane-click, Class: pane, Copy |
 | shows           | =SUBJ-WORKSPACE=          | Open its view, Inspect, Copy             |
 | trail · workspace | the =TRAIL-AREA= morph | Inspect, Code: layout-trail-area, Class: trail-area, Copy |
@@ -2470,8 +2471,16 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   whatever else changed — a tab's title, the status line, a pane the agent streamed
   into — is found by comparing each morph's /signature/ before the repair. That closed
   §10's owed items: a stage step draws only its pane, the agent's tick and a web frame
-  in a window are precise. Owed now (morphic.org §12.8): a pane's body — its list, its
-  text view — is still drawn by the pane rather than being a morph of its own.
+  in a window are precise. *Then what §12.8 owed* (morphic.org §13, 2026-10-17): a
+  pane's *body* — its list, its text view, its grid, its stage, its page, its terminal —
+  is a morph of its own, laid out by the pane and damaged on its own (a key in a text
+  view repairs the lines it changed, not the list beside it); the hand keeps the press
+  in progress; *drag and drop* through the hand — a row (a definition, a class, a file,
+  an inspector field's value) or a sprite picked up by a press that moves, or by
+  =SuperL-p=, dropped on editable text (a readable reference), an inspector field (its
+  value, through the field's setter), the tab strip (a new trail), a pane or a window's
+  title bar (drilled there) — and the X11 host's loop is the world's cycle, so every
+  overlay works there. Nothing is owed.
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
 

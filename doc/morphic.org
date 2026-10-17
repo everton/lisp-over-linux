@@ -1,12 +1,14 @@
 #+TITLE: Morphic — the browser becomes the first window of a Lisp window system
 #+STARTUP: showall
 
-*STATUS (2026-10-16): all six steps (0–5) BUILT*, and the windows kept in the desk file
+*STATUS (2026-10-17): all six steps (0–5) BUILT*, and the windows kept in the desk file
 (§10 tracks each step: what shipped, what changed against the plan, and the measured
-costs; what is still owed is said there; §11 compares one view built before and
-after). §12, every pane its own morph so that the shell has one way to be on screen
-instead of two, was designed and *BUILT* the same day (§12.8 is its status). Written
-first as a design for
+costs; §11 compares one view built before and after). §12, every pane its own morph so
+that the shell has one way to be on screen instead of two, was designed and *BUILT* on
+2026-10-16 (§12.8 is its status); §13, everything §12.8 still owed — a pane's /body/ a
+morph of its own, the hand keeping the press in progress, drag and drop through the
+hand, the X11 host's loop as the world's cycle, a web page driven in a window — was
+*BUILT* on 2026-10-17. Nothing is owed. Written first as a design for
 the user to review; the user answered §9 the same day, and the answers are recorded
 there. The code browser's Phase 7 ([[file:code-browser.org][code-browser.org]], "Phases") points here. Every
 claim about /our/ code below was checked against the tree on that date; claims about
@@ -850,12 +852,12 @@ rectangles to send.
   panes were plain structs drawn by =draw-browser=, so a key in the shell redrew the
   whole shell, and only the stage body and the terminal's rows were finer. That is
   history now: §12 made each pane its own morph — and the tab strip, the tray, the
-  status line, the trail area — so a key in a pane draws that pane, and the protocol
-  did not change for it. (The pane's /body/ — its list, its text view — is still drawn
-  by the pane, not a morph of its own: §12.8, "owed".)
-- *The Hand.* It carries a window during Move/Resize, and the one drop it knows is a
-  window let go over the tab strip, which re-tiles it ([[file:../poc/morphic.lisp::defmethod lol.morph:drop-morph][=drop-morph=]]). Nothing
-  else can be dropped /into/ a morph yet — no dragging a value from one view to another.
+  status line, the trail area — and §13 each pane's /body/ (its list, its text view …),
+  so a key in a text view draws the lines it changed, and the protocol did not change
+  for it.
+- *The Hand.* It carries a window during Move/Resize (a window let go over the tab
+  strip re-tiles: [[file:../poc/morphic.lisp::defmethod lol.morph:drop-morph][=drop-morph=]]), and since §13 a /subject/ to be dropped into another
+  morph — a row dragged onto a Workspace, an inspector field, the tab strip.
 
 * 12. Panes as morphs: one abstraction
 
@@ -1160,7 +1162,8 @@ and is only "paint the whole world afresh" (=lol.morph:world-paint :fresh t=).
 What stays global is the hand's: =*drag-tv*=, =*drag-origin*=, =*last-press*=,
 =*term-drag*=, =*term-pointer*=, =*web-press*=, =*web-last-press*= — the one press in
 progress — and two mirrors kept only for the guest checks to read over the net REPL,
-=*chooser-state*= and =*dbg-state*=, which no click reads.
+=*chooser-state*= and =*dbg-state*=, which no click reads. /(The hand's specials went in
+§13.2: the press in progress is the hand morph's own slot.)/
 
 In lines, at this commit: =poc/shell.lisp= 3885 → 3938, =poc/morphic.lisp= 1171 →
 1505, =poc/morph.lisp= 540 → 750 (surfaces), =poc/overlays.lisp= 377 → 408,
@@ -1285,16 +1288,320 @@ cheap; the pane's body is what costs. =draw-browser= — now a whole-world paint
 every window drawn again, not copied — measured 4.56–5.04 ms against the old shell-only
 3.12.
 
-*** What is owed
+*** What was owed — all of it built in §13
 
-- *A pane's body is not a morph.* Its list, its text view, its grid are drawn by the
+- /A pane's body is not a morph./ Its list, its text view, its grid were drawn by the
   pane's =draw-morph= and offered to the halo as an element of the pane
-  (=pane-body-element=); a key in a text view therefore redraws the whole pane — a list
-  beside it included. Making the bodies morphs is the same step again, one level down.
-- *Nothing is dropped into a morph* but a window onto the tab strip (§11).
-- *A web page in a window* is painted and hovered where it is, but no guest check
-  drives one yet (=check-web= runs its pages tiled).
-- *The hand's drag state* (the press in progress) is still in specials, by choice: there
-  is one hand, and a press and its drag go to one morph.
+  (=pane-body-element=); a key in a text view therefore redrew the whole pane — a list
+  beside it included. *Done* (§13.1).
+- /Nothing is dropped into a morph/ but a window onto the tab strip (§11). *Done*
+  (§13.3).
+- /A web page in a window/ was painted and hovered where it is, but no guest check
+  drove one (=check-web= ran its pages tiled). *Done* (§13.5).
+- /The hand's drag state/ (the press in progress) was still in specials, by choice.
+  *Done* (§13.2): the user asked for no side channel left.
 
+* 13. What §12.8 owed: bodies, the hand, drag and drop, the host loop
 
+*STATUS (2026-10-17): BUILT.* The user's request was "finish everything that is
+missing": every item of §12.8's owed list, with the same rule as §12 — one abstraction,
+no second path — and the same proof, the incrementally repaired screen equal to a full
+repair after every step. Six commits: a pane's body as a morph; the hand keeping the
+press; drag and drop; the X11 loop; a web page driven in a window and the last coarse damage named precisely; these docs.
+
+** 13.1 A pane's body is a morph
+
+A pane on screen now has one child morph for what is under its header — its *body* —
+of the class its view kind asks for ([[file:../poc/shell.lisp::defun body-class-for][=body-class-for=]]):
+
+| class           | draws                                          | keeps (what it drew where)        |
+|-----------------+------------------------------------------------+-----------------------------------|
+| =list-body=     | rows, sections, selection, scrollbar (=draw-list-body=) | =body-rows=, the hit map         |
+| =text-body=     | a text view (=tv-draw=)                         | what each screen row showed (=body-drawn=) |
+| =grid-body=     | the dispatch matrix (=draw-matrix-body=)        | =body-cells=                      |
+| =stage-body=    | the stage, its heads-up line, the transcript   | =body-viewport=                   |
+| =image-body=    | a picture on its checkerboard                  | —                                 |
+| =web-body=      | the toolbar and Chrome's newest frame           | (the =WEB-TAB='s page rect)        |
+| =terminal-body= | the grid of cells                              | (the session's geometry)          |
+
+The tree under an expanded pane, as built:
+
+#+begin_example
+pane (expanded)             its panel: title, tint, badge; a split's divider, column
+│                           header and accent rule — DRAW-PANE-EXPANDED, nothing more
+├── list-body | text-body | …     its own body, at the main column (LAYOUT-EXPANDED)
+└── pane (side)             a pinned side pane or the nav split's preview: draws nothing
+    └── list-body | text-body | …     its body fills it
+#+end_example
+
+*Layout.* [[file:../poc/morphic.lisp::defun layout-expanded][=layout-expanded=]], which already decided the split (=expanded-columns=),
+now places the body too ([[file:../poc/morphic.lisp::defun place-body][=place-body=]], [[file:../poc/morphic.lisp::defun ensure-body][=ensure-body=]]: the same morph for as long as the
+view's kind holds, a new one when it changes). A breadcrumb has no body.
+
+*Events.* A body under the pointer takes its own press — [[file:../poc/shell.lisp::defgeneric body-press][=body-press=]], one method per
+class (the list's row, the text's caret or Ctrl-jump, the grid's cell, the stage's
+sprite, the page, the terminal) — through [[file:../poc/shell.lisp::defun pane-click][=pane-click=]], which knows the split and
+sends a press in the right-hand column to [[file:../poc/shell.lisp::defun column-press][=column-press=]] (the pinned side's rules, the
+preview's "put me over there"). A press in a gutter reaches the pane, which hands it
+on the same way, so no click changed meaning. Menus, the halo and the wheel go on to
+the pane and the trail area, as before.
+
+*Damage.* An event damages the body it acted on; a key the body it was typed into
+([[file:../poc/shell.lisp::defun focused-body][=focused-body=]]: the side's when the side has the keys). A *text view* damages less:
+[[file:../poc/textview.lisp][lol.textview]] now describes its own picture in two parts, by the rules =tv-draw= paints
+by — the /frame/ ([[file:../poc/textview.lisp::defun tv-frame-key][=tv-frame-key=]]: its rect, the font, the scroll, the scrollbar's thumb,
+the focus) and the /rows/ ([[file:../poc/textview.lisp::defun tv-row-keys][=tv-row-keys=]]: per screen row its line number, its text, the
+lexer's state entering it, the current-line band, the selection band, the caret). The
+body keeps both as drawn; the desk compares them ([[file:../poc/morphic.lisp::defmethod check-morph ((b text-body))][=check-morph=]]) and damages the whole
+view only when the frame changed, else just the rows that differ, a run of
+neighbouring rows as one band. A quote opened at the top changes the colour of every
+line below it — the lexer's state is in each row's key, so all of them are found, as
+one band. =tv-draw= returns the lexer's state at the first visible line, so the
+comparison never lexes the lines above the view (a changed line above it is a frame
+change: [[file:../poc/textview.lisp::defun tv-prefix-same-p][=tv-prefix-same-p=]]).
+
+An expanded pane whose picture changed but whose split did not (a new preview's
+title, the accent moving with SuperL-o) damages only its header band — everything
+below the header is under its bodies ([[file:../poc/morphic.lisp::defmethod check-morph ((p pane))][=check-morph=]] of a pane).
+
+*The halo* finds the body under the point like any morph: it is a layer of its own
+between what the pointer is on and the pane (a text view: the =TEXT-BODY=, Code:
+=tv-draw=, =tv-row-keys=; a list: the =LIST-BODY=, Code: =draw-list-body=, =item->row=,
+=draw-list=; a sprite is the stage body's own innermost layer).
+
+*Gone:* =draw-pane-body= (each body's =draw-morph= calls its kind's painter),
+=pane-body-element= (the body is the halo's layer), the pane's =rows=, =list-rect=,
+=cells=, =stage-rect=, =stage-body= and =body-rect= slots. =pane-rows=, =pane-cells=,
+=pane-stage-rect= and =pane-body-rect= stay as readers of the pane's body — the same
+records, in one place, under the names the click and halo code already used.
+
+** 13.2 The hand keeps the press in progress
+
+What a drag extends was a special per kind of view: =*drag-tv*= and =*drag-origin*=
+(text), =*last-press*= (double clicks), =*term-drag*= and =*term-pointer*= (a terminal),
+=*web-press*=, =*web-last-press*= and =*web-click-count*= (a page). They describe one
+thing — the pointer's press in progress — and there is one pointer, so they are now
+two slots of the [[file:../poc/morph.lisp::defclass hand (morph)][hand]]: =hand-press=, a plist whose first key says whose it is
+(=(:text :tv … :origin …)=, =(:terminal :subject … :x … :y …)=, =(:web :tab … :cx …)=,
+=(:row …)= for a press on a row, =(:drag …)= for something picked up), and =hand-clicks=,
+from which [[file:../poc/morph.lisp::defun hand-count-click][=hand-count-click=]] counts a double or triple click for text and pages
+alike. The world clears the press when the button comes up. No special-variable side
+channel is left.
+
+Found on the way: a terminal's wheel report (a program that takes the mouse) used the
+pointer's /screen/ point — wrong in a window. It now asks the hand, in the pane's own
+coordinates (=screen-to-pane=).
+
+** 13.3 Drag and drop
+
+Morphic's hand carries what you pick up and offers it to whatever is under it when you
+let go. What the hand carries here is a *subject*:
+
+| picked up                     | how                                                        |
+|-------------------------------+------------------------------------------------------------|
+| a list row's subject — a definition, a class, a file, an inspector field's value | a press on the row that moves more than 8 px (=+pick-up-travel+=) |
+| a sprite's instance (the stage) | a press on it that moves                                 |
+| the selected row, the selected sprite, the definition (or symbol) at the caret | =SuperL-p= |
+
+Let go of by the button's release; by the next press, when it was picked up with a key
+(no button held — as the halo's Move carries a window); or by =SuperL-d= at the keyboard
+focus (=SuperL-S-d=: on the tab strip). =Esc= puts it back. The status line says what is
+carried and where it can go ([[file:../poc/shell.lisp::defun carrying-hints][=carrying-hints=]]).
+
+The world asks the morph under the hand, then its owners, whether they take it
+([[file:../poc/morph.lisp::defgeneric accept-drop][=lol.morph:accept-drop=]], [[file:../poc/morph.lisp::defun world-drop][=world-drop=]]); each answers T (taken — it says what it did), a
+string (refused — the walk stops and the string is shown), or NIL (ask my owner):
+
+| dropped on                      | does                                                                 |
+|---------------------------------+----------------------------------------------------------------------|
+| editable text (Workspace, source, a file, a pinned side) | inserts a *readable reference* where it lands, one undoable edit |
+| an inspector's field            | sets it to the *value*, through the field's own setter — the path =C-c C-c= takes ([[file:../poc/shell.lisp::defun set-field-to][=set-field-to=]]); a field with no setter refuses, and says so |
+| a terminal                      | types the reference into its program                                 |
+| the tab strip                   | opens it as a new trail                                              |
+| any other pane, a window's title bar | drills it there, in that trail, which gets the keys            |
+| a web page                      | refuses: a page takes no drops                                       |
+
+A subject has two readings, and they agree ([[file:../poc/shell.lisp::defun drop-value][=drop-value=]], [[file:../poc/shell.lisp::defun drop-reference][=drop-reference=]]): as a
+VALUE — a definition is its name, a file its path, an inspected value itself, and a
+browser's handle on a view (a module, a cross-reference) is no value at all — and as
+TEXT that evaluates back to that value: ='draw-alien=, =#'car=, =(find-class 'ship)=,
+=(find-package "COMMON-LISP-USER")=, ="/home/…/x.lisp"=, =42=, or anything else that
+prints readably /and reads back without =#.=/. So the text a drop inserts in the
+Workspace evaluates to what the same drop would store in a field. Something with no
+such text (an instance from the stage, a hash table) is refused by a text, with the
+reason, and is still taken by a field or the tab strip.
+
+*A press on a row now acts on its release.* It had acted on the press: a press on a row
+drilled it at once, so the row was gone before a drag could begin. Now the press waits
+(=(:row …)= on the hand) and the click happens on the release — unless the press moved
+first, which makes it a pick-up. A touchpad *tap* has no release of its own; the
+guest's loop marks its press =:tap=, and it acts at once (=input-events=,
+fb-browser.lisp). A press in text still acts at once (the caret, a selection drag); a
+sprite is selected at once and picked up if the press moves. render-frame's =click:=
+token is now a press and its release.
+
+** 13.4 The X11 host's loop is the world's cycle
+
+[[file:../poc/run-browser.lisp][poc/run-browser.lisp]]'s loop is now one turn as a function, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]] — repair and
+present, wait for an X event or the earliest step deadline, route, step — installed as
+=*world-cycle*= with the chooser and the value prompt, exactly as the guest installs
+=fb-cycle=. So every overlay that waits for an answer waits by turning it; before, the
+host had no cycle and a menu answered NIL. The runner loads =overlays.lisp= and
+=fb-browser.lisp= (the debugger and the cheatsheet; nothing there touches =/dev/fb0=
+before =run-browser-fb=), and the cheatsheet, the frame-source viewer and the agent view
+size themselves from the world rather than =*fb-xres*=. An =Expose= damages the exposed
+rect only. Details: [[file:x11.org][x11.org]] §9½.
+
+*Tested headless*: there is no Xvfb on the build host (=which Xvfb= finds nothing,
+2026-10-17), so [[file:../poc/x11-test.lisp][poc/x11-test.lisp]] turns the very same =host-cycle= with a script of
+lol.x11's own event structures, a presenter that counts frames, and no display — 26
+checks: a row clicked, a right-click menu (Down moves it while it waits), the halo, the
+clipboard manager, the value prompt setting a field, the debugger (=C-g= unwinding
+through the wait), the Spotter, the cheatsheet, a window dragged by Button1Mask motion,
+a row dragged out of it onto the tab strip, the leave menu; after each, the presented
+canvas equals a fresh paint. The real runner was also started once against the host's
+own X server (=DISPLAY= was set) and ran 120 s without an error; nothing was clicked in
+it — not evidence of behaviour, only that it starts.
+
+** 13.5 A web page in a window, driven in the guest
+
+=check-web= (=LOL_GUEST_HOSTROOT=1=) now tears a web tab off into a window and drives it
+by real input: =C-l=, an address and Return load a page in it; the page's viewport is
+the window's pane (=innerWidth= = the page rect's width); frames are painted into the
+window's backing store and the screendump shows them there; the wheel over it scrolls
+it; a click on a link navigates; keys reach a focused input; the window dragged by its
+title bar takes the page with it, the screendump shows it at the new place, and a
+click on the link there still lands. Then =SuperL-g t= puts it back.
+
+*Not a finding — recorded at length, because it looked like one for six guest runs.*
+The first runs failed "an address typed in the window loads the page" and, in other
+runs, "a click on a link navigates": the page went on loading for ever and stopped
+answering =Runtime.evaluate=. It looked like Chrome hanging a page resized while
+another tab existed — one web tab: fine; two tabs and a tear-off: stuck — and a fix
+(activating the page on every screencast restart) seemed to help once. It was
+neither. A log of what the check's own HTTP server received showed the stuck page's
+=GET= arriving only /after/ a later reload: the server served one connection at a
+time, and Chrome opens connections it does not use at once (a preconnect, an idle
+keep-alive), so the server sat reading a request line that never came while the real
+request waited behind it. Tiled, the timing happened to work. The server now serves
+each connection in a thread of its own; the speculative change to =web.lisp= was
+reverted, and =web.lisp= is as it was. (Also not a finding: =C-l= opens the prompt
+holding the current address, so the check clears it, =C-u=, before typing.)
+
+** 13.6 The last coarse damage, named
+
+A sweep for =environment-changed= and world-wide =invalidate=s:
+
+| where                                    | damaged                       | now                                      |
+|------------------------------------------+-------------------------------+------------------------------------------|
+| a running stage's step that opened something beside it | the whole pane | its stage body; the layout damages what it moves |
+| a live worker's view arrived (=damage-pane=) | the whole pane            | its body (the header, if its title changed, by signature) |
+| a run pane's step                         | the whole pane                | its body — a text view, so its changed rows |
+| the wheel over a pane                     | the whole pane                | the pane's own body                       |
+| a key, a click                            | the whole pane                | the body it acted on (§13.1)              |
+| X11 =Expose=                              | the whole world               | the exposed rect                          |
+| render-frame's =wheel:= with an odd count | the whole world               | the current pane's body                   |
+
+*World-wide stays* for what is world-wide: a font size change (every metric moved), a
+new world (=make-desk=: the console and back), and render-frame's final frame, which
+is meant to be a whole fresh paint. =environment-changed= itself was never coarse since
+§12: it is =desk-sync=, which damages by signature.
+
+** 13.7 What went otherwise than §12.8 said, and why
+
+- *A side pane stays a pane* holding a body, rather than becoming a body itself: it is a
+  pane in its own right — its own subject, view, selection and text, and a trail's pane
+  when it is promoted — and the side's /body/ is the morph of its kind.
+- *The text view's damage is computed, not tracked.* No edit records which lines it
+  touched; the body compares what each row shows now with what it showed when drawn.
+  Simpler, and it catches changes no edit command made (the agent streaming, a
+  Workspace print, a replaced buffer).
+- *A stage's signature includes where its bodies are*, so an eval in the Workspace
+  beside a paused stage that moves a ship is found — keys no longer damage the whole
+  pane, so the stage must say for itself that it changed.
+- *A pane draws inside its bounds* (=with-clip=): found when the first full drag-and-drop
+  test failed its "the screen is right" — a split's long column header ran past the
+  pane's right edge into the gutter, where only a whole repaint of the shell cleaned it.
+  render-frame shows it as the one pixel difference against main besides code-derived
+  text: the =beside · …= header of a pinned side now ends at the pane's edge.
+
+** 13.8 Decided by default, pending the user's review
+
+1. *A press on a list row acts on its release* (it acted on the press), so that a press
+   that moves can pick the row up. A tap acts at once.
+2. *What a drop on text inserts* is a readable reference that evaluates to the dropped
+   value: a definition's quoted name (='f=, not =#'f= or =(source-of 'f)=), a class as
+   =(find-class 'c)=, a package as =(find-package "P")=, a path as a string; an object
+   with no such text is refused rather than inserted as =#<…>=. Spaces are added where it
+   would run into a word.
+3. *A drop on an inspector field stores the value*, through the field's own setter, with
+   no confirmation — the same as typing it after =C-c C-c=; a field with no setter, or a
+   browser's handle on a view, refuses with a message.
+4. *A drop on any other pane drills in that pane's trail* (at its end, also on a
+   breadcrumb) and gives it the keys; a read-only text (a preview, a built-in's source)
+   is such a pane, not a place to insert; a terminal types the reference; a web page
+   refuses.
+5. *The keys: SuperL-p picks up, SuperL-d drops at the focus, SuperL-S-d on the tab strip,
+   Esc puts back.* Picked up by a key, the next press anywhere drops it there.
+6. *Nothing is drawn beside the arrow while carrying*: the status line says what is
+   carried. The arrow stays the composited patch of [[file:framebuffer.org][framebuffer.org]] §9.5, so a carry
+   costs no repair.
+7. *A body's halo layer is the body morph* (Inspect shows the morph — its bounds, its
+   records), where it was the model object (the =TEXTVIEW= struct, the =VIEW=); the model
+   is a click further, through the pane's fields.
+8. *On the X11 host the leave menu now shows*, since the host has menus: its entries
+   simply end the runner there (nothing powers off on the host).
+
+** 13.9 Proof
+
+| test                          | checks | what it adds for §13                                                |
+|-------------------------------+--------+---------------------------------------------------------------------|
+| [[file:../poc/morphic-test.lisp][poc/morphic-test.lisp]]         | 178    | a key in a list repairs its list body and the preview, not the strip or the status line; a key in a text view one line, a caret move two (one band), a quote at the top one band below, Return the rows it moved; a key typed into a text view beside a list repairs a line of it, not the list; the morph under a row is the list body; the halo's body layer; drag and drop — a row into a Workspace in a window (the reference inserted, reading back as the value; the list not drilled), onto the tab strip, a window's title bar, an inspector field settable and not, by =SuperL-p= / =SuperL-d= / =SuperL-S-d= / Esc, a sprite picked up, an unreadable value refused; after every step, the screen equal to a full repair |
+| [[file:../poc/x11-test.lisp][poc/x11-test.lisp]]             | 26     | §13.4                                                                |
+| [[file:../check-morphic.lisp][check-morphic.lisp]]            | 82     | section A: a real key in the Workspace repairs the two lines the caret moved, drawn by the =TEXT-BODY= alone; G: the bodies are the pane's children; a row dragged by QEMU's pointer into a Workspace in a window, onto the tab strip, onto an inspector field; =SuperL-p= / =SuperL-d= / Esc / =SuperL-S-d=; a key typed into the window's text repairs one line of it; the keys in the cheatsheet; H: the costs below |
+| [[file:../check-web.lisp][check-web.lisp]] (=LOL_GUEST_HOSTROOT=1=) | +12 | §13.5                                                  |
+
+Every =render-frame.lisp= frame of the standard set is byte for byte main's, but for
+frames showing the code itself (live instances' addresses in =class:STREAM=, the halo's
+caption, which names the new body layer and its row count) and the pinned side's
+header (§13.7).
+
+The regression gate on the final image (2026-10-17), every check passing: check-morphic
+82, check-pointer 13, check-scroll 12, check-clipboard 36, check-input 38, check-font 18,
+check-compile 18, check-debugger 25, check-tour 5, check-worker 39, check-diagnostics 29,
+check-crash 13, check-agent 49, check-persist 33 and check-files 13 (=test-disk.img=),
+check-terminal 18 and check-web 37 (=LOL_GUEST_HOSTROOT=1=); host tests morphic-test 178,
+x11-test 26, clip-test 34, clipboard-test 63, undo-test, font-test, terminal-test 95,
+pty-test 13, web-test 39, worker-live-test 25, journal-test. *Not findings — checks that
+changed with the code:* check-morphic's section A asked that a key repair "the pane";
+it repairs the text view's two rows now, and the check says so. check-clipboard's halo
+on the Workspace text is about the =TEXT-BODY= morph rather than the =TEXTVIEW= struct
+(decision 7).
+
+** 13.10 What it costs (measured 2026-10-17)
+
+Guest: QEMU with KVM on the laptop's i7-1065G7, =-cpu qemu64=, 1280×800, each a real
+event through the world (or a damage), repaired and sent, averaged over 50 runs
+(=check-morphic.lisp= section H); the range of four runs, three of them beside other guests.
+
+| what                                         | §12.8 (before)               | now           |
+|----------------------------------------------+------------------------------+---------------|
+| a key in a text view beside a list           | a whole pane: 2.64–3.36 ms (a key in a tiled pane) | 0.32–0.40 ms    |
+| a key in a window (its list, moved)          | 1.04–1.12 ms                 | 0.96–1.04 ms     |
+| a stage step (its body)                      | 1.92–2.00 ms                 | 2.00–2.24 ms   |
+| a full repair (shell + window)               | 3.76–4.08 ms                 | 4.32–4.80 ms    |
+
+The text view is the gain the user asked for: a key there now repairs one band of
+=line-h= + 3 pixels across one column — a tenth of what it was — and the list beside it
+is not drawn at all. A key in a list costs what it did: its list body, its preview and
+its header band are most of the pane. The stage step did not change. The full repair
+rose by about half a millisecond: it draws one more layer of morphs (each pane's body
+over its panel) for the same pixels, and the text views now record what each row shows
+— the price of the line-sized repairs, paid only on a whole repaint. Host ([[file:../poc/morphic-test.lisp][morphic-test]], 30 runs, drawing only): a key in the tiled list 0.5–0.7
+ms, against 2.1 ms before.
+
+** 13.11 What is owed
+
+Nothing of §12.8's list. Not done, and not owed by any request: a picture of the
+carried thing beside the arrow (decision 6); dragging a /selection of text/ out of a text
+view (only the name at the caret is picked up, by =SuperL-p=); dropping onto the stage.

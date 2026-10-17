@@ -39,12 +39,12 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 
 <h2>Rendering: one canvas, three ways out</h2>
 <figure>
-<svg viewBox="0 0 960 400" role="img" aria-label="Rendering pipeline: the world repairs what is damaged — each morph over a damaged rect draws itself: the tab strip, the tray, a breadcrumb, an expanded pane, a side pane, the status line, a window, an overlay — calling the widgets (draw-panel, draw-list, draw-grid) and the textview's tv-draw; all of them write through lol.canvas primitives fill-rect and draw-string into one pixel vector of #x00RRGGBB words. That vector leaves through one of three backends: lol.fb:present-fb pwrites it to /dev/fb0 in the guest, lol.x11:present sends it with PutImage to an X server on the host, and render-frame.lisp writes it to a PPM file headless.">
+<svg viewBox="0 0 960 400" role="img" aria-label="Rendering pipeline: the world repairs what is damaged — each morph over a damaged rect draws itself: the tab strip, the tray, a breadcrumb, an expanded pane and its body (a list, a text view, a grid, a stage, a page, a terminal), a side pane, the status line, a window, an overlay — calling the widgets (draw-panel, draw-list, draw-grid) and the textview's tv-draw; all of them write through lol.canvas primitives fill-rect and draw-string into one pixel vector of #x00RRGGBB words. That vector leaves through one of three backends: lol.fb:present-fb pwrites it to /dev/fb0 in the guest, lol.x11:present sends it with PutImage to an X server on the host, and render-frame.lisp writes it to a PPM file headless.">
   <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
   <text x="20" y="20" class="lbl">MORPHS (what to draw)</text><text x="260" y="20" class="lbl">TOOLKIT (how)</text><text x="520" y="20" class="lbl">CANVAS (where)</text><text x="760" y="20" class="lbl">BACKEND (out)</text>
   <rect class="box k-shell" x="20" y="40" width="200" height="160" rx="6"/>
   <text x="30" y="62" class="title">world-repair</text>
-  <text x="30" y="84" class="mono">tab strip, tray: draw-tabs</text><text x="30" y="100" class="mono">pane: draw-crumb |</text><text x="30" y="116" class="mono">  draw-pane-expanded</text><text x="30" y="132" class="mono">  (list text matrix image</text><text x="30" y="148" class="mono">   stage) | draw-pane-body</text><text x="30" y="164" class="mono">status line, windows</text>
+  <text x="30" y="84" class="mono">tab strip, tray: draw-tabs</text><text x="30" y="100" class="mono">pane: draw-crumb |</text><text x="30" y="116" class="mono">  draw-pane-expanded</text><text x="30" y="132" class="mono">its body, a morph: list</text><text x="30" y="148" class="mono">  text grid stage web …</text><text x="30" y="164" class="mono">status line, windows</text>
   <text x="30" y="188" class="dim">overlays: Spotter, menus, halo</text>
   <rect class="box k-ui" x="260" y="40" width="210" height="72" rx="6"/><text x="270" y="62" class="title">lol.widgets</text><text x="270" y="80" class="mono">draw-panel draw-list</text><text x="270" y="96" class="mono">draw-grid draw-card scrim</text>
   <rect class="box k-ui" x="260" y="128" width="210" height="72" rx="6"/><text x="270" y="150" class="title">lol.textview</text><text x="270" y="168" class="mono">tv-draw: gutter, lexer</text><text x="270" y="184" class="mono">colours, caret, selection</text>
@@ -69,11 +69,13 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 </figure>
 <ul>
   <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §12): an object with bounds that
-    draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:601</span></a> redraws only what is damaged, and in each damaged rect only the
+    draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a> redraws only what is damaged, and in each damaged rect only the
     morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
-    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1342</span></a>), the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1543</span></a>), or the
-    column beside it. A key in a pane redraws that pane; what else changed is found by each morph's signature
-    (<a class="ref" data-ref="poc/morphic.lisp#desk-sync" href="../../poc/morphic.lisp"><code>desk-sync</code><span class="loc">poc/morphic.lisp:993</span></a>).</li>
+    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1423</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1594</span></a>), or the
+    column beside it — and what is IN a pane, its body, is a morph of its own (a list, a text view, a grid, a stage, a
+    page, a terminal: <a class="ref" data-ref="poc/shell.lisp#pane-body" href="../../poc/shell.lisp"><code>pane-body</code><span class="loc">poc/shell.lisp:143</span></a>). A key in a text view redraws the lines it changed, nothing else;
+    what else changed is found by each morph's signature
+    (<a class="ref" data-ref="poc/morphic.lisp#desk-sync" href="../../poc/morphic.lisp"><code>desk-sync</code><span class="loc">poc/morphic.lisp:1425</span></a>).</li>
   <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:78</span></a>,
     <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:464</span></a>: for each character, paint the pixels the glyph
     covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:418</span></a> reads
@@ -82,9 +84,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     an alist of the screen y of each painted row and its index. A click is resolved against that map
     (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:360</span></a>). The map is needed because section headers make "row N
     on screen" differ from "item N".</li>
-  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:589</span></a> colours Lisp with a small line lexer
-    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:517</span></a>). The editing keys are in
-    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:671</span></a>. The buffer is a vector of line strings that is
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:591</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:519</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:759</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
     (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
@@ -130,7 +132,7 @@ pointer is open at once, and devices plugged in later are picked up.</p>
 keyboards, so the browser's modifiers are the OR of every keyboard's held keys too: Ctrl on the external keyboard plus a
 touchpad click is a Ctrl-click. Under X11 on the host the same four shell entry points are fed from X events instead
 (<code>poc/run-browser.lisp</code>). Either way the loop only decodes: the world routes each event to the morph it is
-for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/morph.lisp"><code>world-dispatch</code><span class="loc">poc/morph.lisp:682</span></a>).</figcaption>
+for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/morph.lisp"><code>world-dispatch</code><span class="loc">poc/morph.lisp:747</span></a>).</figcaption>
 </figure>
 <ul>
   <li>Finding devices without udev: <a class="ref" data-ref="initramfs/fb-browser.lisp#scan-input-devices" href="../../initramfs/fb-browser.lisp"><code>scan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:213</span></a> reads
@@ -151,8 +153,10 @@ for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/mor
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:421</span></a>). A touchpad's motion is integrated as relative
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:549</span></a>), and a tap is a click.</li>
   <li>A press goes to the morph under the pointer, in that morph's coordinates: a tab, a breadcrumb, a window's title
-    bar — or a pane, whose <a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:2868</span></a> decides what in it was under the pointer from what
-    <em>that pane</em> recorded when it last drew: its list rows, its text, its matrix cells, its split.</li>
+    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:2940</span></a>) decides what was under the pointer from what
+    <em>that body</em> recorded when it last drew: its list rows, its text, its grid's cells. A press on a row that moves
+    is not a click: the <em>hand</em> picks the row's subject up, to be dropped on another morph
+    (<a class="ref" data-ref="poc/morph.lisp#world-drop" href="../../poc/morph.lisp"><code>world-drop</code><span class="loc">poc/morph.lisp:719</span></a>).</li>
 </ul>
 
 <div class="pager"><a href="present.html">← present and the shell</a><a href="live.html">Live editing →</a></div>

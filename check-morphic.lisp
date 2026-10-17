@@ -42,6 +42,16 @@
 ;;;;    drawn by that pane alone; paused, the step deadline is -1 again. Prints what a
 ;;;;    body-only step costs against a full repair.
 ;;;;
+;;;; G. §13: a pane's body is a morph (the tiled list's LIST-BODY, the window's
+;;;;    TEXT-BODY; a key typed into the window's text repairs one line of it), and drag
+;;;;    and drop by QEMU's pointer — a row into a Workspace in a window, onto the tab
+;;;;    strip, onto an inspector field — and by keys (SuperL-p, SuperL-d, Esc,
+;;;;    SuperL-S-d); the keys are in the cheatsheet.
+;;;;
+;;;; H. What it costs in this guest, 50-run averages, each a real event or a damage,
+;;;;    repaired and sent: a key in a text view beside a list, a key in a window, a full
+;;;;    repair, a stage step (doc/morphic.org §13.10).
+;;;;
 ;;;; Evidence is read back over the net REPL — the world's own counters (each morph's
 ;;;; MORPH-DRAWS, the world's LAST-REPAIR) — and input is real: QMP keys and pointer
 ;;;; motion, through evdev, as a hand would make them.
