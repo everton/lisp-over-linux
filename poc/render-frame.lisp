@@ -408,7 +408,11 @@ OPTIONS
                (lol.morph:world-dispatch *world* (lol.morph:make-event :kind kind :x x :y y
                                                                        :state st))))
         (case key
-          (:click (send :down (car arg) (cdr arg)))
+          ;; a click is a press and its release: a press on a row that opens
+          ;; something acts on the release (a press that moves picks it up instead —
+          ;; doc/morphic.org §13)
+          (:click (send :down (car arg) (cdr arg))
+                  (send :up (car arg) (cdr arg)))
           ;; drag:X1,Y1,X2,Y2 — press, move with the button held, release: a text
           ;; selection, or a window carried by its title bar (doc/morphic.org)
           (:drag (destructuring-bind (x1 y1 x2 y2) arg

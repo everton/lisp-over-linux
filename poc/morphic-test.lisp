@@ -671,6 +671,19 @@
   (check "... and drew only its stage body (over its pane's panel; a window over it): not the tab strip, the breadcrumbs, the status line"
          (and (drew-p (pane-body p)) (repaired-only-p (list* p (pane-body p) (windows)))))
   (check "the screen is right after a step" (screen-right-p))
+  ;; a sprite is picked up by its press moving: the hand carries its instance
+  (let* ((sb (pane-body p)) (vp (body-viewport sb)) (b (first (stage-bodies st))))
+    (multiple-value-bind (ox oy) (lol.morph:surface-origin sb)
+      (let ((x (+ ox (first vp) (body-x b))) (y (+ oy (second vp) (body-y b))))
+        (setf (stage-running st) nil) (repair)
+        (ev :down :x x :y y) (repair)
+        (check "a press on a sprite selects it at once" (eq (stage-selected st) b))
+        (ev :drag :x (+ x 30) :y (+ y 20)) (repair)
+        (check "... and moved, the hand carries its instance"
+               (eq (getf (lol.morph:hand-payload (lol.morph:world-hand *world*)) :subject) (body-obj b)))
+        (ev :key :key :escape :state 0) (ev :up :x (+ x 30) :y (+ y 20)) (repair)
+        (check "Esc puts it back" (null (lol.morph:hand-payload (lol.morph:world-hand *world*))))
+        (setf (stage-running st) t))))
   ;; the same stage in a window: only that part of its backing store is drawn again
   (keys "s-g esc")
   (let ((w (trail-window-of (nth *active* *trails*))))
@@ -709,6 +722,146 @@
     (check "the screen is right" (screen-right-p))
     (keys "s-w")))
 (repair)
+
+(format t "~&== drag and drop: the hand carries a subject (doc/morphic.org §13) ==~%")
+(defvar zz-drop-target 1 "An inspector field to drop on: this symbol's value cell.")
+(defun hand () (lol.morph:world-hand *world*))
+(defun row-point (p index)
+  "The screen point of row INDEX in the list body of P (as last drawn)."
+  (let ((hit (find index (pane-rows p) :key #'cdr)) (b (pane-body p)))
+    (multiple-value-bind (ox oy) (lol.morph:surface-origin b)
+      (list (+ ox (first (lol.morph:morph-local-bounds b)) 40) (+ oy (car hit) 4)))))
+(defun press-drag-release (x1 y1 x2 y2)
+  (ev :down :x x1 :y y1) (repair)
+  (ev :drag :x (+ x1 20) :y (+ y1 12)) (repair)
+  (ev :drag :x x2 :y y2) (repair)
+  (ev :up :x x2 :y y2) (repair))
+;; a list tiled, a Workspace in a window beside it
+(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(let* ((list-pane (tiled-pane)) (list-trail (nth *active* *trails*)) (list-root (first list-trail))
+       (row 2) (item (nth row (view-items (pane-view list-pane))))
+       (sub (item-subject item)))
+  (keys "s-e s-g esc")                                   ; a fresh Workspace, torn off
+  (let* ((w (focused-window)) (ws (window-pane w)) (tv (pane-tv ws)) (tb (pane-body ws)))
+    (lol.textview:tv-set-text tv (format nil "(list )~%")) (repair)
+    (setf *active* (position list-root *trails* :key #'first)) (repair)
+    (lol.morph:set-morph-bounds w (list 700 300 560 380)) (repair)
+    (let ((sel0 (pane-sel list-pane)) (n0 (length list-trail)))
+      (destructuring-bind (rx ry) (row-point list-pane row)
+        ;; aim inside "(list )", just after "list "
+        (let ((tx (+ 700 (lol.textview::x-of-col tv 6))) (ty (+ 300 (lol.textview::tv-y tv) 12)))
+          (ev :down :x rx :y ry) (repair)
+          (check "a press on a row waits: nothing drilled, nothing picked up yet"
+                 (and (= n0 (length (nth (position list-root *trails* :key #'first) *trails*)))
+                      (eq (press-kind) :row)))
+          (ev :drag :x (+ rx 20) :y (+ ry 12)) (repair)
+          (check "moved past the travel, it is a pick-up: the hand carries the row's subject"
+                 (and (lol.morph:hand-payload (hand))
+                      (eq (getf (lol.morph:hand-payload (hand)) :subject) sub)))
+          (check "... the status line says what it carries (that line repaired, not the list)"
+                 (and (eq :carrying (first (status-line-content (current-pane))))
+                      (not (drew-p (pane-body list-pane)))))
+          (check "the screen is right while carrying" (screen-right-p))
+          (ev :drag :x tx :y ty) (repair)
+          (ev :up :x tx :y ty) (repair)
+          (let ((text (lol.textview:tv-text tv)) (ref (drop-reference sub)))
+            (check "let go over the Workspace in the window: a readable reference is inserted there"
+                   (and ref (search ref text) (null (lol.morph:hand-payload (hand)))))
+            (check "... it reads back as the row's value (DROP-REFERENCE = DROP-VALUE)"
+                   (equal (eval (read-from-string ref)) (drop-value sub)))
+            (check "... the list did not drill, its selection stayed"
+                   (and (= sel0 (pane-sel list-pane))
+                        (= n0 (length (nth (position list-root *trails* :key #'first) *trails*)))))
+            (check "... the keys went to the Workspace's window" (eq (focused-window) w))
+            (check "... and the repair drew the text view's rows (in the window), not the list"
+                   (and (drew-p tb) (not (drew-p (pane-body list-pane)))))
+            (check "the screen is right" (screen-right-p))))
+        ;; a plain click (no travel) on a row still drills, on the release
+        (setf *active* (position list-root *trails* :key #'first)) (repair)
+        (destructuring-bind (rx ry) (row-point list-pane row)
+          (ev :down :x rx :y ry) (ev :up :x rx :y ry) (repair))
+        (check "a press and release without moving is still a click: it drills"
+               (= (1+ n0) (length (nth (position list-root *trails* :key #'first) *trails*))))
+        (keys "C-g")
+        (check "the screen is right" (screen-right-p))
+        ;; onto the tab strip: a new trail
+        (let ((nt (length *trails*)) (tabs-y (floor +bar-h+ 2)))
+          (destructuring-bind (rx ry) (row-point list-pane row)
+            (press-drag-release rx ry 500 tabs-y))
+          (check "dropped on the tab strip: it opens as a new trail"
+                 (and (= (1+ nt) (length *trails*))
+                      (eq (pane-subject (first (nth *active* *trails*))) sub)))
+          (check "the screen is right" (screen-right-p))
+          (keys "s-w"))
+        ;; onto a window's pane (its text is editable, so: onto the window's TITLE BAR
+        ;; — the window's own — which drills in the window's trail)
+        (setf *active* (position list-root *trails* :key #'first)) (repair)
+        (let ((n (length (window-trail w))))
+          (destructuring-bind (rx ry) (row-point list-pane row)
+            (press-drag-release rx ry (+ 700 100) (+ 300 6)))
+          (check "dropped on a window's title bar: drilled there, in the window's trail"
+                 (and (= (1+ n) (length (window-trail w)))
+                      (eq (pane-subject (window-pane w)) sub) (eq (focused-window) w)))
+          (check "the screen is right" (screen-right-p))
+          (keys "C-g"))))
+    ;; an inspector field: zz-drop-target's value cell takes the dropped value
+    (new-trail 'zz-drop-target) (desk-sync *world*) (repair)
+    (keys "s-g esc")
+    (let* ((iw (focused-window)) (ip (window-pane iw))
+           (vrow (position-if (lambda (it) (search ":VALUE" (princ-to-string (item-label it))))
+                              (view-items (pane-view ip))))
+           (nrow (position-if (lambda (it) (search ":NAME" (princ-to-string (item-label it))))
+                              (view-items (pane-view ip)))))
+      (lol.morph:set-morph-bounds iw (list 700 120 560 300)) (repair)
+      (setf *active* (position list-root *trails* :key #'first)) (repair)
+      (destructuring-bind (rx ry) (row-point list-pane row)
+        (destructuring-bind (vx vy) (row-point ip vrow)
+          (press-drag-release rx ry vx vy)))
+      (check "dropped on an inspector's settable field: the field is set to the value"
+             (eq zz-drop-target (drop-value sub)))
+      (check "the screen is right" (screen-right-p))
+      (setf *active* (position list-root *trails* :key #'first)) (repair)
+      (destructuring-bind (rx ry) (row-point list-pane row)
+        (destructuring-bind (nx ny) (row-point ip nrow)
+          (press-drag-release rx ry nx ny)))
+      (check "on a field that is not settable: refused, and the status line says why"
+             (search "not settable" (or *browser-status* "")))
+      (check "the screen is right" (screen-right-p))
+      ;; the keys: SuperL-p on the selected row, then SuperL-d at a focused field
+      (setf zz-drop-target 0)
+      (setf *active* (position list-root *trails* :key #'first)) (repair)
+      (set-pane-sel list-pane row) (repair)
+      (keys "s-p")
+      (check "SuperL-p: the hand picks up the selected row's subject"
+             (eq (getf (lol.morph:hand-payload (hand)) :subject) sub))
+      (keys "esc")
+      (check "Esc puts it back: the hand is empty, nothing changed"
+             (and (null (lol.morph:hand-payload (hand))) (eql zz-drop-target 0)))
+      (keys "s-p")
+      (setf *active* (window-trail-index iw)) (set-pane-sel ip vrow) (repair)
+      (keys "s-d")
+      (check "SuperL-d drops it at the focus: the selected field is set"
+             (and (eq zz-drop-target (drop-value sub)) (null (lol.morph:hand-payload (hand)))))
+      (check "the screen is right" (screen-right-p))
+      (let ((nt (length *trails*)))
+        (setf *active* (position list-root *trails* :key #'first)) (repair)
+        (keys "s-p s-S-d")
+        (check "SuperL-S-d drops it on the tab strip: a new tab"
+               (= (1+ nt) (length *trails*)))
+        (keys "s-w"))
+      ;; something that has no readable form: refused by the text, with a reason
+      (let* ((ws (window-pane w)) (tv (pane-tv ws)) (before (lol.textview:tv-text tv)))
+        (lol.morph:hand-carry-payload (hand) (list :subject (subj-object (make-hash-table))
+                                                   :label "a hash table"))
+        (lol.morph:world-drop *world* nil (pane-body ws))
+        (check "an unreadable object dropped on text: refused, the text untouched"
+               (and (search "no readable form" (or *browser-status* ""))
+                    (string= before (lol.textview:tv-text tv)))))
+      (setf *active* (window-trail-index iw)) (close-trail)
+      (setf *active* (window-trail-index w)) (close-trail)
+      (setf *active* (position list-root *trails* :key #'first)) (close-trail)
+      (setf *active* 0) (repair)
+      (check "the screen is right" (screen-right-p)))))
 
 (format t "~&== the windows across a new world (the console and back; the desk file) ==~%")
 (keys "s-l s-g esc")                                     ; a second window, on top

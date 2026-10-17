@@ -946,21 +946,74 @@
       (:up (browser-drag-end) t)
       (t nil))))
 
+(defparameter +pick-up-travel+ 8
+  "Pixels a press on a row (or a sprite) must travel, the button held, before it picks
+   the row's subject up to be dropped elsewhere — more than +DRAG-SLOP+, so a press
+   that only rolls a fingertip on a clickpad still clicks.")
+
+(defun body-click (p b x y state)
+  "The press at X,Y on body B of the expanded pane P, acted on now: PANE-CLICK, and B
+   (or the column's body it chose) damaged."
+  (declare (ignore b))
+  (damage-body (pane-click p x y (lol.canvas:ctrl-p state) (lol.canvas:super-p state))))
+
+(defun press-subject (p x y)
+  "What a press at X,Y in the expanded pane P could pick up: the subject of the row or
+   the sprite there (PANE-TARGET), or NIL."
+  (let ((target (ignore-errors (pane-target p x y))))
+    (and (member (getf target :kind) '(:row :sprite)) (getf target :subject)
+         target)))
+
+(defun start-carry (subject from)
+  "The hand picks SUBJECT up, from the morph FROM, to drop it elsewhere; the status
+   line says what it carries and where it can go (CARRYING-HINTS, shell.lisp)."
+  (lol.morph:hand-carry-payload (lol.morph:world-hand *world*)
+                                (list :subject subject :from from :label (drop-label subject)))
+  (setf *browser-status* nil))
+
 (defmethod lol.morph:handle-event ((b pane-body) e)
   "A body under the pointer takes its own press and the drag that follows: the press
    is the body's (BODY-PRESS, through PANE-CLICK, which knows the split), and the body
-   is what is damaged. Everything else — the wheel, the menus, the halo — goes on to its
-   pane."
-  (let ((p (expanded-of (body-pane b))))
+   is what is damaged. A press on a ROW that opens something waits for the release —
+   a press that moves first is not a click but a pick-up: the hand carries the row's
+   subject away to be dropped (doc/morphic.org §13). A press on a sprite selects it at
+   once, and moved, picks its instance up. Everything else — the wheel, the menus, the
+   halo — goes on to its pane."
+  (let ((p (expanded-of (body-pane b)))
+        (x (lol.morph:event-x e)) (y (lol.morph:event-y e)) (state (lol.morph:event-state e)))
     (when (and p (eq (pane-mode p) :expanded))
       (case (lol.morph:event-kind e)
-        (:down (press-prelude)
-               (let ((state (lol.morph:event-state e)))
-                 (damage-body (pane-click p (lol.morph:event-x e) (lol.morph:event-y e)
-                                          (lol.canvas:ctrl-p state) (lol.canvas:super-p state))))
-               t)
-        (:drag (when (browser-drag (lol.morph:event-x e) (lol.morph:event-y e)) (damage-body b)) t)
-        (:up (browser-drag-end) t)
+        (:down
+         (press-prelude)
+         (let ((target (and (typep b '(or list-body stage-body))
+                            ;; a tap has no release of its own: it clicks at once
+                            (not (getf (lol.morph:event-data e) :tap))
+                            (press-subject p x y))))
+           (cond
+             ((and target (typep b 'list-body))
+              (setf (hand-press) (list :row :x x :y y :state state :subject (getf target :subject))))
+             (t (body-click p b x y state)
+                (when target
+                  (setf (hand-press) (list :row :x x :y y :clicked t
+                                           :subject (getf target :subject)))))))
+         t)
+        (:drag
+         (let ((press (hand-press)))
+           (if (eq (press-kind press) :row)
+               (when (or (> (abs (- x (getf (rest press) :x))) +pick-up-travel+)
+                         (> (abs (- y (getf (rest press) :y))) +pick-up-travel+))
+                 (start-carry (getf (rest press) :subject) b))
+               (when (browser-drag x y) (damage-body b))))
+         t)
+        (:up
+         (let ((press (hand-press)))
+           ;; a press on a row that never moved: the click it was, now
+           (if (eq (press-kind press) :row)
+               (unless (getf (rest press) :clicked)
+                 (body-click p b (getf (rest press) :x) (getf (rest press) :y)
+                             (getf (rest press) :state)))
+               (browser-drag-end)))
+         t)
         (t nil)))))
 
 (defun area-scroll (a e)
@@ -1109,6 +1162,153 @@
   (when (eq (lol.morph:event-kind e) :wheel)
     (area-scroll (window-area w) e)))
 
+;;; ===========================================================================
+;;; Drag and drop (doc/morphic.org §13)
+;;; ===========================================================================
+;;;
+;;; The hand carries a SUBJECT picked up from a row, a sprite or the caret (by the
+;;; pointer: a press that moves; by the keys: SuperL-p), and lets go of it over a morph
+;;; (the button's release, the next press, or SuperL-d at the keyboard focus). The world
+;;; asks that morph and then its owners whether they take it (LOL.MORPH:ACCEPT-DROP):
+;;;
+;;;   an editable text   inserts a READABLE REFERENCE where it lands ('name, #'f,
+;;;                      (find-class 'c), "a/path" …: DROP-REFERENCE, shell.lisp)
+;;;   an inspector field sets the field to its VALUE, through the field's own setter —
+;;;                      the same path C-c C-c takes (SET-FIELD-TO); a field with no
+;;;                      setter refuses, and says so
+;;;   a terminal         types the reference into its program (a path, a symbol)
+;;;   the tab strip      opens it as a new trail
+;;;   any other pane     drills it there, in that pane's trail (a window's included)
+;;;   a web page         refuses: a page takes no drops
+;;;
+;;; Each method answers T (taken; it says what it did), a string (refused, why), or NIL
+;;; (not mine: ask my owner). The status line says what happened.
+
+(defun focus-pane-of (p)
+  "Give the keys to the trail pane P is in — and, when P is a pinned side pane, to its
+   column."
+  (let* ((host (expanded-of p)) (i (pane-trail-index host)))
+    (when i (setf *active* i))
+    (when (and (not (eq host p)) (eq (pane-side host) p))
+      (setf (pane-editing-side host) t))))
+
+(defmethod lol.morph:accept-drop ((b text-body) payload e)
+  "Editable text takes a readable reference to what is dropped, where it lands (at the
+   caret, dropped from the keys). A preview or read-only text is not a place to type:
+   its pane drills instead."
+  (let* ((p (body-pane b)) (host (and p (expanded-of p))) (tv (and p (pane-tv p))))
+    (when (and tv (editor-pane-p p)
+               (or (eq host p) (eq (pane-side host) p)))     ; not a nav-split preview
+      (let ((text (drop-reference (getf payload :subject))))
+        (if (null text)
+            (format nil "~a has no readable form to insert — drop it on the tabs to inspect it, or on a field to store it"
+                    (getf payload :label))
+            (progn
+              (drop-reference-at tv text (and e (lol.morph:event-x e)) (and e (lol.morph:event-y e)))
+              (focus-pane-of p)
+              (setf *browser-status* (format nil "dropped ~a: inserted ~a" (getf payload :label) text))
+              t))))))
+
+(defmethod lol.morph:accept-drop ((b list-body) payload e)
+  "An inspector's field takes the VALUE dropped on it, through its own setter. Any
+   other list leaves the drop to its pane (it drills)."
+  (let ((p (body-pane b)))
+    (when (and p (pane-view p) (eq (view-kind (pane-view p)) :inspector))
+      (let* ((i (if e (lol.widgets:hit-row (body-rows b) (lol.morph:event-y e)) (pane-sel p)))
+             (it (and i (nth i (view-items (pane-view p))))))
+        (when it
+          (multiple-value-bind (v ok) (drop-value (getf payload :subject))
+            (cond
+              ((null (item-edit it))
+               (format nil "the field ~a is not settable — ~a was not stored" (item-label it)
+                       (getf payload :label)))
+              ((not ok)
+               (format nil "~a is a view, not a value to store in ~a" (getf payload :label)
+                       (item-label it)))
+              (t (handler-case
+                     (progn (set-pane-sel p i) (set-field-to p it v) (focus-pane-of p) t)
+                   (serious-condition (c) (format nil "set failed: ~a" c)))))))))))
+
+(defmethod lol.morph:accept-drop ((b terminal-body) payload e)
+  (declare (ignore e))
+  (let* ((p (body-pane b)) (text (drop-reference (getf payload :subject))))
+    (cond ((null text) (format nil "~a has no readable form to type" (getf payload :label)))
+          ((not (session-live-p (pane-session p))) "that terminal's program has ended")
+          (t (terminal-paste (pane-subject p) text)
+             (focus-pane-of p)
+             (setf *browser-status* (format nil "dropped ~a: typed ~a" (getf payload :label) text))
+             t))))
+
+(defmethod lol.morph:accept-drop ((b web-body) payload e)
+  (declare (ignore payload e))
+  "a web page takes no drops — drop it on the tabs to open it")
+
+(defmethod lol.morph:accept-drop ((p pane) payload e)
+  "Any pane — tiled or in a window, its list or its panel — drills what is dropped
+   there, in its own trail, which gets the keys."
+  (declare (ignore e))
+  (let* ((host (expanded-of p)) (i (pane-trail-index host)))
+    (when i
+      (setf *active* i)
+      (trail-push (getf payload :subject))
+      (setf *browser-status* (format nil "dropped ~a: opened here" (getf payload :label)))
+      t)))
+
+(defmethod lol.morph:accept-drop ((s tab-strip) payload e)
+  "The tab strip opens what is dropped on it as a new trail."
+  (declare (ignore e))
+  (new-trail (getf payload :subject))
+  (setf *browser-status* (format nil "dropped ~a: a new tab" (getf payload :label)))
+  t)
+
+(defmethod lol.morph:accept-drop ((m title-bar) payload e)
+  "A window's title bar: as its pane — drill it in the window's trail."
+  (declare (ignore e))
+  (let ((i (window-trail-index (lol.morph:morph-owner m))))
+    (when i
+      (setf *active* i)
+      (trail-push (getf payload :subject))
+      (setf *browser-status* (format nil "dropped ~a: opened in the window" (getf payload :label)))
+      t)))
+
+(defmethod lol.morph:world-dropped ((desk desk) payload result)
+  (cond ((stringp result) (setf *browser-status* result))
+        ((null result)
+         (setf *browser-status*
+               (format nil "nothing there takes ~a — it is put back" (getf payload :label))))))
+
+(defun keyboard-pick-up ()
+  "SuperL-p: the hand picks up what the keyboard is on — the selected row's subject in
+   a list, the selected sprite on a stage, the definition (or symbol) at the caret in
+   text. -> T, or a status saying there is nothing to pick up."
+  (let* ((p (current-pane)) (b (and p (focused-body p)))
+         (src (if (and (pane-side p) (pane-editing-side p)) (pane-side p) p))
+         (subject
+           (typecase b
+             (list-body (let ((it (selected-item src))) (and it (item-subject it))))
+             (stage-body (let ((st (view-data (pane-view src))))
+                           (and (stage-selected st) (body-obj (stage-selected st)))))
+             (text-body (let ((sym (resolve-symbol (token-at-point (pane-tv src)))))
+                          (and sym (symbolp sym)
+                               (if (jumpable-p sym) (subj-defn sym) sym))))
+             (t nil))))
+    (if subject
+        (progn (start-carry subject b) t)
+        (progn (setf *browser-status* "nothing to pick up here: select a row, a sprite, or put the caret on a name")
+               nil))))
+
+(defun keyboard-drop (desk &optional on-tabs)
+  "SuperL-d: let go of what the hand carries at the keyboard focus — the focused pane's
+   body (text: at the caret; an inspector: on the selected field); with Shift, on the
+   tab strip: a new tab."
+  (let ((hand (lol.morph:world-hand desk)))
+    (if (null (lol.morph:hand-payload hand))
+        (setf *browser-status* "the hand is empty — SuperL-p picks the selection up, or drag a row")
+        (lol.morph:world-drop desk nil
+                              (if on-tabs
+                                  (shell-strip (desk-shell desk))
+                                  (let ((p (current-pane))) (or (focused-body p) p)))))))
+
 ;;; ---- the desk's own keys: SuperL-g and the grab mode -----------------------------------
 
 (defun grab-status ()
@@ -1197,6 +1397,17 @@
      (let ((key (lol.morph:event-key e)) (state (lol.morph:event-state e)))
        (cond
          ((desk-grab desk) (grab-key desk key state))
+         ;; drag and drop from the keys (§13): Esc puts back what the hand carries,
+         ;; SuperL-p picks the selection up, SuperL-d drops it (Shift: as a new tab)
+         ((and (eq key :escape) (lol.morph:hand-payload (lol.morph:world-hand desk)))
+          (setf *browser-status*
+                (format nil "put back: ~a" (getf (lol.morph:hand-payload (lol.morph:world-hand desk)) :label))
+                (lol.morph:hand-press (lol.morph:world-hand desk)) nil)
+          t)
+         ((and (lol.canvas:super-p state) (member key '(#\p #\P)) (not *minibuffer*))
+          (keyboard-pick-up) t)
+         ((and (lol.canvas:super-p state) (member key '(#\d #\D)) (not *minibuffer*))
+          (keyboard-drop desk (or (eql key #\D) (lol.canvas:shift-p state))) t)
          ((and (lol.canvas:super-p state) (member key '(#\g #\G)) (not *minibuffer*))
           (let ((win (or (focused-window) (tear-off-trail *active*))))
             (when win

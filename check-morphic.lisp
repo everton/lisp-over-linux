@@ -542,6 +542,149 @@
   (probe "(sb-int:unencapsulate 'fb-cycle 'zz)")
   (qmp-hold "meta_l" "w") (sleep 1.0))
 
+;;; ---- §13: a pane's body is a morph; drag and drop ---------------------------------
+
+(defun qmp-hold2 (m1 m2 qcode)
+  "QCODE pressed while M1 and M2 are both held (SuperL-Shift-d)."
+  (qmp-events (key-event t m1)) (sleep 0.15)
+  (qmp-events (key-event t m2)) (sleep 0.15)
+  (qmp-events (key-event t qcode)) (sleep 0.1)
+  (qmp-events (key-event nil qcode)) (sleep 0.15)
+  (qmp-events (key-event nil m2)) (sleep 0.15)
+  (qmp-events (key-event nil m1)))
+
+(defun row-point (pane-form index)
+  "The screen point of row INDEX of the list body of the pane PANE-FORM names."
+  (read-list (probe (format nil "(let* ((p ~a) (b (pane-body p)) (hit (find ~d (pane-rows p) :key (function cdr)))) (multiple-value-bind (ox oy) (lol.morph:surface-origin b) (list (+ ox (first (lol.morph:morph-local-bounds b)) 40) (+ oy (car hit) 4))))" pane-form index))))
+
+(defun ws-text () (probe "(lol.textview:tv-text (pane-tv (window-pane (focused-window))))"))
+
+(defun section-g ()
+  "§13: bodies are morphs (a key in a text view beside a list), and drag and drop by
+   QEMU's pointer and by keys."
+  (format t "~&~%== G. bodies are morphs; drag and drop ==~%")
+  (qmp-key "esc") (sleep 0.3)
+  ;; a list, tiled; a Workspace in a window at a known place, holding "(list )"
+  (qmp-hold "meta_l" "l") (sleep 2.0)
+  (probe "(progn (defvar zz-g-root nil) (setf zz-g-root (first (nth *active* *trails*))) t)")
+  (qmp-hold "meta_l" "e") (sleep 1.5) (qmp-hold "meta_l" "g") (sleep 1.0) (qmp-key "esc") (sleep 0.5)
+  (probe "(let ((w (focused-window))) (lol.textview:tv-set-text (pane-tv (window-pane w)) (format nil \"(list )~%\")) (lol.morph:set-morph-bounds w (list 700 300 560 380)) (setf *active* (position zz-g-root *trails* :key (function first))) t)")
+  (sleep 1.0)
+  (check "the tiled list pane's body is a LIST-BODY morph, its child; the window's a TEXT-BODY"
+         (string= (probe "(let ((p (holder-pane (desk-shell *world*)))) (list (type-of (pane-body p)) (eq (lol.morph:morph-owner (pane-body p)) p) (type-of (pane-body (window-pane (first (desk-windows)))))))")
+                  "(LIST-BODY T TEXT-BODY)"))
+  ;; ---- by the pointer: press on a row, glide into the window's text, let go
+  (let* ((row 2)
+         (pt (row-point "(holder-pane (desk-shell *world*))" row))
+         (ref (probe (format nil "(drop-reference (item-subject (nth ~d (view-items (pane-view (holder-pane (desk-shell *world*)))))))" row)))
+         (n0 (probe-int "(length (nth (position zz-g-root *trails* :key (function first)) *trails*))"))
+         (tx (+ 700 (or (probe-int "(lol.textview::x-of-col (pane-tv (window-pane (first (desk-windows)))) 6)") 80)))
+         (ty (+ 300 (or (probe-int "(+ (lol.textview::tv-y (pane-tv (window-pane (first (desk-windows))))) 12)") 40))))
+    (format t "~&  row ~a at ~a, its reference ~a; the text at ~a,~a~%" row pt ref tx ty)
+    (when pt
+      (glide-to (first pt) (second pt)) (button t)
+      (glide-to (+ (first pt) 30) (+ (second pt) 20) :step 15)
+      (check "a press on a row that moves is a pick-up: the hand carries its subject"
+             (string= (probe "(and (lol.morph:hand-payload (lol.morph:world-hand *world*)) t)") "T"))
+      (glide-to tx ty :step 60) (button nil) (sleep 1.0))
+    (let ((text (ws-text)))
+      (format t "~&  the Workspace now: ~a~%" text)
+      (check "let go over the Workspace in the window: the reference is inserted where it landed"
+             (and ref text (search (string-trim "\"" ref) text)
+                  (string= (probe "(lol.morph:hand-payload (lol.morph:world-hand *world*))") "NIL")))
+      (check "... the list did not drill (a pick-up is not a click)"
+             (eql n0 (probe-int "(length (nth (position zz-g-root *trails* :key (function first)) *trails*))"))))
+    ;; a key typed into that text view now repairs a line of it, copied out of the window
+    (probe "(progn (defvar *zz-g* nil) (setf *zz-g* nil) (sb-int:encapsulate 'lol.morph:world-repair 'g (lambda (f &rest a) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f a) (unless (= n (lol.morph:world-repairs *world*)) (push (lol.morph:world-last-repair *world*) *zz-g*)))))) t)")
+    (qmp-type "z") (sleep 1.0)
+    (let ((r (read-list (probe "(let* ((r (first *zz-g*)) (w (focused-window)) (b (pane-body (window-pane w)))) (list (getf r :rects) (lol.morph:morph-bounds b) (lol.textview:tv-line-height (pane-tv (window-pane w))) (mapcar (lambda (e) (symbol-name (type-of (car e)))) (getf r :drawn))))"))))
+      (format t "~&  a key in the window's text: ~a~%" r)
+      (check "a key in the window's text view repairs one line of it — the text body alone (the frame's outline over it), copied out"
+             (and r (= 1 (length (first r))) (= (fourth (first (first r))) (third r))
+                  (equal (sort (copy-list (fourth r)) #'string<) '("TEXT-BODY" "TRAIL-WINDOW" "WINDOW-FRAME")))))
+    (qmp-key "backspace") (sleep 0.5)
+    (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'g)")
+    ;; ---- onto the tab strip
+    (probe "(setf *active* (position zz-g-root *trails* :key (function first)))") (sleep 0.6)
+    (let ((nt (probe-int "(length *trails*)")) (pt (row-point "(holder-pane (desk-shell *world*))" row))
+          (bar (probe-int "+bar-h+")))
+      (when pt
+        (glide-to (first pt) (second pt)) (button t)
+        (glide-to (+ (first pt) 30) (+ (second pt) 20) :step 15)
+        (glide-to 500 (floor bar 2) :step 60) (button nil) (sleep 1.2))
+      (check "dropped on the tab strip by the pointer: a new tab"
+             (eql (probe-int "(length *trails*)") (and nt (1+ nt))))
+      (qmp-hold "meta_l" "w") (sleep 1.0)))
+  ;; ---- by the keys: SuperL-p on the selected row, SuperL-d at the window's text
+  (probe "(progn (setf *active* (position zz-g-root *trails* :key (function first))) (set-pane-sel (current-pane) 3) t)")
+  (sleep 0.6)
+  (let ((ref (probe "(drop-reference (item-subject (selected-item (current-pane))))")))
+    (qmp-hold "meta_l" "p") (sleep 0.6)
+    (check "SuperL-p: the hand picks up the selected row's subject; the status line says so"
+           (string= (probe "(list (and (lol.morph:hand-payload (lol.morph:world-hand *world*)) t) (first (status-line-content (current-pane))))") "(T :CARRYING)"))
+    (probe "(setf *active* (window-trail-index (first (desk-windows))))") (sleep 0.6)
+    (qmp-hold "meta_l" "d") (sleep 1.0)
+    (check "SuperL-d at the Workspace's caret: the reference is inserted there"
+           (let ((text (ws-text))) (and ref text (search (string-trim "\"" ref) text))))
+    ;; Esc puts back, Shift drops on the tabs
+    (probe "(setf *active* (position zz-g-root *trails* :key (function first)))") (sleep 0.5)
+    (qmp-hold "meta_l" "p") (sleep 0.4) (qmp-key "esc") (sleep 0.5)
+    (check "Esc puts back what the hand carries"
+           (string= (probe "(lol.morph:hand-payload (lol.morph:world-hand *world*))") "NIL"))
+    (let ((nt (probe-int "(length *trails*)")))
+      (qmp-hold "meta_l" "p") (sleep 0.4) (qmp-hold2 "meta_l" "shift" "d") (sleep 1.2)
+      (check "SuperL-S-d drops it on the tab strip: a new tab"
+             (eql (probe-int "(length *trails*)") (and nt (1+ nt))))
+      (qmp-hold "meta_l" "w") (sleep 1.0)))
+  ;; ---- an inspector field takes the value, through its setter (by the pointer)
+  (probe "(progn (defvar zz-g-target 0) (setf zz-g-target 0) (new-trail 'zz-g-target) t)") (sleep 1.0)
+  (qmp-hold "meta_l" "g") (sleep 1.0) (qmp-key "esc") (sleep 0.5)
+  (probe "(progn (lol.morph:set-morph-bounds (focused-window) (list 700 100 560 300)) (setf *active* (position zz-g-root *trails* :key (function first))) t)")
+  (sleep 1.0)
+  (let* ((vrow (probe-int "(position-if (lambda (it) (search \":VALUE\" (princ-to-string (item-label it)))) (view-items (pane-view (window-pane (car (last (desk-windows)))))))"))
+         (vpt (and vrow (row-point "(window-pane (car (last (desk-windows))))" vrow)))
+         (pt (row-point "(holder-pane (desk-shell *world*))" 2))
+         (want (probe "(prin1-to-string (drop-value (item-subject (nth 2 (view-items (pane-view (holder-pane (desk-shell *world*))))))))")))
+    (when (and pt vpt)
+      (glide-to (first pt) (second pt)) (button t)
+      (glide-to (+ (first pt) 30) (+ (second pt) 20) :step 15)
+      (glide-to (first vpt) (second vpt) :step 60) (button nil) (sleep 1.2))
+    (format t "~&  zz-g-target = ~a (want ~a)~%" (probe "(prin1-to-string zz-g-target)") want)
+    (check "dropped on an inspector's settable field: the field is set (its setter, as C-c C-c)"
+           (and want (string= (probe "(prin1-to-string zz-g-target)") want))))
+  (check "the drag-and-drop keys are in the SuperL-? cheatsheet"
+         (string= (probe "(let ((s (format nil \"~s\" *cheatsheet*))) (and (search \"Super-p\" s) (search \"Super-d / Super-S-d\" s) (search \"drag a row\" s) t))") "T"))
+  ;; tidy: close the inspector's and the Workspace's windows, and the list
+  (probe "(progn (dolist (w (desk-windows)) (close-window-trail w)) (setf *active* (or (position zz-g-root *trails* :key (function first)) 0)) (close-trail) t)")
+  (sleep 1.0))
+
+(defun measure (label form)
+  (format t "~&  ~42a ~a us~%" label (probe form 300)))
+
+(defun section-h ()
+  "What each kind of repair costs in this guest, drawn and sent, averaged over 50 —
+   doc/morphic.org §13's table."
+  (format t "~&~%== H. what it costs (50-run averages, drawn and sent) ==~%")
+  (qmp-hold "meta_l" "l") (sleep 2.0)
+  (qmp-key "down") (qmp-hold "shift" "ret") (sleep 1.5)     ; a list with source pinned beside
+  (probe "(progn (defvar *zz-t* nil) (defun zz-time (fn) (let ((t0 (get-internal-real-time))) (dotimes (i 50) (funcall fn) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))) t)")
+  (check "a list with an editable text view beside it, the text focused"
+         (string= (probe "(let ((p (current-pane))) (list (type-of (pane-body p)) (and (pane-side p) (type-of (pane-body (pane-side p)))) (pane-editing-side p)))") "(LIST-BODY TEXT-BODY T)"))
+  (measure "a key in a text view beside a list" "(zz-time (let ((i 0)) (lambda () (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key (if (evenp (incf i)) :backspace #\\x) :state 0)))))")
+  (format t "~&  (each a real key through the world: a character, then its backspace)~%")
+  (probe "(let ((r (lol.morph:world-last-repair *world*))) (setf *zz-t* (list (getf r :rects) (mapcar (lambda (e) (type-of (car e))) (getf r :drawn)))))")
+  (format t "~&  its last repair: ~a~%" (probe "*zz-t*"))
+  (check "... each repaired a line of the text view, and nothing of the list"
+         (string= (probe "(let* ((p (current-pane)) (tb (pane-body (pane-side p))) (r (lol.morph:world-last-repair *world*))) (and (= 1 (length (getf r :rects))) (every (lambda (e) (eq (car e) tb)) (getf r :drawn))))") "T"))
+  (qmp-hold "meta_l" "g") (sleep 1.0) (qmp-key "esc") (sleep 0.5)
+  (measure "a key in a window (its list, moved)" "(zz-time (let ((i 0)) (lambda () (setf (pane-editing-side (current-pane)) nil) (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key (if (evenp (incf i)) :up :down) :state 0)))))")
+  (measure "a full repair (shell + window)" "(zz-time (lambda () (lol.morph:invalidate *world*)))")
+  (probe "(progn (dolist (w (desk-windows)) (close-window-trail w)) t)")
+  (probe "(progn (new-trail (subj-stage 'lol.examples:collide)) (setf (stage-running (view-data (pane-view (current-pane)))) nil) t)" 5.0)
+  (sleep 1.5)
+  (measure "a stage step (its body)" "(zz-time (let ((p (current-pane))) (lambda () (step-stage (view-data (pane-view p))) (lol.morph:invalidate (pane-body p)))))")
+  (qmp-hold "meta_l" "w") (sleep 1.0))
+
 (defun checks ()
   (quiet-kernel-console)
   (wait-for-browser)
@@ -551,6 +694,8 @@
   (section-d)
   (section-e)
   (section-f)
+  (section-g)
+  (section-h)
   t)
 
 (run-guest-checks "check-morphic" #'checks)

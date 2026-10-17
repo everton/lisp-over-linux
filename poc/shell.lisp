@@ -1682,6 +1682,9 @@
         (*browser-status*
          (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
          nil)
+        ((carried-label)               ; the hand carries something to drop: say what
+         (draw-hints canvas 10 (status-text-y h) w (carrying-hints))
+         nil)
         (t (draw-hints canvas 10 (status-text-y h) w (status-hints cur))
            nil)))
 
@@ -1694,7 +1697,19 @@
            (list :minibuffer (mb-prompt mb) (mb-text mb) (mb-point mb) (mb-hint mb)
                  (mb-secret mb) (mb-single-key mb))))
         (*browser-status* (list :status *browser-status*))
+        ((carried-label) (list :carrying (carried-label)))
         (t (list :hints (status-hints cur)))))
+
+(defun carried-label ()
+  "The name of what the hand carries to be dropped (doc/morphic.org §13), or NIL."
+  (let ((h (the-hand)))
+    (and h (getf (lol.morph:hand-payload h) :label))))
+
+(defun carrying-hints ()
+  "The status line while the hand carries something: what, and where it can go."
+  (list (cons nil (format nil "carrying ~a:" (carried-label)))
+        (cons "Super-d" "drop at the focus") (cons "Super-S-d" "as a new tab")
+        (cons "click/release" "drop there") (cons "Esc" "put it back")))
 
 (defun status-hints (cur)
   "The keys that matter for the pane CUR, as ((CHORD . MEANING) …) — its own first,
@@ -2148,21 +2163,27 @@
          ;; testing, an Esc appeared to report "that field is not settable".
          (unless text (setf *browser-status* nil))
          (when text
-           (handler-case
-               (let ((new (eval (read-from-string text))))
-                 (funcall (item-edit it) new)
-                 ;; re-present: the row, its neighbours and the title all come from
-                 ;; the object, so read them back rather than editing the old view
-                 (let ((sel (pane-sel pane)))
-                   (setf (pane-view pane) (present (pane-subject pane)))
-                   (set-pane-sel pane sel))
-                 (setf (pane-preview-subject pane) nil) ; the cached preview is stale
-                 (setf *browser-status*
-                       (let ((*print-length* 20) (*print-level* 3))
-                         (format nil "~a = ~s" (item-label it) new))))
+           (handler-case (set-field-to pane it (eval (read-from-string text)))
              (serious-condition (c)
                (setf *browser-status* (format nil "set failed: ~a" c)))))))))
   nil)
+
+(defun set-field-to (pane it new)
+  "Write NEW into the place the inspector row IT of PANE shows, through the row's own
+   setter (ITEM-EDIT), and show the result. The one path every way of setting a field
+   takes — the typed value (SET-FIELD) and a value dropped on the row (drag and drop,
+   poc/morphic.lisp). Signals what the setter signals; T when it was set."
+  (funcall (item-edit it) new)
+  ;; re-present: the row, its neighbours and the title all come from the object, so
+  ;; read them back rather than editing the old view
+  (let ((sel (pane-sel pane)))
+    (setf (pane-view pane) (present (pane-subject pane)))
+    (set-pane-sel pane sel))
+  (setf (pane-preview-subject pane) nil)    ; the cached preview is stale
+  (setf *browser-status*
+        (let ((*print-length* 20) (*print-level* 3))
+          (format nil "~a = ~s" (item-label it) new)))
+  t)
 
 (defun eval-in-context-pane (pane)
   "Evaluate a typed expression INSIDE the object this pane is showing — SELF bound to it
@@ -3734,6 +3755,83 @@
           (if (lol.morph:morph-owner p) (lol.morph:to-world-rect p (list x y 0 0)) (list x y))
         (declare (ignore r))
         (context-menu-at (pane-target p x y) wx wy)))))
+
+;;; ---- drag and drop: a subject, carried by the hand ---------------------------
+;;; Morphic's hand carries what you pick up and offers it to whatever is under it when
+;;; you let go (doc/morphic.org §13). Here what is carried is a SUBJECT — a row's (a
+;;; definition, a class, a file, an inspector field's value), a sprite's instance, the
+;;; symbol at the caret — and each kind of morph says what a drop on it means
+;;; (ACCEPT-DROP, poc/morphic.lisp): a text you can edit inserts a READABLE REFERENCE to
+;;; it, the tab strip opens it as a new trail, a pane drills it there, an inspector's
+;;; settable field is set to its VALUE. These two functions are what the subject is,
+;;; for those two purposes; they agree, so that the text a drop inserts evaluates to the
+;;; value a drop on a field would store.
+
+(defun drop-value (subject)
+  "What SUBJECT is as a VALUE to store -> (values VALUE T), or (values NIL NIL) when
+   it is a browser's handle on a view (a module, a cross-reference …) rather than a
+   value. A definition is its name (the symbol), a file its path, an inspected value
+   itself."
+  (cond
+    ((subj-object-p subject) (values (subj-object-value subject) t))
+    ((subj-defn-p subject) (values (subj-defn-name subject) t))
+    ((subj-file-p subject) (values (subj-file-path subject) t))
+    ((subj-dir-p subject) (values (subj-dir-path subject) t))
+    ;; the other SUBJ-* structures are the browser's own handles on a view
+    ((and (typep subject 'structure-object)
+          (let ((n (symbol-name (type-of subject))))
+            (and (> (length n) 5) (string= "SUBJ-" n :end2 5))))
+     (values nil nil))
+    (t (values subject t))))
+
+(defun drop-reference (subject)
+  "Text that reads back as SUBJECT's value (DROP-VALUE) — what a drop on a text you can
+   edit inserts — or NIL when there is none: a symbol quoted, a class as (find-class
+   'name), a named function as #'name, a package as (find-package \"NAME\"), a path as
+   a string, a number or a string as itself; anything else only if it prints readably.
+   Printed from CL-USER, so a symbol of another package comes out qualified."
+  (multiple-value-bind (v ok) (drop-value subject)
+    (when ok
+      (let ((*package* (find-package :cl-user)) (*print-pretty* nil)
+            (*print-length* nil) (*print-level* nil))
+        (flet ((named (thing) (let ((n (ignore-errors (sb-kernel:%fun-name thing))))
+                                (and n (or (symbolp n) (and (consp n) (eq (first n) 'setf))) n))))
+          (typecase v
+            ((or keyword (member t nil)) (prin1-to-string v))
+            (symbol (format nil "'~s" v))
+            (class (and (class-name v) (eq (find-class (class-name v) nil) v)
+                        (format nil "(find-class '~s)" (class-name v))))
+            (function (let ((n (named v)))
+                        (and n (fboundp n) (eq (fdefinition n) v) (format nil "#'~s" n))))
+            (package (format nil "(find-package ~s)" (package-name v)))
+            ((or number string character pathname) (prin1-to-string v))
+            ;; anything else only if it prints readably — and reads back without
+            ;; #. (SBCL prints a hash table readably as #.(…), an eval at read time:
+            ;; not a reference anyone wants dropped into their code)
+            (t (ignore-errors
+                 (let ((text (let ((*print-readably* t)) (prin1-to-string v))))
+                   (and (let ((*read-eval* nil)) (read-from-string text) t) text))))))))))
+
+(defun drop-label (subject)
+  "A short name for SUBJECT, for the status line while it is carried."
+  (multiple-value-bind (v ok) (drop-value subject)
+    (clip-text (if ok (object-title v) (view-title (present subject))) 40)))
+
+(defun drop-reference-at (tv text &optional x y)
+  "Insert TEXT into the editable text view TV — at X,Y (where TV is drawn) when given,
+   else at the caret — as one undoable edit, with a space either side where it would
+   otherwise run into a word."
+  (when (and x y) (lol.textview:tv-click tv x y))
+  (let* ((line (aref (lol.textview:tv-lines tv) (lol.textview:tv-point-line tv)))
+         (c (lol.textview:tv-point-col tv))
+         (before (and (plusp c) (char line (1- c))))
+         (after (and (< c (length line)) (char line c)))
+         (text (format nil "~:[~; ~]~a~:[~; ~]"
+                       (and before (not (member before '(#\Space #\( #\' #\` #\,))))
+                       text
+                       (and after (not (member after '(#\Space #\))))))))
+    (with-undo (tv) (editor-insert tv text))
+    t))
 
 ;;; ---- the clipboard, wired into the editor ---------------------------------
 ;;; poc/clipboard.lisp holds the state and does the text surgery — pure functions

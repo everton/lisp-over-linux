@@ -1368,8 +1368,12 @@
             ;; (doc/input.org, "Three buttons")
             (when (and clicked *alt-down*)
               (setf clicked nil button :middle *button-down* nil))
+            ;; a TAP is a click with no button held, and no release to come: marked,
+            ;; so what waits for a release (a row, which a press that moves would pick
+            ;; up instead — doc/morphic.org §13) acts at once
             (when clicked
-              (emit :down :state (logior (if *ctrl-down* 4 0) (if *super-down* 64 0))))
+              (emit :down :state (logior (if *ctrl-down* 4 0) (if *super-down* 64 0))
+                          :data (unless *button-down* '(:tap t))))
             (case button
               (:right (emit :right))
               (:middle (emit :middle :state (if *super-down* 64 0))))
@@ -1780,7 +1784,7 @@
    or the wheel; Esc / q / Enter returns to the debugger. Reuses PRESENT (subj-defn
    NAME), so a recorded definition shows its source and a built-in shows whatever
    PRESENT falls back to (or a plain 'no source' note)."
-  (let* ((w *fb-xres*) (h *fb-yres*)
+  (let* ((w (third (lol.morph:morph-bounds *world*))) (h (fourth (lol.morph:morph-bounds *world*)))
          (view (ignore-errors (present (subj-defn name))))
          (text (or (and view (view-text view))
                    (format nil "(no source recorded for ~(~a~) — a built-in or anonymous frame)"
@@ -2059,7 +2063,8 @@
   "A modal view of CONV over the debugger: it fills in as the answer streams, arrows
    and PageUp/Down move the caret, C-c C-c accepts the form before it, C-g stops the
    turn, Esc returns to the rail."
-  (let* ((w *fb-xres*) (h *fb-yres*) (band (agent-view-band))
+  (let* ((w (third (lol.morph:morph-bounds *world*))) (h (fourth (lol.morph:morph-bounds *world*)))
+         (band (agent-view-band))
          (tv (lol.textview:make-textview :font *bfont* :focus t :tint #'conversation-tint))
          (o (make-instance 'agent-view-overlay :conv conv :tv tv)))
     (lol.textview:tv-geometry tv 12 (+ band 8) (- w 24) (- h band 8 (line-h) 9))
@@ -2172,6 +2177,15 @@
      ("halo, Up to window" "Move Resize Raise Close Re-tile")
      ("  Move / Resize"    "the pointer carries it; click: down")
      ("  Inspect, bounds"  "C-c C-c a (x y w h): it moves"))
+    ("Drag and drop  (doc/morphic.org)"
+     ("drag a row / sprite" "pick up what it shows; let go: drop")
+     ("  on editable text" "insert a reference: 'f #'g \"path\"")
+     ("  on a field"       "set it (if settable) to the value")
+     ("  on the tabs"      "open it as a new tab")
+     ("  on a pane / title" "drill it there (a window's too)")
+     ("Super-p"            "pick up the selection / the name")
+     ("Super-d / Super-S-d" "drop at the focus / as a new tab")
+     ("Esc"                "put back what the hand carries"))
     ("Text size  (doc/fonts.org)"
      ("Super-= / Super-+"  "bigger text, everywhere")
      ("Super--"            "smaller text")
@@ -2348,7 +2362,7 @@
   "Put the cheatsheet up over the screen and return. Any key or click dismisses it —
    or, when it runs to several pages, PageDown / Space / Right turn the page and
    PageUp / Left turn it back."
-  (when (and *world* *fb-canvas*)
+  (when *world*                     ; the screen is the world's, on either backend
     (open-overlay (make-instance 'cheatsheet-overlay))))
 
 (defmethod overlay-draw ((o cheatsheet-overlay) canvas w h)

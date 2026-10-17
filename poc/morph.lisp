@@ -65,6 +65,8 @@
    #:hand #:hand-x #:hand-y #:hand-capture #:hand-carrying #:hand-mode
    #:hand-grab-dx #:hand-grab-dy #:hand-pick-up #:hand-drop #:now-ms
    #:hand-press #:hand-clicks #:hand-count-click
+   ;; drag and drop
+   #:accept-drop #:world-dropped #:hand-payload #:hand-carry-payload #:world-drop
    #:+max-damage-rects+
    ;; events
    #:event #:make-event #:event-kind #:event-key #:event-state #:event-x #:event-y
@@ -458,6 +460,24 @@
           (move-morph m (- (hand-x hand) (hand-grab-dx hand))
                         (- (hand-y hand) (hand-grab-dy hand)))))))
 
+(defun hand-payload (hand)
+  "What the hand carries to be DROPPED (not a window it moves): the :DRAG press's
+   plist, or NIL. Whoever picked it up put it there (HAND-CARRY-PAYLOAD)."
+  (let ((p (hand-press hand))) (and (eq (first p) :drag) (rest p))))
+
+(defun hand-carry-payload (hand payload)
+  "Start carrying PAYLOAD (a plist; its :SUBJECT is what a drop is about) to be dropped:
+   on the button's release when it is held, or — picked up with a key, no button held —
+   on the next press, or at the keyboard focus (WORLD-DROP)."
+  (setf (hand-press hand) (cons :drag payload)))
+
+(defgeneric accept-drop (morph payload event)
+  (:documentation "The hand lets go of PAYLOAD over MORPH — EVENT says where, in MORPH's
+   surface coordinates, or is NIL for a drop at the keyboard focus. Return T when MORPH
+   took it, a STRING saying why it refuses (the walk stops there and the string is
+   shown), or NIL to let its owner be asked instead.")
+  (:method ((m morph) payload event) (declare (ignore payload event)) nil))
+
 (defun hand-drop (hand world)
   "Let go of what the hand carries; the morph is told where (DROP-MORPH)."
   (let ((m (shiftf (hand-carrying hand) nil)))
@@ -691,6 +711,25 @@
                   (lol.canvas:blit-canvas canvas c sx sy)))
               (draw-morph m canvas (list x y w h))))))))
 
+(defgeneric world-dropped (world payload result)
+  (:documentation "A drop is over: RESULT is what ACCEPT-DROP answered (T, a refusal, or
+   NIL when nothing under the hand took it). The world's chance to say so.")
+  (:method ((w world) payload result) (declare (ignore payload result)) nil))
+
+(defun world-drop (world event &optional (at (and event (morph-at world (event-x event) (event-y event)))))
+  "Let go of what the hand carries over the morph AT (the topmost under EVENT's point,
+   by default): ask it, then its owners, to ACCEPT-DROP — each with EVENT in its own
+   coordinates — until one answers. The hand is empty afterwards. -> the answer."
+  (let* ((hand (world-hand world))
+         (payload (hand-payload hand))
+         (result (loop for m = at then (morph-owner m)
+                       while (and m (not (eq m world)))
+                       for r = (accept-drop m payload (and event (localize-event event m)))
+                       when r return r)))
+    (setf (hand-press hand) nil)
+    (world-dropped world payload result)
+    result))
+
 (defun bubble (m event)
   "Offer EVENT to M, then to each owner in turn, until one consumes it — each in its
    own surface's coordinates (LOCALIZE-EVENT)."
@@ -727,6 +766,13 @@
           ((and (hand-carrying hand) (eq kind :up))
            (setf (hand-capture hand) nil)
            (hand-drop hand world) t)
+          ;; a payload being dragged (doc/morphic.org §13): the pointer only carries it;
+          ;; letting go of the button — or, picked up with a key, the next press — drops
+          ;; it on the morph under the pointer
+          ((and (hand-payload hand) (member kind '(:drag :move))) t)
+          ((and (hand-payload hand) (member kind '(:up :down)))
+           (setf (hand-capture hand) nil)
+           (world-drop world event) t)
           ((handle-event world event))
           ((member kind '(:key :menu))
            (and (world-focus world) (bubble (world-focus world) event)))
