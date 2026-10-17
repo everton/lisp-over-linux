@@ -86,14 +86,22 @@
     (setf (sb-bsd-sockets:sockopt-reuse-address sock) t)
     (sb-bsd-sockets:socket-bind sock #(127 0 0 1) *http-port*)
     (sb-bsd-sockets:socket-listen sock 8)
+    ;; one thread PER CONNECTION: Chrome opens connections it does not use at once (a
+    ;; preconnect, an idle keep-alive), and a server that served one connection at a
+    ;; time sat reading a request line that never came while the real request waited
+    ;; behind it — a page load that never finished, which first looked like Chrome
+    ;; hanging a page torn off into a window (doc/morphic.org §13.5)
     (sb-thread:make-thread
      (lambda ()
        (loop (let ((c (sb-bsd-sockets:socket-accept sock)))
-               (ignore-errors
-                 (let ((s (sb-bsd-sockets:socket-make-stream c :input t :output t
-                                                               :external-format :utf-8)))
-                   (serve-one s)))
-               (ignore-errors (sb-bsd-sockets:socket-close c)))))
+               (sb-thread:make-thread
+                (lambda ()
+                  (ignore-errors
+                    (let ((s (sb-bsd-sockets:socket-make-stream c :input t :output t
+                                                                  :external-format :utf-8)))
+                      (serve-one s)))
+                  (ignore-errors (sb-bsd-sockets:socket-close c)))
+                :name "http connection"))))
      :name "http")))
 
 ;;; ---- driving --------------------------------------------------------------------
@@ -161,6 +169,146 @@
 
 (defun mem-available-mb ()
   (probe "(with-open-file (s \"/proc/meminfo\") (loop for l = (read-line s nil) while l when (search \"MemAvailable\" l) return (round (parse-integer l :start 13 :junk-allowed t) 1024)))"))
+
+;;; ---- a page in a window (doc/morphic.org §13) --------------------------------------
+;;; A web pane torn off into a trail window: its page is drawn into the window's
+;;; backing store, at the window's own coordinates, and the window is copied to the
+;;; screen. Everything that maps between the page and the screen must therefore add the
+;;; window's corner: the frames painted (WEB-PRESENT-FRAME, into the store), the clicks
+;;; and keys sent in (the body morph under the pointer, in its surface's coordinates),
+;;; the wheel (the hand's point, made the pane's). This drives all of it by real input.
+
+(defun page-origin ()
+  "Where the visible tab's page coordinates start on the SCREEN: its pane's surface
+   corner (a window's) plus the page rect's corner."
+  (read-list (probe "(let* ((p (current-pane)) (r (web-tab-page-rect (web-visible-tab)))) (multiple-value-bind (ox oy) (lol.morph:surface-origin (pane-body p)) (list (+ ox (first r)) (+ oy (second r)))))")))
+
+(defun read-list (s) (and s (ignore-errors (let ((*read-eval* nil)) (read-from-string s)))))
+
+(defun element-on-screen (id)
+  "The SCREEN point at the middle of element ID — in a window too (ELEMENT-CENTER
+   gives it where the pane draws)."
+  (let ((xy (element-center id))
+        (o (read-list (probe "(multiple-value-list (lol.morph:surface-origin (pane-body (current-pane))))"))))
+    (and xy o (list (+ (first xy) (first o)) (+ (second xy) (second o))))))
+
+(defun screen-points (points)
+  "The #xRRGGBB the guest's display shows at each (x y) of POINTS (one screendump)."
+  (let ((v (screen-octets)))
+    (when v
+      ;; P6 header: "P6\nW H\n255\n"
+      (let* ((nl1 (position 10 v)) (nl2 (position 10 v :start (1+ nl1))) (nl3 (position 10 v :start (1+ nl2)))
+             (dims (map 'string #'code-char (subseq v (1+ nl1) nl2)))
+             (w (parse-integer dims :junk-allowed t))
+             (base (1+ nl3)))
+        (loop for (x y) in points
+              collect (let ((i (+ base (* 3 (+ (* y w) x)))))
+                        (logior (ash (aref v i) 16) (ash (aref v (+ i 1)) 8) (aref v (+ i 2)))))))))
+
+(defun window-store-points (points)
+  "The same points, read from the focused window's backing store in the guest."
+  (read-list (probe (format nil "(let* ((w (focused-window)) (b (lol.morph:surface-backing w)) (o (lol.morph:morph-bounds w))) (mapcar (lambda (p) (aref (lol.canvas:canvas-pixels b) (+ (* (- (second p) (second o)) (lol.canvas:canvas-w b)) (- (first p) (first o))))) '~s))" points) 10)))
+
+(defun page-points (n)
+  "N screen points spread over the visible page, avoiding the pointer."
+  (let ((r (read-list (probe "(let* ((p (current-pane)) (r (web-tab-page-rect (web-visible-tab)))) (multiple-value-bind (ox oy) (lol.morph:surface-origin (pane-body p)) (list (+ ox (first r)) (+ oy (second r)) (third r) (fourth r))))")))
+        (cx (probe-int "*cursor-x*")) (cy (probe-int "*cursor-y*")))
+    (when r
+      (destructuring-bind (x y w h) r
+        (loop for i from 1 below (* 3 n)
+              for px = (+ x 4 (mod (* i 131) (max 1 (- w 8))))
+              for py = (+ y 4 (mod (* i 71) (max 1 (- h 8))))
+              unless (and cx cy (< (abs (- px cx)) 40) (< (abs (- py cy)) 40))
+                collect (list px py) into pts
+              when (>= (length pts) n) return pts
+              finally (return pts))))))
+
+(defun page-in-a-window ()
+  (format t "~&~%== a page in a window ==~%")
+  (probe (format nil "(web-navigate (web-visible-tab) \"http://10.0.2.2:~d/two.html\")" *http-port*))
+  (row "page two loaded (tiled)" (wait-until 30 (lambda () (search "LoL page two" (title)))))
+  (qmp-hold "meta_l" "g") (sleep 1.2) (qmp-key "esc") (sleep 0.6)
+  (probe "(progn (lol.morph:set-morph-bounds (focused-window) (list 120 90 900 600)) t)")
+  (sleep 1.0)
+  (check "SuperL-g tears the web tab off into a window, focused"
+         (string= (probe "(let ((w (focused-window))) (and w (eq :web (view-kind (pane-view (window-pane w)))) (typep (pane-body (window-pane w)) 'web-body)))") "T"))
+  ;; load a page from the keys, in the window: C-l, an address, Return
+  (qmp-hold "ctrl" "l") (sleep 0.8)
+  (check "C-l in the window opens the address prompt" (string= (probe "(and *minibuffer* t)") "T"))
+  (qmp-hold "ctrl" "u") (sleep 0.4)                  ; it holds the current address: clear it
+  (type-text (format nil "10.0.2.2:~d/index.html" *http-port*))
+  (row "the prompt holds" (probe "(and *minibuffer* (mb-text *minibuffer*))"))
+  (qmp-key "ret")
+  (check "an address typed in the window loads the page there"
+         (wait-until 30 (lambda () (search "LoL test index" (title)))))
+  (row "title, url, state" (probe "(let ((tb (web-visible-tab))) (list (web-tab-title tb) (web-tab-url tb) (web-tab-state tb) (current-pane)))"))
+  (let ((f0 (probe-int "(web-tab-frames (web-visible-tab))")))
+    (wait-until 20 (lambda () (let ((f (probe-int "(web-tab-frames (web-visible-tab))"))) (and f f0 (> f f0)))))
+    (sleep 1.5)
+    (check "the page's viewport is the window's pane (innerWidth = the page rect's width)"
+           (let ((iw (ignore-errors (parse-integer (js "window.innerWidth") :junk-allowed t)))
+                 (pw (probe-int "(round (third (web-tab-page-rect (web-visible-tab))) *web-zoom*)")))
+             (format t "~&  innerWidth ~a, page rect width ~a~%" iw pw)
+             (and iw pw (<= (abs (- iw pw)) 2))))
+    (let* ((pts (page-points 24)) (store (window-store-points pts)) (shown (screen-points pts)))
+      (check "frames are painted into the window's store, and the screen shows them there"
+             (and pts store shown (equal store shown)
+                  ;; (not all one colour: the page really is in them)
+                  (> (length (remove-duplicates store)) 1)))))
+  ;; scroll: the wheel over the page in the window
+  (let ((o (page-origin)))
+    (when o (glide-to (+ (first o) 200) (+ (second o) 200))))
+  (qmp-wheel "down" 3)
+  (check "the wheel over the page in the window scrolls it"
+         (wait-until 20 (lambda () (let ((y (ignore-errors (parse-integer (js "window.scrollY") :junk-allowed t))))
+                                     (and y (> y 50))))))
+  ;; back to the top, and settled there before the link is measured
+  (sleep 2.0) (js "window.scrollTo(0,0)")
+  (wait-until 10 (lambda () (equal "0" (js "window.scrollY"))))
+  (sleep 1.0)
+  (probe "(progn (defvar *zz-m* nil) (setf *zz-m* nil) (sb-int:encapsulate 'web-mouse 'zz (lambda (f tab type cx cy &rest r) (unless (equal type \"mouseMoved\") (push (list type (round cx) (round cy)) *zz-m*)) (apply f tab type cx cy r))) t)")
+  ;; click: the link, at its place on the screen inside the window
+  (let ((xy (element-on-screen "go")))
+    (format t "~&  link 'go' on the screen at ~a, scrollY ~a~%" xy (js "window.scrollY"))
+    (when xy (glide-to (first xy) (second xy)) (click)))
+  (row "sent to the page" (probe "(let ((*print-pretty* nil)) (prin1-to-string (reverse *zz-m*)))"))
+  (probe "(sb-int:unencapsulate 'web-mouse 'zz)")
+  (check "a real click on a link in the window navigates"
+         (wait-until 30 (lambda () (search "LoL page two" (title)))))
+  (sleep 1) (qmp-hold "meta_l" "left")
+  (wait-until 30 (lambda () (search "LoL test index" (title))))
+  (sleep 1.5)
+  ;; type: into the input, clicked in the window
+  (let ((xy (element-on-screen "q")))
+    (when xy (glide-to (first xy) (second xy)) (click)))
+  (wait-until 10 (lambda () (search "q" (js "document.activeElement.id"))))
+  (type-text "in a window")
+  (check "keys typed in the window reach the page's focused input"
+         (wait-until 20 (lambda () (search "in a window" (js "document.getElementById('q').value")))))
+  ;; move the window by its title bar: the page goes with it, and clicks still land
+  (let ((b0 (read-list (probe "(lol.morph:morph-bounds (focused-window))"))))
+    (when b0
+      (glide-to (+ (first b0) 80) (+ (second b0) 6))
+      (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":true,\"button\":\"left\"}}") (sleep 0.3)
+      (dotimes (i 4) (qmp-move 30 20) (sleep 0.3))
+      (qmp-events "{\"type\":\"btn\",\"data\":{\"down\":false,\"button\":\"left\"}}") (sleep 1.0))
+    (let ((b1 (read-list (probe "(lol.morph:morph-bounds (focused-window))"))))
+      (format t "~&  window moved ~a -> ~a~%" b0 b1)
+      (check "the window moved by its title bar, the page with it"
+             (and b0 b1 (= (first b1) (+ (first b0) 120)) (= (second b1) (+ (second b0) 80))))
+      (sleep 1.0)
+      (let* ((pts (page-points 24)) (store (window-store-points pts)) (shown (screen-points pts)))
+        (check "... the screen shows the page at the window's new place (= its store)"
+               (and pts store shown (equal store shown))))
+      (let ((xy (element-on-screen "go")))
+        (format t "~&  link 'go' now at ~a~%" xy)
+        (when xy (glide-to (first xy) (second xy)) (click)))
+      (check "... and a click on the link at its new place still navigates"
+             (wait-until 30 (lambda () (search "LoL page two" (title)))))))
+  (shot "web-in-window")
+  ;; back into the tab strip for what follows
+  (qmp-hold "meta_l" "g") (sleep 0.6) (qmp-key "t") (sleep 1.0)
+  (check "SuperL-g t re-tiles the web window" (string= (probe "(desk-windows)") "NIL")))
 
 ;;; ---- the checks -------------------------------------------------------------------
 
@@ -286,6 +434,8 @@
          (wait-until 10 (lambda () (string= (chooser) ":SELECT"))))
   (qmp-key "esc")
   (wait-until 10 (lambda () (string= (chooser) "NIL")))
+
+  (page-in-a-window)
 
   (format t "~&~%== the public web, and the sandbox ==~%")
   ;; No precondition on OUR /etc/resolv.conf: lol-ct gives the container one (ours,

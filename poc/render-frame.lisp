@@ -429,7 +429,9 @@ OPTIONS
                                 :kind :wheel :notches (- (floor arg +wheel-lines+)) :state state
                                 :x (floor (third (lol.morph:morph-bounds *world*)) 2)
                                 :y (floor (fourth (lol.morph:morph-bounds *world*)) 2)))
-                      (progn (browser-scroll arg) (lol.morph:invalidate *world*))))
+                      ;; what scrolled: the current pane's body
+                      (progn (browser-scroll arg)
+                             (lol.morph:invalidate (or (pane-body (current-pane)) *world*)))))
           (t (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key key
                                                                      :state state)))))
       (pump-terminals 0.3))))

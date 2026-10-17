@@ -93,7 +93,10 @@
          (5 (ev :wheel :notches -1))))
       (:button-release (and (= 1 (lol.x11:event-detail e)) (ev :up)))
       (:motion (if (logtest #x100 (lol.x11:event-state e)) (ev :drag) (ev :move)))
-      (:expose (lol.morph:invalidate *world*) nil)          ; the window was uncovered
+      ;; part of the window was uncovered: X says which rect; that, and no more
+      (:expose (lol.morph:invalidate *world* (list (lol.x11:event-x e) (lol.x11:event-y e)
+                                                   (lol.x11:event-w e) (lol.x11:event-h e)))
+               nil)
       (:error (format t "~&X11 error ~a~%" (lol.x11:event-detail e)) nil)
       (t nil))))
 

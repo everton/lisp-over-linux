@@ -1857,10 +1857,11 @@
 (defmethod lol.morph:step-morph ((p pane) now)
   (declare (ignore now))
   (cond ((pane-running-stage p)
-         ;; the stage's body morph alone — unless the step opened something beside it
-         (if (or (eq :layout (step-stage-pane p)) (not (typep (pane-body p) 'stage-body)))
-             (lol.morph:invalidate p)
-             (lol.morph:invalidate (pane-body p))))
+         ;; the stage's body morph alone. A step that opened something beside it (the
+         ;; Workspace a [define-method] template asks for) changes the layout too, and
+         ;; the layout damages what it moves — the next DESK-SYNC: nothing more here
+         (step-stage-pane p)
+         (lol.morph:invalidate (or (pane-body p) p)))
         ;; a run's text: its body (the text view finds its own rows; a run's colours
         ;; come from its output, so the rows compare those too)
         ((step-run-panes p) (damage-body (pane-body p)))))
@@ -1875,10 +1876,11 @@
       (list (current-trail))))
 
 (defun damage-pane (p)
-  "P changed on its own (a live worker's view arrived): redraw it where it is on
-   screen, and nothing else — a pane nobody shows costs nothing."
+  "P changed on its own (a live worker's view arrived): redraw its body where it is on
+   screen, and nothing else — its header, if the title changed, its signature finds; a
+   pane nobody shows costs nothing."
   (when (and *world* (pane-mode p) (lol.morph:morph-world p))
-    (lol.morph:invalidate p)))
+    (lol.morph:invalidate (or (pane-body p) p))))
 
 (defun paint-into (m canvas fn)
   "Let M paint part of itself straight into the canvas it draws into — the screen's
