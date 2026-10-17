@@ -103,24 +103,12 @@
    (split-x :initform nil :accessor pane-split-x
             :documentation "The left x of the right-hand column (the nav-split preview, a
    side pane) when the pane is split, else NIL: a click at x >= this is the column's.")
-   (rows :initform '() :accessor pane-rows
-         :documentation "The hit map LOL.WIDGETS:DRAW-LIST returned when this pane's
-   list was drawn last — ((y . index) …). A click reads it back rather than computing
-   an index from y, because with section headers in the layout screen row N is no
-   longer item N.")
-   (list-rect :initform nil :accessor pane-list-rect
-              :documentation "The rect (x y w h) its list was drawn in: the halo outlines a
-   row across it.")
-   (cells :initform '() :accessor pane-cells
-          :documentation "The hit map LOL.WIDGETS:DRAW-GRID returned for its dispatch grid.")
-   (stage-rect :initform nil :accessor pane-stage-rect
-               :documentation "The stage's viewport (x y w h), for clicks.")
-   (stage-body :initform nil :accessor pane-stage-body
-               :documentation "The whole stage body (viewport, heads-up line, transcript)
-   as last drawn: all that a tick can change, so a stepping stage damages only this.")
-   (body-rect :initform nil :accessor pane-body-rect
-              :documentation "The rect its body (the text, the list, the grid ...) was
-   drawn in: what the halo outlines as the pane's text view, or its list.")
+   (body :initform nil :accessor pane-body
+         :documentation "The morph that draws this pane's BODY — its list, its text view,
+   its grid, its stage, its page, its terminal (a PANE-BODY, below): the pane's child,
+   laid out by the pane, hit-tested and damaged on its own. NIL while the pane is not
+   expanded or beside one (a breadcrumb draws no body). What the body drew where —
+   a list's rows, a grid's cells, a stage's viewport — is the body's own slots.")
    ;; ---- where it is: set by the layout of the trail it belongs to ----------------
    (mode :initform nil :accessor pane-mode
          :documentation ":COLLAPSED (an ancestor: a breadcrumb bar), :EXPANDED (the
@@ -139,6 +127,97 @@
   (apply #'make-instance 'pane initargs))
 
 (defun pane-p (x) (typep x 'pane))
+
+;;; A pane's BODY is a morph too (doc/morphic.org §13): the list, the text view, the
+;;; grid, the stage, the image, the page, the terminal — whatever the view kind paints
+;;; under the pane's header. The pane draws only its panel (title, tint, badge, the
+;;; divider and header of a split); its body is its child, laid out by the pane at the
+;;; rect EXPANDED-COLUMNS gives it, drawn by its own DRAW-MORPH, under the pointer on
+;;; its own, and damaged on its own — so a key in a text view repairs the text view (its
+;;; changed lines, in fact), not the list beside it. A side pane, or the nav split's
+;;; preview, is a pane whose body is its only picture. The drawing itself is the
+;;; functions below (DRAW-LIST-BODY, TV-DRAW, DRAW-STAGE-BODY …), called by the body's
+;;; DRAW-MORPH (poc/morphic.lisp) with the body's bounds; what they drew where goes into
+;;; the BODY's slots, which its clicks and the halo read back.
+
+(defclass pane-body (lol.morph:morph)
+  ((sig :initform :none :accessor body-sig
+        :documentation "What its picture was last a function of (DESK-SYNC compares)."))
+  (:documentation "The part of a pane under its header: one morph per pane on screen,
+   of the class its view kind asks for (BODY-CLASS-FOR). Its pane is its owner."))
+
+(defclass list-body (pane-body)
+  ((rows :initform '() :accessor body-rows
+         :documentation "The hit map LOL.WIDGETS:DRAW-LIST returned when the list was drawn
+   last — ((y . index) …). A click reads it back rather than computing an index from y,
+   because with section headers in the layout screen row N is no longer item N."))
+  (:documentation "A list view: rows, sections, the selection and a scrollbar."))
+
+(defclass text-body (pane-body)
+  ((drawn :initform nil :accessor body-drawn
+          :documentation "What the text view showed when last drawn — (TV FRAME LINES
+   START ROWS), LOL.TEXTVIEW's own account (TV-FRAME-KEY, TV-ROW-KEYS) — so that a
+   change damages only the screen rows that differ."))
+  (:documentation "A text view (lol.textview): source, the Workspace, a file, a
+   conversation, a run's output."))
+
+(defclass grid-body (pane-body)
+  ((cells :initform '() :accessor body-cells
+          :documentation "The hit map LOL.WIDGETS:DRAW-GRID returned for the dispatch grid."))
+  (:documentation "A dispatch matrix: a clickable grid of method counts."))
+
+(defclass stage-body (pane-body)
+  ((viewport :initform nil :accessor body-viewport
+             :documentation "The stage's viewport (x y w h) as last drawn, for clicks."))
+  (:documentation "The COLLIDE stage: the viewport with its sprites, the heads-up line
+   and the transcript. All a tick can change is inside it, so a stepping stage damages
+   this morph alone."))
+
+(defclass image-body (pane-body) ()
+  (:documentation "A picture, fitted into the pane on a checkerboard."))
+
+(defclass web-body (pane-body) ()
+  (:documentation "A web page: its toolbar and Chrome's newest frame (initramfs/web.lisp)."))
+
+(defclass terminal-body (pane-body) ()
+  (:documentation "A program on a pty, its grid of cells (poc/terminal-pane.lisp)."))
+
+(defun body-pane (b)
+  "The pane whose body B is."
+  (lol.morph:morph-owner b))
+
+(defun body-class-for (pane)
+  "Which PANE-BODY class PANE's view is drawn by."
+  (let ((kind (view-kind (pane-view pane))))
+    (cond ((pane-tv pane) 'text-body)
+          ((eq kind :matrix) 'grid-body)
+          ((eq kind :stage) 'stage-body)
+          ((eq kind :image) 'image-body)
+          ((eq kind :web) 'web-body)
+          ((eq kind :terminal) 'terminal-body)
+          (t 'list-body))))
+
+(defun pane-rows (p)
+  "The rows P's list body drew last, ((y . index) …) — NIL when P shows no list."
+  (let ((b (pane-body p))) (and (typep b 'list-body) (body-rows b))))
+
+(defun pane-cells (p)
+  "The cells P's grid body drew last."
+  (let ((b (pane-body p))) (and (typep b 'grid-body) (body-cells b))))
+
+(defun pane-stage-rect (p)
+  "The viewport P's stage body drew last (x y w h), or NIL."
+  (let ((b (pane-body p))) (and (typep b 'stage-body) (body-viewport b))))
+
+(defun pane-body-rect (p)
+  "Where P's body is, in the coordinates P draws in (its surface's), or NIL."
+  (let ((b (pane-body p))) (and b (lol.morph:morph-owner b) (lol.morph:morph-local-bounds b))))
+
+(defun focused-body (p)
+  "The body the keyboard is in, in the expanded pane P: its side pane's when the side
+   has the keys, else its own."
+  (let ((side (pane-side p)))
+    (if (and side (pane-editing-side p)) (pane-body side) (pane-body p))))
 
 (defun screen-to-pane (pane x y)
   "The screen point X,Y in the coordinates PANE draws and records in — a window's,
@@ -836,10 +915,10 @@
   "Render a list view: the widget does rows, sections, selection and the scrollbar;
    this decides only WHAT the rows say. PANE-TOP is the widget's viewport position
    (a layout slot, headers included) and is written back so it persists across frames,
-   and the rows drawn go into the pane's own hit map (PANE-ROWS): a split draws two
-   lists in one frame, the pane's and its side's, and each keeps its own — when one
-   special held both, whichever went second used to overwrite the other's map, so a
-   click in the left list hit-tested against the right one's rows."
+   and the rows drawn go into the hit map of the pane's own LIST-BODY morph (BODY-ROWS):
+   a split draws two lists, the pane's and its side's, and each body keeps its own —
+   when one special held both, whichever went second used to overwrite the other's
+   map, so a click in the left list hit-tested against the right one's rows."
   (let ((rows (map 'vector #'item->row (view-items (pane-view pane)))))
     (multiple-value-bind (top hits)
         (lol.widgets:draw-list canvas x y w h rows
@@ -850,9 +929,9 @@
                                ;; gets its own column and full-strength text
                                :value-col (when (eq (view-kind (pane-view pane)) :inspector)
                                             (min (* 50 (char-w)) (floor w 2))))
-      (setf (pane-top pane) top
-            (pane-rows pane) hits
-            (pane-list-rect pane) (list x y w h)))))
+      (setf (pane-top pane) top)
+      (let ((b (pane-body pane)))
+        (when (typep b 'list-body) (setf (body-rows b) hits))))))
 
 ;;; Layout heights that depend on the text — all derived from the current font, so a
 ;;; font-size change relays them out on the next frame. The comments give the pixel
@@ -900,7 +979,8 @@
          (counts (mapcar (lambda (cellrow) (mapcar #'length cellrow)) (getf m :cells))))
     (multiple-value-bind (hits bottom)
         (lol.widgets:draw-grid canvas x y (- w 2) (- h (line-h) 5) rows cols counts)
-      (setf (pane-cells pane) hits)            ; a click reads it back (MATRIX-CELL-CLICK)
+      (let ((b (pane-body pane)))              ; a click reads it back (MATRIX-CELL-CLICK)
+        (when (typep b 'grid-body) (setf (body-cells b) hits)))
       ;; the caption sits directly under the grid, where the design puts it — at the
       ;; foot of a mostly-empty pane it would be furniture nobody reads
       (draw-hints canvas x (+ bottom 6) w
@@ -1038,7 +1118,8 @@
          (vh (- h (stage-transcript-h)))
          (ox x) (oy y))
     (stage-resize stage (max 80 w) (max 80 vh))
-    (setf (pane-stage-rect pane) (list x y w vh) (pane-stage-body pane) (list x y w h))
+    (let ((b (pane-body pane)))                   ; for clicks, and the halo's sprites
+      (when (typep b 'stage-body) (setf (body-viewport b) (list x y w vh))))
     (lol.canvas:fill-rect canvas x y w vh !#0E1013)
     (dolist (b (stage-bodies stage))
       (draw-stage-sprite canvas b stage ox oy))
@@ -1365,40 +1446,10 @@
         (when tv (setf (lol.textview:tv-focus tv) nil))))  ; read-only: no caret
     (pane-preview pane)))
 
-(defun draw-pane-body (canvas pane x y w h)
-  "Render PANE's body — a source/reference textview, the dispatch matrix, or a list —
-   into the rect. The one place that knows how each view kind paints, so the expanded
-   pane and the nav-split preview stay identical. The rect is kept (PANE-BODY-RECT):
-   it is what the halo outlines as the body."
-  (setf (pane-body-rect pane) (list x y w h))
-  (cond
-    ((pane-tv pane)
-     (lol.textview:tv-geometry (pane-tv pane) x y w h)
-     (lol.textview:tv-draw canvas (pane-tv pane)))
-    ((eq (view-kind (pane-view pane)) :matrix) (draw-matrix-body canvas pane x y w h))
-    ((eq (view-kind (pane-view pane)) :stage) (draw-stage-body canvas pane x y w h))
-    ((eq (view-kind (pane-view pane)) :image) (draw-image-body canvas pane x y w h))
-    ;; a web page (initramfs/web.lisp): Chrome's frame under a toolbar
-    ((eq (view-kind (pane-view pane)) :web)
-     (funcall 'draw-web-body canvas pane x y w h))
-    ((terminal-pane-p pane)                       ; poc/terminal-pane.lisp
-     (funcall 'draw-terminal-body canvas pane x y w h))
-    (t (draw-list-body canvas pane x y w h))))
-
-(defun pane-body-element (pane)
-  "What the halo calls PANE's body, as (values OBJECT DRAWERS LABEL): the instance on
-   screen there and the functions whose code paints it."
-  (let ((kind (view-kind (pane-view pane))))
-    (cond
-      ((pane-tv pane) (values (pane-tv pane) '(lol.textview:tv-draw) "text view"))
-      ((eq kind :matrix) (values (view-data (pane-view pane)) '(draw-matrix-body lol.widgets:draw-grid)
-                                 "dispatch matrix"))
-      ((eq kind :stage) (values (view-data (pane-view pane)) '(draw-stage-body) "stage"))
-      ((eq kind :image) (values (view-data (pane-view pane)) '(draw-image-body) "image"))
-      ((eq kind :web) (values (view-data (pane-view pane)) '(draw-web-body web-blit) "web page"))
-      ((terminal-pane-p pane) (values (pane-subject pane) '(draw-terminal-body) "terminal"))
-      (t (values (pane-view pane) '(draw-list-body item->row lol.widgets:draw-list)
-                 (format nil "list of ~d rows" (length (view-items (pane-view pane)))))))))
+;;; Each body morph draws itself (poc/morphic.lisp: the DRAW-MORPH methods of LIST-BODY,
+;;; TEXT-BODY, GRID-BODY …), calling the function above or below that paints its kind;
+;;; there is no one function that knows every kind any more, and nothing beside the
+;;; morph tree for the halo to read: a body under the pointer IS the halo's layer.
 
 (defparameter +non-list-kinds+ '(:matrix :stage :image :web :terminal)
   "View kinds with no textview that are NOT lists either: they draw themselves, and
@@ -1542,9 +1593,9 @@
 
 (defun draw-pane-expanded (canvas cur x y w h)
   "The trail's current pane, its panel at X,Y W x H: the panel with its title, tint
-   and badge, then its own body; when it is split, the divider, the right-hand
-   column's header and the accent rule over whichever half has the keyboard. The
-   column's body is the side pane's to draw (it is a morph of its own)."
+   and badge; when it is split, the divider, the right-hand column's header and the
+   accent rule over whichever half has the keyboard. Its body, and the column's, are
+   morphs of their own (PANE-BODY), drawn over this by themselves."
   (let* ((cols (or (pane-split-plan cur) (expanded-columns cur x y w h)))
          (full-w (- (+ x w 8) 24))
          (body-y (getf cols :body-y)) (body-h (getf cols :body-h))
@@ -1553,8 +1604,7 @@
          (sw (third (getf cols :side-rect)))
          (edit (pane-editing-side cur)))
     (setf (pane-body-top cur) body-y            ; what its clicks are tested against
-          (pane-split-x cur) sx
-          (pane-body-rect cur) (list mx body-y mw body-h))
+          (pane-split-x cur) sx)
     (lol.widgets:draw-panel canvas x y w h
                             ;; when the pane is about to split, its title owns only
                             ;; the left half: the right one carries the preview's
@@ -1580,25 +1630,21 @@
                  (lol.canvas:fill-rect canvas mx (- body-y 2) mw 2 *ui-accent*))))
       (ecase (getf cols :kind)
         (:text-side
-         (draw-pane-body canvas cur mx body-y mw body-h)
          (divider)
          (header (format nil "~a~@[   ~a~]" (view-title (pane-view side))
                          (if edit "up/dn · ret opens · SuperL-o back" "SuperL-o")))
          (accent))
         (:stage-side
-         (draw-stage-body canvas cur mx body-y mw body-h)
          (divider)
          (header (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
                          (if edit "editing — C-c C-c define · SuperL-o stage" "SuperL-o to edit")))
          (accent))
         (:list-side
-         (draw-list-body canvas cur mx body-y mw body-h)
          (divider)
          (header (format nil "beside · ~a~@[   ~a~]" (view-title (pane-view side))
                          (if edit "editing — C-c C-c accept · SuperL-o list" "SuperL-o to edit")))
          (accent))
         (:preview
-         (draw-list-body canvas cur mx body-y mw body-h)
          (divider)
          (if side
              (lol.canvas:draw-string canvas *bfont*
@@ -1606,8 +1652,7 @@
                                                 (max 8 (floor (- sw (* 11 (char-w))) (char-w))))  ; leave the badge room
                                      sx (pane-header-text-y body-y) *ui-dim*)
              (lol.canvas:draw-string canvas *bfont* "(no preview)" sx (+ body-y 4) *ui-dim*)))
-        (:single
-         (draw-pane-body canvas cur mx body-y mw body-h))))))
+        (:single nil)))))
 
 (defun draw-browser (canvas w h)
   "The whole screen, drawn afresh into CANVAS: every morph of the world, back to
@@ -2866,12 +2911,13 @@
          (when tab (activate-trail (car tab)))))))
 
 (defun pane-click (p x y &optional ctrl super)
-  "A left press at X,Y (where P was drawn) in the expanded pane P — or in its
-   right-hand column, whose own morph lets the press through to here, since this is
-   what knows the split: a list item drills (SuperL-click opens it in a NEW trail
-   instead); Ctrl-click on a symbol in a source pane jumps to its definition. Uses
-   the geometry P recorded when it drew (PANE-BODY-TOP, PANE-SPLIT-X, PANE-ROWS), so
-   click and draw can never disagree.
+  "A left press at X,Y (where P was drawn) in the expanded pane P: on its own body, or
+   in its right-hand column (a side pane, the nav split's preview) — whichever side of
+   the split X is on; a press on the panel around them (a gutter) is decided the same
+   way, so it keeps the meaning it always had. -> the body morph the press was for (its
+   caller damages it), or NIL. Uses the geometry P and its bodies recorded when they
+   drew (PANE-BODY-TOP, PANE-SPLIT-X, a list body's rows), so click and draw can never
+   disagree.
 
    In a side-by-side, a plain click in the half that does NOT have keyboard focus is
    a focus move and nothing more — SuperL-o with a pointer. It still positions you
@@ -2881,99 +2927,119 @@
    in the half that already has focus behaves as it always did, and Ctrl-click /
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
-  (let ((top (pane-body-top p)) (split (pane-split-x p)))
+  (let ((split (pane-split-x p)))
     (cond
-      ;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
-      ((eq (view-kind (pane-view p)) :web)
-       (when (>= y top) (funcall 'web-click p x y ctrl super)))
-      ;; a terminal: the program's click if it asked for the mouse, else a selection
-      ((terminal-pane-p p) (when (>= y top) (funcall 'terminal-press p x y)))
-      ;; text pane: Ctrl-click jumps to definition; a plain click places the caret
-      ;; (and arms a drag) — in a read-only pane too, because SELECTING text to copy
-      ;; it is reading, not editing. The caret is simply not drawn there.
-      ;; (a text pane's own half only: one with a list beside it — the agent's
-      ;; Activity — leaves clicks in the right column to the split clause below)
-      ((and (pane-tv p) (not (and (pane-side p) split (>= x split))))
-       (setf (pane-editing-side p) nil)
+      ;; the column, on the header band above it: nothing (as it always was)
+      ((and split (>= x split) (< y (pane-body-top p))) nil)
+      ((and split (>= x split))
+       (column-press p x y ctrl super)
+       (let ((side (or (pane-side p) (pane-preview p)))) (and side (pane-body side))))
+      (t (let ((b (pane-body p)))
+           (when b (body-press b p x y ctrl super))
+           b)))))
+
+(defgeneric body-press (body pane x y ctrl super)
+  (:documentation "A left press at X,Y on BODY, the own body of the expanded pane PANE
+   (not its right-hand column: COLUMN-PRESS). CTRL and SUPER say which modifiers were
+   held. By default — a list, a picture — the row there is selected and drilled."))
+
+;; a list: the row there — SuperL-click opens it in a NEW trail; a plain click also
+;; returns focus to the list (away from any side pane)
+(defmethod body-press ((b pane-body) p x y ctrl super)
+  (declare (ignore x ctrl))
+  (when (>= y (pane-body-top p))
+    (let ((came-from-side (pane-editing-side p)))
+      ;; UNFOCUS-SIDE rather than a bare (setf (pane-editing-side p) nil): a side the
+      ;; pointer or -> merely FOCUSED goes away again and you are looking at the
+      ;; live preview you started from, while one you PINNED with <S-Return> stays.
+      ;; Same rule C-g follows, so the two ways back agree.
+      (unfocus-side p)
+      ;; which row was actually painted here? The body's rows answer; a click on a
+      ;; group header hits no row and is correctly inert.
+      (let* ((items (view-items (pane-view p)))
+             (i (lol.widgets:hit-row (pane-rows p) y)))
+        (when (and i (< i (length items)))
+          (set-pane-sel p i)
+          ;; If the side pane had focus, taking it back WAS this click's job.
+          ;; Select the row and stop — drilling as well would navigate out of the
+          ;; split you were working in, which is the one thing a focus move must
+          ;; never do. SuperL-click stays an explicit "open in a new trail".
+          (unless (and came-from-side (not super))
+            (let ((it (nth i items)))
+              (when (item-subject it)
+                (if super (new-trail (item-subject it))
+                    (trail-push (item-subject it)))))))))))
+
+;; text: Ctrl-click jumps to definition; a plain click places the caret (and arms a
+;; drag) — in a read-only pane too, because SELECTING text to copy it is reading, not
+;; editing. The caret is simply not drawn there.
+(defmethod body-press ((b text-body) p x y ctrl super)
+  (declare (ignore super))
+  (setf (pane-editing-side p) nil)
+  (cond
+    (ctrl (jump-to-definition (pane-tv p) x y))
+    ((lol.textview:tv-hit-p (pane-tv p) x y)
+     (text-press (pane-tv p) x y))))
+
+;; the dispatch matrix: a cell drills its effective-method onion
+(defmethod body-press ((b grid-body) p x y ctrl super)
+  (declare (ignore ctrl super))
+  (matrix-cell-click p x y))
+
+;; the stage: the instance under the pointer is selected (a miss clears the
+;; selection), and focus comes back to the stage's half. That it is only the stage's
+;; OWN half is the point — a stage with its Workspace beside it (§3b) is a
+;; side-by-side, and the Workspace half is the column's (COLUMN-PRESS).
+(defmethod body-press ((b stage-body) p x y ctrl super)
+  (declare (ignore ctrl super))
+  (stage-click p x y)
+  (setf (pane-editing-side p) nil))
+
+;; a web page: its toolbar, or a click sent into the page (initramfs/web.lisp)
+(defmethod body-press ((b web-body) p x y ctrl super)
+  (when (>= y (pane-body-top p)) (funcall 'web-click p x y ctrl super)))
+
+;; a terminal: the program's click if it asked for the mouse, else a selection
+(defmethod body-press ((b terminal-body) p x y ctrl super)
+  (declare (ignore ctrl super))
+  (when (>= y (pane-body-top p)) (funcall 'terminal-press p x y)))
+
+(defun column-press (p x y ctrl super)
+  "A left press at X,Y in the right-hand column of the expanded pane P. A pinned side
+   pane: focus it, and place the caret (Ctrl jumps) or select the row. The nav split's
+   preview: a matrix preview is LIVE — clicking a cell drills its effective-method onion
+   straight from here; a source preview jumps on Ctrl-click; otherwise the click puts
+   you over there (SuperL-click opens the previewed selection in a new trail)."
+  (cond
+    ((pane-side p)
+     (setf (pane-editing-side p) t)
+     (let* ((side (pane-side p)) (tv (pane-tv side)))
        (cond
-         (ctrl (jump-to-definition (pane-tv p) x y))
-         ((lol.textview:tv-hit-p (pane-tv p) x y)
-          (text-press (pane-tv p) x y))))
-      ;; dispatch matrix: a cell drills its effective-method onion
-      ((eq (view-kind (pane-view p)) :matrix)
-       (matrix-cell-click p x y))
-      ;; the stage: a click in the stage's OWN half selects the instance under the
-      ;; pointer (a miss clears the selection) and brings focus back to that half.
-      ;; The half test is the point — a stage with its Workspace beside it (§3b) is a
-      ;; side-by-side, and this clause used to swallow every click in the frame,
-      ;; including the ones aimed at the Workspace. That made the other half
-      ;; unreachable by pointer: SuperL-o was the only way in, and clicking to place
-      ;; the caret did nothing at all.
-      ((and (eq (view-kind (pane-view p)) :stage)
-            (not (and split (>= x split))))
-       (stage-click p x y)
-       (setf (pane-editing-side p) nil))
-      ;; nav-split preview column: a matrix preview is LIVE — clicking a cell drills its
-      ;; effective-method onion straight from here (no need to open the matrix first); a
-      ;; source preview jumps on Ctrl-click; otherwise the click opens the previewed
-      ;; selection for real (SuperL-click in a new trail).
-      ((and split (>= x split) (>= y top))
+         ((and tv (lol.textview:tv-hit-p tv x y))
+          (if ctrl
+              (jump-to-definition tv x y)
+              (text-press tv x y)))
+         ;; a list in the right column: select the row that was drawn there, read
+         ;; back from its OWN hit map (the side pane's list body)
+         ((null tv)
+          (let ((i (lol.widgets:hit-row (pane-rows side) y)))
+            (when i (set-pane-sel side i)))))))
+    (t
+     (let ((sel (selected-item p))
+           (pv (pane-preview p)))
        (cond
-         ;; ⇧↵ editable side pane: a click focuses it and places the caret (Ctrl jumps).
-         ((pane-side p)
-          (setf (pane-editing-side p) t)
-          (let* ((side (pane-side p)) (tv (pane-tv side)))
-            (cond
-              ((and tv (lol.textview:tv-hit-p tv x y))
-               (if ctrl
-                   (jump-to-definition tv x y)
-                   (text-press tv x y)))
-              ;; a list in the right column: select the row that was drawn there,
-              ;; read back from its OWN hit map (the side pane's PANE-ROWS)
-              ((null tv)
-               (let ((i (lol.widgets:hit-row (pane-rows side) y)))
-                 (when i (set-pane-sel side i)))))))
-         (t
-          (let ((sel (selected-item p))
-                (pv (pane-preview p)))
-            (cond
-              ((and pv (eq (view-kind (pane-view pv)) :matrix))
-               (or (matrix-cell-click pv x y)               ; a cell -> its onion
-                   (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
-              ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
-              ;; A plain click on the preview means "put me over there" — exactly the
-              ;; promotion -> performs, and until now the only focus state the pointer
-              ;; could not reach. It does not drill: the row it would have opened is
-              ;; one click away on the left, and crossing the split is a focus move.
-              ;; FOCUS-SIDE is NIL when there is nothing previewable, so a click on an
-              ;; empty column falls through rather than swallowing itself.
-              ((and (not super) (focus-side p)))
-              ((and sel (item-subject sel))
-               (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))))
-      ;; else an item in the current list view — SuperL-click opens it in a NEW trail; a
-      ;; plain click here also returns focus to the list (away from any side pane).
-      ((>= y top)
-       (let ((came-from-side (pane-editing-side p)))
-         ;; UNFOCUS-SIDE rather than a bare (setf (pane-editing-side p) nil): a side the
-         ;; pointer or -> merely FOCUSED goes away again and you are looking at the
-         ;; live preview you started from, while one you PINNED with <S-Return> stays.
-         ;; Same rule C-g follows, so the two ways back agree.
-         (unfocus-side p)
-         ;; which row was actually painted here? PANE-ROWS answers; a click on a group
-         ;; header hits no row and is correctly inert.
-         (let* ((items (view-items (pane-view p)))
-                (i (lol.widgets:hit-row (pane-rows p) y)))
-           (when (and i (< i (length items)))
-             (set-pane-sel p i)
-             ;; If the side pane had focus, taking it back WAS this click's job.
-             ;; Select the row and stop — drilling as well would navigate out of the
-             ;; split you were working in, which is the one thing a focus move must
-             ;; never do. SuperL-click stays an explicit "open in a new trail".
-             (unless (and came-from-side (not super))
-               (let ((it (nth i items)))
-                 (when (item-subject it)
-                   (if super (new-trail (item-subject it))
-                       (trail-push (item-subject it)))))))))))))
+         ((and pv (eq (view-kind (pane-view pv)) :matrix))
+          (or (matrix-cell-click pv x y)               ; a cell -> its onion
+              (and sel (item-subject sel) (trail-push (item-subject sel)))))  ; miss -> open matrix
+         ((and ctrl pv (pane-tv pv)) (jump-to-definition (pane-tv pv) x y))
+         ;; A plain click on the preview means "put me over there" — exactly the
+         ;; promotion -> performs. It does not drill: the row it would have opened is
+         ;; one click away on the left, and crossing the split is a focus move.
+         ;; FOCUS-SIDE is NIL when there is nothing previewable, so a click on an
+         ;; empty column falls through rather than swallowing itself.
+         ((and (not super) (focus-side p)))
+         ((and sel (item-subject sel))
+          (if super (new-trail (item-subject sel)) (trail-push (item-subject sel)))))))))
 
 ;;; ---- what is under the pointer --------------------------------------------
 ;;; The right-button menu and the middle-button halo both start from the same
@@ -3305,7 +3371,7 @@
                              :thing))))))
     (:row
      (let* ((pane (getf target :pane)) (item (getf target :item))
-            (rec (pane-list-rect pane))
+            (rec (pane-body-rect pane))
             (hit (find (getf target :index) (pane-rows pane) :key #'cdr))
             (rect (if (and rec hit)
                       (list (first rec) (car hit) (third rec) +row-h+)

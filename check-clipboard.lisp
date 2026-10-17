@@ -15,7 +15,8 @@
 ;;;;   E. the right button opens the context menu; Esc closes it
 ;;;;   F. the middle button on a list row opens the halo; Up walks out through the
 ;;;;      layers (row subject, row, list, pane); Inspect opens the PANE instance;
-;;;;      on the Workspace text the halo is about the TEXT VIEW, and Code opens tv-draw
+;;;;      on the Workspace text the halo is about the TEXT VIEW (its body morph), and
+;;;;      Code opens tv-draw
 ;;;;   G. SuperL-h opens the clipboard manager
 ;;;;   H. the pointer hides after a few idle seconds and comes back on a move
 ;;;;   I. the systray is drawn
@@ -173,8 +174,8 @@
     (glide-to (+ tx 1000) (+ ty 40)))                ; empty space right of the text
   (click "middle")
   (shot "halo-textview")
-  (check "a middle click on the Workspace's empty text is about the TEXT VIEW instance"
-         (yes "(and (lol.textview::textview-p (getf (chooser-layer (top-overlay)) :object)) t)"))
+  (check "a middle click on the Workspace's empty text is about the TEXT VIEW — its morph"
+         (yes "(and (typep (getf (chooser-layer (top-overlay)) :object) 'text-body) t)"))
   (format t "~&  halo layer: ~a~%" (probe "(getf (chooser-layer (top-overlay)) :title)"))
   (qmp-key "2") (sleep 1.5)                         ; Code: tv-draw
   (format t "~&  after Code: ~a~%" (probe "(view-title (pane-view (current-pane)))"))

@@ -28,7 +28,9 @@
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
            #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span
            ;; undo (shell.lisp drives it: C-_ / C-/ / C-x u)
-           #:tv-undo-checkpoint #:tv-undo-note #:tv-undo #:tv-undo-count))
+           #:tv-undo-checkpoint #:tv-undo-note #:tv-undo #:tv-undo-count
+           ;; what the view shows, row by row: the damage a change needs (poc/morphic.lisp)
+           #:tv-frame-key #:tv-row-keys #:tv-row-rect #:tv-prefix-same-p))
 
 (in-package :lol.textview)
 
@@ -587,6 +589,9 @@
 (defparameter *scroll*  !#39404A)
 
 (defun tv-draw (canvas tv)
+  "Paint TV into its rect on CANVAS. -> (values DEPTH IN-STRING): the lexer's state at
+   the first visible line — what TV-ROW-KEYS needs to say, without lexing the lines
+   above the view again, what each row now shows."
   (let* ((font (tv-font tv))
          (lh (tv-line-height tv))
          (x0 (tv-x tv)) (y0 (tv-y tv)) (w (tv-w tv)) (h (tv-h tv))
@@ -599,7 +604,7 @@
          (hs (progn (when (tv-focus tv) (follow-caret-horizontally tv)) (tv-hscroll tv)))
          (maxcol (+ hs (tv-text-cols tv)))
          (last  (min (length (tv-lines tv)) (+ first (visible-lines tv))))
-         (depth 0) (instr nil))
+         (depth 0) (instr nil) (start-depth 0) (start-instr nil))
     (fill-rect canvas x0 y0 w h *bg*)
     ;; paren depth AND open-string state must be correct at the first VISIBLE line, so
     ;; lex the hidden prefix for them only. (A real editor caches this per line.)
@@ -607,6 +612,7 @@
       (dotimes (i first)
         (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
           (declare (ignore r)) (setf depth d instr s))))
+    (setf start-depth depth start-instr instr)
 
     (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
       (loop for li from first below last
@@ -664,7 +670,89 @@
         (let* ((track-h (- h 4))
                (thumb-h (max 20 (floor (* track-h vis) total)))
                (thumb-y (+ y0 2 (floor (* track-h first) total))))
-          (fill-rect canvas (+ x0 w -6) thumb-y 4 thumb-h *scroll*))))))
+          (fill-rect canvas (+ x0 w -6) thumb-y 4 thumb-h *scroll*))))
+    (values start-depth start-instr)))
+
+;;; ---- what the view shows, row by row ---------------------------------------
+;;; A text view on screen is a morph (poc/morphic.lisp, TEXT-BODY), and a morph that
+;;; changes says which rect of the screen is now wrong. For a text view that rect is
+;;; usually a line or two: typing changes the line it is on, moving the caret the two
+;;; lines it left and entered. So the view describes its picture in two parts, by the
+;;; same rules TV-DRAW paints by:
+;;;
+;;;   the FRAME   everything whose change repaints the whole view — its rect, the font,
+;;;               where it is scrolled to, the scrollbar's thumb, the caret's focus;
+;;;   the ROWS    per screen row, what that row shows — its line number, its text, the
+;;;               lexer's state entering it (an open paren or string on one line changes
+;;;               the colours of the lines below), the current-line band, the selection
+;;;               band, the caret.
+;;;
+;;; The morph keeps both as they were when drawn; when they differ now it damages the
+;;; whole view (the frame) or just the rows that differ. Rows are TV-LINE-HEIGHT bands
+;;; starting 2 px above each line's text (where the selection and the caret begin), so
+;;; repairing one row repaints exactly that band.
+
+(defun scroll-thumb (tv)
+  "The scrollbar's thumb (Y H), or NIL when there is nothing to scroll."
+  (let ((total (length (tv-lines tv))) (vis (visible-lines tv)))
+    (when (> total vis)
+      (let* ((track-h (- (tv-h tv) 4)))
+        (list (+ (tv-y tv) 2 (floor (* track-h (tv-scroll tv)) total))
+              (max 20 (floor (* track-h vis) total)))))))
+
+(defun tv-frame-key (tv)
+  "What, changed, repaints all of TV (see above). Follows the caret sideways first, as
+   TV-DRAW does, so a key that pushes the caret past the right edge is a frame change."
+  (when (tv-focus tv) (follow-caret-horizontally tv))
+  (list (tv-x tv) (tv-y tv) (tv-w tv) (tv-h tv) (tv-pad tv)
+        (tv-font tv) (font-cw (tv-font tv)) (font-ch (tv-font tv))
+        (tv-scroll tv) (tv-hscroll tv) (and (tv-focus tv) t)
+        (tv-syntax tv) (tv-tint tv) (scroll-thumb tv)))
+
+(defun tv-row-keys (tv depth instr)
+  "What each visible row of TV shows, as a vector of lists (one per screen row), given
+   the lexer's state DEPTH / INSTR entering the first visible line (TV-DRAW returned
+   it). Two rows that are EQUAL paint the same pixels."
+  (let* ((first (tv-scroll tv))
+         (last (min (length (tv-lines tv)) (+ first (visible-lines tv))))
+         (sel (selection-p tv))
+         (out (make-array (max 0 (- last first)))))
+    (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
+      (loop for li from first below last
+            for row from 0
+            do (let* ((line (aref (tv-lines tv) li))
+                      (tint (and (tv-tint tv) (funcall (tv-tint tv) line)))
+                      (band (and sel (<= sl0 li) (<= li sl1)
+                                 (if (tv-rect-mode tv)
+                                     (list (min (tv-anchor-col tv) (tv-point-col tv))
+                                           (max (tv-anchor-col tv) (tv-point-col tv)))
+                                     (list (if (= li sl0) sc0 0)
+                                           (if (= li sl1) sc1 (length line))))))
+                      (runs (and (not tint) (functionp (tv-syntax tv))
+                                 (funcall (tv-syntax tv) li line))))
+                 (setf (aref out row)
+                       (list li line depth instr tint runs band
+                             (and (= li (tv-point-line tv)) (not sel))                ; the band
+                             (and (tv-focus tv) (= li (tv-point-line tv)) (tv-point-col tv))))
+                 ;; the lexer's state entering the next line, as TV-DRAW carries it
+                 (when (and (not tint) (eq (tv-syntax tv) :lisp))
+                   (multiple-value-bind (r d s) (lex-line line depth instr)
+                     (declare (ignore r)) (setf depth d instr s))))))
+    out))
+
+(defun tv-row-rect (tv row)
+  "The band screen row ROW of TV paints, (x y w h) — inside TV's rect."
+  (let* ((lh (tv-line-height tv))
+         (y (+ (tv-y tv) (tv-pad tv) (* row lh) -2))
+         (y0 (max y (tv-y tv)))
+         (y1 (min (+ y lh) (+ (tv-y tv) (tv-h tv)))))
+    (list (tv-x tv) y0 (tv-w tv) (max 0 (- y1 y0)))))
+
+(defun tv-prefix-same-p (old new upto)
+  "Do the line vectors OLD and NEW hold the same lines (EQ) before index UPTO? Then
+   the lexer enters line UPTO in the same state in both, with no need to lex them."
+  (and (>= (length old) upto) (>= (length new) upto)
+       (loop for i below upto always (eq (aref old i) (aref new i)))))
 
 ;;; ---- key handling --------------------------------------------------------
 

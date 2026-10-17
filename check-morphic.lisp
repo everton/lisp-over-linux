@@ -60,7 +60,7 @@
               (format nil "{\"type\":\"rel\",\"data\":{\"axis\":\"y\",\"value\":~d}}" dy)))
 
 (defun shell-draws () (probe-int "(lol.morph:morph-draws (desk-shell *world*))"))
-(defun pane-draws () (probe-int "(lol.morph:morph-draws (holder-pane (desk-shell *world*)))"))
+(defun pane-draws () (probe-int "(lol.morph:morph-draws (pane-body (holder-pane (desk-shell *world*))))"))
 (defun repairs () (probe-int "(lol.morph:world-repairs *world*)"))
 
 (defun section-a ()
@@ -87,11 +87,13 @@
       (check "a bare pointer move repairs nothing" (and d0 (eql d0 d1) (eql r0 r1))))
     (qmp-key "down") (sleep 1.5)
     (let ((d2 (shell-draws)) (p2 (pane-draws))
-          (last (read-list (probe "(let ((r (lol.morph:world-last-repair *world*))) (list (getf r :rects) (mapcar (lambda (e) (symbol-name (type-of (car e)))) (getf r :drawn)) (lol.morph:morph-bounds (holder-pane (desk-shell *world*)))))"))))
-      (format t "~&  after a key: shell draws ~a -> ~a, pane draws ~a -> ~a; last repair ~a~%" d0 d2 p0 p2 last)
-      (check "a key repairs the expanded pane (it draws again)" (and p2 p0 (> p2 p0)))
-      (check "... its rect alone, drawn by the pane alone — not the shell's other morphs"
-             (and last (equal (first last) (list (third last))) (equal (second last) '("PANE"))
+          (last (read-list (probe "(let* ((r (lol.morph:world-last-repair *world*)) (b (pane-body (holder-pane (desk-shell *world*))))) (list (getf r :rects) (mapcar (lambda (e) (symbol-name (type-of (car e)))) (getf r :drawn)) (lol.morph:morph-bounds b) (lol.textview:tv-line-height (pane-tv (holder-pane (desk-shell *world*))))))"))))
+      (format t "~&  after a key: shell draws ~a -> ~a, text body draws ~a -> ~a; last repair ~a~%" d0 d2 p0 p2 last)
+      (check "a key in the Workspace repairs its text view (the body morph draws again)" (and p2 p0 (> p2 p0)))
+      (check "... the two lines the caret left and entered, drawn by the TEXT-BODY alone"
+             (and last (= 1 (length (first last)))
+                  (= (fourth (first (first last))) (* 2 (fourth last)))
+                  (equal (second last) '("TEXT-BODY"))
                   (eql d2 d0)))))
   ;; the halo, asked directly for the layers under a point in the pane
   (let ((last (probe "(let ((l (car (last (halo-layers 300 300))))) (type-of (getf l :object)))")))
@@ -245,11 +247,16 @@
     ;; ---- only the damaged morphs draw: a key in the window
     (probe "(setf *zz-repairs* nil)")
     (qmp-key "down") (sleep 1.0)
-    (let ((r (read-list (probe "(let ((r (first (last *zz-repairs*))) (w (first (desk-windows)))) (list (mapcar (lambda (e) (list (car e) (mapcar (lambda (m) (symbol-name (type-of m))) (cdr e)))) (getf r :per-rect)) (lol.morph:morph-bounds (window-pane w)) (and (assoc (window-pane w) (getf r :drawn)) t) (and (assoc (window-title w) (getf r :drawn)) t)))"))))
+    (let ((r (read-list (probe "(let ((r (first (last *zz-repairs*))) (w (first (desk-windows)))) (list (mapcar (lambda (e) (list (car e) (mapcar (lambda (m) (symbol-name (type-of m))) (cdr e)))) (getf r :per-rect)) (lol.morph:morph-bounds (pane-body (window-pane w))) (and (assoc (pane-body (window-pane w)) (getf r :drawn)) t) (and (assoc (window-title w) (getf r :drawn)) t) (lol.morph:morph-bounds (window-pane w))))"))))
       (format t "~&  a key in the window: ~a~%" (and r (first r)))
-      (check "a key in the window repairs exactly its pane's rect, copied from the window"
-             (and r (equal (first r) (list (list (second r) '("TRAIL-WINDOW"))))))
-      (check "... the pane redrawn in the window's store, its title bar not, the shell not"
+      (check "a key in the window repairs its list body's rect (and the preview, the header), each copied from the window"
+             (and r (find (second r) (first r) :key #'first :test #'equal)
+                  (every (lambda (e) (equal (second e) '("TRAIL-WINDOW"))) (first r))
+                  (every (lambda (e) (destructuring-bind (px py pw ph) (fifth r)
+                                       (destructuring-bind (x y w h) (first e)
+                                         (and (<= px x) (<= py y) (<= (+ x w) (+ px pw)) (<= (+ y h) (+ py ph))))))
+                         (first r))))
+      (check "... the list body redrawn in the window's store, its title bar not, the shell not"
              (and r (third r) (not (fourth r)))))
     (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'rec)")
     ;; ---- a bare move over the window draws nothing
@@ -302,10 +309,10 @@
             (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate *world*) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
     (format t "~&  window moved 10 px (repaired and sent):       ~a us~%"
             (probe "(let ((w (first (desk-windows))) (t0 (get-internal-real-time))) (dotimes (i 50) (destructuring-bind (x y ww wh) (lol.morph:morph-bounds w) (declare (ignore ww wh)) (lol.morph:move-morph w (+ x (if (evenp i) 10 -10)) y)) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
-    (format t "~&  a key in the window (its pane, copied out):  ~a us~%"
-            (probe "(let ((w (first (desk-windows))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate (window-pane w)) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
-    (format t "~&  a key in the tiled pane (the pane):           ~a us~%"
-            (probe "(let ((p (holder-pane (desk-shell *world*))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate p) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+    (format t "~&  a key in the window (its body, copied out):  ~a us~%"
+            (probe "(let ((w (first (desk-windows))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate (pane-body (window-pane w))) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+    (format t "~&  a key in the tiled pane (its body):           ~a us~%"
+            (probe "(let ((p (holder-pane (desk-shell *world*))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate (pane-body p)) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
     (format t "~&  draw-browser alone (the old full frame's draw): ~a us~%"
             (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (draw-browser *fb-canvas* *fb-xres* *fb-yres*)) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
     (probe "(progn (lol.morph:invalidate *world*) t)")))
@@ -513,7 +520,7 @@
   (let ((s0 (probe-int "(lol.morph:morph-steps (holder-pane (desk-shell *world*)))")))
     (sleep 2.0)
     (let ((s1 (probe-int "(lol.morph:morph-steps (holder-pane (desk-shell *world*)))"))
-          (body (probe "(let* ((p (holder-pane (desk-shell *world*))) (b (pane-stage-body p)) (rs (mapcar (lambda (r) (getf r :rects)) *zz-reps*))) (list (length rs) (count (list b) rs :test (function equal)) (count-if (lambda (r) (getf r :full)) *zz-reps*) (count-if (lambda (r) (every (lambda (e) (eq (car e) p)) (getf r :drawn))) *zz-reps*)))"))
+          (body (probe "(let* ((p (holder-pane (desk-shell *world*))) (sb (pane-body p)) (b (lol.morph:morph-bounds sb)) (rs (mapcar (lambda (r) (getf r :rects)) *zz-reps*))) (list (length rs) (count (list b) rs :test (function equal)) (count-if (lambda (r) (getf r :full)) *zz-reps*) (count-if (lambda (r) (every (lambda (e) (member (car e) (list p sb))) (getf r :drawn))) *zz-reps*)))"))
           (ms (probe "(let ((ms (mapcar (lambda (r) (getf r :ms)) *zz-reps*))) (and ms (/ (round (* 100 (/ (reduce (function +) ms) (length ms)))) 100.0)))")))
       (format t "~&  stage steps in 2 s: ~a -> ~a; repairs (all, body-only, full): ~a; ~a ms a repair~%" s0 s1 body ms)
       (check "a running stage on screen steps by itself (~30 a second)"
@@ -521,11 +528,11 @@
       (let ((b (read-list body)))
         (check "... each step repairs only the stage's body, never the whole screen"
                (and b (plusp (first b)) (>= (second b) (floor (* 9 (first b)) 10)) (zerop (third b))))
-        (check "... drawn by the stage's pane alone (not the strip, the breadcrumbs, the status)"
+        (check "... drawn by the stage's body morph (over its pane's panel) alone (not the strip, the breadcrumbs, the status)"
                (and b (>= (fourth b) (floor (* 9 (first b)) 10)))))))
   (probe "(sb-int:unencapsulate 'lol.morph:world-repair 'rec)")
   (format t "~&  a stage step, repaired and sent (body only):  ~a us~%"
-          (probe "(let ((p (holder-pane (desk-shell *world*))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate-local p (pane-stage-body p)) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
+          (probe "(let ((p (holder-pane (desk-shell *world*))) (t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate (pane-body p)) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (format t "~&  the same as a full repair (what step 2 did):  ~a us~%"
           (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate *world*) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (qmp-key "spc") (sleep 1.0)                              ; Space pauses the stage

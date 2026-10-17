@@ -209,11 +209,23 @@
 (format t "~&== damage per morph ==~%")
 (let ((p (tiled-pane)))
   (keys "down")
-  (check "a key in the tiled pane repairs that pane, and nothing else"
-         (and (equal (repaired-rects) (list (lol.morph:morph-bounds p)))
-              (repaired-only-p (list p (first (lol.morph:morph-children p))))))
-  (check "... (its preview, its child, drawn with it; the tabs, the status line not)"
+  (let ((side (pane-preview p)))
+    (check "a key in a list repairs its list body and the preview beside it, nothing else"
+           (and (member (lol.morph:morph-bounds (pane-body p)) (repaired-rects) :test #'equal)
+                (every (lambda (r) (lol.morph:rect-contains-p (lol.morph:morph-bounds p) r))
+                       (repaired-rects))
+                (drew-p (pane-body p)) (drew-p (pane-body side))
+                (repaired-only-p (list p (pane-body p) side (pane-body side))))))
+  (check "... (the tabs, the status line, the shell not)"
          (and (not (drew-p (strip))) (not (drew-p (status))) (not (drew-p (shell)))))
+  (check "a pane's body is its child, a morph, at the main column; the preview's, the side's"
+         (and (typep (pane-body p) 'list-body) (eq (lol.morph:morph-owner (pane-body p)) p)
+              (eq (lol.morph:morph-owner (pane-preview p)) p)
+              (eq (lol.morph:morph-owner (pane-body (pane-preview p))) (pane-preview p))))
+  (check "... the morph under a row is the list body"
+         (destructuring-bind (x y w h) (lol.morph:morph-bounds (pane-body p))
+           (declare (ignore w h))
+           (eq (lol.morph:morph-at *world* (+ x 20) (+ y 20)) (pane-body p))))
   (check "the screen is right" (screen-right-p))
   (setf *browser-status* "a message") (repair)
   (check "a new message in the status line repairs the status line alone"
@@ -236,22 +248,90 @@
 (check "SuperL-2 switches the tiled trail: the strip and the trail area repaired"
        (and (drew-p (strip)) (drew-p (tiled-pane))))
 (check "the screen is right" (screen-right-p))
-(let ((p (tiled-pane)))
+(let* ((p (tiled-pane)) (b (pane-body p)) (tv (pane-tv p)))
   (keys "a b")
-  (check "typing in the Workspace repairs the Workspace pane alone"
-         (and (equal (repaired-rects) (list (lol.morph:morph-bounds p)))
-              (repaired-only-p (list p))))
-  (keys "bs bs")
+  (check "typing in the Workspace repairs one line of its text view, nothing else"
+         (and (= 1 (length (repaired-rects)))
+              (= (fourth (first (repaired-rects))) (lol.textview:tv-line-height tv))
+              (lol.morph:rect-contains-p (lol.morph:morph-bounds b) (first (repaired-rects)))
+              (repaired-only-p (list b))))
+  (check "the screen is right" (screen-right-p))
+  (keys "ret")
+  (check "Return: the rows from the caret's line down (they all moved), still the text view alone"
+         (and (repaired-only-p (list b)) (screen-right-p)))
+  (keys "up")
+  (check "a caret move up repairs the two lines it left and entered (one band)"
+         (and (= 1 (length (repaired-rects)))
+              (= (fourth (first (repaired-rects))) (* 2 (lol.textview:tv-line-height tv)))
+              (repaired-only-p (list b))))
+  (check "the screen is right" (screen-right-p))
+  (keys "down bs bs bs")
+  (check "the screen is right" (screen-right-p))
+  ;; an open string colours every line after it: those rows differ too, and are found
+  (keys "C-home \"")
+  (check "a quote opened at the top: the rows below it repaint (the lexer's state moved)"
+         (and (> (reduce #'+ (mapcar #'fourth (repaired-rects))) (* 2 (lol.textview:tv-line-height tv)))
+              (not (getf (last-repair) :full))
+              (repaired-only-p (list b))))
+  (check "the screen is right" (screen-right-p))
+  (keys "bs")
   (check "the screen is right" (screen-right-p)))
 (keys "s-1")
 ;; a change made behind the shell's back (the agent, a service, the REPL): found by
 ;; the pane's signature, nothing else redrawn
 (let ((p (tiled-pane)))
   (setf (pane-view p) (present (pane-subject p))) (repair)
-  (check "a pane's view replaced from outside: that pane alone is repaired"
-         (and (member (lol.morph:morph-bounds p) (repaired-rects) :test #'equal)
+  (check "a pane's view replaced from outside: its body is repaired, found by its signature"
+         (and (member (lol.morph:morph-bounds (pane-body p)) (repaired-rects) :test #'equal)
               (not (drew-p (strip))) (not (drew-p (status)))))
   (check "the screen is right" (screen-right-p)))
+
+(format t "~&== a pane's body is a morph: a key in a text view beside a list ==~%")
+(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(keys "down S-ret")
+(let* ((p (tiled-pane)) (side (pane-side p))
+       (lb (pane-body p)) (tb (and side (pane-body side))))
+  (check "S-ret pins an editable text view beside the list: two bodies, a list and a text"
+         (and (typep lb 'list-body) (typep tb 'text-body) (pane-editing-side p)))
+  (check "the screen is right" (screen-right-p))
+  (keys "x")
+  (check "a key typed into the text view repairs one of its lines — not the list beside it"
+         (and (= 1 (length (repaired-rects)))
+              (lol.morph:rect-contains-p (lol.morph:morph-bounds tb) (first (repaired-rects)))
+              (repaired-only-p (list tb))
+              (not (drew-p lb)) (not (drew-p p))))
+  (check "the screen is right" (screen-right-p))
+  (keys "bs")
+  ;; the pointer: a press on the text view goes to the text body, placing the caret
+  (let ((tv (pane-tv side)))
+    (destructuring-bind (x y w h) (lol.morph:morph-bounds tb)
+      (declare (ignore w h))
+      (check "the morph under the text is the text body"
+             (eq (lol.morph:morph-at *world* (+ x 80) (+ y 40)) tb))
+      (ev :down :x (+ x 80) :y (+ y (* 2 (lol.textview:tv-line-height tv)) 12))
+      (ev :up :x (+ x 80) :y (+ y (* 2 (lol.textview:tv-line-height tv)) 12)) (repair)
+      (check "a click in it moves the caret: two of its lines repaired, the list not"
+             (and (<= 1 (length (repaired-rects)) 2) (not (drew-p lb))
+                  (every (lambda (r) (lol.morph:rect-contains-p (lol.morph:morph-bounds tb) r))
+                         (repaired-rects))))
+      (check "the screen is right" (screen-right-p))))
+  ;; a press on the list takes the focus back: the list body is the one damaged
+  (destructuring-bind (x y w h) (lol.morph:morph-bounds lb)
+    (declare (ignore w h))
+    (let ((row (first (last (pane-rows p) 2))))
+      (ev :down :x (+ x 40) :y (+ (lol.morph:surface-origin p) 0 (car row) 4))
+      (ev :up :x (+ x 40) :y (+ (car row) 4)) (repair)
+      (check "a press on a row: the list body takes it (the selection moved)"
+             (and (drew-p lb) (not (pane-editing-side p))))
+      (check "the screen is right" (screen-right-p))))
+  (let ((layers (destructuring-bind (x y w h) (lol.morph:morph-bounds lb)
+                  (declare (ignore w h)) (halo-layers (+ x 40) (+ y 40)))))
+    (check "the halo: the list body is a layer of its own, a morph, inside its pane's"
+           (let ((i (position lb layers :key (lambda (l) (getf l :object))))
+                 (j (position p layers :key (lambda (l) (getf l :object)))))
+             (and i j (< i j))))))
+(close-trail) (setf *active* 0)       ; back to the module index, as the script expects
+(repair)
 
 (format t "~&== SuperL-g: tear off, grab, move, resize, re-tile ==~%")
 (keys "s-g")
@@ -285,9 +365,11 @@
   (let* ((p (window-pane w)) (sel (pane-sel p)) (r0 (window-renders w)))
     (keys "down")
     (check "a key in the focused window moves ITS selection" (= (pane-sel p) (1+ sel)))
-    (check "... the repair redrew that pane, in the window's store, and copied it"
-           (and (drew-p p) (drew-p w) (= (1+ r0) (window-renders w))
-                (equal (repaired-rects) (list (lol.morph:morph-bounds p)))))
+    (check "... the repair redrew that pane's list body (and its header), in the window's store, and copied it"
+           (and (drew-p (pane-body p)) (drew-p w) (= (1+ r0) (window-renders w))
+                (member (lol.morph:morph-bounds (pane-body p)) (repaired-rects) :test #'equal)
+                (every (lambda (r) (lol.morph:rect-contains-p (lol.morph:morph-bounds p) r))
+                       (repaired-rects))))
     (check "... and none of the shell, nor the window's title bar"
            (and (zerop (shell-area-drawn)) (not (drew-p (window-title w)))))
     (check "the screen is right" (screen-right-p))))
@@ -585,9 +667,9 @@
     (check "a due step steps it" (= (1+ n) (lol.morph:morph-steps p))))
   (repair)
   (check "the step damaged only the stage's body"
-         (equal (repaired-rects) (list (lol.morph:to-world-rect p (pane-stage-body p)))))
-  (check "... and drew only its pane (and a window over it): not the tab strip, the breadcrumbs, the status line"
-         (and (drew-p p) (repaired-only-p (cons p (windows)))))
+         (equal (repaired-rects) (list (lol.morph:morph-bounds (pane-body p)))))
+  (check "... and drew only its stage body (over its pane's panel; a window over it): not the tab strip, the breadcrumbs, the status line"
+         (and (drew-p (pane-body p)) (repaired-only-p (list* p (pane-body p) (windows)))))
   (check "the screen is right after a step" (screen-right-p))
   ;; the same stage in a window: only that part of its backing store is drawn again
   (keys "s-g esc")
@@ -598,11 +680,12 @@
     (lol.morph:world-step *world* (+ (lol.morph:now-ms) 2000))
     (repair)
     (check "a step damages the window's stage body only"
-           (let ((rects (repaired-rects)) (b (pane-stage-body p)))
+           (let ((rects (repaired-rects)) (b (lol.morph:morph-local-bounds (pane-body p))))
              (and (= 1 (length rects)) b
                   (= (lol.morph:rect-area (first rects)) (lol.morph:rect-area b))
                   ;; (the window copies it out, and its frame is drawn over it)
-                  (drew-p p) (repaired-only-p (list* p w (window-frame w) (windows))))))
+                  (drew-p (pane-body p))
+                  (repaired-only-p (list* p (pane-body p) w (window-frame w) (windows))))))
     (check "the screen is right" (screen-right-p))
     (setf (stage-running st) nil)
     (check "a paused stage steps nothing: back to -1"

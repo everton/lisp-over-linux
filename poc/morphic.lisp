@@ -69,7 +69,14 @@
 (defgeneric morph-sig-place (morph)
   (:documentation "Where MORPH's last signature is kept: (values GETTER SETTER).")
   (:method ((m watched-morph)) (values (lambda () (morph-sig m)) (lambda (v) (setf (morph-sig m) v))))
-  (:method ((p pane)) (values (lambda () (pane-sig p)) (lambda (v) (setf (pane-sig p) v)))))
+  (:method ((p pane)) (values (lambda () (pane-sig p)) (lambda (v) (setf (pane-sig p) v))))
+  (:method ((b pane-body)) (values (lambda () (body-sig b)) (lambda (v) (setf (body-sig b) v)))))
+
+(defgeneric check-morph (morph)
+  (:documentation "DESK-SYNC's question to each morph: damage whatever of you changed
+   since you were last drawn. By default, the whole morph when its SIGNATURE changed; a
+   text view answers row by row (TEXT-BODY, below).")
+  (:method ((m lol.morph:morph)) (check-signature m)))
 
 (defun check-signature (m)
   "Damage M if its picture changed since it was last compared."
@@ -233,11 +240,36 @@
     (lol.morph:add-morph owner m)))
 
 (defun let-go (p)
-  "P leaves the screen: off its owner, its own children (a side pane, a preview) with
-   it, and no longer laid out."
-  (dolist (c (lol.morph:morph-children p)) (when (pane-p c) (let-go c)))
+  "P leaves the screen: off its owner, its own children (its body, a side pane, a
+   preview) with it, and no longer laid out."
+  (drop-children p)
   (when (lol.morph:morph-owner p) (lol.morph:remove-morph p))
   (setf (pane-mode p) nil (pane-split-plan p) nil))
+
+(defun drop-children (p &optional keep)
+  "Take every child of the pane P off screen but those in KEEP: its body, a side pane."
+  (dolist (c (lol.morph:morph-children p))
+    (unless (member c keep)
+      (if (pane-p c) (let-go c) (lol.morph:remove-morph c)))))
+
+(defun ensure-body (p)
+  "P's body morph, of the class its view asks for — made anew when the view's kind
+   changed (a list that became source, say)."
+  (let ((want (body-class-for p)) (b (pane-body p)))
+    (if (and b (eq (class-name (class-of b)) want))
+        b
+        (setf (pane-body p) (make-instance want)))))
+
+(defun place-body (p rect)
+  "Lay P's body out at RECT (world coordinates), as P's child."
+  (let ((b (ensure-body p)))
+    (adopt p b)
+    (set-bounds-if b rect)
+    ;; a text view knows its rect before it is first drawn (TV-FRAME-KEY compares it)
+    (when (and (typep b 'text-body) (pane-tv p))
+      (destructuring-bind (x y w h) (lol.morph:morph-local-bounds b)
+        (lol.textview:tv-geometry (pane-tv p) x y w h)))
+    b))
 
 (defun layout-trail-area (a trail)
   "Lay TRAIL out in area A: its panes become A's children, in order — every one but
@@ -256,7 +288,7 @@
             do (adopt a p)
                (cond
                  ((< i (1- n))
-                  (dolist (c (lol.morph:morph-children p)) (when (pane-p c) (let-go c)))
+                  (drop-children p)                ; a breadcrumb has no body
                   (set-pane-mode p :collapsed)
                   (set-bounds-if p (list (+ ax 8) y (- aw 16) +bar-h+))
                   (incf y (+ +bar-h+ 3)))
@@ -270,21 +302,27 @@
           (remove-if-not (lambda (c) (member c trail)) (copy-list trail)))))
 
 (defun layout-expanded (p)
-  "Lay out the expanded pane P's right-hand column: what EXPANDED-COLUMNS says sits
-   there becomes P's one child, at the column's rect; anything else that was there
-   goes. Its split and its body's top are recorded for its clicks."
+  "Lay out the expanded pane P's insides, as EXPANDED-COLUMNS divides it: its own body
+   at the main column, and what sits in its right-hand column (a side pane, the nav
+   split's preview — a pane, whose body fills it) at the column's rect. Anything else
+   that was there goes. Its split and its body's top are recorded for its clicks."
   (destructuring-bind (x y w h) (lol.morph:morph-local-bounds p)
     (let* ((cols (expanded-columns p x y w h))
-           (side (getf cols :side)))
+           (side (getf cols :side))
+           (main (getf cols :main)))
       (setf (pane-split-plan p) cols
             (pane-body-top p) (getf cols :body-y)
             (pane-split-x p) (getf cols :split-x))
-      (dolist (c (lol.morph:morph-children p))
-        (unless (eq c side) (let-go c)))
+      (let ((body (place-body p (lol.morph:to-world-rect
+                                 p (list (first main) (getf cols :body-y) (second main)
+                                         (max 0 (getf cols :body-h)))))))
+        (drop-children p (list body side)))
       (when side
         (adopt p side)
         (set-pane-mode side :side)
-        (set-bounds-if side (lol.morph:to-world-rect p (getf cols :side-rect)))))))
+        (set-bounds-if side (lol.morph:to-world-rect p (getf cols :side-rect)))
+        (let ((sb (place-body side (copy-list (lol.morph:morph-bounds side)))))
+          (drop-children side (list sb)))))))
 
 ;;; ---- a pane, as a morph --------------------------------------------------------
 
@@ -304,32 +342,185 @@
   ;; current pane (a terminal's cursor, say) gets the one of the trail it is drawing
   (let ((*active* (or (pane-trail-index p) *active*)))
     (destructuring-bind (x y w h) (lol.morph:morph-local-bounds p)
-      (case (pane-mode p)
+      ;; inside its bounds, always: a split's column header used to run on into the
+      ;; gutter beside the pane, where only a whole repaint of the shell put it right
+      (lol.canvas:with-clip (canvas x y w h)
+       (case (pane-mode p)
         (:collapsed (draw-crumb canvas x y w p))
         (:expanded (draw-pane-expanded canvas p x y w h))
-        (:side (draw-pane-body canvas p x y w h))))))
-
-(defun tv-signature (tv)
-  "A text view's picture, short of where it is scrolled to (which drawing itself
-   adjusts, to keep the caret in view): its buffer — a persistent vector, replaced on
-   every edit, so one EQ — its caret, selection and focus."
-  (and tv (list (lol.textview:tv-lines tv) (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv)
-                (lol.textview::tv-anchor-line tv) (lol.textview::tv-anchor-col tv)
-                (lol.textview::tv-mark-active tv) (lol.textview::tv-rect-mode tv)
-                (lol.textview:tv-focus tv))))
+        ;; a side pane, a preview: its body is its whole picture
+        (:side nil))))))
 
 (defmethod morph-signature ((p pane))
+  "A pane's own picture — its panel: the title (with a file's modified mark), the tint
+   and badge, how it is split, and the column header and accent rule a split draws.
+   What is IN it is its body's (and a side pane's) business, watched on its own."
   (let ((v (pane-view p)))
     (case (pane-mode p)
       (:collapsed
        (let ((sel (selected-item p)))
          (list :collapsed (lol.morph:morph-local-bounds p) (and v (view-title v)) (and v (view-kind v))
                (and sel (item-label sel)))))
-      (t (list (pane-mode p) (lol.morph:morph-local-bounds p) v (and v (view-title v)) (pane-title p)
-               (pane-side p) (pane-preview p) (pane-sel p) (pane-editing-side p)
-               (tv-signature (pane-tv p))
-               (and (terminal-pane-p p) *minibuffer* t)
-               (subject-signature (pane-subject p) p))))))
+      (:expanded
+       (let* ((cols (pane-split-plan p)) (side (getf cols :side)) (it (selected-item p)))
+         (list :expanded (lol.morph:morph-local-bounds p) (and v (view-title v)) (and v (view-kind v))
+               (pane-title p) (getf cols :kind) (getf cols :split-x)
+               (and side (pane-view side) (view-title (pane-view side)))
+               (pane-editing-side p) (pane-side p) (and it (item-subject it) t))))
+      (t (list (pane-mode p) (lol.morph:morph-local-bounds p))))))
+
+;;; ---- a pane's body, as a morph -----------------------------------------------------
+;;; Each draws itself with the function that paints its kind, at its own bounds and with
+;;; *ACTIVE* at its pane's trail (as the pane does), and says what its picture depends
+;;; on. A text view says it row by row (CHECK-MORPH below), so typing damages a line.
+
+(defmacro with-body-drawing ((b pane x y w h) &body body)
+  "Bind PANE to B's pane and X Y W H to B's bounds where it draws, with *ACTIVE* at the
+   pane's trail."
+  `(let* ((,pane (body-pane ,b))
+          (*active* (or (and ,pane (pane-trail-index (expanded-of ,pane))) *active*)))
+     (destructuring-bind (,x ,y ,w ,h) (lol.morph:morph-local-bounds ,b)
+       (declare (ignorable ,x ,y ,w ,h))
+       ,@body)))
+
+(defun expanded-of (p)
+  "The expanded pane P belongs to: P itself, or the pane whose column P is in."
+  (if (and (eq (pane-mode p) :side) (pane-p (lol.morph:morph-owner p)))
+      (lol.morph:morph-owner p)
+      p))
+
+(defmethod lol.morph:draw-morph ((b list-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h)
+    (draw-list-body canvas p x y w h)
+    ;; drawing moves the viewport to keep the selection in view: what is on screen now
+    (setf (body-sig b) (morph-signature b))))
+
+(defmethod lol.morph:draw-morph ((b text-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h)
+    (let ((tv (pane-tv p)))
+      (lol.textview:tv-geometry tv x y w h)
+      (multiple-value-bind (depth instr) (lol.textview:tv-draw canvas tv)
+        ;; what each row shows, as drawn: a later change damages only rows that differ
+        (setf (body-drawn b)
+              (list tv (lol.textview:tv-frame-key tv) (lol.textview:tv-lines tv) (list depth instr)
+                    (lol.textview:tv-row-keys tv depth instr)))))))
+
+(defmethod lol.morph:draw-morph ((b grid-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h) (draw-matrix-body canvas p x y w h)))
+
+(defmethod lol.morph:draw-morph ((b stage-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h) (draw-stage-body canvas p x y w h)))
+
+(defmethod lol.morph:draw-morph ((b image-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h) (draw-image-body canvas p x y w h)))
+
+(defmethod lol.morph:draw-morph ((b web-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h) (funcall 'draw-web-body canvas p x y w h)))
+
+(defmethod lol.morph:draw-morph ((b terminal-body) canvas clip)
+  (declare (ignore clip))
+  (with-body-drawing (b p x y w h) (funcall 'draw-terminal-body canvas p x y w h)))
+
+;; a text view and a terminal fill their whole rect: nothing under them shows
+(defmethod lol.morph:morph-opaque-p ((b text-body)) t)
+(defmethod lol.morph:morph-opaque-p ((b terminal-body)) t)
+
+(defmethod lol.morph:morph-name ((b pane-body))
+  (let ((p (body-pane b)))
+    (typecase b
+      (text-body "text view")
+      (grid-body "dispatch matrix")
+      (stage-body "stage")
+      (image-body "image")
+      (web-body "web page")
+      (terminal-body "terminal")
+      (t (format nil "list of ~d rows" (if (and p (pane-view p)) (length (view-items (pane-view p))) 0))))))
+
+(defmethod morph-signature ((b pane-body))
+  "Its rect, its pane's view and what the subject itself adds (a web tab's toolbar, a
+   terminal's fate)."
+  (let ((p (body-pane b)))
+    (and p (list (lol.morph:morph-local-bounds b) (pane-view p)
+                 (subject-signature (pane-subject p) p)))))
+
+(defmethod morph-signature ((b list-body))
+  ;; the viewport is in it, as drawn (the draw records the signature after it has
+  ;; scrolled to the selection, so the next comparison sees the list as it is on screen)
+  (let ((p (body-pane b)))
+    (and p (list (lol.morph:morph-local-bounds b) (pane-view p) (pane-sel p) (pane-top p)
+                 (pane-follow p)))))
+
+(defmethod morph-signature ((b stage-body))
+  "A stage's picture: its bodies where they are, the selection, whether it runs, the
+   transcript's newest line — a step damages it too, explicitly; this catches the
+   rest (an eval in the Workspace beside it that moved a ship)."
+  (let* ((p (body-pane b)) (st (and p (view-data (pane-view p)))))
+    (and st (list (lol.morph:morph-local-bounds b) (pane-view p) (stage-selected st)
+                  (stage-running st) (first (stage-transcript st))
+                  (mapcar (lambda (o) (list (body-x o) (body-y o) (body-rot o) (body-flash o)
+                                            (body-breached o) (body-docked o)))
+                          (stage-bodies st))))))
+
+(defmethod morph-signature ((b terminal-body))
+  (let ((p (body-pane b)))
+    (and p (list (lol.morph:morph-local-bounds b) (pane-view p)
+                 (subject-signature (pane-subject p) p)
+                 ;; the cursor is not drawn while a prompt is open
+                 (and *minibuffer* t)))))
+
+(defmethod check-morph ((p pane))
+  "An expanded pane whose split is as it was repairs only its HEADER band when its
+   picture changed — the title, the column's header, the accent rule all live there;
+   the panel below is under its bodies. Anything else damages the whole pane."
+  (multiple-value-bind (get set) (morph-sig-place p)
+    (let ((old (funcall get)) (now (morph-signature p)))
+      (unless (equal now old)
+        (funcall set now)
+        (if (and (eq (pane-mode p) :expanded) (consp old) (eq (first old) :expanded)
+                 ;; the same rect, kind and split, the same side pane: then what
+                 ;; differs is a title, a header, the accent — all on the header band
+                 (every (lambda (i) (equal (nth i old) (nth i now))) '(1 3 5 6 9)))
+            (destructuring-bind (x y w h) (lol.morph:morph-local-bounds p)
+              (declare (ignore h))
+              (lol.morph:invalidate-local p (list x y w (max 0 (- (pane-body-top p) y)))))
+            (lol.morph:invalidate p))))))
+
+(defmethod check-morph ((b text-body))
+  "A text view damages the screen ROWS whose picture changed (LOL.TEXTVIEW's
+   TV-ROW-KEYS, compared with what it drew) — or all of itself, when what changed is
+   the frame: its rect, the font, the scroll, the scrollbar, or a line above the view
+   (which changes the colours entering it)."
+  (let* ((p (body-pane b)) (tv (and p (pane-tv p))) (drawn (body-drawn b)))
+    (when (and tv drawn)
+      (destructuring-bind (dtv frame lines start rows) drawn
+        (if (or (not (eq dtv tv))
+                (not (equal frame (lol.textview:tv-frame-key tv)))
+                (not (lol.textview:tv-prefix-same-p lines (lol.textview:tv-lines tv)
+                                                    (lol.textview::tv-scroll tv))))
+            (lol.morph:invalidate b)
+            (let ((now (lol.textview:tv-row-keys tv (first start) (second start)))
+                  (run nil))                ; the first row of a run of changed rows
+              ;; a run of neighbouring changed rows is one rect (a string opened at the
+              ;; top changes every row below it: one band, not thirty)
+              (flet ((flush (end)
+                       (when run
+                         (let ((a (lol.textview:tv-row-rect tv run))
+                               (z (lol.textview:tv-row-rect tv (1- end))))
+                           (lol.morph:invalidate-local
+                            b (list (first a) (second a) (third a)
+                                    (- (+ (second z) (fourth z)) (second a)))))
+                         (setf run nil))))
+                (dotimes (r (max (length now) (length rows)) (flush r))
+                  (if (and (< r (length now)) (< r (length rows))
+                           (equal (aref now r) (aref rows r)))
+                      (flush r)
+                      (unless run (setf run r)))))))))))
 
 ;;; ===========================================================================
 ;;; The desk: the world the environment runs in
@@ -727,25 +918,50 @@
   "The expanded pane of the shell or window H."
   (and h (area-expanded (area-of-holder h))))
 
+(defun damage-body (b)
+  "An event changed body B: damage it — but a text view tells for itself which of its
+   rows changed (CHECK-MORPH), so it is left to DESK-SYNC, which runs after every event."
+  (when (and b (not (typep b 'text-body)))
+    (lol.morph:invalidate b)))
+
 (defun pane-event (p e)
-  "The pointer events of the expanded pane P (E in P's coordinates). -> T when taken."
+  "The pointer events that reach the expanded pane P itself (E in P's coordinates):
+   those its bodies let through, and a press on its panel around them. -> T when taken.
+   DAMAGE: the body the event acted on — not the whole pane."
   (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e))
         (wx (lol.morph:event-wx e)) (wy (lol.morph:event-wy e))
         (state (lol.morph:event-state e)))
     (case (lol.morph:event-kind e)
       (:down (press-prelude)
-             (pane-click p x y (lol.canvas:ctrl-p state) (lol.canvas:super-p state))
-             (lol.morph:invalidate p) t)
-      (:right (context-menu-at (pane-target p x y) wx wy)
-              (lol.morph:invalidate p) t)
-      (:middle (pane-middle-click p x y wx wy (lol.canvas:super-p state))
-               (lol.morph:invalidate p) t)
+             (damage-body (pane-click p x y (lol.canvas:ctrl-p state) (lol.canvas:super-p state)))
+             t)
+      ;; a menu or the halo: an overlay, whose going repairs what it covered; what its
+      ;; command changed, the morphs' signatures find
+      (:right (context-menu-at (pane-target p x y) wx wy) t)
+      (:middle (pane-middle-click p x y wx wy (lol.canvas:super-p state)) t)
       ;; a drag extends the selection the press started; it redraws only if it did
-      (:drag (when (browser-drag x y) (lol.morph:invalidate p)) t)
+      (:drag (when (browser-drag x y) (damage-body (pane-body p))) t)
       ;; a drag that selected something hands it to PRIMARY and the clipboard (X's
       ;; rule). It changes nothing on screen, as it never did.
       (:up (browser-drag-end) t)
       (t nil))))
+
+(defmethod lol.morph:handle-event ((b pane-body) e)
+  "A body under the pointer takes its own press and the drag that follows: the press
+   is the body's (BODY-PRESS, through PANE-CLICK, which knows the split), and the body
+   is what is damaged. Everything else — the wheel, the menus, the halo — goes on to its
+   pane."
+  (let ((p (expanded-of (body-pane b))))
+    (when (and p (eq (pane-mode p) :expanded))
+      (case (lol.morph:event-kind e)
+        (:down (press-prelude)
+               (let ((state (lol.morph:event-state e)))
+                 (damage-body (pane-click p (lol.morph:event-x e) (lol.morph:event-y e)
+                                          (lol.canvas:ctrl-p state) (lol.canvas:super-p state))))
+               t)
+        (:drag (when (browser-drag (lol.morph:event-x e) (lol.morph:event-y e)) (damage-body b)) t)
+        (:up (browser-drag-end) t)
+        (t nil)))))
 
 (defun area-scroll (a e)
   "The wheel over area A: its trail's current pane scrolls — without taking the focus,
@@ -754,7 +970,8 @@
     (when i
       (let ((*active* i))
         (browser-scroll (* (- (lol.morph:event-notches e)) +wheel-lines+)))
-      (let ((p (area-expanded a))) (when p (lol.morph:invalidate p)))
+      ;; what scrolled: the current pane's own body
+      (let ((p (area-expanded a))) (when p (damage-body (pane-body p))))
       t)))
 
 (defmethod lol.morph:handle-event ((p pane) e)
@@ -763,7 +980,7 @@
      (case (lol.morph:event-kind e)
        (:key (pane-key p e))
        ;; the Menu key (fb: from the evdev): the right-button menu, at the caret
-       (:menu (keyboard-context-menu) (lol.morph:invalidate p) t)
+       (:menu (keyboard-context-menu) t)
        (t (pane-event p e))))
     ;; a breadcrumb: a press goes back to that level
     (:collapsed
@@ -776,17 +993,21 @@
     (t nil)))
 
 (defun pane-key (p e)
-  "A key for the focused pane P: BROWSER-KEY's. P is damaged — unless the key was
-   typed INTO a terminal: the echo comes back as output and repaints only its rows
-   (terminal-pane.lisp), so nothing is damaged (unless the key was not the console's,
-   an evdev chord)."
-  (let ((state (lol.morph:event-state e)))
-    (let ((result (browser-key (lol.morph:event-key e) state)))
-      (unless (and (getf (lol.morph:event-data e) :tty)
-                   (fboundp 'terminal-key-was-cheap-p)
-                   (funcall 'terminal-key-was-cheap-p p state))
-        (lol.morph:invalidate p))
-      (if (eq result :quit) :quit t))))
+  "A key for the focused pane P: BROWSER-KEY's. DAMAGE: the body the key was typed
+   into (the side pane's, when the side has the keys) — and for a text view not even
+   that: it says itself which rows changed (CHECK-MORPH), so a key that changes one line
+   repairs that line. Nothing either when the key was typed INTO a terminal: the echo
+   comes back as output and repaints only its rows (terminal-pane.lisp) — unless the
+   key was not the console's, an evdev chord. What else a key changed (the pane's
+   title, the layout, the status line, another tab) DESK-SYNC finds after the event."
+  (let* ((state (lol.morph:event-state e))
+         (body (focused-body p))
+         (result (browser-key (lol.morph:event-key e) state)))
+    (unless (and (getf (lol.morph:event-data e) :tty)
+                 (fboundp 'terminal-key-was-cheap-p)
+                 (funcall 'terminal-key-was-cheap-p p state))
+      (damage-body body))
+    (if (eq result :quit) :quit t)))
 
 (defmethod lol.morph:handle-event ((a trail-area) e)
   "What reaches the area itself: the wheel (from anywhere over it), and a press in a
@@ -1021,8 +1242,8 @@
         (lol.morph:raise-morph win))
       (setf (lol.morph:world-focus desk) (or focus (desk-shell desk))))
     (dolist (m (lol.morph:morph-descendants desk))
-      (when (or (typep m 'watched-morph) (and (pane-p m) (pane-mode m)))
-        (check-signature m)))
+      (when (or (typep m 'watched-morph) (typep m 'pane-body) (and (pane-p m) (pane-mode m)))
+        (check-morph m)))
     nil))
 
 ;;; ---- the halo knows about morphs --------------------------------------------------
@@ -1050,8 +1271,15 @@
   (:method ((p pane))
     (case (pane-mode p)
       (:collapsed '(draw-crumb))
-      (:side '(draw-pane-body))
-      (t '(draw-pane-expanded lol.widgets:draw-panel pane-click)))))
+      (:side '(layout-expanded))
+      (t '(draw-pane-expanded lol.widgets:draw-panel pane-click))))
+  (:method ((b list-body)) '(draw-list-body item->row lol.widgets:draw-list))
+  (:method ((b text-body)) '(lol.textview:tv-draw lol.textview:tv-row-keys))
+  (:method ((b grid-body)) '(draw-matrix-body lol.widgets:draw-grid))
+  (:method ((b stage-body)) '(draw-stage-body))
+  (:method ((b image-body)) '(draw-image-body))
+  (:method ((b web-body)) '(draw-web-body web-blit))
+  (:method ((b terminal-body)) '(draw-terminal-body)))
 
 (defun morph-layer (m)
   "M itself as a halo layer: its name, its instance, its rect, its drawers."
@@ -1069,27 +1297,23 @@
   (:method ((m lol.morph:morph) wx wy) (declare (ignore wx wy)) (list (morph-layer m))))
 
 (defmethod morph-halo-layers ((p pane) wx wy)
-  (let ((shows (halo-layer "shows" (format nil "what the pane shows: ~a" (view-title (pane-view p)))
-                           (pane-subject p) (copy-list (lol.morph:morph-bounds p)) :subject)))
-    (if (eq (pane-mode p) :collapsed)
-        (list (morph-layer p) shows)
-        (let* ((body (local-rect-in p (if (eq (view-kind (pane-view p)) :web)
-                                          (let ((tab (view-data (pane-view p))))
-                                            (and (fboundp 'web-tab-page-rect) (funcall 'web-tab-page-rect tab)))
-                                          (pane-body-rect p))))
-               (on-body (and body (lol.morph:rect-contains-point-p body wx wy))))
-          (append
-           ;; a sprite on the stage is the smallest thing there
-           (when (and on-body (eq (view-kind (pane-view p)) :stage))
-             (multiple-value-bind (lx ly) (lol.morph:surface-origin p)
-               (let ((b (stage-body-at p (- wx lx) (- wy ly))))
-                 (when b
-                   (list (halo-layer "sprite" "sprite" b (local-rect-in p (sprite-rect p b)) :element
-                                     '(draw-stage-sprite stage-sprite-points)))))))
-           (when on-body
-             (multiple-value-bind (object drawers label) (pane-body-element p)
-               (list (halo-layer (clip-text label 24) label object body :element drawers))))
-           (list (morph-layer p) shows))))))
+  "A pane is itself, then what it shows. (Its body, under the point, is a layer of its
+   own: the body morph, deeper.)"
+  (declare (ignore wx wy))
+  (list (morph-layer p)
+        (halo-layer "shows" (format nil "what the pane shows: ~a" (view-title (pane-view p)))
+                    (pane-subject p) (copy-list (lol.morph:morph-bounds p)) :subject)))
+
+(defmethod morph-halo-layers ((b stage-body) wx wy)
+  "On the stage, a sprite is the smallest thing there: its layer comes first."
+  (let ((p (body-pane b)))
+    (append
+     (multiple-value-bind (lx ly) (lol.morph:surface-origin b)
+       (let ((sprite (and p (stage-body-at p (- wx lx) (- wy ly)))))
+         (when sprite
+           (list (halo-layer "sprite" "sprite" sprite (local-rect-in b (sprite-rect p sprite)) :element
+                             '(draw-stage-sprite stage-sprite-points))))))
+     (call-next-method))))
 
 (defmethod morph-halo-layers ((s tab-strip) wx wy)
   (declare (ignore wy))
@@ -1125,6 +1349,7 @@
   (loop for o = m then (lol.morph:morph-owner o)
         while o
         for target = (typecase o
+                       (pane-body nil)            ; its pane answers, which knows the split
                        (pane (and (eq (pane-mode o) :expanded) (pane-target o x y)))
                        (tab-strip (tab-target o x))
                        (trail-area (let ((p (area-expanded o))) (and p (pane-target p x y))))
@@ -1421,10 +1646,13 @@
 (defmethod lol.morph:step-morph ((p pane) now)
   (declare (ignore now))
   (cond ((pane-running-stage p)
-         (if (or (eq :layout (step-stage-pane p)) (null (pane-stage-body p)))
+         ;; the stage's body morph alone — unless the step opened something beside it
+         (if (or (eq :layout (step-stage-pane p)) (not (typep (pane-body p) 'stage-body)))
              (lol.morph:invalidate p)
-             (lol.morph:invalidate-local p (pane-stage-body p))))
-        ((step-run-panes p) (lol.morph:invalidate p))))
+             (lol.morph:invalidate (pane-body p))))
+        ;; a run's text: its body (the text view finds its own rows; a run's colours
+        ;; come from its output, so the rows compare those too)
+        ((step-run-panes p) (damage-body (pane-body p)))))
 
 ;;; ---- what the services changed, exactly ---------------------------------------------
 
@@ -1497,9 +1725,10 @@
   (dolist (p (on-screen-panes))
     (when (terminal-pane-p p)
       (let ((*active* (or (pane-trail-index p) *active*)))
-        (paint-into p canvas (lambda (c) (or (terminal-paint-dirty p c) :fail)))))))
+        (paint-into (or (pane-body p) p) canvas
+                    (lambda (c) (or (terminal-paint-dirty p c) :fail)))))))
 
 (defun pane-painted (pane canvas fn)
   "PAINT-INTO for a pane by the backends' services (web.lisp's frames): NIL when PANE
    is not on screen."
-  (when (and *world* (pane-mode pane)) (paint-into pane canvas fn)))
+  (when (and *world* (pane-mode pane)) (paint-into (or (pane-body pane) pane) canvas fn)))
