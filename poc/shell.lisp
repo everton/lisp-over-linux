@@ -2784,70 +2784,76 @@
 ;;; A click that places the caret in a text view also arms a DRAG: while the button
 ;;; stays down, pointer motion extends the selection from that caret to the pointer
 ;;; (TV-DRAG — the anchor stays where the press began). The backend tells us the
-;;; button is still held; this file only remembers WHICH view the press landed in,
-;;; because by the time the pointer moves it may be over a different pane.
+;;; button is still held; what the press landed in is THE HAND's to remember
+;;; (LOL.MORPH:HAND-PRESS, poc/morph.lisp) — the press in progress is the pointer's
+;;; state, not a view's, and by the time the pointer moves it may be over another pane.
+;;; It was a special per kind of view (*DRAG-TV*, *TERM-DRAG*, *WEB-PRESS* …) until the
+;;; hand kept it.
 
-(defvar *drag-tv* nil
-  "The text view the last left press placed the caret in, or NIL: what a drag
-   extends. Set by BROWSER-CLICK, cleared by the next click.")
-(defvar *drag-origin* nil
-  "Where that press happened, (X . Y), until the pointer has moved far enough to be
-   a drag; NIL once it is one. See +DRAG-SLOP+.")
 (defparameter +drag-slop+ 3
   "Pixels the pointer must travel, held down, before it selects. A clickpad's press
    rolls the fingertip, which nudges the pointer a pixel or two; without this slop
    every press would select a character or two instead of just placing the caret.")
 
-(defvar *term-drag* nil
-  "A press that landed in a TERMINAL pane, while the button is held: what a drag
-   extends there. Owned by poc/terminal-pane.lisp; declared here so the routing below
-   can test it without that file loaded.")
+(defun the-hand ()
+  "The world's hand — the pointer, as a morph — or NIL outside the environment."
+  (and *world* (lol.morph:world-hand *world*)))
+
+(defun hand-press ()
+  "The press in progress, as its morph described it (LOL.MORPH:HAND-PRESS), or NIL."
+  (let ((h (the-hand))) (and h (lol.morph:hand-press h))))
+
+(defun (setf hand-press) (press)
+  (let ((h (the-hand))) (when h (setf (lol.morph:hand-press h) press)))
+  press)
+
+(defun press-kind (&optional (press (hand-press)))
+  "Whose the press in progress is: :TEXT, :TERMINAL, :WEB, :DRAG — or NIL."
+  (first press))
 
 (defun browser-drag (x y)
-  "The left button is still held and the pointer is at X,Y: extend the selection in
-   the view the press landed in. Returns T when the frame changed (so the caller
-   redraws), NIL when there is no drag or the pointer is still inside the slop."
-  ;; a press in a web page drags IN the page (selecting, sliding): web.lisp's
-  (when (eq (view-kind (pane-view (current-pane))) :web)
-    (return-from browser-drag (funcall 'web-drag x y)))
-  (when *term-drag* (return-from browser-drag (funcall 'terminal-drag x y)))
-  (when *drag-tv*
-    (when (and *drag-origin*
-               (<= (abs (- x (car *drag-origin*))) +drag-slop+)
-               (<= (abs (- y (cdr *drag-origin*))) +drag-slop+))
-      (return-from browser-drag nil))
-    (setf *drag-origin* nil)
-    (lol.textview:tv-drag *drag-tv* x y)
-    t))
+  "The left button is still held and the pointer is at X,Y: extend what the press in
+   progress extends — a text selection, a terminal's, a drag in a web page. Returns T
+   when the frame changed (so the caller redraws), NIL when there is no drag or the
+   pointer is still inside the slop."
+  (let ((press (hand-press)))
+    (case (press-kind press)
+      ;; a press in a web page drags IN the page (selecting, sliding): web.lisp's
+      (:web (funcall 'web-drag x y))
+      (:terminal (funcall 'terminal-drag x y))
+      (:text
+       (let ((origin (getf (rest press) :origin)) (tv (getf (rest press) :tv)))
+         (cond ((and origin
+                     (<= (abs (- x (car origin))) +drag-slop+)
+                     (<= (abs (- y (cdr origin))) +drag-slop+))
+                nil)
+               (t (setf (getf (rest press) :origin) nil)
+                  (lol.textview:tv-drag tv x y)
+                  t))))
+      (t nil))))
 
 (defun arm-drag (tv x y)
   "A press just placed TV's caret at X,Y: a drag from here selects in TV."
-  (setf *drag-tv* tv *drag-origin* (cons x y)))
+  (setf (hand-press) (list :text :tv tv :origin (cons x y))))
 
 ;;; Double and triple click, as X does it: a second press on the same spot soon after
 ;;; the first selects the WORD there, a third the whole LINE (its newline included, as
 ;;; xterm does), and a fourth starts over with a plain caret. What gets selected goes
 ;;; straight to PRIMARY and the history, like a drag's — that is the point of it in X:
-;;; double-click a word, middle-click it somewhere else.
+;;; double-click a word, middle-click it somewhere else. The hand counts the run
+;;; (LOL.MORPH:HAND-COUNT-CLICK), as it counts a web page's.
 
 (defparameter +multi-click-ms+ 400
   "How soon a press must follow the last one to count as the next click of a run.")
 
-(defvar *last-press* nil
-  "(TV X Y TIME COUNT) of the last left press in text: what MULTI-CLICK counts from.")
-
 (defun press-count (tv x y)
   "This press on TV at X,Y is the Nth of a run (1, 2, 3, then 1 again): the same view,
-   within +DRAG-SLOP+ of the last press and +MULTI-CLICK-MS+ after it."
-  (let* ((now (get-internal-real-time))
-         (n (destructuring-bind (&optional ltv lx ly lt (lc 0)) *last-press*
-              (if (and (eq ltv tv)
-                       (<= (abs (- x lx)) +drag-slop+) (<= (abs (- y ly)) +drag-slop+)
-                       (<= (- now lt) (* +multi-click-ms+ (/ internal-time-units-per-second 1000))))
-                  (1+ (mod lc 3))
-                  1))))
-    (setf *last-press* (list tv x y now n))
-    n))
+   within +DRAG-SLOP+ of the last press and +MULTI-CLICK-MS+ after it. Without a world
+   (no hand to remember the last press) every press is the first."
+  (let ((h (the-hand)))
+    (if h
+        (lol.morph:hand-count-click h tv x y :slop +drag-slop+ :ms +multi-click-ms+ :max 3)
+        1)))
 
 (defun text-press (tv x y)
   "A left press in text view TV at X,Y: place the caret and arm a drag, or — as the
@@ -2894,7 +2900,7 @@
   "What any press in the browser does first: it ends a drag (only a press in text
    re-arms one), and it ends an open prompt — a click is a change of subject, like
    C-g (the live filter keeps what was typed: its ON-CANCEL decides that, not us)."
-  (setf *drag-tv* nil *drag-origin* nil *term-drag* nil)
+  (setf (hand-press) nil)
   (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*))))
 
 (defun tab-strip-click (tabs closes plus x)
@@ -3857,13 +3863,15 @@
   "The button came up after a press in text: if the drag selected something, that
    selection becomes PRIMARY and enters the history — once, now, rather than on
    every motion event, or the history would fill with every intermediate stretch."
-  (when (fboundp 'web-release) (funcall 'web-release))   ; a press in a web page, if any
-  (when *term-drag* (return-from browser-drag-end (funcall 'terminal-release)))
-  (when *drag-tv*
-    (let ((text (editor-region-text *drag-tv*)))
-      (when (and text (null *drag-origin*))          ; it really was a drag
-        (lol.clipboard:clip-select text)
-        (clip-status "selected" text)))))
+  (let ((press (hand-press)))
+    (case (press-kind press)
+      (:web (funcall 'web-release))                    ; a press in a web page
+      (:terminal (funcall 'terminal-release))
+      (:text
+       (let ((text (editor-region-text (getf (rest press) :tv))))
+         (when (and text (null (getf (rest press) :origin)))   ; it really was a drag
+           (lol.clipboard:clip-select text)
+           (clip-status "selected" text)))))))
 
 ;;; Rectangles: the region's two corners are the rectangle's (C-x SPC shows it as
 ;;; one, but any region works, as in Emacs).

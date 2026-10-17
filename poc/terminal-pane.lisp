@@ -659,13 +659,15 @@
 ;;; The mouse
 ;;; ===========================================================================
 
-;;; *TERM-DRAG* (declared in shell.lisp) is, while the button is held after a press
-;;; in a terminal, either (SUBJECT . :PROGRAM) — the program took the press — or
-;;; (SUBJECT ROW COL X Y), where a selection began.
+;;; A press in a terminal is THE HAND's while the button is held (shell.lisp's
+;;; HAND-PRESS, poc/morph.lisp): (:TERMINAL :SUBJECT s :PROGRAM T :X x :Y y) when the
+;;; program took the press, else (:TERMINAL :SUBJECT s :ROW r :COL c :X x :Y y) where a
+;;; selection began; X,Y follow the pointer (where the terminal is drawn), so the
+;;; release can be reported at the right cell.
 
-(defvar *term-pointer* '(0 . 0)
-  "Where the pointer was last seen over a terminal (for a release or wheel report,
-   which the shell hands us without a position).")
+(defun terminal-press-state ()
+  "The hand's press, when it is a terminal's, as a plist (its :TERMINAL tag dropped)."
+  (let ((p (hand-press))) (and (eq (first p) :terminal) (rest p))))
 
 (defun terminal-cell-at (session x y)
   "(values COL VIEW-ROW) of the cell under pixel X,Y (clamped to the grid)."
@@ -701,50 +703,54 @@
   "A left press in terminal PANE at X,Y: to the program if it wants the mouse, else
    the start of a selection."
   (let* ((subject (pane-subject pane)) (ss (subj-terminal-session subject)))
-    (setf *term-pointer* (cons x y))
     (when (and ss (term-session-geometry ss))
       (if (program-wants-mouse-p ss (mouse-state))
           (progn (report-mouse subject :press 0 x y (mouse-state))
-                 (setf *term-drag* (cons subject :program)))
+                 (setf (hand-press) (list :terminal :subject subject :program t :x x :y y)))
           (multiple-value-bind (col vy) (terminal-cell-at ss x y)
             (let ((r (view-row->abs (term-session-term ss) vy)))
               (setf (term-session-selection ss) nil
-                    *term-drag* (list subject r col x y))
+                    (hand-press) (list :terminal :subject subject :row r :col col :x x :y y))
               (lol.terminal:term-mark-all-dirty (term-session-term ss)))))
       t)))
 
 (defun terminal-drag (x y)
   "The left button is held and the pointer moved: extend the selection (or report
    the motion to a program that asked for it, mode 1002/1003). T when the frame changed."
-  (when *term-drag*
-    (setf *term-pointer* (cons x y))
-    (let* ((subject (first *term-drag*)) (ss (subj-terminal-session subject)))
-      (cond
-        ((null (term-session-geometry ss)) nil)
-        ((eq (cdr *term-drag*) :program)
-         (report-mouse subject :motion 0 x y (mouse-state)) nil)
-        (t (destructuring-bind (r0 c0 px py) (cdr *term-drag*)
-             (when (or (> (abs (- x px)) 3) (> (abs (- y py)) 3) (term-session-selection ss))
+  (let ((press (terminal-press-state)))
+    (when press
+      (let* ((subject (getf press :subject)) (ss (subj-terminal-session subject))
+             (px (getf press :x)) (py (getf press :y)))
+        ;; the pointer, for the release: the hand keeps the press, this updates it
+        (let ((now (copy-list press)))
+          (setf (getf now :x) x (getf now :y) y (hand-press) (cons :terminal now)))
+        (cond
+          ((null (term-session-geometry ss)) nil)
+          ((getf press :program)
+           (report-mouse subject :motion 0 x y (mouse-state)) nil)
+          (t (when (or (> (abs (- x px)) 3) (> (abs (- y py)) 3) (term-session-selection ss))
                (multiple-value-bind (col vy) (terminal-cell-at ss x y)
                  (setf (term-session-selection ss)
-                       (list r0 c0 (view-row->abs (term-session-term ss) vy) col))
+                       (list (getf press :row) (getf press :col)
+                             (view-row->abs (term-session-term ss) vy) col))
                  (lol.terminal:term-mark-all-dirty (term-session-term ss))
                  t))))))))
 
 (defun terminal-release ()
   "The button came up: a finished drag becomes PRIMARY and joins the history — once,
    now — exactly as a drag in a text view does (shell.lisp's BROWSER-DRAG-END)."
-  (when *term-drag*
-    (let* ((subject (first *term-drag*)) (ss (subj-terminal-session subject)))
-      (if (eq (cdr *term-drag*) :program)
-          (report-mouse subject :release 0 (car *term-pointer*) (cdr *term-pointer*) (mouse-state))
-          (let ((sel (term-session-selection ss)))
-            (when sel
-              (let ((text (apply #'lol.terminal:term-text-range (term-session-term ss) sel)))
-                (when (plusp (length text))
-                  (lol.clipboard:clip-select text)
-                  (clip-status "selected" text)))))))
-    (setf *term-drag* nil)))
+  (let ((press (terminal-press-state)))
+    (when press
+      (let* ((subject (getf press :subject)) (ss (subj-terminal-session subject)))
+        (if (getf press :program)
+            (report-mouse subject :release 0 (getf press :x) (getf press :y) (mouse-state))
+            (let ((sel (term-session-selection ss)))
+              (when sel
+                (let ((text (apply #'lol.terminal:term-text-range (term-session-term ss) sel)))
+                  (when (plusp (length text))
+                    (lol.clipboard:clip-select text)
+                    (clip-status "selected" text)))))))
+      (setf (hand-press) nil))))
 
 (defun terminal-wheel (pane lines)
   "The wheel over a terminal: history on the primary screen; on the alternate screen,
@@ -756,10 +762,12 @@
       (cond
         ((and (session-live-p ss) (lol.terminal:term-mouse-mode term))
          (dotimes (i (max 1 (floor (abs lines) +wheel-lines+)))
-           ;; the framebuffer backend's pointer (fb-browser.lisp), when it has one
-           (let ((x (if (boundp '*cursor-x*) (symbol-value '*cursor-x*) (car *term-pointer*)))
-                 (y (if (boundp '*cursor-y*) (symbol-value '*cursor-y*) (cdr *term-pointer*))))
-             (report-mouse subject :press (if (minusp lines) :wheel-up :wheel-down) x y 0))))
+           ;; where the pointer is — the hand's screen point, where this pane draws (a
+           ;; window's coordinates, inside one)
+           (let ((h (the-hand)))
+             (multiple-value-bind (x y)
+                 (screen-to-pane pane (if h (lol.morph:hand-x h) 0) (if h (lol.morph:hand-y h) 0))
+               (report-mouse subject :press (if (minusp lines) :wheel-up :wheel-down) x y 0)))))
         ((lol.terminal:term-alt-screen-p term)
          (when (session-live-p ss)
            (terminal-send subject (with-output-to-string (o)

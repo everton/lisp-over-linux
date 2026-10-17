@@ -64,6 +64,7 @@
    #:world-before-repair
    #:hand #:hand-x #:hand-y #:hand-capture #:hand-carrying #:hand-mode
    #:hand-grab-dx #:hand-grab-dy #:hand-pick-up #:hand-drop #:now-ms
+   #:hand-press #:hand-clicks #:hand-count-click
    #:+max-damage-rects+
    ;; events
    #:event #:make-event #:event-kind #:event-key #:event-state #:event-x #:event-y
@@ -401,10 +402,35 @@
    (mode     :initform :move :accessor hand-mode
              :documentation ":MOVE drags the carried morph; :RESIZE drags its corner.")
    (grab-dx  :initform 0 :accessor hand-grab-dx)
-   (grab-dy  :initform 0 :accessor hand-grab-dy))
+   (grab-dy  :initform 0 :accessor hand-grab-dy)
+   (press    :initform nil :accessor hand-press
+             :documentation "The press in progress, as the morph that took it describes
+   it — a plist whose first key says whose it is: (:TEXT tv :ORIGIN (x . y)) for a
+   selection being dragged out in a text view, (:TERMINAL …) for one in a terminal,
+   (:WEB …) for a press sent into a web page, (:DRAG …) for something picked up to be
+   dropped. NIL when no button is held, or the press drags nothing. There is one hand,
+   so one press: what used to be six specials, one per kind of view, is this slot.")
+   (clicks   :initform nil :accessor hand-clicks
+             :documentation "(TARGET X Y TIME COUNT) of the last left press: what counts a
+   double or a triple click (HAND-COUNT-CLICK)."))
   (:documentation "The pointer as a morph. It is NOT drawn into the canvas: the arrow
    is composited on the way out (doc/framebuffer.org §9.5), so a bare move still costs
-   microseconds. What it adds is what it carries."))
+   microseconds. What it adds is what it carries — a window, while it is moved — and
+   the press in progress (what a drag extends, or what it will drop)."))
+
+(defun hand-count-click (hand target x y &key (slop 3) (ms 400) (max 3))
+  "A left press on TARGET at X,Y: which click of a run it is — 1, then 2 and 3 when
+   each follows the last on the same TARGET within SLOP pixels and MS milliseconds,
+   then 1 again after MAX (X's double and triple click). Remembered in HAND-CLICKS."
+  (let* ((now (get-internal-real-time))
+         (n (destructuring-bind (&optional lt lx ly ltime (lc 0)) (hand-clicks hand)
+              (if (and (eq lt target) lx
+                       (<= (abs (- x lx)) slop) (<= (abs (- y ly)) slop)
+                       (<= (- now ltime) (* ms (/ internal-time-units-per-second 1000))))
+                  (1+ (mod lc max))
+                  1))))
+    (setf (hand-clicks hand) (list target x y now n))
+    n))
 
 (defparameter +min-carried-w+ 120 "A resize never makes a morph narrower than this.")
 (defparameter +min-carried-h+ 80  "... or shorter than this.")
@@ -710,7 +736,8 @@
                              (morph-at world (event-x event) (event-y event)))))
              (when (eq kind :down) (setf (hand-capture hand) target))
              (prog1 (bubble target event)
-               (when (eq kind :up) (setf (hand-capture hand) nil))))))
+               ;; the button is up: the press is over, whoever took it
+               (when (eq kind :up) (setf (hand-capture hand) nil (hand-press hand) nil))))))
       (world-after-dispatch world event))))
 
 ;;; ---- stepping (liveness) ---------------------------------------------------------

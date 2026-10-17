@@ -1204,15 +1204,26 @@ window.__lolPickerApply = function(id, v){
                        (setf *browser-status* "that control has gone from the page")))
                 (setf *web-changed* t)))))
 
-(defvar *web-press*)                    ; defined with the pointer input, below
+(defun web-press ()
+  "The press sent into a page whose release has not been sent yet — the hand's, while
+   the button is held (shell.lisp's HAND-PRESS): a plist (:TAB :CX :CY :COUNT :MODS),
+   or NIL."
+  (let ((p (hand-press))) (and (eq (first p) :web) (rest p))))
+
+(defun take-web-press ()
+  "The pending web press (WEB-PRESS), taken off the hand: it is being released now."
+  (let ((p (web-press)))
+    (when p (setf (hand-press) nil))
+    p))
 
 (defun web-finish-press ()
   "The press that opened a picker has not been released to the page yet (the button
    is still down while the chooser comes up, and the chooser will eat its release):
    send the release now, so the page does not think the button is held."
-  (when *web-press*
-    (destructuring-bind (tab cx cy count mods) (shiftf *web-press* nil)
-      (web-mouse tab "mouseReleased" cx cy :button "left" :count count :mods mods))))
+  (let ((p (take-web-press)))
+    (when p
+      (web-mouse (getf p :tab) "mouseReleased" (getf p :cx) (getf p :cy) :button "left"
+                 :count (getf p :count) :mods (getf p :mods)))))
 
 (defun web-pick (tab payload ctx)
   "Show the picker the page asked for (PAYLOAD, the JSON string the script sent from
@@ -1264,9 +1275,6 @@ window.__lolPickerApply = function(id, v){
   "CDP's modifier bitfield: Alt 1, Ctrl 2, Meta 4, Shift 8."
   (logior (if alt 1 0) (if ctrl 2 0) (if shift 8 0)))
 
-(defvar *web-press* nil "(tab cx cy) of a press whose release has not been sent.")
-(defvar *web-click-count* 1)
-(defvar *web-last-press* nil "(time x y) of the last press, for double-click counting.")
 
 (defun web-note-input (tab)
   "Start the latency clock for TAB, unless an earlier input is still unanswered."
@@ -1300,29 +1308,25 @@ window.__lolPickerApply = function(id, v){
       (t
        (multiple-value-bind (cx cy) (web-page-point tab x y)
          (when cx
-           (let* ((now (get-internal-real-time))
-                  (count (if (and *web-last-press*
-                                  (< (- now (first *web-last-press*))
-                                     (* 0.4 internal-time-units-per-second))
-                                  (<= (abs (- x (second *web-last-press*))) 3)
-                                  (<= (abs (- y (third *web-last-press*))) 3))
-                             (1+ (min *web-click-count* 2))
+           ;; the click count — 2 for a double click, 3 and up for more, as Chrome wants
+           ;; it — is the hand's to keep (LOL.MORPH:HAND-COUNT-CLICK), as for text
+           (let* ((h (the-hand))
+                  (count (if h
+                             (min 3 (lol.morph:hand-count-click h tab x y :max most-positive-fixnum))
                              1))
                   (mods (web-modifiers :ctrl (or ctrl super) :shift (fb-var "*SHIFT-DOWN*")
                                        :alt (fb-var "*ALT-DOWN*"))))
-             (setf *web-click-count* count *web-last-press* (list now x y))
              (when (or ctrl super) (setf *web-focus-next* (and super (not ctrl)) ))
              (web-mouse tab "mousePressed" cx cy :button "left" :buttons 1 :count count :mods mods)
              (if (fb-var "*BUTTON-DOWN*")
-                 (setf *web-press* (list tab cx cy count mods))
+                 (setf (hand-press) (list :web :tab tab :cx cx :cy cy :count count :mods mods))
                  (web-mouse tab "mouseReleased" cx cy :button "left" :count count :mods mods)))))))))
 
 (defun web-drag (x y)
   "The button is held and the pointer moved: a drag in the page (selecting text,
    moving a slider). -> NIL: the page answers with a frame, not us with a redraw."
-  (when *web-press*
-    (destructuring-bind (tab . rest) *web-press*
-      (declare (ignore rest))
+  (let ((tab (getf (web-press) :tab)))
+    (when tab
       (when (web-tab-page-rect tab)
         (destructuring-bind (px py pw ph) (web-tab-page-rect tab)
           (let ((cx (/ (- (max px (min x (+ px pw -1))) px) *web-zoom* 1.0))
@@ -1333,8 +1337,9 @@ window.__lolPickerApply = function(id, v){
 (defun web-release ()
   "The button came up: finish the click — and, as X does, a drag that selected text
    puts it in PRIMARY (lol.clipboard:clip-select), for a middle-click elsewhere."
-  (when *web-press*
-    (destructuring-bind (tab cx cy count mods) (shiftf *web-press* nil)
+  (let ((p (take-web-press)))
+    (when p
+     (destructuring-bind (&key tab cx cy count mods) p
       (multiple-value-bind (rx ry) (multiple-value-call #'web-page-point tab
                                      (screen-to-pane (current-pane) (or (fb-var "*CURSOR-X*") -1)
                                                      (or (fb-var "*CURSOR-Y*") -1)))
@@ -1344,14 +1349,14 @@ window.__lolPickerApply = function(id, v){
                 (lambda (r)
                   (let ((s (jget r "result" "result" "value")))
                     (when (and (stringp s) (plusp (length (string-trim " " s))))
-                      (lol.clipboard:clip-select s))))))))
+                      (lol.clipboard:clip-select s)))))))))
 
 (defun web-hover (x y)
   "A bare pointer move to the screen point X,Y: over the page, Chrome needs it for
    hover menus, tooltips and cursors-that-highlight — wherever the pane is, a window
    included. The frame that may follow redraws; we do not."
   (let ((tab (web-visible-tab)))
-    (when (and tab (null *web-press*))
+    (when (and tab (null (web-press)))
       (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
                                      (screen-to-pane (current-pane) x y))
         (when cx (web-mouse tab "mouseMoved" cx cy))))))

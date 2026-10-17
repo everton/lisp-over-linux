@@ -1070,7 +1070,7 @@
   "A press on the minibuffer's ✕ clears its text and keeps it open; any other press
    is the shell's (it ends the prompt, as a press anywhere does)."
   (when (and (eq (lol.morph:event-kind e) :down)
-             (progn (setf *drag-tv* nil *drag-origin* nil *term-drag* nil)
+             (progn (setf (hand-press) nil)
                     (minibuffer-click (status-clear m) (lol.morph:event-x e) (lol.morph:event-y e))))
     (lol.morph:invalidate m)
     t))
