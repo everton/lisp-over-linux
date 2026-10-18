@@ -362,6 +362,11 @@ static void give_devices(uid_t uid, gid_t gid) {
      * permission (net/rfkill/core.c, rfkill_fop_write) — so the user owning the
      * node is all it takes. (The sysfs `soft' file would also want CAP_NET_ADMIN.) */
     chown_dir_matching("/dev", "rfkill", uid, gid);
+    /* Sound (tag #29, doc/screencast.org §3.1): controlC0 (the mixer and the jacks),
+     * pcmC0D0p / pcmC0D0c (play / record), timer. The host's ffmpeg and mplayer open
+     * them from the container, which bind-mounts our /dev. "" matches every name;
+     * the S_ISCHR test above skips the by-path/ directory. */
+    chown_dir_matching("/dev/snd", "", uid, gid);
 }
 
 /* /etc/resolv.conf (doc/networking.org §2c). The Lisp rewrites it from every DHCP

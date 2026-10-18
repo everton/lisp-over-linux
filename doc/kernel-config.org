@@ -11,7 +11,8 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#28* (when the KERNEL is stuck: Magic SysRq, the lockup and hung-task
+Current tag: *#29* (SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
+the KERNEL is stuck: Magic SysRq, the lockup and hung-task
 detectors, pstore on EFI variables — §6; built on #27 = USB Ethernet dongles, the RTL8153
 and the generic CDC classes, §8; built on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
 seccomp, SysV IPC, inotify, fw_cfg and virtio-9p — §8; built on top of #25 = storage:
@@ -43,7 +44,9 @@ INOTIFY_USER|SECCOMP|SECCOMP_FILTER|IPV6|CFG80211|MAC80211|IWLWIFI|IWLMVM|RFKILL
 FW_CFG_SYSFS|DMI_SYSFS|NET_9P|NET_9P_VIRTIO|9P_FS|\
 USB_USBNET|USB_RTL8152|USB_NET_CDCETHER|USB_NET_CDC_NCM|\
 MAGIC_SYSRQ|MAGIC_SYSRQ_DEFAULT_ENABLE|SOFTLOCKUP_DETECTOR|HARDLOCKUP_DETECTOR|\
-DETECT_HUNG_TASK|PSTORE|EFI_VARS_PSTORE|MISC_FILESYSTEMS)=' .config | sort
+DETECT_HUNG_TASK|PSTORE|EFI_VARS_PSTORE|MISC_FILESYSTEMS|\
+SOUND|SND|SND_PCM|SND_HDA_INTEL|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_ALC269|\
+SND_HDA_GENERIC|SND_SOC|SND_HDA_CODEC_HDMI|SND_USB_AUDIO)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -52,6 +55,10 @@ grep -E 'CONFIG_BINFMT' .config
 grep -cE '^CONFIG_NET=y' .config        # expect 1
 grep -cE '^CONFIG_IPV6=y' .config       # expect 1 (on since #26, §8)
 grep -cE '^CONFIG_MAC80211_HWSIM=y' .config  # expect 0 (fake radios on every boot, §8)
+
+# sound is ON since tag #29 (§9), through plain HD-Audio — not the DSP drivers:
+grep -cE '^CONFIG_SND_HDA_INTEL=y' .config   # expect 1
+grep -cE '^CONFIG_SND_SOC=y' .config        # expect 0 (no SOF / AVS, §9)
 #+end_src
 
 * 1. Boot — how the kernel becomes the EFI application
@@ -285,7 +292,48 @@ Wi-Fi is therefore tested only on the laptop.
 =cfg80211: failed to load regulatory.db= and the radio is held to the world
 domain — harmless, only slower.
 
+* 9. Sound — NEW in tag #29
+
+Tag #29 (2026-10-17) gives the image sound, for screencasts recorded with the user's
+voice and for playing them back ([[file:screencast.org][screencast.org]], whose §2–§3 hold the hardware
+evidence). The laptop (Dell XPS 13 9300) has Intel's Ice Lake audio controller
+(=8086:34c8=) with a *Realtek ALC289* codec, and its microphones — the built-in one
+and the headset jack's — are analogue, on that codec. Debian's own kernel drives it
+with plain =snd_hda_intel= (=snd_intel_dspcfg.dsp_driver= = 0 chose it), so no DSP
+driver and no firmware are needed.
+
+| Option                                                   | State | Role |
+|----------------------------------------------------------+-------+------|
+| =CONFIG_SOUND= + =CONFIG_SND=                            | y     | the sound core: =/dev/snd/controlC0= (the mixer and the jacks), =pcmC0D0p= / =pcmC0D0c= (play / record), =timer=. Selects =SND_PCM=, =SND_TIMER=, =SND_JACK= |
+| =CONFIG_SND_HDA_INTEL=                                   | y     | the HD-Audio controller (=sound/hda/controllers/Kconfig=); depends on =PCI=; selects =SND_HDA= and =SND_INTEL_DSP_CONFIG= (which, with no DSP driver built, has nothing else to pick) |
+| =CONFIG_SND_HDA_CODEC_REALTEK= + =SND_HDA_CODEC_ALC269= | y     | the ALC289 is handled by =sound/hda/codecs/realtek/alc269.c= (=case 0x10ec0289=, the Dell fixups for this family). Selects =SND_HDA_CODEC_REALTEK_LIB= → =SND_HDA_GENERIC= (+ =_LEDS=, which pulls in =NEW_LEDS= / =LEDS_CLASS=, and =SND_HDA_SCODEC_COMPONENT=). Without =EXPERT= the menu turns every ALCxxx driver on (=ALC260= … =ALC882=); left so: small, and harmless |
+| =CONFIG_SND_HDA_GENERIC=                                 | y     | the generic codec parser: also what drives QEMU's =hda-duplex= codec in =check-sound.lisp= |
+| =CONFIG_SND_JACK_INPUT_DEV=                              | y     | (default) each jack is also an input device reporting =SW_HEADPHONE_INSERT= & co.; the environment's input code ignores devices with no keys or pointer |
+
+/Pulled in by =make olddefconfig=:/ =SND_PCI=, =SND_X86=, =SND_HDA_CORE=,
+=SND_HDA_PREALLOC_SIZE=0= (buffers allocated when a stream opens),
+=SND_CTL_FAST_LOOKUP=, =SND_CTL_LED=, =SND_DMA_SGBUF=, =SND_PROC_FS= /
+=SND_VERBOSE_PROCFS= (=/proc/asound=), =SND_VMASTER=, =SND_INTEL_NHLT=,
+=SND_INTEL_SOUNDWIRE_ACPI=, =ACPI_NHLT=, =INPUT_LEDS=, =LEDS_TRIGGERS=, and the
+=_LEDS= options of iwlwifi, mac80211 and rfkill that =NEW_LEDS= makes visible.
+
+The userland half: lol-rootd gives =/dev/snd= to the user like =/dev/fb0=
+([[file:../initramfs/preinit.c::static void give_devices][preinit.c, =give_devices=]]), and [[file:../initramfs/mixer.lisp][mixer.lisp]] sets the codec's switches at
+boot and drives the volume keys.
+
 * Deliberately OFF (and what it would take to turn on)
+
+** Sound through the DSP, HDMI audio, USB and Bluetooth audio — OFF (tag #29)
+
+- =SND_SOC= (SOF, AVS): the Intel DSP path. Needed on laptops whose microphones are
+  digital and wired to the DSP; this one's are analogue, on the codec (§9). It would
+  also need the DSP's firmware and topology copied from the host.
+- =SND_HDA_CODEC_HDMI=: sound over HDMI/DisplayPort wants i915's audio component
+  (=SND_HDA_I915=); we run on efifb with no i915.
+- =SND_USB_AUDIO=: a USB headset. The user's headset is wired to the jack; one option
+  turns it on if that changes (no firmware).
+- Bluetooth: the whole stack, the AX201's Bluetooth firmware, and a sound server for
+  the hands-free profile — ruled out in [[file:screencast.org][screencast.org]] §2.1.
 
 ** Other storage — SATA/AHCI, USB mass storage, vfat, modules — OFF (tag #25)
 Only the path to /this/ laptop's disk is built: NVMe → GPT → ext4. =ATA=/=SATA_AHCI=
@@ -440,3 +488,17 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   #27); 1,071 =CONFIG_= lines. Verified in QEMU+OVMF by =check-diagnostics.lisp=:
   =pstore: Registered efi_pstore=, =/proc/sys/kernel/sysrq= = 1,
   =hung_task_timeout_secs= = 120, =watchdog= = 1. /Not yet booted on the laptop./
+- =#29= *Sound* (2026-10-17): =SOUND=, =SND=, =SND_HDA_INTEL=,
+  =SND_HDA_CODEC_REALTEK= + =SND_HDA_CODEC_ALC269= (the laptop's ALC289) and
+  =SND_HDA_GENERIC= (QEMU's codec); explicitly *not* =SND_SOC=, =SND_HDA_CODEC_HDMI=,
+  =SND_USB= (§9 and "Deliberately OFF"). =make olddefconfig= added the helpers listed
+  under §9 — among them =NEW_LEDS= / =LEDS_CLASS= / =LEDS_TRIGGERS= (selected by the
+  HDA codecs' LED support), which reach widely included headers: the build recompiled
+  1,576 files and took 5 min 47 s on the i7-1065G7 (=./build.sh --kernel=, 8 jobs), not
+  the "two to five minutes" estimated beforehand. =bootx64.efi= is 4,240,384 bytes at #29
+  (4,080,640 at #28); 1,124 =CONFIG_= lines. Userland in the same tag: lol-rootd gives
+  =/dev/snd= to the user, =mixer.lisp= (the codec's controls at boot, the volume keys,
+  the tray's VOL). Verified in QEMU+OVMF by =check-sound.lisp= (15 checks: the card,
+  =/dev/snd= owned by uid 1000, the mixer, the volume keys over QMP, ffmpeg recording
+  through =plughw:0,0=, mplayer's 440 Hz tone measured at 439.7 Hz in QEMU's WAV).
+  /Not yet booted on the laptop/ — [[file:screencast.org][screencast.org]] §8.5 is the checklist.
