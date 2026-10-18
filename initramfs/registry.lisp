@@ -129,22 +129,6 @@
                        :source (string-trim '(#\Newline #\Space #\Tab) text))
             (gethash name *registry*)))))
 
-(defun load-recording (path)
-  "LOAD PATH, and additionally capture each top-level form's source into
-   *REGISTRY*. LOAD runs FIRST so every package the file defines already exists;
-   then a SEPARATE read pass (with *READ-EVAL* off, so it runs no code) captures the
-   verbatim source. That pass tracks IN-PACKAGE — binding *PACKAGE* locally and
-   switching it on each (in-package …) — so every definition is filed under its REAL
-   package, not CL-USER (without this, an in-package file's symbols all land in
-   CL-USER and its own package browses empty). Any capture failure degrades to 'that
-   form is not in the registry' — never to a broken build.
-
-   Note: the span from one form's end to the next form's end includes the blank
-   lines and comments between them, so a doc-comment written above a DEFUN is
-   captured WITH it — exactly where it belongs (doc/code-browser.org §2)."
-  (load path)                                    ; execute first: packages now exist
-  (record-source path))
-
 (defun record-source (path)
   "The capture half of LOAD-RECORDING: read PATH's top-level forms WITHOUT
    evaluating them and file each definition's verbatim text in *REGISTRY*. Split out
@@ -166,6 +150,22 @@
                        (let ((p (ignore-errors (find-package (second form)))))
                          (when p (setf *package* p))))))))))
   (values))
+
+(defun load-recording (path)
+  "LOAD PATH, and additionally capture each top-level form's source into
+   *REGISTRY*. LOAD runs FIRST so every package the file defines already exists;
+   then a SEPARATE read pass (with *READ-EVAL* off, so it runs no code) captures the
+   verbatim source. That pass tracks IN-PACKAGE — binding *PACKAGE* locally and
+   switching it on each (in-package …) — so every definition is filed under its REAL
+   package, not CL-USER (without this, an in-package file's symbols all land in
+   CL-USER and its own package browses empty). Any capture failure degrades to 'that
+   form is not in the registry' — never to a broken build.
+
+   Note: the span from one form's end to the next form's end includes the blank
+   lines and comments between them, so a doc-comment written above a DEFUN is
+   captured WITH it — exactly where it belongs (doc/code-browser.org §2)."
+  (load path)                                    ; execute first: packages now exist
+  (record-source path))
 
 ;;; ---- Accept: compile edited source into the live image + update the registry --
 

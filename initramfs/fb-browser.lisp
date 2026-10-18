@@ -1138,6 +1138,11 @@
   "Milliseconds elapsed since internal-real-time TIME."
   (round (* 1000 (- (get-internal-real-time) time)) internal-time-units-per-second))
 
+;; (before PUT-CURSOR, which sets them: a variable set before its DEFVAR is a build WARNING)
+(defvar *cursor-shown-x* 0 "Where PUT-CURSOR last drew the arrow: what a repair that
+   moved it must put back (PRESENT-REPAIR).")
+(defvar *cursor-shown-y* 0)
+
 (defun put-cursor (canvas x y)
   "Show the pointer at X,Y over CANVAS's pixels, sending only the arrow's patch."
   (let* ((patch (or *cursor-patch*
@@ -1152,10 +1157,6 @@
     (draw-cursor patch 0 0)
     (lol.fb:present-fb patch :x0 x :y0 y)
     (setf *cursor-shown-x* x *cursor-shown-y* y)))
-
-(defvar *cursor-shown-x* 0 "Where PUT-CURSOR last drew the arrow: what a repair that
-   moved it must put back (PRESENT-REPAIR).")
-(defvar *cursor-shown-y* 0)
 
 (defun present-frame (canvas)
   "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is

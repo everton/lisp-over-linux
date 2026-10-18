@@ -1048,7 +1048,7 @@
     ;; the station's ring and core — a hexagon alone reads as a rock
     (when (eq (body-kind b) :station)
       (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
-                              (round (* (body-r b) 42) 100) color)
+                              (round (* r 42) 100) color)
       (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b)) 3 color :fill t))
     ;; a survived hull breach is a scar the ship keeps wearing
     (when (body-breached b)

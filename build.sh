@@ -232,9 +232,16 @@ printf '(require :sb-bsd-sockets)\n' >> "$BUILD_LISP"
 # wrapper references its package, so require it before loading registry.lisp.
 printf '(require :sb-introspect)\n' >> "$BUILD_LISP"
 printf '(load "%s")\n' "$REGISTRY_SRC" >> "$BUILD_LISP"   # defines load-recording
+# ONE compilation unit around every module: a call to a function defined in a later
+# file (or further down the same one) is not reported file by file — about 350
+# lines of STYLE-WARNINGs that hid the real ones — but once, at the end, and only
+# if it is STILL undefined there. So the build's last "compilation unit finished"
+# block, if any, lists names that do not exist in the image: worth reading.
+printf '(with-compilation-unit ()\n' >> "$BUILD_LISP"
 for src in "${LISP_SOURCES[@]}"; do            # then record+load each module, in order
-  printf '(load-recording "%s")\n' "$src" >> "$BUILD_LISP"
+  printf '  (load-recording "%s")\n' "$src" >> "$BUILD_LISP"
 done
+printf ')\n' >> "$BUILD_LISP"
 # The image has no zoneinfo; local time = UTC + one offset, taken from the build
 # host (= the laptop the image boots on). Fixed: it does not follow DST
 # (doc/systray.org).

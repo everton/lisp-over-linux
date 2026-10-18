@@ -334,6 +334,9 @@
   "Every network saved under ~/.lol/wifi/, as plists (:ssid :psk :security)."
   (remove nil (mapcar #'read-plist-file (directory (concatenate 'string (wifi-config-dir) "*.net")))))
 
+;; (before FORGET-WIFI-NETWORK, its first user)
+(defvar *nm-networks* nil "Networks parsed from the host's NetworkManager profiles.")
+
 (defun forget-wifi-network (ssid)
   (ignore-errors (delete-file (credentials-file ssid)))
   (setf *nm-networks* (remove ssid *nm-networks* :key (lambda (n) (getf n :ssid)) :test #'equal))
@@ -347,7 +350,6 @@
 ;;; keeps its secret in a keyring agent, not the file: there is nothing to import.
 
 (defvar *nm-import-dir* "/tmp/lol-nm-import/")
-(defvar *nm-networks* nil "Networks parsed from the host's NetworkManager profiles.")
 (defvar *nm-import-requested* nil)
 
 (defun parse-nmconnection (path)

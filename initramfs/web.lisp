@@ -547,6 +547,16 @@
 (defun web-tab-by-target (tid)
   (and tid (find tid *web-tabs* :key #'web-tab-target :test #'equal)))
 
+;; (before WEB-EVENT and WEB-SERVICE, their first users; the pickers section is below)
+(defvar *web-picks* '()
+  "(tab payload context-id) for every picker a page asked for, oldest first. Filled by
+   WEB-EVENT, emptied by WEB-SERVICE: the chooser is MODAL, so it must not run while
+   WEB-EVENT is still inside the dispatch loop of CDP-PUMP.")
+(defparameter +web-picker-binding+ "__lolPicker"
+  "The name of the binding the page script reports through.")
+(defvar *web-pump-thread* nil
+  "The thread that runs WEB-SERVICE, i.e. the one that reads Chrome's pipe.")
+
 (defun web-event (method params session)
   "Chrome's events. Each case is a fact about a page; none of them draws — they set
    state, and WEB-SERVICE decides whether the screen needs redoing."
@@ -806,9 +816,6 @@
     (cond ((shiftf *web-changed* nil) :redraw)
           (frame :frame))))
 
-(defvar *web-pump-thread* nil
-  "The thread that runs WEB-SERVICE, i.e. the one that reads Chrome's pipe.")
-
 (defun web-js (expression &key (tab (web-visible-tab)) (timeout 10))
   "Evaluate the JavaScript EXPRESSION in TAB's page and return its value — for tests
    and the REPL. From the thread that reads the pipe this simply waits for the reply
@@ -1019,9 +1026,6 @@
 ;;; Runtime.evaluate IN THE SAME FRAME (the event names its execution context), firing
 ;;; the input and change events a real choice fires.
 
-(defparameter +web-picker-binding+ "__lolPicker"
-  "The name of the binding the page script reports through.")
-
 (defparameter +web-picker-js+
   "(function(){
 if (window.__lolPickerInstalled) return;
@@ -1145,11 +1149,6 @@ window.__lolPickerApply = function(id, v){
   "The page script behind the pickers (see the section's header). Plain JavaScript in
    the page's own world, written to be read: the capture-phase listeners on WINDOW run
    before any of the page's, and only cancel the gestures that would open a popup.")
-
-(defvar *web-picks* '()
-  "(tab payload context-id) for every picker a page asked for, oldest first. Filled by
-   WEB-EVENT, emptied by WEB-SERVICE: the chooser is MODAL, so it must not run while
-   WEB-EVENT is still inside the dispatch loop of CDP-PUMP.")
 
 (defun web-picker-setup (tab)
   "Give TAB's page the binding and the script — for every document it will load, and

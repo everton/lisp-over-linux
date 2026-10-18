@@ -424,10 +424,11 @@ generates:
   (load ".../initramfs/registry.lisp")          ; defines load-recording (plain load)
   ;; …then one (load-recording "…") per module, in LISP_SOURCES order — see the
   ;; table above; the list is generated, so it never drifts from build.sh.
-  (load-recording ".../initramfs/logcount-fix.lisp") ; patches SBCL, self-tests
-  (load-recording ".../initramfs/model.lisp")
-  ;;  …
-  (load-recording ".../initramfs/supervisor.lisp")
+  (with-compilation-unit ()                     ; one unit: see below the block
+    (load-recording ".../initramfs/logcount-fix.lisp") ; patches SBCL, self-tests
+    (load-recording ".../initramfs/model.lisp")
+    ;;  …
+    (load-recording ".../initramfs/supervisor.lisp"))
   (set-utc-offset "+0100")                      ; the build host's zone (doc/systray.org)
   (setf *build-stamp* "a392d7d+dirty 2026-10-16T10:47:00Z") ; journal.lisp's build stamp
   (sb-ext:save-lisp-and-die ".../initramfs/lisp-init"
@@ -439,6 +440,23 @@ generates:
        --non-interactive --load "$BUILD_LISP"
 #+end_src
 (=--no-userinit --no-sysinit= so a personal ~/.sbclrc/quicklisp can't interfere.)
+
+*One compilation unit around the modules* (2026-10-17). A call to a function
+defined in a later file, or further down the same file, used to draw an "undefined
+function" STYLE-WARNING the moment its caller compiled. That came to about 350
+warning lines per build, all of them resolved by the end, and they buried the real
+ones. Inside =with-compilation-unit= SBCL holds such warnings until the unit ends
+and reports only names that are *still* undefined then. A clean build now ends with
+no "Undefined function" summary, so if one appears, it names something missing from
+the image. Checked when the change was made: every one of the 181 names the old
+build flagged was defined in the booted image (=fboundp= / =boundp= / =find-class=
+over the net REPL). The handful of warnings left are style-only and known: struct
+accessors called before their =defstruct= (=mb-*= in =shell.lisp=, =lease-iface=
+from =agent.lisp='s preflight) cost an inline expansion, not correctness, and three
+lambda lists mix =&optional= with =&key=. Six variables used before their =defvar=
+(full WARNINGs: a =setf= of an unknown variable) had their =defvar= moved up. None
+was a bug, because no =let= bound one before its =defvar=, which would have made the
+binding lexical.
 
 Both =require= calls matter and both must come *before* the modules: =net.lisp=
 names the =sb-bsd-sockets= package at load time, and =registry.lisp='s =senders=

@@ -885,6 +885,12 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
     (setf (call-subject call) (subj-file path) (call-summary call) (format nil "wrote ~d bytes" (length octets)))
     (format nil "Wrote ~d bytes to ~a." (length octets) path)))
 
+;; (here, before container-run reads it; EXECUTE-TOOL-CALL below binds it)
+(defvar *tool-conversation* nil
+  "While a tool call runs, the CONVERSATION it belongs to (bound by EXECUTE-TOOL-CALL),
+   for the tools that act on the conversation itself: update-plan, spawn-subagent,
+   await-subagents.")
+
 (defparameter *container-run-seconds* 300
   "How long container-run waits for its program before stopping it (the model may ask
    for less with \"timeout\").")
@@ -1029,11 +1035,6 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 ;;; ===========================================================================
 ;;; Running one tool call
 ;;; ===========================================================================
-
-(defvar *tool-conversation* nil
-  "While a tool call runs, the CONVERSATION it belongs to (bound by EXECUTE-TOOL-CALL),
-   for the tools that act on the conversation itself: update-plan, spawn-subagent,
-   await-subagents.")
 
 (defun execute-tool-call (conv call &key (gate #'gated-run))
   "Do CALL: check its input, pass a write through the gate, run it, and return the
