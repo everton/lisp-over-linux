@@ -8,6 +8,7 @@
 ;;;;
 ;;;;   - preinit found the disk, mounted /home rw and /mnt/host ro;
 ;;;;   - PID 1 runs as the user with exactly the five kept capabilities;
+;;;;   - the disk's settings file at the old ~/.config/lol place was moved into ~/.lol;
 ;;;;   - SuperL-f (a real held Super over QMP) opens the file manager at $HOME;
 ;;;;   - "+" then a typed name makes a folder — on the disk, owned by the user;
 ;;;;   - libstbi.so loads in the guest and decodes the progressive JPEG;
@@ -49,6 +50,15 @@
   (check "exactly the five kept capabilities (CapEff 4403400)"
          (search "4403400"
                  (row "CapEff" (probe "(with-open-file (s \"/proc/self/status\") (loop for l = (read-line s nil) while l when (search \"CapEff\" l) return (string-trim '(#\\Tab #\\Space) (subseq l 7))))"))))
+  ;; make-test-disk.sh leaves a settings file at the pre-2026-10-17 place on purpose,
+  ;; so every boot with the disk exercises the move into ~/.lol (lol-home.lisp)
+  (format t "~&~%== the old layout moved into HOME/.lol at boot ==~%")
+  (check "the disk's old .config/lol/settings is now HOME/.lol/settings, .config/lol gone"
+         (string= "(T NIL)"
+                  (row "new / old"
+                       (probe "(let ((h (sb-ext:posix-getenv \"HOME\"))) (list (and (probe-file (concatenate 'string h \"/.lol/settings\")) t) (and (probe-file (concatenate 'string h \"/.config/lol/\")) t)))"))))
+  (check "the move is in the session log"
+         (string= "T" (probe "(with-open-file (s (log-path \"session\")) (loop for l = (read-line s nil) while l thereis (and (search \"lol-home: moved\" l) (search \".config/lol/settings\" l) t)))")))
   (let ((home (row "HOME" (probe "(sb-ext:posix-getenv \"HOME\")"))))
     (format t "~&~%== the file manager ==~%")
     (wait-for-browser)

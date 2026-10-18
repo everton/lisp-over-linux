@@ -45,6 +45,8 @@ mkdir -p "$H/Documents/notes" "$H/Pictures" "$H/src" "$H/.config/lol"
 printf 'Hello from the test disk.\nThis file lives on ext4, owned by %s.\n' "$USER_NAME" > "$H/README.txt"
 printf '# a note\n- one\n- two\n' > "$H/Documents/notes/todo.org"
 cp "$MICRO/initramfs/examples.lisp" "$H/src/examples.lisp"
+# at the PRE-2026-10-17 place on purpose: every boot with this disk moves it into
+# ~/.lol (initramfs/lol-home.lisp), and check-files.lisp asserts the move
 printf 'secret=1\n' > "$H/.config/lol/settings"
 printf 'hidden\n' > "$H/.hidden-file"
 ln -s Documents/notes "$H/notes"                 # a symlink to a directory

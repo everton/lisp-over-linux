@@ -26,8 +26,14 @@
 ;;;;   boot 3  the crash Accept survived (fsync per Accept); the torn tail was cut and
 ;;;;           reported; the journal view opened by itself; replay-off planted, then
 ;;;;           "Shut down without saving".
-;;;;   boot 4  replay was off: nothing replayed, no desk restored.
-;;;;   boot 5  DISKLESS: persistence off, an Accept writes nothing under /.local.
+;;;;   boot 4  replay was off: nothing replayed, no desk restored. Then the files are put
+;;;;           BACK at the pre-2026-10-17 places (~/.lol/journal -> ~/.local/share/lol,
+;;;;           ~/.lol/desk -> ~/.local/state/lol, ~/.lol/settings with a font size ->
+;;;;           ~/.config/lol/settings), synced, and QEMU killed.
+;;;;   boot 5  MIGRATION (lol-home.lisp): every one moved back into ~/.lol, the old
+;;;;           folders gone, each move in the session log; the font size kept, the
+;;;;           journal replayed from its new place.
+;;;;   boot 6  DISKLESS: persistence off, an Accept writes nothing under /.lol or /.local.
 ;;;;
 ;;;; doc/session-persistence.org §5. All original code, under this project's MIT licence.
 
@@ -133,7 +139,7 @@
   (check "boot 1: SuperL-g tore the module index off into a window"
          (yes "(and (= 1 (length (desk-windows))) (typep (pane-subject (first (window-trail (first (desk-windows))))) 'subj-modules))"))
   (probe "(progn (save-setting :desk-clipboard 3) (lol.clipboard:clip-copy \"zzclip\") t)")
-  ;; statuses, not FILE-OUT-SUMMARY: that names ~/.local/…, and the harness refuses
+  ;; statuses, not FILE-OUT-SUMMARY: that names ~/.lol/…, and the harness refuses
   ;; any answer containing a tilde (it could be the echo of a FORMAT string)
   (let ((fo (row "file out" (probe "(sort (mapcar (lambda (r) (getf r :status)) (file-out-changes)) #'string<)" 30.0))))
     (check "boot 1: file-out folded the edit, left the new one unfolded"
@@ -145,9 +151,9 @@
 (defun between ()
   (format t "~&~%==== between boots (debugfs on the copy) ====~%")
   (check "the journal is owned by uid 1000"
-         (eql 1000 (row "owner of changes.lisp" (owner-of (format nil "~a/.local/share/lol/changes.lisp" *user-home*)))))
+         (eql 1000 (row "owner of changes.lisp" (owner-of (format nil "~a/.lol/journal/changes.lisp" *user-home*)))))
   (check "the desk is owned by uid 1000"
-         (eql 1000 (row "owner of desk.lisp" (owner-of (format nil "~a/.local/state/lol/desk.lisp" *user-home*)))))
+         (eql 1000 (row "owner of desk.lisp" (owner-of (format nil "~a/.lol/desk/desk.lisp" *user-home*)))))
   (check "the file system is clean (release-disk ran after the saves)"
          (search "clean" (row "dumpe2fs state"
                               (let ((o (sh "/sbin/dumpe2fs" "-h" *copy*)))
@@ -197,7 +203,7 @@
   (check "boot 3: the journal reads clean again" (yes "(null (nth-value 1 (read-journal)))"))
   (check "boot 3: the journal view opened by itself"
          (yes "(and (find-if (lambda (tr) (subj-journal-p (pane-subject (first tr)))) *trails*) t)"))
-  (probe "(progn (append-synced (persist-path :data \"replay-off\") \"\") t)")
+  (probe "(progn (append-synced (persist-path :journal \"replay-off\") \"\") t)")
   (qmp-hold "meta_l" "q") (sleep 2)
   (qmp-key "3")                                        ; Shut down without saving
   (check "boot 3: Shut down without saving powered off" (wait-guest-exit 180)))
@@ -207,15 +213,46 @@
   (check "boot 4: replay-off was honoured" (yes "(and (getf *replay-report* :disabled) t)"))
   (check "boot 4: nothing replayed" (yes "(not (fboundp 'zz-persist))"))
   (check "boot 4: no desk restored: the Workspace alone" (eql 1 (probe-int "(length *trails*)")))
+  ;; the OLD layout, made by hand: what a laptop that ran an image from before
+  ;; 2026-10-17 has on its disk. Renamed with the guest's own rename(2), then sync(2),
+  ;; because QEMU is killed next and the guest's page cache would die with it.
+  (probe "(progn (delete-file (persist-path :journal \"replay-off\")) (save-setting :font-size 24) t)")
+  (check "boot 4: the old layout recreated (journal, desk, settings moved back)"
+         (string= "(T T T)"
+                  (row "renames"
+                       (probe "(let ((h (sb-ext:posix-getenv \"HOME\"))) (flet ((p (s) (concatenate 'string h \"/\" s))) (ensure-directories-exist (p \".local/share/\")) (ensure-directories-exist (p \".local/state/\")) (ensure-directories-exist (p \".config/lol/\")) (prog1 (list (and (sb-unix:unix-rename (p \".lol/journal\") (p \".local/share/lol\")) t) (and (sb-unix:unix-rename (p \".lol/desk\") (p \".local/state/lol\")) t) (and (sb-unix:unix-rename (p \".lol/settings\") (p \".config/lol/settings\")) t)) (sb-alien:alien-funcall (sb-alien:extern-alien \"sync\" (function sb-alien:void))))))" 10.0))))
   (kill-guest) (wait-guest-exit 30))
 
-(defun boot-5 ()
-  (setf *disk-copy* nil)
+(defun there-p (rel)
+  "A probe form: does HOME/REL exist in the guest?"
+  (format nil "(and (probe-file (concatenate 'string (sb-ext:posix-getenv \"HOME\") \"/~a\")) t)" rel))
+
+(defun boot-migrate ()
   (boot 5)
-  (check "boot 5 (diskless): persistence is off" (yes "(not (persistence-available-p))"))
+  (check "boot 5: the journal moved to HOME/.lol/journal" (yes (there-p ".lol/journal/changes.lisp")))
+  (check "boot 5: the desk moved to HOME/.lol/desk" (yes (there-p ".lol/desk/desk.lisp")))
+  (check "boot 5: the settings moved to HOME/.lol/settings" (yes (there-p ".lol/settings")))
+  (check "boot 5: the old folders are gone"
+         (yes (format nil "(not (or ~a ~a ~a))"
+                      (there-p ".local/share/lol/") (there-p ".local/state/lol/") (there-p ".config/lol/"))))
+  (check "boot 5: each move is in the session log"
+         (eql 3 (row "lol-home lines"
+                     (probe-int "(with-open-file (s (log-path \"session\")) (loop for l = (read-line s nil) while l count (search \"lol-home: moved\" l)))"))))
+  (check "boot 5: the font size was kept (24 px)"
+         (eql 24 (row "font size" (probe-int "(lol.canvas:font-size *bfont*)"))))
+  (row "replay at boot" (probe "(replay-summary)"))
+  (check "boot 5: the journal replayed from its new place"
+         (and (eql 42 (row "(zz-persist)" (probe-int "(zz-persist)")))
+              (eql 7 (row "(zz-crash)" (probe-int "(zz-crash)")))))
+  (kill-guest) (wait-guest-exit 30))
+
+(defun boot-6 ()
+  (setf *disk-copy* nil)
+  (boot 6)
+  (check "boot 6 (diskless): persistence is off" (yes "(not (persistence-available-p))"))
   (probe "(accept-source \"(defun zz-diskless () 1)\")" 30.0)
-  (check "boot 5: nothing written under /.local"
-         (yes "(not (probe-file \"/.local/\"))"))
+  (check "boot 6: nothing written under /.lol or /.local"
+         (yes "(not (or (probe-file \"/.local/\") (probe-file \"/.lol/journal/\")))"))
   (kill-guest) (wait-guest-exit 30))
 
 (defun main ()
@@ -230,7 +267,7 @@
                      (setf *disk-copy* *copy*)
                      (plant-fixture)
                      (check "the fixture is planted, owned by 1000" (eql 1000 (owner-of *fixture*)))
-                     (boot-1) (between) (boot-2) (boot-3) (boot-4) (boot-5)
+                     (boot-1) (between) (boot-2) (boot-3) (boot-4) (boot-migrate) (boot-6)
                      (report-results))
                  (serious-condition (c)
                    (format *error-output* "~&persist: ~a~%" c)

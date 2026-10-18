@@ -15,7 +15,7 @@
 ;;;;
 ;;;; With the stand-in disk attached (snapshot=on, so nothing persists past the run)
 ;;;; the guest has a real home, and the chosen size must land in
-;;;; ~/.config/lol/settings. Diskless, HOME is / and nothing may be written — that is
+;;;; ~/.lol/settings. Diskless, HOME is / and nothing may be written — that is
 ;;;; asserted instead.
 ;;;;
 ;;;; Run ./build.sh first; this boots iso_root as it stands. LOL_PORT as for every check.
@@ -114,8 +114,11 @@
     (super "equal")
     (let ((size (first (font-state "after one more SuperL-="))))
       (if disk
-          (check "the size is saved in ~/.config/lol/settings"
-                 (eql size (probe-int "(setting :font-size)")))
+          (progn
+            (check "the size is saved in ~/.lol/settings"
+                   (eql size (probe-int "(setting :font-size)")))
+            (check "...and that file is HOME/.lol/settings (lol-home.lisp)"
+                   (string= "T" (probe "(and (string= (settings-path) (concatenate 'string (sb-ext:posix-getenv \"HOME\") \"/.lol/settings\")) (probe-file (settings-path)) t)"))))
           (check "diskless: no settings file is written (HOME is /)"
                  (string= "NIL" (probe "(settings-path)")))))
     (super "0"))
