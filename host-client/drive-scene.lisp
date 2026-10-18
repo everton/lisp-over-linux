@@ -69,7 +69,8 @@
 (defparameter *scenes*
   '(;; THE environment, as it boots on the laptop: the stand-in disk attached, so PID 1
     ;; runs as the user with a real home — the Workspace, the tray, the outline font.
-    ;; The README's first picture (2026-10-16): what you see when you turn it on.
+    ;; The README's second picture (first from 2026-10-16 to 2026-10-17, when "windows"
+    ;; took that place): what you see when you turn it on.
     ;; It does one thing, so the picture shows the buffer as a REPL: define GREET
     ;; live (C-c C-c on line 10) and Print (greet "lisp") under itself (C-c C-p, line 11).
     ("desk"      "e" ((:wait 2.0)
@@ -78,6 +79,12 @@
                       (:chord "ctrl" "c") (:chord "ctrl" "c") (:wait 1.5)
                       (:key "down") (:key "end")
                       (:chord "ctrl" "c") (:chord "ctrl" "p") (:wait 2.0)))
+    ;; The README's FIRST picture (2026-10-17). Morphic (doc/morphic.org): the desk as it boots, then the module index (SuperL-m)
+    ;; torn off into a WINDOW with SuperL-g, where it opens (Ret ends grab mode) — the
+    ;; tiled Workspace stays behind it. Moving it in grab mode pushed it off screen.
+    ("windows"   "e" ((:wait 2.0) (:hold "meta_l" "m") (:wait 1.5)
+                      (:hold "meta_l" "g") (:wait 1.0)
+                      (:key "ret") (:wait 1.5)))
     ;; the module index (§4⅔): the table of contents, first module previewed beside
     ("modules"   "b" ())
     ;; the flat CL-USER package view — the old default root, kept on 'l'

@@ -504,7 +504,7 @@ the concept palette, the list widget and the scrollbar without knowing they came
 off a pipe. The status line carries the Workspace's echo of the form that was
 run; =commands-for= on this subject offers "Run again", reachable the usual way.
 
-[[file:../media/screenshots/worker-2026-10-16.png]]
+[[file:../media/screenshots/worker-2026-10-17.png]]
 
 /The view a second process sent back, rendered by this one./
 /=./refresh-screenshot.sh --scene worker=/

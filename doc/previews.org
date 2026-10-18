@@ -369,7 +369,7 @@ What it looks like in the guest at tag #25: a 320x200 JPEG from the stand-in dis
 through =libstbi.so=, scaled to fit the file manager's preview pane
 ([[file:file-manager.org][file-manager.org]] §6; =./refresh-screenshot.sh --scene files=).
 
-[[file:../media/screenshots/files-2026-10-16.png]]
+[[file:../media/screenshots/files-2026-10-17.png]]
 
 #+begin_src lisp
   (lol.image:decode-image octets &key (background :checker) (orient t)
