@@ -24,6 +24,7 @@
            #:tv-wheel
            #:tv-text #:tv-set-text #:tv-lines #:tv-point-line #:tv-point-col
            #:tv-geometry #:tv-focus #:tv-line-height #:tv-hit-p #:tv-syntax #:tv-tint
+           #:*syntaxes*
            ;; for the clipboard (shell.lisp): the region, and replacing the buffer
            #:tv-region #:tv-replace #:tv-select-all #:tv-move-point
            #:tv-rect-mode #:tv-mark-active #:tv-pos-at #:tv-select-span
@@ -34,7 +35,10 @@
            ;; incremental search, C-s / C-r (shell.lisp routes the keys; below)
            #:tv-isearch #:tv-isearch-start #:tv-isearch-key #:tv-isearch-yank
            #:tv-isearch-exit #:tv-isearch-prompt #:tv-isearch-spans #:*isearch-last*
-           #:tv-mark #:tv-exchange-point-and-mark))
+           #:tv-mark #:tv-exchange-point-and-mark
+           ;; hidden lines: folding (Org; see "Hidden lines" below)
+           #:tv-hidden #:tv-show-line #:tv-reveal #:tv-folded-after-p #:hidden-line-p
+           #:line-row #:row-line))
 
 (in-package :lol.textview)
 
@@ -69,15 +73,124 @@
   (undo-inserts 0)                 ; self-inserts folded into the newest record
   ;; search — see "Incremental search" below
   (isearch nil)                    ; an ISEARCH while C-s / C-r is running, else NIL
-  (mark nil))                      ; Emacs's mark when no region shows: (LINE . COL),
+  (mark nil)                       ; Emacs's mark when no region shows: (LINE . COL),
                                    ; where a search began or C-SPC was last set — what
                                    ; C-x C-x goes back to. Not moved by edits (Emacs's
                                    ; is a marker); clamped when used.
+  ;; folding — see "Hidden lines" below (doc/org.org §5)
+  (fold-bits nil)                  ; NIL, or a simple-bit-vector: 1 = the line is hidden
+  (fold-lines nil)                 ; the LINES vector FOLD-BITS were made for
+  (rows-cache nil)                 ; (LINES BITS . ROWS): the visible lines, in order
+  (reveal nil))                    ; NIL, or a function (TV LINE) -> new bits showing
+                                   ; LINE (Org reveals the lineage and the entry);
+                                   ; without one, only that line's bit is cleared
 
 (defun tv-line-height (tv) (+ (font-ch (tv-font tv)) 3))
 (defun tv-cw (tv) (font-cw (tv-font tv)))
 (defun visible-lines (tv) (max 1 (floor (- (tv-h tv) (* 2 (tv-pad tv)))
                                         (tv-line-height tv))))
+
+;;; ---- hidden lines: folding ---------------------------------------------------------
+;;; A view can hide lines (Org's folds, doc/org.org §5). Which ones is a bit per line,
+;;; NIL when none — every view that does not fold — and then everything below is the
+;;; identity: screen row R shows line SCROLL + R, as it always did. With bits, rows go
+;;; through ROWS, the visible lines in order, and TV-SCROLL counts ROWS, not lines.
+;;;
+;;; The text view never learns WHICH command edited it: every edit installs a new line
+;;; vector and keeps the untouched line strings EQ (REPLACE-LINE, INSERT-NEWLINE —
+;;; TV-PREFIX-SAME-P relies on the same fact). So the bits follow the text lazily: when
+;;; the vector is not the one they were made for, they are SPLICED — the EQ prefix and
+;;; suffix keep their bits, a line in between keeps the bit of the identical string it
+;;; was (a subtree moved by M-<down> stays folded), and a new line shows.
+
+(defun splice-fold-bits (old new bits)
+  "BITS (over the line vector OLD) carried over to the line vector NEW."
+  (let* ((m (length old)) (n (length new))
+         (p (or (mismatch old new :test #'eq) (min m n)))
+         (s (loop for k from 0
+                  while (and (< (+ p k) (min m n))
+                             (eq (aref old (- m k 1)) (aref new (- n k 1))))
+                  finally (return k)))
+         (out (make-array n :element-type 'bit :initial-element 0))
+         (moved (make-hash-table :test 'eq)))
+    (replace out bits :end1 p)
+    (replace out bits :start1 (- n s) :start2 (- m s))
+    (loop for i from p below (- m s) when (= 1 (sbit bits i)) do (setf (gethash (aref old i) moved) t))
+    (loop for i from p below (- n s) when (gethash (aref new i) moved) do (setf (sbit out i) 1))
+    (and (find 1 out) out)))
+
+(defun tv-hidden (tv)
+  "The hidden-line bits for TV's CURRENT lines, or NIL when nothing is hidden."
+  (let ((bits (tv-fold-bits tv)))
+    (cond ((null bits) nil)
+          ((eq (tv-fold-lines tv) (tv-lines tv)) bits)
+          (t (let ((spliced (splice-fold-bits (tv-fold-lines tv) (tv-lines tv) bits)))
+               (setf (tv-fold-lines tv) (tv-lines tv)
+                     (tv-fold-bits tv) spliced))))))
+
+(defun (setf tv-hidden) (bits tv)
+  (setf (tv-fold-bits tv) (and bits (find 1 bits) bits)
+        (tv-fold-lines tv) (tv-lines tv))
+  (clamp-point tv)
+  (ensure-visible tv)
+  bits)
+
+(defun hidden-line-p (tv line)
+  (let ((bits (tv-hidden tv)))
+    (and bits (< -1 line (length bits)) (= 1 (sbit bits line)))))
+
+(defun tv-rows (tv)
+  "The visible line indices in order, or NIL when nothing is hidden."
+  (let ((bits (tv-hidden tv)))
+    (when bits
+      (let ((c (tv-rows-cache tv)))
+        (if (and c (eq (first c) (tv-lines tv)) (eq (second c) bits))
+            (cddr c)
+            (let ((rows (coerce (loop for i below (length (tv-lines tv))
+                                      when (or (>= i (length bits)) (zerop (sbit bits i))) collect i)
+                                'simple-vector)))
+              (setf (tv-rows-cache tv) (list* (tv-lines tv) bits rows))
+              rows))))))
+
+(defun row-count (tv)
+  (let ((rows (tv-rows tv))) (if rows (length rows) (length (tv-lines tv)))))
+
+(defun row-line (tv row)
+  "The line screen row ROW (counted from the top of the buffer, not of the view) shows."
+  (let ((rows (tv-rows tv)))
+    (if rows
+        (aref rows (max 0 (min row (1- (length rows)))))
+        (max 0 (min row (1- (length (tv-lines tv))))))))
+
+(defun line-row (tv line)
+  "The row LINE is drawn on; a hidden line counts as the visible line above it."
+  (let ((rows (tv-rows tv)))
+    (if rows
+        (let ((r (position line rows :test #'>= :from-end t))) (or r 0))
+        line)))
+
+(defun next-visible-line (tv line)
+  "The first visible line after LINE, or NIL."
+  (loop for i from (1+ line) below (length (tv-lines tv))
+        unless (hidden-line-p tv i) return i))
+
+(defun prev-visible-line (tv line)
+  (loop for i from (1- line) downto 0
+        unless (hidden-line-p tv i) return i))
+
+(defun tv-show-line (tv line)
+  "Make LINE visible — a search's match, a link's target, a goto — the view's REVEAL
+   function deciding how much around it shows."
+  (when (hidden-line-p tv line)
+    (setf (tv-hidden tv)
+          (if (tv-reveal tv)
+              (funcall (tv-reveal tv) tv line)
+              (let ((b (copy-seq (tv-hidden tv)))) (setf (sbit b line) 0) b)))))
+
+(defun tv-folded-after-p (tv line)
+  "Does a fold start right after LINE? Then the line ends with Org's ellipsis."
+  (and (< (1+ line) (length (tv-lines tv))) (hidden-line-p tv (1+ line))
+       (not (hidden-line-p tv line))))
 
 (defun tv-geometry (tv x y w h)
   (setf (tv-x tv) x (tv-y tv) y (tv-w tv) w (tv-h tv) h))
@@ -222,7 +335,8 @@
   (length (if (tv-undo-run tv) (tv-undo-pending tv) (tv-undo-list tv))))
 
 (defun tv-move-point (tv line col)
-  "Put point (and no selection) at LINE/COL, clamped."
+  "Put point (and no selection) at LINE/COL, clamped — a fold hiding LINE opens."
+  (tv-show-line tv (max 0 (min line (1- (length (tv-lines tv))))))
   (setf (tv-point-line tv) line (tv-point-col tv) col)
   (clamp-point tv)
   (collapse tv)
@@ -328,31 +442,43 @@
 (defun clamp-point (tv)
   (setf (tv-point-line tv)
         (max 0 (min (tv-point-line tv) (1- (length (tv-lines tv))))))
+  ;; never inside a fold: up to the visible line it hangs from (Emacs moves point out
+  ;; of invisible text the same way — onto the folded headline)
+  (when (hidden-line-p tv (tv-point-line tv))
+    (let ((l (or (prev-visible-line tv (tv-point-line tv))
+                 (next-visible-line tv (tv-point-line tv)) 0)))
+      (setf (tv-point-line tv) l (tv-point-col tv) (length (line-at tv l)))))
   (setf (tv-point-col tv)
         (max 0 (min (tv-point-col tv) (length (line-at tv (tv-point-line tv)))))))
 
 (defun ensure-visible (tv)
-  (let ((n (visible-lines tv)))
-    (cond ((< (tv-point-line tv) (tv-scroll tv))
-           (setf (tv-scroll tv) (tv-point-line tv)))
-          ((>= (tv-point-line tv) (+ (tv-scroll tv) n))
-           (setf (tv-scroll tv) (- (tv-point-line tv) n -1))))
+  "Scroll so the caret's row is on screen. TV-SCROLL counts rows (= lines unless
+   something is folded)."
+  (when (tv-fold-bits tv) (clamp-point tv))    ; never leave the caret inside a fold
+  (let ((n (visible-lines tv)) (r (line-row tv (tv-point-line tv))))
+    (cond ((< r (tv-scroll tv))
+           (setf (tv-scroll tv) r))
+          ((>= r (+ (tv-scroll tv) n))
+           (setf (tv-scroll tv) (- r n -1))))
     (setf (tv-scroll tv) (max 0 (tv-scroll tv)))))
 
 (defun move (tv where extend)
   (case where
     (:left  (if (> (tv-point-col tv) 0)
                 (decf (tv-point-col tv))
-                (when (> (tv-point-line tv) 0)
-                  (decf (tv-point-line tv))
-                  (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv)))))))
+                (let ((l (prev-visible-line tv (tv-point-line tv))))
+                  (when l
+                    (setf (tv-point-line tv) l
+                          (tv-point-col tv) (length (line-at tv l)))))))
     (:right (if (< (tv-point-col tv) (length (line-at tv (tv-point-line tv))))
                 (incf (tv-point-col tv))
-                (when (< (tv-point-line tv) (1- (length (tv-lines tv))))
-                  (incf (tv-point-line tv))
-                  (setf (tv-point-col tv) 0))))
-    (:up    (decf (tv-point-line tv)))
-    (:down  (incf (tv-point-line tv)))
+                (let ((l (next-visible-line tv (tv-point-line tv))))
+                  (when l (setf (tv-point-line tv) l (tv-point-col tv) 0)))))
+    ;; up and down step over a fold: by ROW, which is the line itself when nothing is
+    ;; hidden
+    (:up    (setf (tv-point-line tv) (row-line tv (1- (line-row tv (tv-point-line tv))))))
+    (:down  (let ((r (1+ (line-row tv (tv-point-line tv)))))
+              (when (< r (row-count tv)) (setf (tv-point-line tv) (row-line tv r)))))
     (:home  (setf (tv-point-col tv) 0))
     (:end   (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv))))))
   (clamp-point tv)
@@ -373,13 +499,13 @@
       (:right
        (let ((s (line-at tv l)))
          (if (>= c (length s))
-             (when (< l (1- (length (tv-lines tv)))) (setf l (1+ l) c 0))
+             (let ((next (next-visible-line tv l))) (when next (setf l next c 0)))
              (progn
                (loop while (and (< c (length s)) (word-boundary-p (char s c))) do (incf c))
                (loop while (and (< c (length s)) (not (word-boundary-p (char s c)))) do (incf c))))))
       (:left
        (if (<= c 0)
-           (when (> l 0) (setf l (1- l) c (length (line-at tv l))))
+           (let ((prev (prev-visible-line tv l))) (when prev (setf l prev c (length (line-at tv l)))))
            (let ((s (line-at tv l)))
              (loop while (and (> c 0) (word-boundary-p (char s (1- c)))) do (decf c))
              (loop while (and (> c 0) (not (word-boundary-p (char s (1- c))))) do (decf c))))))
@@ -425,10 +551,9 @@
    The column is preserved where the target line allows (clamp-point trims it), and
    ensure-visible scrolls the view to follow. EXTEND keeps the anchor (grows the
    selection), exactly as the arrows do."
-  (let ((n (visible-lines tv)))
-    (case dir
-      (:up   (decf (tv-point-line tv) n))
-      (:down (incf (tv-point-line tv) n))))
+  (let ((n (visible-lines tv)) (r (line-row tv (tv-point-line tv))))
+    (setf (tv-point-line tv)
+          (row-line tv (min (1- (row-count tv)) (max 0 (if (eq dir :up) (- r n) (+ r n)))))))
   (clamp-point tv)
   (unless extend (collapse tv))
   (ensure-visible tv))
@@ -437,7 +562,7 @@
   "Scroll the viewport by LINES (positive = down, toward the end) WITHOUT moving
    point — the mouse wheel. The first visible line is clamped to
    [0, last-scrollable]; a buffer shorter than the view never scrolls."
-  (let* ((total (length (tv-lines tv)))
+  (let* ((total (row-count tv))
          (max-first (max 0 (- total (visible-lines tv)))))
     (setf (tv-scroll tv) (max 0 (min max-first (+ (tv-scroll tv) lines))))))
 
@@ -480,7 +605,7 @@
 
 (defun line-at-y (tv py)
   (let ((row (floor (- py (tv-y tv) (tv-pad tv)) (tv-line-height tv))))
-    (max 0 (min (+ (tv-scroll tv) row) (1- (length (tv-lines tv)))))))
+    (row-line tv (max 0 (min (+ (tv-scroll tv) row) (1- (row-count tv)))))))
 
 (defun tv-hit-p (tv px py)
   "True when PX,PY lands inside the view's own rectangle. Callers gate clicks on
@@ -621,7 +746,9 @@
 (defun isearch-goto (tv pos)
   "Put point at POS during a search: the region follows point unless C-SPC set the mark
    (then the search grows the region, as in Emacs), and the match is scrolled into view
-   — sideways too, which a read-only pane with no caret would otherwise never do."
+   — sideways too, which a read-only pane with no caret would otherwise never do. A
+   match inside a fold opens it, as Emacs's isearch does (search-invisible = open)."
+  (tv-show-line tv (car pos))
   (setf (tv-point-line tv) (car pos) (tv-point-col tv) (cdr pos))
   (clamp-point tv)
   (unless (tv-mark-active tv) (collapse tv))
@@ -953,6 +1080,37 @@
 (defparameter *isearch-other* !#3A4130)  ; the other matches in view (lazy-highlight):
                                          ; quieter, so the current one still leads
 
+;;; Colourers from elsewhere. A view's SYNTAX is :lisp (LEX-LINE, here), :plain, a
+;;; function of (line-index line) -> runs (a run pane's ANSI colours, which only the
+;;; program's output knows), or a KEYWORD registered in *SYNTAXES*: a function of
+;;; (lines line-index line) -> runs, for a language whose colour depends on OTHER lines
+;;; — in Org, whether a line is inside a #+begin_src block (poc/org-mode.lisp). The
+;;; keyword stays the view's syntax, so it prints, compares and saves like :lisp.
+;;; Runs are (start end . colour), as LEX-LINE returns them.
+
+(defvar *syntaxes* (make-hash-table :test 'eq)
+  "Keyword -> function of (LINES LINE-INDEX LINE) -> runs. See above.")
+
+(defun syntax-colourer (tv)
+  "The function that colours TV's lines when it is not the Lisp lexer, or NIL."
+  (let ((s (tv-syntax tv)))
+    (cond ((functionp s) s)
+          ((and (keywordp s) (not (eq s :lisp))) (gethash s *syntaxes*)))))
+
+(defun syntax-runs (tv li line)
+  (let ((s (tv-syntax tv)))
+    (if (functionp s)
+        (funcall s li line)
+        (funcall (gethash s *syntaxes*) (tv-lines tv) li line))))
+
+(defun lex-through (tv from to depth instr)
+  "The Lisp lexer's state entering line TO, given DEPTH / INSTR entering line FROM.
+   -> (values DEPTH INSTR TO)."
+  (loop for i from from below to
+        do (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
+             (declare (ignore r)) (setf depth d instr s)))
+  (values depth instr to))
+
 (defun tv-draw (canvas tv)
   "Paint TV into its rect on CANVAS. -> (values DEPTH IN-STRING): the lexer's state at
    the first visible line — what TV-ROW-KEYS needs to say, without lexing the lines
@@ -968,22 +1126,24 @@
          ;; (doc/fonts.org §5).
          (hs (progn (when (tv-focus tv) (follow-caret-horizontally tv)) (tv-hscroll tv)))
          (maxcol (+ hs (tv-text-cols tv)))
-         (last  (min (length (tv-lines tv)) (+ first (visible-lines tv))))
-         (depth 0) (instr nil) (start-depth 0) (start-instr nil))
+         (last  (min (row-count tv) (+ first (visible-lines tv))))
+         (depth 0) (instr nil) (start-depth 0) (start-instr nil) (lexed 0))
     (fill-rect canvas x0 y0 w h *bg*)
     ;; paren depth AND open-string state must be correct at the first VISIBLE line, so
     ;; lex the hidden prefix for them only. (A real editor caches this per line.)
     (when (eq (tv-syntax tv) :lisp)
-      (dotimes (i first)
-        (multiple-value-bind (r d s) (lex-line (aref (tv-lines tv) i) depth instr)
-          (declare (ignore r)) (setf depth d instr s))))
+      (multiple-value-setq (depth instr lexed) (lex-through tv 0 (row-line tv first) 0 nil)))
     (setf start-depth depth start-instr instr)
 
     (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
-      (loop for li from first below last
+      (loop for r from first below last
+            for li = (row-line tv r)
             for row from 0
             for ly = (+ y0 pad (* row lh))
-            do (let ((line (aref (tv-lines tv) li)))
+            do (when (and (eq (tv-syntax tv) :lisp) (< lexed li))  ; folded lines skipped
+                 (multiple-value-setq (depth instr lexed) (lex-through tv lexed li depth instr)))
+               (setf lexed (1+ li))
+               (let ((line (aref (tv-lines tv) li)))
                  ;; current-line highlight
                  (when (and (= li (tv-point-line tv)) (not (selection-p tv)))
                    (fill-rect canvas (+ x0 1) (- ly 2) (- w 2) lh *cur-ln*))
@@ -1021,8 +1181,8 @@
                            ;; a FUNCTION of (line-index line) -> runs: colour that
                            ;; comes from elsewhere — a run pane's ANSI colours
                            ;; (initramfs/runs.lisp), which no lexer could recover
-                           ((functionp (tv-syntax tv))
-                            (values (funcall (tv-syntax tv) li line) 0 nil))
+                           ((syntax-colourer tv)
+                            (values (syntax-runs tv li line) 0 nil))
                            (t (values (list (list* 0 (length line) *c-text*)) 0 nil)))
                    (setf depth new-depth instr new-instr)
                    (dolist (r runs)
@@ -1030,6 +1190,10 @@
                        (when (and (< s maxcol) (> e hs))
                          (draw-string canvas font (subseq line (max s hs) (min e maxcol))
                                       (x-of-col tv (max s hs)) ly color)))))
+                 ;; a fold starts below this line: Org's ellipsis after its text
+                 (when (and (tv-folded-after-p tv li) (< (1+ (length line)) maxcol))
+                   (draw-string canvas font " ..." (x-of-col tv (max hs (length line))) ly
+                                *c-comment*))
                  ;; the caret
                  (when (and (tv-focus tv) (= li (tv-point-line tv)))
                    (fill-rect canvas
@@ -1037,7 +1201,7 @@
                               2 lh *caret*)))))
 
     ;; scrollbar — only when there is something to scroll
-    (let ((total (length (tv-lines tv))) (vis (visible-lines tv)))
+    (let ((total (row-count tv)) (vis (visible-lines tv)))
       (when (> total vis)
         (let* ((track-h (- h 4))
                (thumb-h (max 20 (floor (* track-h vis) total)))
@@ -1066,7 +1230,7 @@
 
 (defun scroll-thumb (tv)
   "The scrollbar's thumb (Y H), or NIL when there is nothing to scroll."
-  (let ((total (length (tv-lines tv))) (vis (visible-lines tv)))
+  (let ((total (row-count tv)) (vis (visible-lines tv)))
     (when (> total vis)
       (let* ((track-h (- (tv-h tv) 4)))
         (list (+ (tv-y tv) 2 (floor (* track-h (tv-scroll tv)) total))
@@ -1086,13 +1250,18 @@
    the lexer's state DEPTH / INSTR entering the first visible line (TV-DRAW returned
    it). Two rows that are EQUAL paint the same pixels."
   (let* ((first (tv-scroll tv))
-         (last (min (length (tv-lines tv)) (+ first (visible-lines tv))))
+         (last (min (row-count tv) (+ first (visible-lines tv))))
          (sel (selection-p tv))
-         (out (make-array (max 0 (- last first)))))
+         (out (make-array (max 0 (- last first))))
+         (lexed (row-line tv first)))
     (multiple-value-bind (sl0 sc0 sl1 sc1) (selection-range tv)
-      (loop for li from first below last
+      (loop for r from first below last
+            for li = (row-line tv r)
             for row from 0
-            do (let* ((line (aref (tv-lines tv) li))
+            do (when (and (eq (tv-syntax tv) :lisp) (< lexed li))  ; folded lines skipped
+                 (multiple-value-setq (depth instr lexed) (lex-through tv lexed li depth instr)))
+               (setf lexed (1+ li))
+               (let* ((line (aref (tv-lines tv) li))
                       (tint (and (tv-tint tv) (funcall (tv-tint tv) line)))
                       (band (and sel (<= sl0 li) (<= li sl1)
                                  (if (tv-rect-mode tv)
@@ -1100,13 +1269,14 @@
                                            (max (tv-anchor-col tv) (tv-point-col tv)))
                                      (list (if (= li sl0) sc0 0)
                                            (if (= li sl1) sc1 (length line))))))
-                      (runs (and (not tint) (functionp (tv-syntax tv))
-                                 (funcall (tv-syntax tv) li line))))
+                      (runs (and (not tint) (syntax-colourer tv)
+                                 (syntax-runs tv li line))))
                  (setf (aref out row)
                        (list li line depth instr tint runs band
                              (and (= li (tv-point-line tv)) (not sel))                ; the band
                              (and (tv-focus tv) (= li (tv-point-line tv)) (tv-point-col tv))
-                             (tv-isearch-spans tv li line)))                         ; a search's matches
+                             (tv-isearch-spans tv li line)                           ; a search's matches
+                             (tv-folded-after-p tv li)))                             ; the ellipsis
                  ;; the lexer's state entering the next line, as TV-DRAW carries it
                  (when (and (not tint) (eq (tv-syntax tv) :lisp))
                    (multiple-value-bind (r d s) (lex-line line depth instr)

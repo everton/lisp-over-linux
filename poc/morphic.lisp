@@ -502,7 +502,9 @@
         (if (or (not (eq dtv tv))
                 (not (equal frame (lol.textview:tv-frame-key tv)))
                 (not (lol.textview:tv-prefix-same-p lines (lol.textview:tv-lines tv)
-                                                    (lol.textview::tv-scroll tv))))
+                                                    ;; the first line on screen (a
+                                                    ;; fold makes it differ from the row)
+                                                    (lol.textview::row-line tv (lol.textview::tv-scroll tv)))))
             (lol.morph:invalidate b)
             (let ((now (lol.textview:tv-row-keys tv (first start) (second start)))
                   (run nil))                ; the first row of a run of changed rows
