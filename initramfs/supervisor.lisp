@@ -111,6 +111,9 @@
          (format t "  INSECURE: remote eval = remote root — trusted wires only.~%"))
         (t (format t "~&network REPL could not start.~%")))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
+  ;; sound (tag #29): switch the codec on and restore the saved volume, the job
+  ;; alsactl / WirePlumber do on Debian (mixer.lisp, doc/screencast.org §3.1)
+  (when (fboundp 'restore-audio) (ignore-errors (funcall 'restore-audio)))
   (sleep 1)                       ; let the boot diagnostics be read first
   ;; the journal: every Accept of earlier sessions compiled back in, each entry
   ;; guarded on its own — a bad one is skipped and reported, never fatal

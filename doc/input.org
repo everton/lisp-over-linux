@@ -133,6 +133,7 @@ Of the ~30 event types, the browser needs four. Constants from
 | =1= =EV_KEY= | =#x110= =BTN_LEFT=                                    | =1= press / =0= release               | on press: a =:down= event, to the morph under the pointer (a pane's =pane-click=) |
 | =1= =EV_KEY= | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up                     | a contact changed: forget the last pad position, and open or close a *tap* (§4½)  |
 | =1= =EV_KEY= | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta     | =1= down =2= repeat =0= up            | set =*ctrl-down*= / =*shift-down*= / =*super-down*=                               |
+| =1= =EV_KEY= | =115= / =114= =KEY_VOLUMEUP= / =DOWN=, =113= =KEY_MUTE=, =248= =KEY_MICMUTE= | =1= press, =2= repeat (volume only) | =mixer.lisp='s =audio-key= (tag #29): no tty byte exists for these keys |
 | =0= =EV_SYN= | =0= =SYN_REPORT=                                      | —                                     | end of packet: apply the gathered position                                        |
 
 Relative *and* absolute are both handled because the three ways we run differ:

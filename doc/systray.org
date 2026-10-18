@@ -200,6 +200,11 @@ All in =CL-USER=, all safe to call every frame — none of them signals:
 =*power-supply-root*= (default ="/sys/class/power_supply/"=) is what the host test
 repoints at a scratch directory.
 
+Other modules add their own items, each called by name so the tray works without
+them: the network (=wifi.lisp=), the agent's cost (=agent-ui.lisp=), and since tag #29
+the sound card's volume, =VOL 50%= or =VOL mute= (=sound-tray-item= in
+[[file:../initramfs/mixer.lisp][mixer.lisp]]; nothing without a card, the card read at most every 2 s).
+
 * 5. Drawing it: one strip, repainted by itself
 
 The shell draws the tray at the right end of the tab strip, where the app's name

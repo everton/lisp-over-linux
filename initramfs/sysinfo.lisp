@@ -270,5 +270,8 @@
                   ;; the agent's authority and the session's cost (initramfs/agent-ui.lisp,
                   ;; loaded later — doc/agent.org §8.9: a meter that is always on screen)
                   (and (fboundp 'agent-tray-item) (ignore-errors (funcall 'agent-tray-item)))
+                  ;; the sound card's volume (initramfs/mixer.lisp, tag #29): nothing
+                  ;; without a card
+                  (and (fboundp 'sound-tray-item) (ignore-errors (funcall 'sound-tray-item)))
                   (let ((c (ignore-errors (clock-string))))
                     (and c (list :kind :clock :text c)))))))

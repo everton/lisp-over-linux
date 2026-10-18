@@ -95,6 +95,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/files.lisp"        # the file system as data: lstat/readdir/rename/... via sb-unix + libc
                                      #   (doc/file-manager.org; after sysinfo for *utc-offset*)
   "$INITRAMFS_DIR/settings.lisp"     # ~/.lol/settings: the user's preferences, e.g. the font size (uses files)
+  "$INITRAMFS_DIR/mixer.lisp"        # the sound card's mixer over ALSA control ioctls + the volume keys (doc/screencast.org; tag #29)
   "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
   "$POC_DIR/terminal.lisp"           # lol.terminal: the VT engine — bytes in, a grid of cells out (doc/terminal.org)
   "$INITRAMFS_DIR/pty.lisp"          # pseudo-terminals via posix_spawn: a program on a pty, as a session leader

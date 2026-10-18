@@ -479,6 +479,14 @@
     ;; (doc/terminal.org); elsewhere they reach BROWSER-KEY as Shift-PageUp/Down.
     ((and *shift-down* (plusp val) (= code 104)) :shift-page-up)          ; KEY_PAGEUP
     ((and *shift-down* (plusp val) (= code 109)) :shift-page-down)        ; KEY_PAGEDOWN
+    ;; The laptop's volume keys (Fn-F1..F3 on the XPS) arrive on the AT keyboard's
+    ;; evdev and send no byte to the tty either (no keymap entry). The host's StumpWM
+    ;; binds the same keys (XF86Audio*) to pactl; here MIXER.LISP's AUDIO-KEY writes
+    ;; the card's controls itself. A held key repeats (value 2), as on the desktop.
+    ((and (plusp val) (= code 115)) :volume-up)                         ; KEY_VOLUMEUP
+    ((and (plusp val) (= code 114)) :volume-down)                       ; KEY_VOLUMEDOWN
+    ((and (= val 1) (= code 113)) :mute)                                ; KEY_MUTE
+    ((and (= val 1) (= code 248)) :mic-mute)                            ; KEY_MICMUTE
     (t nil)))
 
 (defun unbind-console-ctrl-dot (&optional (fd 0))
@@ -1335,6 +1343,12 @@
               ;; scrollback (a terminal pane's history)
               ((eq ev :shift-page-up) (emit :key :key :page-up :state 1 :data '(:evdev t)))
               ((eq ev :shift-page-down) (emit :key :key :page-down :state 1 :data '(:evdev t)))
+              ;; the volume keys act at once, whatever has the focus (mixer.lisp);
+              ;; the status line says the new level, the tray follows
+              ((member ev '(:volume-up :volume-down :mute :mic-mute))
+               (when (fboundp 'audio-key)
+                 (setf *browser-status* (ignore-errors (funcall 'audio-key ev)))
+                 (funcall 'forget-sound-tray)))
               ;; a Ctrl chord the console sends no byte for
               ((characterp ev)
                (emit :key :key ev :state (logior 4 (if *super-down* 64 0)) :data '(:evdev t)))))
@@ -2242,6 +2256,10 @@
      ("Super-0"            "back to the default size")
      ("C-x C-+ / C-- / C-0" "the same, Emacs-style;")
      ("  then + - 0"       "  ... repeat without C-x"))
+    ("Sound  (doc/screencast.org)"
+     ("Vol+ / Vol- keys"   "volume up / down 5% (held: repeats)")
+     ("Mute key"           "mute / unmute (the tray says VOL)")
+     ("Mic-mute key"       "microphone off / on"))
     ("Workspace & source"
      ("Tab"                "complete the symbol (else indent)")
      ("C-< / C->  M-< M->" "start / end of the buffer")
