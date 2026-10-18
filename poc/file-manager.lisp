@@ -410,6 +410,8 @@
                                                        (subseq (mode-string m) 1)))))))
         (:copy-path (when (need-one)
                       (copy-to-clipboard (if (rest paths) (format nil "~{~a~^ ~}" paths) one))))
+        (:copy-path-shell (when (need-one)
+                            (copy-to-clipboard (format nil "~{~a~^ ~}" (mapcar #'shell-quote paths)))))
         (:info (when (need-one) (trail-push (subj-file-info one))))
         (:jump (when (need-one) (fm-jump-target one)))
         (t (setf *browser-status* (format nil "unknown file operation ~s" op)))))))
@@ -420,12 +422,28 @@
 ;;; keep the meaning they have in every list (shell.lisp's BROWSER-KEY), and so does
 ;;; everything with Ctrl or Super. The table is doc/file-manager.org's.
 
+(defun shell-quote (path)
+  "PATH as a shell word: as it is when every character is one a shell leaves alone
+   (letters, digits and / . _ - + : , @ % = ~ — so a pasted plain path stays readable),
+   else in single quotes, where nothing is special but the quote itself, written '\\''
+   (end the quote, an escaped quote, open it again). A file called \"my notes\" pastes
+   into a terminal as '/home/me/my notes', one argument, not two."
+  (if (and (plusp (length path))
+           (every (lambda (c) (or (alphanumericp c) (find c "/._-+:,@%=~"))) path)
+           (char/= (char path 0) #\~))           ; a leading ~ would be expanded
+      path
+      (with-output-to-string (o)
+        (write-char #\' o)
+        (loop for c across path
+              do (if (char= c #\') (write-string "'\\''" o) (write-char c o)))
+        (write-char #\' o))))
+
 (defparameter +fm-keys+
   '((#\/ . :filter) (#\f . :find) (#\s . :sort) (#\S . :reverse) (#\. . :hidden)
     (#\^ . :parent) (#\~ . :home) (#\g . :refresh)
     (#\+ . :new-folder) (#\n . :new-file)
     (#\r . :rename) (#\c . :copy) (#\m . :move) (#\d . :delete) (:delete . :delete)
-    (#\l . :symlink) (#\L . :hardlink) (#\x . :chmod-x) (#\y . :copy-path)
+    (#\l . :symlink) (#\L . :hardlink) (#\x . :chmod-x) (#\y . :copy-path) (#\Y . :copy-path-shell)
     (#\i . :info) (#\j . :jump))
   "Key -> FM-RUN operation, in a folder.")
 
@@ -443,14 +461,9 @@
   ;; the results are entries too: the per-entry verbs apply; the folder ones do not
   (let ((op (cdr (assoc key +fm-keys+))))
     (when (member op '(:rename :copy :move :delete :symlink :hardlink :chmod-x
-                       :copy-path :info :jump :find :hidden))
+                       :copy-path :copy-path-shell :info :jump :find :hidden))
       (fm-run op)
       t)))
-
-(defun video-file-p (path)
-  "Does PATH name a video the host's MPlayer can play (by its extension)?"
-  (member (string-downcase (or (pathname-type path) "")) '("mp4" "m4v" "mkv" "webm" "mov" "avi" "ogv")
-          :test #'string=))
 
 (defmethod subject-key ((s subj-file) pane key state)
   (declare (ignore state pane))
@@ -459,13 +472,16 @@
     ((eql key #\^) (open-folder-selecting (subj-file-path s)) t)
     ;; a video: p plays it full screen, w in a window (initramfs/player.lisp)
     ((and (member key '(#\p #\w)) (video-file-p (subj-file-path s)) (fboundp 'play-video))
-     (funcall 'play-video (subj-file-path s) :window (eql key #\w)) t)))
+     (funcall 'play-video (subj-file-path s) :window (eql key #\w)) t)
+    ;; its path into the clipboard, as in a folder: y as it is, Y quoted for a shell
+    ((eql key #\y) (copy-to-clipboard (subj-file-path s)) t)
+    ((eql key #\Y) (copy-to-clipboard (shell-quote (subj-file-path s))) t)))
 
 (defmethod subject-hints ((s subj-dir) pane)
   (declare (ignore pane))
   '(("ret" . "open") ("/" . "filter") ("f" . "find") ("s/S" . "sort") ("." . "dot files")
     ("+/n" . "new folder/file") ("r" . "rename") ("c/m" . "copy/move") ("d" . "delete")
-    ("l" . "link") ("spc" . "mark") ("^" . "up")))
+    ("l" . "link") ("y/Y" . "copy path / for a shell") ("spc" . "mark") ("^" . "up")))
 
 (defmethod subject-hints ((s subj-find) pane)
   (declare (ignore pane))
@@ -517,4 +533,4 @@
   ;; a file shown as a LIST or an IMAGE (an archive, a picture, a broken link) — the
   ;; text ones are file panes and get the editor's hints instead
   (append (when (video-file-p (subj-file-path s)) '(("p" . "play") ("w" . "play in a window")))
-          '(("^" . "its folder") ("bs" . "back") ("i" . "info via the menu"))))
+          '(("y/Y" . "copy path / for a shell") ("^" . "its folder") ("bs" . "back") ("i" . "info via the menu"))))

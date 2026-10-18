@@ -2455,7 +2455,7 @@
      ("r  c  m  d  Del"    "rename copy move delete")
      ("l  L  x"            "symlink, hard link, chmod +x")
      ("Space  U"           "mark (d/c/m act on all) / clear")
-     ("^  ~  i  y"         "up, home, info, copy path")
+     ("^  ~  i  y  Y"      "up, home, info, path; Y for a shell")
      ("j  g"               "follow a link / refresh")
      ("Esc (during f)"     "stop a running find")
      ("C-x C-s"            "save a file you are editing")

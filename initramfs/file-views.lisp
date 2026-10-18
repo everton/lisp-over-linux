@@ -676,6 +676,10 @@
         (:directory (return-from file-view (listing-view (subj-dir path))))
         (:file)
         (t (return-from file-view (present (subj-file-info path)))))
+      ;; a video: a frame from it and what ffprobe says (player.lisp, VIDEO-VIEW —
+      ;; it needs the host's ffmpeg, so it lives with the player, called by name)
+      (when (and (video-file-p path) (fboundp 'video-view))
+        (return-from file-view (funcall 'video-view s path e preview)))
       (flet ((reader (n &optional (start 0)) (read-prefix path n :start start)))
         (let ((head (reader (min size 65536))))
           (multiple-value-bind (kind label) (sniff head (path-name path))
@@ -729,6 +733,12 @@
                             :syntax :plain
                             :text (format nil "~a, ~a~%~%~a" label (human-size size)
                                           (hex-dump head :limit (if preview 1024 +hex-bytes+))))))))))))
+
+(defun video-file-p (path)
+  "Does PATH name a video (by its extension)? The host's MPlayer plays these
+   (player.lisp), and the file manager previews them with a frame (VIDEO-VIEW)."
+  (member (string-downcase (or (pathname-type path) "")) '("mp4" "m4v" "mkv" "webm" "mov" "avi" "ogv")
+          :test #'string=))
 
 (defun guarded-file-view (s path &key preview)
   (handler-case (file-view s path :preview preview)
@@ -857,6 +867,7 @@
         (fm-command "Make hard link to it..." "L" :hardlink :path path :surfaces '(:menu))
         (fm-command "Toggle executable" "x" :chmod-x :path path :surfaces '(:menu))
         (fm-command "Copy path" "y" :copy-path :path path :surfaces '(:menu :halo))
+        (fm-command "Copy path, quoted for a shell" "Y" :copy-path-shell :path path :surfaces '(:menu))
         (make-command :label "Information" :key "i" :surfaces '(:menu :halo)
                       :target (subj-file-info path) :disposition :in-place)))
 

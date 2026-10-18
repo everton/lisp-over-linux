@@ -106,3 +106,143 @@
   nil)
 
 (fb-register-service :player :timeout 'player-timeout :run 'player-run)
+
+;;; ---- what a video is: ffprobe -------------------------------------------------------
+
+(defun probe-video (path)
+  "What ffprobe says of PATH: (:duration s :size bytes :width :height :video codec
+   :audio codec :fps \"30/1\"), from its JSON (lol.json). Runs the host's ffprobe in
+   the default container and waits for it: call it on a thread (the recorder's join,
+   the preview maker), not on the environment's."
+  (let ((out (with-output-to-string (s)
+               (sb-ext:run-program *lol-ct* (rest (container-command-line
+                                                   (list "ffprobe" "-v" "error" "-of" "json"
+                                                         "-show_format" "-show_streams" path)))
+                                   :output s :error nil :wait t :environment (container-environment)))))
+    (let* ((j (lol.json:parse-json out))
+           (format (lol.json:jget j "format"))
+           (streams (coerce (lol.json:jget j "streams" #()) 'list))
+           (v (find "video" streams :key (lambda (x) (lol.json:jget x "codec_type")) :test #'equal))
+           (a (find "audio" streams :key (lambda (x) (lol.json:jget x "codec_type")) :test #'equal)))
+      (list :duration (ignore-errors (let ((*read-default-float-format* 'double-float))
+                                       (float (read-from-string (lol.json:jget format "duration")) 1.0)))
+            :size (ignore-errors (parse-integer (lol.json:jget format "size")))
+            :width (and v (lol.json:jget v "width")) :height (and v (lol.json:jget v "height"))
+            :video (and v (lol.json:jget v "codec_name")) :fps (and v (lol.json:jget v "avg_frame_rate"))
+            :audio (and a (lol.json:jget a "codec_name"))
+            :sample-rate (and a (lol.json:jget a "sample_rate"))))))
+
+;;; ---- the file manager's preview of a video ----------------------------------------------
+;;;
+;;; A frame from the video, with what ffprobe says in the title. Both need the host's
+;;; ffmpeg in a container: a few hundred ms per file, too slow for every move of the
+;;; selection. So FILE-VIEW (file-views.lisp) asks VIDEO-VIEW, which answers at once
+;;; from a cache keyed by path and modification time, and otherwise says "making a
+;;; preview…" and asks the PREVIEW MAKER thread for it. The thread works on the newest
+;;; request only — scrolling past ten videos makes one preview, not ten — and when it
+;;; has one, the :VIDEO-PREVIEWS service (on the environment's thread) forgets the
+;;; panes' stale previews so the next repair draws the frame.
+
+(defparameter *video-thumb-width* 640 "How wide the preview's frame is made (it is scaled to fit).")
+
+(defvar *video-previews* (make-hash-table :test 'equal)
+  "(path . mtime) -> (:state :done :info PLIST :w :h :pixels) or (:state :failed :error STRING).")
+(defvar *video-wanted* nil "The newest (path . mtime) a preview was asked for.")
+(defvar *video-ready* '() "Paths whose preview became ready, for the service to refresh.")
+(defvar *video-lock* (sb-thread:make-mutex :name "video previews"))
+(defvar *video-cv* (sb-thread:make-waitqueue :name "video previews"))
+(defvar *video-maker* nil)
+
+(defun video-thumbnail (path info)
+  "A frame of PATH as (values W H PIXELS): ffmpeg takes the frame at a tenth of the
+   way in (an opening is often black), at most 30 s in, scaled to *VIDEO-THUMB-WIDTH*,
+   as a PPM in /tmp (the container shares our /tmp), decoded by lol.image."
+  (let* ((at (min 30 (* 0.1 (or (getf info :duration) 0))))
+         (out (format nil "/tmp/lol-thumb-~d.ppm" (sb-unix:unix-getpid))))
+    (ignore-errors (delete-file out))
+    (sb-ext:run-program *lol-ct* (rest (container-command-line
+                                        (list "ffmpeg" "-v" "error" "-y" "-ss" (format nil "~,2f" at)
+                                              "-i" path "-frames:v" "1"
+                                              "-vf" (format nil "scale=~d:-2" *video-thumb-width*)
+                                              "-f" "image2" "-c:v" "ppm" out)))
+                        :output nil :error nil :wait t :environment (container-environment))
+    (let ((octets (with-open-file (s out :element-type '(unsigned-byte 8) :if-does-not-exist nil)
+                    (and s (let ((b (make-array (file-length s) :element-type '(unsigned-byte 8))))
+                             (read-sequence b s) b)))))
+      (ignore-errors (delete-file out))
+      (unless octets (error "ffmpeg made no frame"))
+      (multiple-value-bind (w h pixels) (lol.image:decode-image octets)
+        (unless (and (integerp w) pixels) (error "the frame did not decode"))
+        (values w h pixels)))))
+
+(defun video-maker-loop ()
+  "The preview maker thread: the newest wanted video, probed and given a frame."
+  (loop
+    (let ((key (sb-thread:with-mutex (*video-lock*)
+                 (loop until (and *video-wanted* (not (gethash *video-wanted* *video-previews*)))
+                       do (sb-thread:condition-wait *video-cv* *video-lock*))
+                 *video-wanted*)))
+      (let ((entry (handler-case
+                       (let ((info (probe-video (car key))))
+                         (multiple-value-bind (w h pixels) (video-thumbnail (car key) info)
+                           (list :state :done :info info :w w :h h :pixels pixels)))
+                     (error (e) (list :state :failed :error (princ-to-string e))))))
+        (sb-thread:with-mutex (*video-lock*)
+          (setf (gethash key *video-previews*) entry)
+          (push (car key) *video-ready*))))))
+
+(defun want-video-preview (key)
+  (sb-thread:with-mutex (*video-lock*)
+    (setf *video-wanted* key)
+    (sb-thread:condition-notify *video-cv*))
+  (unless (and *video-maker* (sb-thread:thread-alive-p *video-maker*))
+    (setf *video-maker* (sb-thread:make-thread #'video-maker-loop :name "video-previews"))))
+
+(defun video-info-line (info)
+  (format nil "~@[~ax~]~@[~a~] ~@[~a~]~@[/~a~] ~a"
+          (getf info :width) (getf info :height) (getf info :video) (getf info :audio)
+          (mm-ss (or (getf info :duration) 0))))
+
+(defun video-view (s path e preview)
+  "The view of a video file: its frame and ffprobe's facts when the cache has them,
+   else a list saying a preview is being made (and asking for it)."
+  (declare (ignore preview))
+  (let* ((key (cons path (fentry-mtime e)))
+         (entry (sb-thread:with-mutex (*video-lock*) (gethash key *video-previews*))))
+    (cond
+      ((and entry (eq (getf entry :state) :done))
+       (make-view :title (file-title "video" path e (video-info-line (getf entry :info)))
+                  :kind :image :subject s
+                  :data (list :width (getf entry :w) :height (getf entry :h)
+                              :pixels (getf entry :pixels) :format "video frame" :path path)))
+      (t
+       (unless entry (want-video-preview key))
+       (make-view :title (file-title "video" path e (human-size (fentry-size e))) :kind :list :subject s
+                  :items (list (make-item :label (if entry
+                                                     (format nil "(no preview: ~a)" (getf entry :error))
+                                                     "making a preview… (the host's ffmpeg)"))
+                               (make-item :label "p plays it full screen, w in a window")
+                               (make-item :label "file information" :subject (subj-file-info path))))))))
+
+(defun video-previews-timeout ()
+  (if (or *video-ready* (and *video-wanted* (not (gethash *video-wanted* *video-previews*)))) 200 -1))
+
+(defun video-previews-run (canvas dirty)
+  "On the environment's thread: a preview became ready — forget the stale views of that
+   file (a side preview, or the file's own pane), so the next repair shows the frame."
+  (declare (ignore canvas dirty))
+  (let ((ready (sb-thread:with-mutex (*video-lock*) (shiftf *video-ready* '()))))
+    (when ready
+      (flet ((ours-p (subject) (and (subj-file-p subject)
+                                    (member (subj-file-path subject) ready :test #'equal))))
+        (dolist (trail *trails*)
+          (dolist (p trail)
+            (when (ours-p (pane-preview-subject p))
+              (setf (pane-preview-subject p) nil)
+              (damage-pane p))
+            (when (ours-p (pane-subject p))
+              (let ((v (ignore-errors (present (pane-subject p)))))
+                (when v (setf (pane-view p) v) (damage-pane p))))))))
+    nil))
+
+(fb-register-service :video-previews :timeout 'video-previews-timeout :run 'video-previews-run)

@@ -88,6 +88,7 @@
   log-wall               ; :log — the running segment's start, wall-clock seconds
   (seg-seconds 0)        ; the length of the segment closed last
   (offsets '())         ; :log — each segment's sound start minus its picture's, seconds
+  mic                    ; the input recorded (Capture Source), as the take began
   w h)
 
 (defvar *rec* nil "The recording in progress, or the last one (its result), or NIL.")
@@ -527,12 +528,17 @@
     (let ((fifo (rec-meter-fifo)))
       (unless (probe-file fifo) (%mkfifo fifo #o600)))
     (rec-make-pool (rec-w *rec*) (rec-h *rec*))
+    ;; the mic before the first sample: the headset's when its jack senses a plug
+    ;; (mixer.lisp, CHOOSE-MIC) — the first laptop take went to the built-in mic
+    (setf (rec-mic *rec*) (ignore-errors (choose-mic)))
     (handler-case (rec-start-segment)
       (error (e) (setf (rec-state *rec*) :failed)
         (return-from rec-start (rec-say "could not start ffmpeg: ~a" e))))
     (forget-rec-tray)
-    (rec-say "recording ~dx~d to ~a" (rec-w *rec*) (rec-h *rec*) dir)
-    "Recording — SuperL-r pauses, SuperL-S-r stops"))
+    (rec-say "recording ~dx~d to ~a, mic ~a at ~@[~,1f dB~]" (rec-w *rec*) (rec-h *rec*) dir
+             (rec-mic *rec*) (ignore-errors (capture-db)))
+    (format nil "Recording (mic: ~a~:[~;, the BUILT-IN one: is the headset plugged in? M in the recorder pane switches~]) — SuperL-r pauses, SuperL-S-r stops"
+            (or (rec-mic *rec*) "?") (equal (rec-mic *rec*) "Internal Mic"))))
 
 (defun rec-in-background (name fn)
   "Run FN on a thread: a segment's end and the join take seconds, and the environment's
@@ -605,7 +611,7 @@
               (dolist (seg segs) (ignore-errors (delete-file seg)))
               (ignore-errors (delete-file list)) (ignore-errors (delete-file prog))))
         (let ((result (probe-video out)))
-          (setf result (append result (list :mode (rec-mode *rec*) :offsets (rec-offsets *rec*) :stale (rec-stale *rec*) :frames (rec-frames *rec*)
+          (setf result (append result (list :mode (rec-mode *rec*) :mic (rec-mic *rec*) :gain (ignore-errors (capture-db)) :offsets (rec-offsets *rec*) :stale (rec-stale *rec*) :frames (rec-frames *rec*)
                                             :segments (length segs) :peak (round (rec-peak *rec*))
                                             :file out)))
           (with-open-file (s (rec-file "result.lisp") :direction :output :if-exists :supersede)
@@ -692,27 +698,6 @@
                 do (setf last (ignore-errors (parse-integer line :start 12))))
         last))))
 
-(defun probe-video (path)
-  "What ffprobe says of PATH: (:duration s :size bytes :width :height :video codec
-   :audio codec :fps \"30/1\"), from its JSON (lol.json)."
-  (let ((out (with-output-to-string (s)
-               (sb-ext:run-program *lol-ct* (rest (container-command-line
-                                                   (list "ffprobe" "-v" "error" "-of" "json"
-                                                         "-show_format" "-show_streams" path)))
-                                   :output s :error nil :wait t :environment (container-environment)))))
-    (let* ((j (lol.json:parse-json out))
-           (format (lol.json:jget j "format"))
-           (streams (coerce (lol.json:jget j "streams" #()) 'list))
-           (v (find "video" streams :key (lambda (x) (lol.json:jget x "codec_type")) :test #'equal))
-           (a (find "audio" streams :key (lambda (x) (lol.json:jget x "codec_type")) :test #'equal)))
-      (list :duration (ignore-errors (let ((*read-default-float-format* 'double-float))
-                                       (float (read-from-string (lol.json:jget format "duration")) 1.0)))
-            :size (ignore-errors (parse-integer (lol.json:jget format "size")))
-            :width (and v (lol.json:jget v "width")) :height (and v (lol.json:jget v "height"))
-            :video (and v (lol.json:jget v "codec_name")) :fps (and v (lol.json:jget v "avg_frame_rate"))
-            :audio (and a (lol.json:jget a "codec_name"))
-            :sample-rate (and a (lol.json:jget a "sample_rate"))))))
-
 ;;; ---- the keys ------------------------------------------------------------------------------
 
 (defun recorder-key (stop)
@@ -784,6 +769,13 @@
            :detail (if (eq (if (rec-active-p) (rec-mode r) *rec-mode*) :log)
                        "a damage log while you record, encoded after the stop"
                        "encoded as it records (about one thread)"))
+      (row "Recorder — SuperL-r record / pause / resume, SuperL-S-r stop"
+           (format nil "mic: ~a at ~@[~,1f dB~] — M switches, + / - the gain"
+                   (or (ignore-errors (mic-source)) "?") (ignore-errors (capture-db)))
+           :detail (if (ignore-errors (headset-plugged-p))
+                       "the headset's jack senses a plug"
+                       "no headset sensed in the jack (if yours is plugged in, M picks it)")
+           :kind (and (equal (ignore-errors (mic-source)) "Internal Mic") :condition))
       (when (and r (member (rec-state r) '(:recording :paused)))
         (row "Recorder — SuperL-r record / pause / resume, SuperL-S-r stop"
              (format nil "mic ~a ~4d dB" (meter-bar (rec-level r) 20) (round (rec-level r)))
@@ -818,12 +810,13 @@
       (row "frames" (format nil "~a written~@[, ~a stale (the encoder fell behind)~]" (getf r :frames)
                             (let ((n (getf r :stale))) (and n (plusp n) n))))
       (row "segments" (princ-to-string (getf r :segments)))
+      (row "mic" (format nil "~a~@[ at ~,1f dB~]" (or (getf r :mic) "?") (getf r :gain)))
       (row "made" (if (eq (getf r :mode) :log) "from a damage log, encoded after the stop" "encoded live")))
     (make-view :title (pathname-name (getf r :file)) :kind :list :subject s :items (nreverse items))))
 
 (defmethod subject-hints ((s subj-recorder) pane)
   (declare (ignore pane))
-  '(("Super-r" . "record/pause/resume") ("Super-S-r" . "stop") ("m" . "live / log") ("ret" . "open") ("p" . "play")))
+  '(("Super-r" . "record/pause/resume") ("Super-S-r" . "stop") ("m" . "live / log") ("M" . "mic") ("+/-" . "mic gain") ("ret" . "open") ("p" . "play")))
 (defmethod subject-hints ((s subj-recording) pane)
   (declare (ignore pane))
   '(("p" . "play") ("w" . "play in a window") ("f" . "show in files") ("D" . "delete")))
@@ -849,6 +842,13 @@
 
 (defmethod subject-key ((s subj-recorder) pane key state)
   (declare (ignore state))
+  (case key
+    (#\M (setf *browser-status* (format nil "mic: ~a" (or (ignore-errors (next-mic)) "no mic to choose")))
+     (setf *rec-refreshed* 0) (refresh-recorder-panes) (return-from subject-key t))
+    ((#\+ #\=) (setf *browser-status* (format nil "mic gain ~@[~,1f dB~]" (ignore-errors (step-capture-db 3))))
+     (setf *rec-refreshed* 0) (refresh-recorder-panes) (return-from subject-key t))
+    (#\- (setf *browser-status* (format nil "mic gain ~@[~,1f dB~]" (ignore-errors (step-capture-db -3))))
+     (setf *rec-refreshed* 0) (refresh-recorder-panes) (return-from subject-key t)))
   (if (eql key #\m)
       (progn (setf *browser-status*
                    (if (rec-active-p) "not while recording"
