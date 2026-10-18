@@ -203,7 +203,9 @@ repoints at a scratch directory.
 Other modules add their own items, each called by name so the tray works without
 them: the network (=wifi.lisp=), the agent's cost (=agent-ui.lisp=), and since tag #29
 the sound card's volume, =VOL 50%= or =VOL mute= (=sound-tray-item= in
-[[file:../initramfs/mixer.lisp][mixer.lisp]]; nothing without a card, the card read at most every 2 s).
+[[file:../initramfs/mixer.lisp][mixer.lisp]]; nothing without a card, the card read at most every 2 s). And a recording in
+progress shows =REC 01:23 ###...= (the mic's level as a bar), =PAUSED 01:23= or =SAVING 42%=
+(=recorder-tray-item=, [[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:screencast.org][screencast.org]] §13).
 
 * 5. Drawing it: one strip, repainted by itself
 

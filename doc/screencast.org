@@ -1,15 +1,19 @@
 #+TITLE: Screencasts — recording the environment, with sound, from inside it
 #+STARTUP: showall
 
-*STATUS (2026-10-17): step 0 BUILT, the rest DESIGN.* Kernel tag #29 (sound), =/dev/snd=
-for the user, =mixer.lisp= and the volume keys are built and pass =check-sound.lisp= in
-QEMU (15 checks) — not yet on the laptop: §8.5 is the checklist for that session, and
-plays recordings with the host's MPlayer from a Workspace. Steps 1–5 (§10) are not
-built. Written first for the user to review, the way [[file:morphic.org][morphic.org]] was: §12 lists the decisions taken by default, to be confirmed or
-changed. Every claim about /our/ code, the kernel tree, the host's ffmpeg and the
-laptop's sound hardware was checked on this date; the ones that could *not* be checked
-without building something are marked /to prove/, and §10 says in which step each one
-gets proved.
+*STATUS (2026-10-18): steps 0–4 BUILT; step 5 (the damage log) next.* Kernel tag #29
+(sound), =/dev/snd= for the user, =mixer.lisp= and the volume keys are built and in use
+on the laptop (the user played their own screencast through the headset, 2026-10-18).
+A/V sync was proved on the host before any recorder code (§5.1: a constant 27–32 ms,
+no drift over 3 minutes). The recorder (=recorder.lisp=, =SuperL-r= / =SuperL-S-r=, the
+tray, the recorder pane and the recordings) and the full-screen player
+(=player.lisp=, the screen lent to the host's MPlayer) pass =check-recorder.lisp= in
+QEMU (24 checks); a recording made on the laptop is owed. §13 is what shipped, what
+changed against this design, and what was measured. Written first for the user to
+review, the way [[file:morphic.org][morphic.org]] was; the user then said to go on alone (2026-10-18), so
+§12's defaults stand as decided. Every claim about /our/ code, the kernel tree, the
+host's ffmpeg and the laptop's sound hardware was checked on its date; what could not
+be is marked /to prove/.
 
 The point: the project is about to be shown to other people, and a two-minute video
 of the environment — with the author's voice explaining it — says more than any
@@ -253,11 +257,20 @@ alone on the same picture runs 12×; =veryfast= 4.2×. File size for that noisy 
 20 MB for 10 s; a UI that mostly sits still compresses far better (/to measure/ on a
 real recording, step 2).
 
-/To prove (step 1, on the host, with =-f pulse= standing in for =-f alsa=):/ that
-=-use_wallclock_as_timestamps= on the raw pipe plus ALSA's own wall-clock stamps keep
-lips and pointer in sync, and how far they drift in ten minutes. The fallback if they
-do not: stamp nothing, rely on the constant 30 fps on one side and the sample count on
-the other, which is exact as long as no frame is dropped (and drops are counted).
+*Proved on the host (step 1, 2026-10-18), and it was the fallback that won.* A loopback
+probe: a Lisp generator wrote frames into ffmpeg's stdin at 30 fps and, *at the same
+instant*, a 100 ms tone into =pacat=; every 2 s the frame went white while the tone
+sounded. ffmpeg recorded the frames (constant 30 fps, *no* wall-clock stamps) and the
+sound card's output — a PipeWire null sink's monitor, standing in for the mic, so
+nothing came out of the speakers — and the analysis found each flash and each beep's
+onset in the file. Over 12 s the sound sat a constant 32.0 ms behind the picture; over
+*3 minutes, all 89 beeps 26.7 ms behind, the first and the last alike: no drift at
+all*. That offset is one frame, inside what nobody notices (sound up to ~45 ms late), and
+part of it is the probe's own playback buffer (=pacat --latency-msec=10= and
+PipeWire's). So the recorder stamps nothing: the frame COUNT is the video's clock
+(§4.2), and the sound keeps its own. Learned on the way, and used by the recorder: a
+live audio input never ends, so ffmpeg does not stop at the video's EOF — it waited
+until the probe sent SIGINT (§13).
 
 ** 5.2 The damage log (the option)
 
@@ -709,11 +722,14 @@ dropped-frame counts); tearing; colours; the volume keys; and whether the
    headset plugged in, into its earphones, and recording *its* mic (§2.1). Record the
    mixer and jack controls the codec actually has, their boot defaults, and the fixup
    our kernel picked, here.
-1. *Prove A/V sync on the host* (§5.1), before any Lisp: the exact command line, the
-   drift in ten minutes.
+1. *Prove A/V sync on the host* (§5.1), before any Lisp. *DONE 2026-10-18*: constant
+   30 fps with no stamps, 26.7 ms, no drift in 3 minutes.
 2. *Live recorder*: tap, sampler, writer, segments, preflight, tray, keys, cheatsheet.
-3. *Progress and result view*, the recordings list, the silent-take warning.
-4. *The player* (§8): the screen hand-off, the key table, MPlayer's slave protocol, the file manager's and the result view's *Play*.
+   *BUILT 2026-10-18* (§13).
+3. *Progress and result view*, the recordings list, the silent-take warning. *BUILT
+   2026-10-18* (§13).
+4. *The player* (§8): the screen hand-off, the key table, MPlayer's slave protocol, the
+   result view's *Play*. *BUILT 2026-10-18* (§13); the file manager's =.mp4= hook not yet.
 5. *The damage log* (§5.2) as the second mode.
 6. Later, each optional: an on-screen *key display* (the environment is keyboard-first;
    a viewer cannot see =C-c C-c= being pressed — drawn into the recorded frame only),
@@ -753,3 +769,97 @@ Steps 0–4 are the user's request; 5 is the documented option; 6 is not owed.
 | Where the finished file goes                    | *=~/.lol/rec/<date>/NAME.mp4=* (one tree, the lol-home rule)                 | =~/Videos/= (it is your content, made to leave the machine)             |
 | Keys                                            | *=SuperL-r= record/pause/resume, =SuperL-S-r= stop*                          | —                                                                       |
 | The player                                      | *The host's MPlayer, full screen on the framebuffer, the screen lent* (§8.2) | VLC's =fb= output; or in a pane via libvlc =vmem= and a C helper (§8.4) |
+
+* 13. What was built (2026-10-18)
+
+Steps 1–4 of §10, in [[file:../initramfs/recorder.lisp][recorder.lisp]] and [[file:../initramfs/player.lisp][player.lisp]], with the two hooks they
+need in [[file:../initramfs/fb-browser.lisp::Every write of ours to /dev/fb0][fb-browser.lisp]]. Proved in QEMU by =check-recorder.lisp= (25 checks); a
+take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is owed.
+
+** 13.1 What shipped
+
+- *The tap and the lent screen.* =*frame-tap*= is called by =present-frame= and
+  =present-repair=; =*screen-lent*= turns off all five functions that write
+  =/dev/fb0= (=put-cursor=, =present-frame=, =present-repair=, =move-cursor=,
+  =hide-cursor=), and while it is set the loop gives input events to the player
+  instead of the world. The volume keys still work during playback: they are read
+  before events reach anyone (=mixer.lisp=).
+- *The sampler* is a service (=:timeout= / =:run=, like the web pane): every slot that
+  is due gets a frame, so a late wake-up still writes the right number — the count
+  is the video's clock (§5.1). A slot copies the canvas only when it was presented
+  or the pointer moved since the last copy, and draws the arrow onto the copy (it is
+  never in the canvas); otherwise it queues the last frame again.
+- *The writer* is a thread: the environment's thread never writes to ffmpeg. Its
+  queue holds =(buffer . copies)=, so a repeated frame costs a counter, not a copy.
+  When no pooled buffer is free (4 per recording), the sampler repeats the last
+  frame — the timing kept, the picture a frame or two stale — and counts it; the
+  result says how many (*stale*).
+- *ffmpeg* in the container, as §5.1 proved: rawvideo =bgr0= on stdin at a constant
+  30 fps, ALSA =plughw:0,0= stereo, H.264 =ultrafast= + AAC 160k into =seg-NNN.mp4=,
+  and a second output, the mic as 8 kHz mono into a FIFO in the shared =/tmp=, read
+  by a meter thread (opened non-blocking, so a FIFO nobody writes yet cannot hang it)
+  for the level in the tray and the pane.
+- *Pause and stop* end a segment on a thread (§13.2), the state =:finishing= meanwhile;
+  stop then joins with the concat demuxer and =-c copy=, reading its =-progress= file
+  for =SAVING n%=, renames a single segment instead, and asks =ffprobe= (JSON, read
+  with =lol.json=) what came out. =result.lisp= beside the video keeps that: duration,
+  size, size in pixels, codecs, frames written and stale, segments, the take's
+  loudest moment.
+- *The preflight*: a sound card, =/dev/snd/pcmC0D0c= openable, a home on a disk with
+  1 GB free, containers, the host's ffmpeg. Each failure is the status line's
+  message and the recorder pane's first row.
+- *The recorder pane* (Spotter "record" / "recordings"): state, time, the mic as a
+  bar with its dB, the frames, the segment; then every recording, newest first, a
+  "(silent!)" on any whose loudest moment stayed under -50 dB. A recording drills to
+  its result; =p= plays it full screen, =w= in a window, =f= opens its folder with
+  the video selected, =D= deletes it (refused while recording).
+- *The tray*: =REC 01:23 ###...= (the mic's level as a bar), =PAUSED 01:23=,
+  =SAVING 42%=, in red and amber.
+- *The player*: =(play-video FILE)= lends the screen to =mplayer -slave -vo fbdev2=
+  scaled to the screen; =SPC= pauses, the arrows seek 5 s (with Shift 30 s), =0=–=9=
+  jump to 0–90 %, =o= shows its clock, =q= or Esc ends it; a player still there 3 s
+  after =q= is killed; when it is gone the whole canvas is presented once.
+  =:window t= is still §8.5's interim way, a terminal tab drawing over a corner.
+
+** 13.2 What changed against the design, and why
+
+- *A segment does not end by itself.* §5.1 planned "close stdin, and =-shortest=
+  ends the file". It ends the main output, but the meter's output is the live mic
+  alone, which never ends — the first build waited the full 30 s and then counted
+  ffmpeg's exit as a failure. Now stdin is closed, ffmpeg gets a second to read the
+  last frames, then SIGINT, its graceful stop (flush the encoder, write the index);
+  its exit code 255 counts as success *when ffprobe finds a video in the file*.
+- *Ending a segment must not happen on the environment's thread.* The first build
+  did, and in QEMU pause froze the screen for the whole 30 s. Pause and stop now
+  stop sampling at once on the environment's thread (=rec-close-segment=, which also
+  counts the time) and do the rest on a thread (=rec-in-background=).
+- *The meter's level is not yet proved.* QEMU's capture is silence, which proves the
+  silent-take warning but not that the bar moves with a voice: that is the laptop's.
+- *The file manager does not yet open videos with the player*, as §8.1 planned; the
+  recordings do (=p=, =w=).
+- *The tray's indicator is visible in the video*, as §12 decided.
+
+** 13.3 Measured
+
+- *Sync* (host, §5.1): sound 26.7 ms behind the picture, constant over 3 minutes.
+- *A take in QEMU* (1280×800, the Workspace with some typing, TCG emulation): 11.1 s
+  in two segments → 1.4 MB, 334 frames for 11.12 s (30 per second to the frame), 8
+  stale — the emulated machine's encoder briefly behind.
+- *The picture is the screen*: the last frame decoded from the file against the
+  canvas, as mean colour per channel: red 30 vs 32, blue 40 vs 42 (the H.264 colour
+  conversion's rounding). A wrong pixel format would have swapped the two.
+- *The hand-back*: 48 points of the screen equal the canvas before playing, none
+  while the clip plays, all 48 again after =q=.
+
+** 13.4 Traps found while testing (so nobody falls in again)
+
+- *=key-event= builds a QMP event; =qmp-events= sends it.* The first check called
+  =key-event= alone for =SuperL-S-r=, so nothing was pressed and "stop does not work"
+  was the test, not the recorder.
+- *A binary PPM's header is P6, width, height, maxval.* The check's first reader took
+  the third field as the width, read the wrong pixel, and made a correct hand-back
+  look like a wrong one.
+- *QEMU's home under =LOL_GUEST_HOSTROOT=1= is a tmpfs in the guest's RAM*: 0.3 GB free,
+  so the 1 GB rule refuses there (as it should). The check lowers =*rec-min-free*=.
+- *=sb-unix= has no =unix-chmod=, =unix-rmdir= or =o_nonblock=*: =files.lisp='s
+  =%chmod= / =%rmdir=, and =O_NONBLOCK= = =#o4000= from =asm-generic/fcntl.h=.

@@ -46,19 +46,19 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     On the console, Alt-. (or Esc then .) arrives as the bytes <code>ESC .</code>. An ESC followed within 20 ms by a printable
     byte becomes that character with the Meta bit (8) set. A lone ESC becomes <code>:escape</code>, which the shell keeps as a
     "sticky" Meta for the next key.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1593</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1617</span></a></span>
     The loop ORs in the held modifiers from evdev and calls <code>browser-key</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2638</span></a></span>
     The first real branch: Meta and <code>.</code> in a pane with a textview. It comes before the editing branch, or the
     "." would be typed into the buffer.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#jump-at-point" href="../../poc/shell.lisp"><code>jump-at-point</code><span class="loc">poc/shell.lisp:2924</span></a> →
-    <a class="ref" data-ref="poc/shell.lisp#token-at-point" href="../../poc/shell.lisp"><code>token-at-point</code><span class="loc">poc/shell.lisp:2912</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#jump-at-point" href="../../poc/shell.lisp"><code>jump-at-point</code><span class="loc">poc/shell.lisp:2928</span></a> →
+    <a class="ref" data-ref="poc/shell.lisp#token-at-point" href="../../poc/shell.lisp"><code>token-at-point</code><span class="loc">poc/shell.lisp:2916</span></a></span>
     Takes the token under the caret, or the one just before it, because the caret usually rests after a word. A token
-    is a run of non-delimiter characters (<a class="ref" data-ref="poc/shell.lisp#token-span" href="../../poc/shell.lisp"><code>token-span</code><span class="loc">poc/shell.lisp:2874</span></a>). There is no reader
+    is a run of non-delimiter characters (<a class="ref" data-ref="poc/shell.lisp#token-span" href="../../poc/shell.lisp"><code>token-span</code><span class="loc">poc/shell.lisp:2878</span></a>). There is no reader
     involved, so <code>pkg:name</code> and <code>*var*</code> both work.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#resolve-symbol" href="../../poc/shell.lisp"><code>resolve-symbol</code><span class="loc">poc/shell.lisp:2891</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#resolve-symbol" href="../../poc/shell.lisp"><code>resolve-symbol</code><span class="loc">poc/shell.lisp:2895</span></a></span>
     Finds an <em>existing</em> symbol: with a package prefix, in that package; otherwise CL-USER, then CL. It never interns,
-    so clicking a typo creates nothing. <a class="ref" data-ref="poc/shell.lisp#jumpable-p" href="../../poc/shell.lisp"><code>jumpable-p</code><span class="loc">poc/shell.lisp:2907</span></a> requires a function, a
+    so clicking a typo creates nothing. <a class="ref" data-ref="poc/shell.lisp#jumpable-p" href="../../poc/shell.lisp"><code>jumpable-p</code><span class="loc">poc/shell.lisp:2911</span></a> requires a function, a
     variable or a class.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:348</span></a></span>
     Pushes <code>(subj-defn sym)</code>. The jump is just a drill, so <kbd>C-g</kbd> undoes it.</li>
@@ -71,7 +71,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     scanner that never <code>READ</code>s SBCL's code.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:243</span></a></span>
     Wraps the text in a textview, focused only for <code>:source</code>. The loop redraws. <kbd>M-,</kbd> is the same path
-    ending in <code>(subj-xref :senders sym)</code> (<a class="ref" data-ref="poc/shell.lisp#senders-at-point" href="../../poc/shell.lisp"><code>senders-at-point</code><span class="loc">poc/shell.lisp:2936</span></a>), answered by
+    ending in <code>(subj-xref :senders sym)</code> (<a class="ref" data-ref="poc/shell.lisp#senders-at-point" href="../../poc/shell.lisp"><code>senders-at-point</code><span class="loc">poc/shell.lisp:2940</span></a>), answered by
     <code>sb-introspect:who-calls</code> (<a class="ref" data-ref="initramfs/registry.lisp#senders" href="../../initramfs/registry.lisp"><code>senders</code><span class="loc">initramfs/registry.lisp:414</span></a>).</li>
 </ol>
 
@@ -163,13 +163,13 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
 
 <h2 id="halo">6 · "Who drew this pixel?" — the halo</h2>
 <ol class="stops">
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:3818</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:3822</span></a></span>
     A middle click (or Alt-click) in text you can edit pastes PRIMARY. Anywhere else it opens the halo.</li>
   <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#halo-layers" href="../../poc/morphic.lisp"><code>halo-layers</code><span class="loc">poc/morphic.lisp:1573</span></a></span>
     Every thing on screen is a morph that draws itself, so "who drew this pixel" is the morph tree: the thing the
     pointer is on (a word, a row), then each morph from the deepest under the point out — the text view in the pane,
     the pane, what it shows, its trail area, the shell or the window — each offering itself and its drawing functions.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3597</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3601</span></a></span>
     The handles: Inspect the object, Code (the function that drew it), Source, and so on. Each one is a command.</li>
   <li><span class="where"><a class="ref" data-ref="poc/overlays.lisp#run-chooser" href="../../poc/overlays.lisp"><code>run-chooser</code><span class="loc">poc/overlays.lisp:152</span></a></span>
     The chooser overlay draws the halo and waits for the pick by turning the environment's own loop; the caller runs the

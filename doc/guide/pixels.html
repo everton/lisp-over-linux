@@ -94,8 +94,8 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
   <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:243</span></a> is the host twin: the X11 wire protocol over a Unix socket,
     written in Lisp. It is deliberately <em>not</em> in the image.</li>
-  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1222</span></a> composites
-    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1263</span></a> repairs only the old and new
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1235</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1281</span></a> repairs only the old and new
     rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
 </ul>
 
@@ -153,7 +153,7 @@ for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/mor
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:426</span></a>). A touchpad's motion is integrated as relative
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:625</span></a>), and a tap is a click.</li>
   <li>A press goes to the morph under the pointer, in that morph's coordinates: a tab, a breadcrumb, a window's title
-    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:3110</span></a>) decides what was under the pointer from what
+    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:3114</span></a>) decides what was under the pointer from what
     <em>that body</em> recorded when it last drew: its list rows, its text, its grid's cells. A press on a row that moves
     is not a click: the <em>hand</em> picks the row's subject up, to be dropped on another morph
     (<a class="ref" data-ref="poc/morph.lisp#world-drop" href="../../poc/morph.lisp"><code>world-drop</code><span class="loc">poc/morph.lisp:719</span></a>).</li>
