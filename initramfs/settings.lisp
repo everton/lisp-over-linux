@@ -35,7 +35,12 @@
           (let* ((*read-eval* nil)
                  (*package* (find-package :keyword))   ; bare words read as keywords
                  (form (read s nil nil)))
-            (and (listp form) (evenp (length form)) form)))))))
+            ;; ... and so would NIL and T, which SAVE-SETTING writes (and a person
+            ;; types) as bare words: they came back as :NIL and :T, both true. Found
+            ;; 2026-10-18: a saved (:MUTED NIL) booted the sound muted, and a saved
+            ;; (:TAP-TO-CLICK T) never turned tapping on (fb-browser.lisp tests EQ T).
+            (when (and (listp form) (evenp (length form)))
+              (sublis '((:nil . nil) (:t . t)) form))))))))
 
 (defun setting (key &optional default)
   "The value of KEY in the user's settings, or DEFAULT."

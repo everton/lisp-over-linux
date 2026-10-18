@@ -87,13 +87,20 @@
          (string/= "NIL" (row "volume control" (probe "(getf (volume-control) :name)"))))
   (let ((v0 (probe-int "(volume-percent)")))
     (row "volume after boot" v0)
-    (check "RESTORE-AUDIO set the default level, unmuted"
-           (and (eql v0 50) (string= "NIL" (probe "(volume-muted-p)"))))
+    ;; the level SAVED in ~/.lol/settings, or 50 % on a first boot. Under
+    ;; LOL_GUEST_HOSTROOT=1 the home is the build host's own (under a tmpfs overlay), so
+    ;; this is whatever the user last set on the laptop — 56 % on 2026-10-18, which is
+    ;; how this check first learned that the laptop's volume keys work.
+    (let ((saved (probe-int "(let ((v (setting :volume 50))) (if (integerp v) v 50))")))
+      (row "saved level (:volume, else 50)" saved)
+      (check "RESTORE-AUDIO set the saved level exactly, unmuted"
+             (and saved (eql v0 saved) (string= "NIL" (probe "(volume-muted-p)")))))
     (format t "~&~%== the volume keys ==~%")
     (qmp-key "volumeup") (sleep 1)
     (let ((v1 (probe-int "(volume-percent)")))
       (row "after volumeup" v1)
-      (check "volumeup raises it one step" (eql v1 (and v0 (+ v0 5))))
+      (check "volumeup raises it one step, exactly (no drift through the raw steps)"
+             (eql v1 (and v0 (min 100 (+ v0 5)))))
       (check "the status line says the level"
              (search (format nil "Volume ~d%" v1) (row "status" (probe "*browser-status*"))))
       (sleep 2.5)

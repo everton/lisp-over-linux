@@ -533,8 +533,14 @@ for playback and for the mic, and §3.1's job is not optional. (The HDMI codec, 
 is driven by the generic parser since =SND_HDA_CODEC_HDMI= is off; it shows no
 outputs and is harmless.) The first =(play …)= then froze the environment — not
 sound's fault: [[file:diagnostics.org][diagnostics.org]] §1, the stopped console, fixed the same night.
-Picture, sound in the headset and the volume keys on the laptop are still to be
-seen.
+*The volume keys work on the laptop:* the next session found =(:MUTED NIL :VOLUME 56)=
+in =~/.lol/settings=, written by =audio-key= — so the keys arrive on the AT keyboard's
+evdev as §1 below expected. Reading it back found two bugs, both fixed 2026-10-18: the
+saved =NIL= read back as =:NIL= (true), so every boot after a volume key would have
+started *muted* (=settings.lisp=, which also kept =(:tap-to-click t)= from ever
+working; =poc/settings-test.lisp=), and the steps drifted through the codec's raw
+levels (55 % + 5 gave 59 %) — =mixer.lisp= now remembers the level it set
+(=*volume-intent*=). Picture and sound in the headset are still to be seen.
 
 *** 1. Is there sound at all?
 

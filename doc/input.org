@@ -323,7 +323,9 @@ thing that decides those two events were a click. There is no =libinput= here.
 you really click). =*tap-to-click*= is =NIL=, so a contact never opens a tap
 candidate and only a physical press clicks. Put =(:tap-to-click t)= in
 =~/.lol/settings= (read when the browser starts), or =(setf *tap-to-click* t)=
-in the Workspace, to bring back the rule below.
+in the Workspace, to bring back the rule below. (The settings line only works since
+2026-10-18: the file is read with bare words as keywords, so =t= came back as =:T=,
+which =(eq … t)= refused — =settings.lisp=, proved by =poc/settings-test.lisp=.)
 
 When it is on, =read-mouse= decides. A contact becomes a click when four things hold:
 

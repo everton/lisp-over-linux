@@ -175,9 +175,22 @@
         (round (* 100 (- (/ (reduce #'+ vs) (length vs)) lo)) (- hi lo))
         0)))
 
+(defvar *volume-intent* nil
+  "(PERCENT . RAW): the level SET-VOLUME-PERCENT last asked for, and the raw control
+   value it became. A codec has fewer steps than there are percents (the ALC289's
+   Master has 88, QEMU's codec fewer), so percent -> raw -> percent does not come back
+   where it started, and stepping from the read-back value drifts: 55 % + 5 gave 59 %,
+   then - 5 gave 54 % (check-sound.lisp, 2026-10-18). So while the card still holds
+   RAW, the volume IS that percent; if something else moved the control, the card wins.")
+
 (defun volume-percent ()
   "The volume as 0-100, or NIL with no card."
-  (let ((c (volume-control))) (and c (control-percent c))))
+  (let ((c (volume-control)))
+    (and c
+         (let ((intent *volume-intent*))
+           (if (and intent (every (lambda (v) (= v (cdr intent))) (getf c :values)))
+               (car intent)
+               (control-percent c))))))
 
 (defun volume-muted-p ()
   "T when the volume's switch is off (a boolean control: 1 = sound on)."
@@ -189,8 +202,10 @@
   (let ((c (volume-control)))
     (when c
       (let* ((p (max 0 (min 100 p)))
-             (lo (getf c :min)) (hi (getf c :max)))
-        (when (mixer-write c (+ lo (round (* p (- hi lo)) 100)))
+             (lo (getf c :min)) (hi (getf c :max))
+             (raw (+ lo (round (* p (- hi lo)) 100))))
+        (when (mixer-write c raw)
+          (setf *volume-intent* (cons p raw))
           p)))))
 
 (defun set-muted (muted)
