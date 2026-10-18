@@ -37,6 +37,7 @@
    #:term #:make-term #:term-feed #:term-feed-string #:term-resize #:term-reset
    #:term-cols #:term-rows #:term-cx #:term-cy #:term-cursor-visible-p #:term-cursor-style
    #:term-title #:term-cwd #:term-bell-count #:term-alt-screen-p
+   #:term-take-copies
    #:term-app-cursor-p #:term-app-keypad-p #:term-bracketed-paste-p
    #:term-mouse-mode #:term-mouse-sgr-p #:term-take-output
    ;; looking at the grid
@@ -190,6 +191,8 @@
   (view-offset 0 :type fixnum)          ; how far the user has scrolled back (0 = live)
   ;; what the program told us about itself
   (title "") (cwd nil) (bell-count 0 :type fixnum)
+  ;; texts the program asked to put on the clipboard (OSC 52), oldest first: (TARGETS . STRING)
+  (copies '())
   ;; bytes the TERMINAL must send back to the program (answers to DSR, DA, …)
   (output (make-array 0 :element-type '(unsigned-byte 8) :adjustable t :fill-pointer 0))
   ;; rows that changed since the pane last drew (so only those are repainted)
@@ -594,7 +597,7 @@
         ((and (= c 7) (eq state :osc-string)) (end-string term))  ; BEL ends an OSC too
         ((member c '(24 26)) (setf (term-state term) :ground))
         ((eq state :osc-string)
-         (when (and (>= c 32) (< (fill-pointer (term-string-buf term)) 4096))
+         (when (and (>= c 32) (< (fill-pointer (term-string-buf term)) (osc-limit term)))
            (vector-push-extend (code-char c) (term-string-buf term)))))
       (return-from parse-code))
     ;; ---- anywhere ----
@@ -995,6 +998,54 @@
 
 ;;; ---- OSC: strings the program sends us -------------------------------------
 
+(defparameter +osc-52-limit+ (* 1024 1024)
+  "Characters of base64 an OSC 52 may carry (about 768 KB of text). Every other OSC
+   is a title or a path, and is cut at 4096.")
+
+(defun osc-limit (term)
+  "How long the OSC being read may grow: long only once it is known to be a copy."
+  (let ((buf (term-string-buf term)))
+    (if (and (>= (fill-pointer buf) 3) (string= "52;" buf :end2 3)) +osc-52-limit+ 4096)))
+
+(defun base64-octets (s)
+  "The octets of base64 text S. Anything outside the alphabet (line breaks, the
+   padding) is skipped rather than refused, as xterm does."
+  (let ((out (make-array (floor (* 3 (length s)) 4) :element-type '(unsigned-byte 8)
+                                                     :fill-pointer 0))
+        (acc 0) (bits 0))
+    (loop for ch across s
+          for v = (position ch "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/")
+          when v
+            do (setf acc (logior (ash (logand acc #xFFFF) 6) v)) (incf bits 6)
+               (when (>= bits 8)
+                 (decf bits 8)
+                 (vector-push (ldb (byte 8 bits) acc) out)))
+    out))
+
+(defun osc-52 (term arg)
+  "OSC 52 ; TARGETS ; BASE64 — the program puts text on the clipboard. It is how a
+   program that took the mouse (Claude Code's full screen, vim with mouse=a, tmux)
+   copies what it selected: our own selection never sees those drags. TARGETS are
+   xterm's letters: c the clipboard, p PRIMARY, s 'the selection' (empty means s 0).
+   The text waits in TERM-COPIES for the pane to take. A QUERY (BASE64 = ?) is not
+   answered: it would let any program read whatever you last copied — xterm refuses
+   it by default too."
+  (let* ((semi (position #\; arg))
+         (targets (if semi (subseq arg 0 semi) ""))
+         (data (if semi (subseq arg (1+ semi)) "")))
+    (unless (string= data "?")
+      (let ((text (sb-ext:octets-to-string (coerce (base64-octets data)
+                                                   '(simple-array (unsigned-byte 8) (*)))
+                                           :external-format '(:utf-8 :replacement #\?))))
+        (setf (term-copies term)
+              (append (term-copies term) (list (cons (if (string= targets "") "s0" targets)
+                                                     text))))))))
+
+(defun term-take-copies (term)
+  "The texts the program asked to copy since the last call, oldest first, as
+   (TARGETS . STRING) — and forget them."
+  (shiftf (term-copies term) '()))
+
 (defun osc-dispatch (term s)
   (let* ((semi (position #\; s))
          (code (ignore-errors (parse-integer s :end (or semi (length s)))))
@@ -1002,6 +1053,7 @@
     (case code
       ((0 2) (setf (term-title term) (subseq arg 0 (min 200 (length arg)))))   ; window title
       (7 (setf (term-cwd term) arg))                     ; the shell's cwd, as a file:// URL
+      (52 (osc-52 term arg))                             ; the program copies
       ;; "what are your colours?" — vim asks for the background (to choose
       ;; 'background=dark') and waits briefly for the answer; giving one is cheap
       ((10 11) (when (string= arg "?")

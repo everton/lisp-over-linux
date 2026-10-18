@@ -325,6 +325,10 @@
     (let ((title (lol.terminal:term-title term)))
       (unless (string= title (term-session-title ss))
         (setf (term-session-title ss) title result :title)))
+    ;; what the program copied (OSC 52): its own selection, made with the mouse it took
+    (dolist (copy (lol.terminal:term-take-copies term))
+      (terminal-take-copy copy)
+      (unless (eq result :title) (setf result :copied)))
     result))
 
 (defun terminal-service (ready-fds)
@@ -344,6 +348,8 @@
                (dolist (p trail)
                  (when (eq (pane-subject p) s)
                    (setf (view-title (pane-view p)) (terminal-view-title s))))))
+            ;; the status line says what the program copied
+            (:copied (setf need :full))
             ((nil))
             (t (unless need (setf need :rows)))))))
     need))
@@ -608,6 +614,16 @@
     (if sel
         (copy-to-clipboard (apply #'lol.terminal:term-text-range (term-session-term ss) sel))
         (setf *browser-status* "copy: no selection (drag across the text)"))))
+
+(defun terminal-take-copy (copy)
+  "A program copied (OSC 52; COPY is (TARGETS . TEXT), lol.terminal's OSC-52): p sets
+   PRIMARY, anything else — c, s, a cut buffer — is the clipboard, so C-y and
+   S-Insert give it back everywhere."
+  (destructuring-bind (targets . text) copy
+    (when (find #\p targets) (lol.clipboard:set-primary text))
+    (if (find-if (lambda (ch) (find ch "cs01234567")) targets)
+        (clip-status "copied by the program" (lol.clipboard:clip-copy text))
+        (clip-status "selected by the program" text))))
 
 (defun terminal-key-was-cheap-p (pane-before state)
   "True when the key just handled went to the program in PANE-BEFORE and nothing but

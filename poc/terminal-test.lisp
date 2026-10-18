@@ -204,6 +204,20 @@
   (feed term "\\e]2;other\\e\\\\after")
   (check "OSC 2 with ST, and printing resumes" (list (term-title term) (row term 0)) '("other" "after")))
 
+;; OSC 52: the program copies (base64 of UTF-8; "aé日" is YcOp5pel)
+(let ((term (make-term 20 2)))
+  (feed term "\\e]52;c;YcOp5pel~c" (code-char 7))
+  (feed term "\\e]52;;aGk=\\e\\\\")
+  (feed term "\\e]52;c;?\\e\\\\")
+  (check "OSC 52: copies kept in order, empty targets = s0, a query not answered"
+         (list (term-take-copies term) (take-reply term))
+         '((("c" . "aé日") ("s0" . "hi")) nil))
+  (check "OSC 52: taken once" (term-take-copies term) nil)
+  (let ((long (make-string 9000 :initial-element #\A)))      ; 6750 octets of zeros
+    (feed term (format nil "\\e]52;c;~a\\e\\\\" long))
+    (check "OSC 52: longer than any other OSC may be"
+           (length (cdr (first (term-take-copies term)))) 6750)))
+
 ;;; ---- UTF-8, wide characters, DEC graphics -------------------------------------------
 
 (let* ((term (make-term 10 2))

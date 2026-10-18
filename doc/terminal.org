@@ -18,7 +18,7 @@ terminals all their life without needing to know what one is.
 | [[file:../poc/terminal.lisp][poc/terminal.lisp]]      | =lol.terminal=, the *VT engine*: UTF-8 bytes in, a grid of cells out; and the reverse, keys / mouse / paste encoded as bytes. Pure data, no FFI. |
 | [[file:../initramfs/pty.lisp][initramfs/pty.lisp]]     | *pseudo-terminals*: open =/dev/ptmx=, run a program on the slave as a session leader (=posix_spawn=), read, write, resize, reap.                 |
 | [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run.                                              |
-| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 95 checks, incl. recordings of less, vi and bash.                                                                       |
+| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 98 checks, incl. recordings of less, vi and bash.                                                                       |
 | [[file:../poc/pty-test.lisp][poc/pty-test.lisp]]      | host test of the ptys: 13 checks on real programs (bash, htop).                                                                                  |
 | [[file:../check-terminal.lisp][check-terminal.lisp]]    | the guest check over QMP: 18 checks.                                                                                                             |
 
@@ -362,6 +362,17 @@ no cost — and =present-preview= never starts a program. Its view kind is
   screen; on the alternate screen it is reported to a program that takes the mouse,
   and otherwise sent as arrow keys — xterm's /alternateScroll/, so the wheel
   scrolls less and man.
+- *A program copies* with OSC 52 (=ESC ] 52 ; c ; BASE64 BEL=). When it holds the
+  mouse, its drags are its own selection and never ours, so this is the only way
+  what it selected reaches us. Claude Code in full screen is the case that found
+  it (2026-10-18: nothing could be copied out of it): its copy tries the host's
+  clipboard tools first, finds no X or Wayland in the container, and falls back to
+  OSC 52 — which we used to drop. Now the text goes into the clipboard history
+  (targets =c=, =s=, a cut buffer) or PRIMARY (=p=), and the status line says
+  "copied by the program". A /query/ (=?=) is never answered: any program could
+  read what you last copied (xterm refuses it by default too). An OSC 52 may carry
+  1 MiB of base64; every other OSC is cut at 4096 characters. Shift-drag still
+  selects on our side, past the program.
 - *Paste* is bracketed when the program asked (=2004=): =ESC[200~ … ESC[201~=, so a
   shell does not run each pasted line as it arrives. Newlines become CR (what
   Return sends), and any ESC inside is dropped, or a crafted clipboard could close
@@ -414,7 +425,7 @@ syscall per terminal):
 
 | what                  | how                                                      | result                 |
 |-----------------------+----------------------------------------------------------+------------------------|
-| the engine            | =sbcl --script poc/terminal-test.lisp=                   | 95/95                  |
+| the engine            | =sbcl --script poc/terminal-test.lisp=                   | 98/98                  |
 | ptys on real programs | =sbcl --script poc/pty-test.lisp=                        | 13/13 (bash, htop)     |
 | a frame, headless     | =sbcl --script poc/render-frame.lisp terminal:htop=      | htop drawn in the pane |
 | the guest             | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 18/18                  |
@@ -456,7 +467,7 @@ with =stty size= agreeing again, and
   bold is colour, not a heavier glyph.
 - A character the font's cmap lacks shows as its fallback; wide characters still
   take their two cells, so alignment holds.
-- Not implemented: OSC 52 (a program setting the clipboard), left/right margins
+- Not implemented: OSC 52's query (reading the clipboard — refused on purpose), left/right margins
   (=DECLRMM=, mode 69), sixel, the title stack, focus events (1004 is recorded and
   not sent), synchronized output (2026 reports "unknown"), application keypad (§8).
 - The fallback shell (§9, 2.) keeps PID 1's capabilities. The container path does
