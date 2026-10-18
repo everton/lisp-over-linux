@@ -449,7 +449,7 @@
               (progn (setf blank nil) (push l lines)))))
       (string-trim '(#\Newline) (format nil "~{~a~^~%~}" (nreverse lines))))))
 
-(define-agent-tool "web-fetch" (:write t :available (lambda () (fboundp 'http-request)))
+(define-agent-tool "web-fetch" (:write t :off-main t :available (lambda () (fboundp 'http-request)))
   "Fetch a web page (http or https) and return its text: HTML is reduced to its words
    (scripts, styles and tags removed), plain text and JSON come back as they are.
    Asks the user first, like a write: a URL can carry data out of this machine. At

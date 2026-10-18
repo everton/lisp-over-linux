@@ -1461,13 +1461,60 @@
         (tick-tray canvas)))
     nil))
 
+;;; ---- one turn's error is not the environment's death -------------------------
+;;; An error in a turn (a key's command, a morph's drawing, a service) used to unwind
+;;; out of the loop: the environment ended, its tabs were dropped to be safe, and the
+;;; next 'b' started bare — unsaved Workspace text and every open tab gone for one bad
+;;; keystroke (review of 2026-10-16). Now a turn that fails is logged with its
+;;; backtrace, said on the status line, and the loop goes on, with the whole screen
+;;; marked for repair (the failed turn may have stopped halfway through drawing).
+;;; Only a run of failures with no good turn between them, which means the error is
+;;; in the drawing itself and will come back every turn, still ends the environment.
+
+(defparameter +cycle-failure-limit+ 3
+  "Failed turns in a row (no good turn between them) that end the environment.")
+
+(defvar *cycle-failures* '() "Conditions of the failed turns since the last good one.")
+
+(defun guarded-fb-cycle ()
+  "FB-CYCLE, surviving an error in it (see above). -> what FB-CYCLE returned, or NIL."
+  (block turn
+    (handler-bind
+        ((error
+           (lambda (c)
+             ;; logged HERE, before unwinding, so the backtrace is the error's own
+             (ignore-errors
+               (session-log-block (format nil "a turn of the environment failed: ~s ~a" (type-of c)
+                                          (or (ignore-errors (clip-one-line c 300)) "?"))
+                                  (backtrace-string :count 30)))
+             (push c *cycle-failures*)
+             (when (>= (length *cycle-failures*) +cycle-failure-limit+)
+               (session-log "~d turns failed in a row: leaving the environment" (length *cycle-failures*))
+               (return-from turn (error c)))       ; RUN-BROWSER-FB's handler ends it, as before
+             (setf *browser-status*
+                   (format nil "error: ~a — logged (~~/.lol/log/session.log); carrying on"
+                           (or (ignore-errors (clip-one-line c 120)) (type-of c))))
+             (ignore-errors (repair-everything))
+             (return-from turn nil))))
+      (prog1 (fb-cycle)
+        (setf *cycle-failures* '())))))
+
+(defun repair-everything ()
+  "Mark the whole screen, and every window's backing store, as needing a repaint."
+  (when *world*
+    (dolist (m (lol.morph:morph-descendants *world*))
+      (when (typep m 'lol.morph:surface) (setf (lol.morph:surface-damage m) :all)))
+    (lol.morph:invalidate *world*)))
+
 (defun run-browser-fb (&optional root)
   "Launch the browser full-screen on /dev/fb0, rooted at ROOT. The supervisor calls
    it once at boot, and again from its menu ('b', 'p', 'c', 'l'). Blocks until you
    leave it (SuperL-q, which asks: the supervisor's console or power off; or q on a
    list pane), then restores the text console and returns to the supervisor menu,
-   or powers off. Any error is caught and printed, so a dying
-   environment drops you at the menu instead of crashing PID 1.
+   or powers off. An error in one turn is logged and the loop goes on
+   (GUARDED-FB-CYCLE); only errors turn after turn end it, and those are caught
+   and printed, so a dying environment drops you at the menu instead of crashing
+   PID 1.
 
    ROOT defaults to the WORKSPACE alone. It used to be the module index with a
    Workspace tab beside it; but the environment is something you WORK in, and a
@@ -1515,11 +1562,13 @@
                      ;; THE CYCLE (doc/morphic.org §4.2), one turn at a time: FB-CYCLE.
                      ;; The world starts wholly damaged, so the first turn draws the
                      ;; frame. A blocking overlay (a menu, the debugger) turns the same
-                     ;; function while it waits (RUN-OVERLAY, poc/morphic.lisp).
+                     ;; function while it waits (RUN-OVERLAY, poc/morphic.lisp) —
+                     ;; the GUARDED one, so a failing turn under a menu survives too.
                      (unwind-protect
                           (progn
-                            (setf *world-cycle* 'fb-cycle *world-quit* nil)
-                            (loop until (or (eq :quit (fb-cycle)) *world-quit*)))
+                            (setf *world-cycle* 'guarded-fb-cycle *world-quit* nil
+                                  *cycle-failures* '())
+                            (loop until (or (eq :quit (guarded-fb-cycle)) *world-quit*)))
                        (setf *world-cycle* nil))))
               (close-input-devices)))))
     (serious-condition (c)

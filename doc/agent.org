@@ -1443,6 +1443,40 @@ through the Spotter by typing (section 5b). Without the disk, section 5b is skip
 - =poc/agent-test.lisp= could not load on =main= after =f4f44bf=: =agent.lisp= calls
   =watch-locks= from =session-log.lisp=, which the test did not load. It loads it now.
 
+** 14.11 Tools that cannot freeze the environment (2026-10-17)
+
+The code review after the 2026-10-16 freeze ([[file:diagnostics.org][diagnostics.org]] §9) put the likeliest
+cause here. Tool calls run on the environment's thread (the job queue above), and two
+of them had no limit at all. =lisp-eval= of a form that never returns, or
+=container-run= of a program that never exits, stopped the screen for good. C-g
+could not help, because C-g is read by the same thread. Three changes:
+
+- *Off-main tools.* A tool defined with =:off-main t= ([[file:../initramfs/agent.lisp::defun post-job-and-wait][=post-job-and-wait=]]) sends only
+  its *approval* to the environment's thread, which still asks you on screen. The
+  work then runs on the turn's own thread. =container-run= and =web-fetch= are
+  marked: neither touches Lisp state, and each can wait seconds or minutes on a
+  program or a server. On the turn's thread C-g reaches them.
+  =cancel-conversation= interrupts that thread, and =container-run='s cleanup
+  ([[file:../initramfs/agent.lisp::defun stop-tool-process][=stop-tool-process=]]) sends TERM, then KILL, then reaps the process. Its
+  cleanup runs =without-interrupts=, so a second C-g cannot cut it short.
+- *Time limits.* =lisp-eval= is stopped after =*lisp-eval-seconds*= (60) with
+  =sb-ext:with-timeout=. The timeout unwinds the form as C-c would, and the
+  model gets an error naming the limit, with whatever the form had printed.
+  =container-run= stops its program after 300 s, or sooner if the model passes
+  ="timeout"=.
+- *Output capped while it is written.* Both tools print into a =capped-output=
+  stream (a Gray stream) that keeps =*tool-output-cap*= characters (200000) and
+  only counts the rest. Capping afterwards, as =clip-result= does, was too late:
+  =(loop (print 1))= fills a string until the heap is gone, long before any timeout.
+
+=lisp-eval= itself stays on the environment's thread, because the image is changed by
+one thread at a time. A form that loops is now stopped, but the screen still waits
+for it for up to 60 s. Tested by =poc/agent-test.lisp= ("bounded tools", 13 checks):
+the cap, a form stopped by its timeout, an output flood, and an off-main tool. It is
+approved by a stand-in environment thread, runs on the turn's thread, and C-g stops
+it while it runs. The real =container-run= path in the guest (lol-ct's process
+ending on C-g) is not asserted by a guest check yet.
+
 * Appendix — measurements taken for this doc
 
 Against this machine and this tree, 2026-08-06:

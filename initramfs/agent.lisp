@@ -394,11 +394,12 @@
   name description schema
   handler          ; (lambda (input call) ...) => result string; may set the call's subject
   write-p          ; a WRITE tool: gated by the authority dial
-  available-p)     ; NIL, or a predicate: offer it only when true (container-run)
+  available-p      ; NIL, or a predicate: offer it only when true (container-run)
+  off-main-p)      ; runs on the TURN's thread once approved (POST-JOB-AND-WAIT)
 
 (defvar *agent-tools* '() "Every tool, in the order they are offered (that order is cached).")
 
-(defmacro define-agent-tool (name (&key write available) description properties required
+(defmacro define-agent-tool (name (&key write available off-main) description properties required
                              (input call) &body body)
   "Define a tool the model may call. PROPERTIES is a list of (NAME TYPE DESCRIPTION);
    REQUIRED names the ones it must give. BODY runs with INPUT (the JSON-OBJECT the
@@ -410,7 +411,7 @@
                                                   (loop for (n type doc) in ',properties
                                                         append (list n (lol.json:jobj "type" type "description" doc))))
                               "required" (coerce ',required 'simple-vector))
-                :write-p ,write :available-p ,available
+                :write-p ,write :available-p ,available :off-main-p ,off-main
                 :handler (lambda (,input ,call) (declare (ignorable ,input ,call)) ,@body))))
      (setf *agent-tools* (append (remove ,name *agent-tools* :key #'agent-tool-name :test #'string=)
                                  (list tool)))
@@ -793,6 +794,42 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
         (*read-eval* nil))
     (read-from-string text)))
 
+;;; Output a tool collects is CAPPED as it is written, not after: (loop (print 1))
+;;; would otherwise grow a string until the heap ran out, long before any timeout.
+
+(defparameter *tool-output-cap* 200000
+  "Characters a tool keeps of what it runs prints; the rest is counted, not kept.")
+
+(defparameter *lisp-eval-seconds* 60
+  "How long lisp-eval may run before it is stopped.")
+
+(defclass capped-output (sb-gray:fundamental-character-output-stream)
+  ((buf :initform (make-string-output-stream) :reader capped-buf)
+   (kept :initform 0 :accessor capped-kept)
+   (dropped :initform 0 :accessor capped-dropped)
+   (cap :initarg :cap :initform *tool-output-cap* :reader capped-cap)
+   (column :initform 0 :accessor capped-column)))
+
+(defun make-capped-output (&optional (cap *tool-output-cap*))
+  (make-instance 'capped-output :cap cap))
+
+(defmethod sb-gray:stream-write-char ((s capped-output) ch)
+  (setf (capped-column s) (if (char= ch #\Newline) 0 (1+ (capped-column s))))
+  (if (< (capped-kept s) (capped-cap s))
+      (progn (write-char ch (capped-buf s)) (incf (capped-kept s)))
+      (incf (capped-dropped s)))
+  ch)
+
+(defmethod sb-gray:stream-line-column ((s capped-output)) (capped-column s))
+
+(defun capped-output-string (s)
+  "What S kept, and how much it dropped. Can be called more than once."
+  (let ((text (get-output-stream-string (capped-buf s))))
+    (write-string text (capped-buf s))   ; put it back: get-output-stream-string empties it
+    (if (plusp (capped-dropped s))
+        (format nil "~a~%… [~d more characters were printed and not kept]" text (capped-dropped s))
+        text)))
+
 (define-agent-tool "lisp-eval" (:write t)
   "Evaluate one Lisp form in the running image and return its values and anything it
    printed. A WRITE: the user approves each call unless they have allowed writes."
@@ -801,10 +838,20 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
   ("form")
   (input call)
   (let* ((form (read-in-package (lol.json:jget input "form") (lol.json:jget input "package")))
-         (out (make-string-output-stream))
-         (values (let ((*standard-output* out) (*trace-output* out))
-                   (multiple-value-list (eval form))))
-         (printed (get-output-stream-string out)))
+         (out (make-capped-output))
+         ;; it runs on the environment's thread (the image is touched by one thread at
+         ;; a time), where C-g cannot reach it: a form that never returns would freeze
+         ;; the screen for good — the likeliest cause of the 2026-10-16 freeze
+         ;; (doc/diagnostics.org §9). The timeout unwinds it like C-c would.
+         (values (handler-case
+                     (sb-ext:with-timeout *lisp-eval-seconds*
+                       (let ((*standard-output* out) (*trace-output* out))
+                         (multiple-value-list (eval form))))
+                   (sb-ext:timeout ()
+                     (error "the form ran past ~d s and was stopped (*LISP-EVAL-SECONDS*)~@[; it had printed:~%~a~]"
+                            *lisp-eval-seconds* (let ((p (capped-output-string out)))
+                                                  (and (plusp (length p)) (clip-result p 2000)))))))
+         (printed (capped-output-string out)))
     (setf (call-summary call) (format nil "=> ~a" (lol.widgets:clip-text
                                                   (let ((*print-length* 8) (*print-level* 3))
                                                     (format nil "~{~s~^, ~}" values))
@@ -843,21 +890,62 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
     (setf (call-subject call) (subj-file path) (call-summary call) (format nil "wrote ~d bytes" (length octets)))
     (format nil "Wrote ~d bytes to ~a." (length octets) path)))
 
-(define-agent-tool "container-run" (:write t :available (lambda () (fboundp 'run-in-container)))
+(defparameter *container-run-seconds* 300
+  "How long container-run waits for its program before stopping it (the model may ask
+   for less with \"timeout\").")
+
+(define-agent-tool "container-run" (:write t :off-main t
+                                    :available (lambda () (fboundp 'run-in-container)))
   "Run a program inside the user's container (the laptop's own Debian, with the network;
    see doc/containers.org) and return its exit code and output. argv is the program
-   and its arguments, e.g. [\"ruby\", \"-v\"]; no shell unless you run one."
+   and its arguments, e.g. [\"ruby\", \"-v\"]; no shell unless you run one. It is
+   stopped after 300 s (or \"timeout\" seconds); at most 200000 characters of output
+   are kept."
   (("argv" "array" "Program and arguments")
-   ("cwd" "string" "Working directory (default: home)"))
+   ("cwd" "string" "Working directory (default: home)")
+   ("timeout" "integer" "Seconds before it is stopped (default and maximum 300)"))
   ("argv")
   (input call)
+  ;; OFF-MAIN: approved on the environment's thread, RUN on the turn's (POST-JOB-AND-WAIT).
+  ;; It touches no Lisp state, and here C-g reaches it: CANCEL-CONVERSATION interrupts
+  ;; this thread and the cleanup below stops the program.
   (let* ((argv (coerce (lol.json:jget input "argv") 'list))
-         (out (make-string-output-stream))
+         (limit (let ((n (lol.json:jget input "timeout")))
+                  (if (and (integerp n) (plusp n)) (min n *container-run-seconds*) *container-run-seconds*)))
+         (out (make-capped-output))
          (proc (progn (unless (and argv (every #'stringp argv)) (error "argv must be strings"))
-                      (funcall 'run-in-container argv :cwd (lol.json:jget input "cwd") :output out :wait t)))
-         (code (ignore-errors (sb-ext:process-exit-code proc))))
-    (setf (call-summary call) (format nil "exit ~a" code))
-    (clip-result (format nil "exit ~a~%~a" code (get-output-stream-string out)))))
+                      (funcall 'run-in-container argv :cwd (lol.json:jget input "cwd")
+                                                      :output :stream :wait nil)))
+         (timed-out nil))
+    (unwind-protect
+         (let ((stream (sb-ext:process-output proc))
+               (deadline (+ (get-internal-real-time) (* limit internal-time-units-per-second))))
+           (loop
+             (let ((ch (read-char-no-hang stream nil :eof)))
+               (cond ((eq ch :eof) (return))
+                     (ch (write-char ch out))
+                     ((> (get-internal-real-time) deadline) (setf timed-out t) (return))
+                     (t (sb-sys:wait-until-fd-usable (sb-sys:fd-stream-fd stream) :input 0.2)
+                        (when *tool-conversation* (check-cancel *tool-conversation*)))))))
+      ;; a throw from C-g lands here too: never leave the program running
+      (sb-sys:without-interrupts
+        (stop-tool-process proc)))
+    (let ((code (ignore-errors (sb-ext:process-exit-code proc))))
+      (setf (call-summary call) (if timed-out (format nil "stopped after ~d s" limit) (format nil "exit ~a" code)))
+      (clip-result (format nil "~:[exit ~a~;stopped after ~*~d s (timeout)~]~%~a"
+                           timed-out code limit (capped-output-string out))))))
+
+(defun stop-tool-process (proc)
+  "End PROC if it still runs: TERM (lol-ct forwards it to the command), KILL after a
+   second, then reap it and close its pipe."
+  (ignore-errors
+    (when (sb-ext:process-alive-p proc)
+      (sb-ext:process-kill proc sb-unix:sigterm)
+      (loop repeat 10 while (sb-ext:process-alive-p proc) do (sleep 0.1))
+      (when (sb-ext:process-alive-p proc)
+        (sb-ext:process-kill proc sb-unix:sigkill)))
+    (sb-ext:process-wait proc))
+  (ignore-errors (sb-ext:process-close proc)))
 
 (defun write-tool-p (name) (let ((tool (find-agent-tool name))) (and tool (agent-tool-write-p tool))))
 
@@ -952,7 +1040,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
    for the tools that act on the conversation itself: update-plan, spawn-subagent,
    await-subagents.")
 
-(defun execute-tool-call (conv call)
+(defun execute-tool-call (conv call &key (gate #'gated-run))
   "Do CALL: check its input, pass a write through the gate, run it, and return the
    tool_result block. Every failure becomes an is_error result the model can read and
    recover from — a tool error must never take down the turn, let alone PID 1."
@@ -983,7 +1071,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
          (handler-case
              (let ((thunk (lambda () (funcall (agent-tool-handler tool) input call))))
                (result (clip-result
-                        (if (agent-tool-write-p tool) (gated-run conv call thunk) (funcall thunk)))))
+                        (if (agent-tool-write-p tool) (funcall gate conv call thunk) (funcall thunk)))))
            (serious-condition (c)
              (result (format nil "Error: ~a" (or (ignore-errors (princ-to-string c)) (type-of c))) t))))))))
 
@@ -1008,9 +1096,35 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 
 (defun post-job-and-wait (conv call thunk)
   "Hand THUNK to the environment's thread and wait for it, staying cancellable.
-   A tool in *IN-THREAD-TOOLS* runs right here, on the turn's thread, instead."
+   A tool in *IN-THREAD-TOOLS* runs right here, on the turn's thread, instead; an
+   OFF-MAIN tool sends only its approval over."
   (when (member (call-name call) *in-thread-tools* :test #'string=)
     (return-from post-job-and-wait (funcall thunk)))
+  ;; an OFF-MAIN tool (container-run, web-fetch): only its approval needs the screen.
+  ;; Post just that, then run the tool here, where C-g can stop it and where it
+  ;; cannot freeze the environment while a program or a server takes its time
+  (let ((tool (find-agent-tool (call-name call))))
+    (when (and tool (agent-tool-off-main-p tool))
+      (return-from post-job-and-wait
+        (execute-tool-call conv call
+                           :gate (lambda (conv call work)
+                                   (if (eq (conversation-authority* conv) :ask)
+                                       (let ((verdict (post-thunk-and-wait
+                                                       conv call
+                                                       ;; on the environment's thread: an error
+                                                       ;; here (an EDIT it cannot do) must come
+                                                       ;; back as words, not unwind the loop
+                                                       (lambda ()
+                                                         (handler-case (gated-run conv call (lambda () :approved))
+                                                           (serious-condition (c)
+                                                             (format nil "Not run: ~a" (or (ignore-errors (princ-to-string c)) (type-of c)))))))))
+                                         (if (eq verdict :approved) (funcall work) verdict))
+                                       (gated-run conv call work)))))))
+  (post-thunk-and-wait conv call thunk))
+
+(defun post-thunk-and-wait (conv call thunk)
+  "Queue THUNK as a job for the environment's thread and wait for its value, checking
+   for C-g between waits."
   (let ((job (make-agent-job :conv conv :call call :thunk thunk
                              :gated (and (write-tool-p (call-name call))
                                          (eq (conversation-authority* conv) :ask)))))
@@ -1028,8 +1142,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 (defun run-job (job)
   "Run a posted job (on the environment's thread) and wake its turn."
   (unwind-protect
-       (setf (agent-job-result job)
-             (execute-tool-call (agent-job-conv job) (agent-job-call job)))
+       (setf (agent-job-result job) (funcall (agent-job-thunk job)))
     (setf (agent-job-done job) t)
     (sb-thread:signal-semaphore (agent-job-sem job))))
 

@@ -10,7 +10,8 @@ STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #28). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
-leave it or it dies — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
+leave it or it dies (an error turn after turn; a single failing turn is logged and
+survived since 2026-10-17, [[file:diagnostics.org][diagnostics.org]] §9) — [[file:../initramfs/supervisor.lisp::defun print-menu][supervisor.lisp → print-menu]] is the authoritative
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the
 Workspace ([[file:../initramfs/fb-browser.lisp::defun run-browser-fb][run-browser-fb]]'s default root; the module index is =SuperL-m=), (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
 (w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle

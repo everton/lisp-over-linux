@@ -121,6 +121,24 @@
   (check "it is logged with its message" (yes "(zz-has \"[zz-doomed] UNHANDLED SIMPLE-ERROR: zz guest boom\")"))
   (check "PID 1 is still here" (eql (probe-int "(sb-unix:unix-getpid)") 1))
 
+  (format t "~&~%== an error in a turn of the environment ==~%")
+  ;; TICK-TRAY runs on the clock's deadline every second, inside FB-CYCLE: make it
+  ;; fail once, then every time (GUARDED-FB-CYCLE, fb-browser.lisp)
+  (probe "(progn (new-trail (subj-modules)) (defvar *zz-boom* 0) (setf *zz-boom* 1) (sb-int:encapsulate 'tick-tray 'zz (lambda (f &rest a) (if (plusp *zz-boom*) (progn (decf *zz-boom*) (error \"zz turn boom\")) (apply f a)))) t)" 10.0)
+  (let ((tabs (row "tabs before" (probe-int "(length *trails*)"))))
+    (sleep 3)
+    (check "one failed turn: the environment goes on"
+           (yes "(eq *world-cycle* 'guarded-fb-cycle)"))
+    (check "... with every tab" (eql (row "tabs after" (probe-int "(length *trails*)")) tabs))
+    (check "... saying so on the status line" (yes "(and (search \"zz turn boom\" (or *browser-status* \"\")) t)"))
+    (check "... and in session.log, with the backtrace"
+           (yes "(and (zz-has \"a turn of the environment failed: SIMPLE-ERROR zz turn boom\") (zz-has \"TICK-TRAY\") t)")))
+  (probe "(setf *zz-boom* 1000)")
+  (sleep 6)
+  (check "failing every turn: it leaves the environment (as before)" (yes "(null *world-cycle*)"))
+  (check "... and says why" (yes "(zz-has \"turns failed in a row: leaving the environment\")"))
+  (probe "(progn (sb-int:unencapsulate 'tick-tray 'zz) t)")
+
   (format t "~&~%== archiving, inside the image ==~%")
   (check "set aside + gzip + read back with the image's inflate"
          (yes "(let ((*log-dir* \"/tmp/zz-logs/\")) (ensure-directories-exist *log-dir*) (with-open-file (o (log-path \"session\") :direction :output :if-exists :supersede) (dotimes (i 500) (format o \"2026-10-16 00:00:00Z [main] pulse line ~d~%\" i))) (let ((orig (with-open-file (i (log-path \"session\") :element-type '(unsigned-byte 8)) (let ((b (make-array (file-length i) :element-type '(unsigned-byte 8)))) (read-sequence b i) b)))) (set-aside-live-logs) (archive-pending) (let ((gz (first (directory \"/tmp/zz-logs/archive/*.gz\")))) (and gz (null (pending-logs)) (not (getf *previous-session* :clean)) (equalp orig (lol.inflate:gunzip (with-open-file (i gz :element-type '(unsigned-byte 8)) (let ((b (make-array (file-length i) :element-type '(unsigned-byte 8)))) (read-sequence b i) b)))))))))" 30.0))

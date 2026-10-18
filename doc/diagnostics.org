@@ -267,7 +267,7 @@ Alt-SysRq-w then -c before holding the power button (§6).
   records, file modes, an unhandled error ending only its thread, fd 2 captured and given back at close —
   and *the LDB freeze itself*: a plain SBCL calling =lose()= is still waiting after
   6 s; after =disable_lossage_handler= it exits with the message on stderr.
-- [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 29 checks; with or without
+- [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 35 checks; with or without
   =LOL_GUEST_DISK=test-disk.img=): the boot line, the 4 GiB heap,
   =kernel.panic= = 10, fd 2, the pulse, idle while waiting — then the environment's
   thread is made to spin 13 s (an =INTERRUPT-THREAD= into it from the net REPL) and
@@ -295,3 +295,15 @@ the /client/ failing (its heap, OpenSSL); it would *not* protect it from a tool'
 costs the conversation as a live object to inspect (it becomes a view, like
 [[file:processes.org][processes.org]] §2's worker) and a second heap. Decision deferred until a STALL or
 an =UNHANDLED= in these logs says which part failed.
+
+*Since 2026-10-17 the tools cannot wedge it for long* ([[file:agent.org][agent.org]] §14.11).
+=container-run= and =web-fetch= run on the turn's thread once approved, where C-g
+reaches them. =lisp-eval= stops after 60 s, and every tool's output is capped as it is
+written. The same review made a failing turn of the environment non-fatal. An error
+in one turn of =fb-cycle= (a key's command, a morph's drawing, a service) used to end
+the environment, and its tabs were dropped "to be safe". Now
+[[file:../initramfs/fb-browser.lisp::defun guarded-fb-cycle][=guarded-fb-cycle=]] logs it with its backtrace ("a turn of the environment
+failed"), says it on the status line, marks the whole screen for repair and goes
+on. Only three failed turns in a row, which means the error is in the drawing
+itself, still leave. Asserted by =check-diagnostics.lisp=: one failure keeps both
+tabs, and a failure every turn leaves.
