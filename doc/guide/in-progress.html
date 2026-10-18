@@ -40,7 +40,7 @@ place to read.</p>
   <tr><th>Subsystem</th><th>State on 2026-10-12</th><th>Read</th><th>Will extend</th></tr>
   <tr><td>Multi-device input and hotplug</td><td><strong>Merged.</strong> Every keyboard and pointer at once, plus inotify on <code>/dev/input</code>. Already described.</td>
     <td><a href="../input.org">input.org</a> §4¾</td><td><a href="pixels.html">Pixels and input</a> (done)</td></tr>
-  <tr><td>Runtime-resizable fonts</td><td>Done (2026-10-12): a TrueType font rasterised in pure Lisp, <code>SuperL-=</code> / <code>-</code> / <code>0</code> resize it, the size is remembered in <code>~/.config/lol/settings</code>; the 6x15 <code>/cozette.lolf</code> is the fallback. <a href="../fonts.org">fonts.org</a>.</td>
+  <tr><td>Runtime-resizable fonts</td><td>Done (2026-10-12): a TrueType font rasterised in pure Lisp, <code>SuperL-=</code> / <code>-</code> / <code>0</code> resize it, the size is remembered in <code>~/.lol/settings</code>; the 6x15 <code>/cozette.lolf</code> is the fallback. <a href="../fonts.org">fonts.org</a>.</td>
     <td><a href="../fonts.org">fonts.org</a></td><td>Pixels (the font box in the rendering diagram)</td></tr>
   <tr><td>Networking beyond wired DHCP: DNS, default route, SNTP, Wi-Fi (iwlwifi, tag #26), HTTP + TLS</td><td><strong>Built</strong> on the network track (2026-10-12): default route, lease renewal, a Lisp DNS resolver, SNTP, HTTP/1.1 + HTTPS (the host's libssl), IPv6, and Wi-Fi through the host's <code>wpa_supplicant</code> (<code>SuperL-n</code>). Wi-Fi is untested on hardware until the checklist in networking.org §7.4 is run.</td>
     <td><a href="../networking.org">networking.org</a></td><td>Storage, privilege, network → Networking</td></tr>

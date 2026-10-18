@@ -955,7 +955,7 @@ didactic sub-project it always was.
 
 - *Model* =claude-opus-5-5= by default (§6's sketch said =claude-opus-5=; the default
   moved with the model line). Everything about a request is a special variable, and
-  =~/.config/lol/agent.lisp= may set them: =:model :max-tokens :effort
+  =~/.lol/agent/settings.lisp= (was =~/.config/lol/agent.lisp=, moved at boot) may set them: =:model :max-tokens :effort
   :thinking-display :endpoint :fallbacks :wrap :max-rounds :initiative :authority=.
   The file is one plist, *READ, never LOADed, with =*read-eval*= off* — a settings file
   must not be able to run code, and =#.= would. Unknown keys and ill-typed values are
@@ -991,7 +991,10 @@ didactic sub-project it always was.
 - *Cost*: every response's =usage= (input, cache read, cache write, output) priced per
   model (=+agent-prices+=, the 2026-10-06 first-party rates; a cache write at 1.25×
   input), per turn, per conversation and per session.
-- *The key*: =~/.config/lol/anthropic-api-key=, read at runtime (never in the saved
+- *The key*: =~/.lol/agent/anthropic-api-key= (one line, the key; make it 0600) —
+  since 2026-10-17; it was =~/.config/lol/anthropic-api-key=, and a key left there is
+  moved to the new place at boot by [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] (never overwriting one
+  already there; [[file:session-persistence.org][session-persistence.org]] §3). Read at runtime (never in the saved
   heap, §11), kept in one special variable, never printed, and sent *only* when the
   endpoint is =https://api.anthropic.com= — not over http, not to any other host
   (tested both ways). A diskless boot has no =/home=; the agent then says it has no
@@ -1233,7 +1236,7 @@ Four changes came out of using the agent for real on the laptop:
   session. [[file:../initramfs/agent.lisp::defun allow-all-writes][=allow-all-writes=]] sets the authority dial (§8.9) to =:allow= for
   this session, and for the conversation if it has its own setting, which would
   otherwise win. =:save t= also writes =:authority :allow= to
-  =~/.config/lol/agent.lisp= through [[file:../initramfs/agent.lisp::defun save-agent-setting][=save-agent-setting=]]. That function rewrites
+  =~/.lol/agent/settings.lisp= through [[file:../initramfs/agent.lisp::defun save-agent-setting][=save-agent-setting=]]. That function rewrites
   the whole plist through a temporary file and a rename, so a crash leaves the old
   file or the new one, never half of one. [[file:../initramfs/agent.lisp::defun ask-before-writes][=ask-before-writes=]] undoes it. In the
   environment, the agent's commands offer "Allow all writes (stop asking, this

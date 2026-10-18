@@ -301,7 +301,9 @@ chord instead. =Ctrl--= is fine (=Control_underscore=, byte 31, reaching us as =
 So =note-modifier-key= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] reports those two chords from evdev, the
 way it already reported the Menu key.
 
-*Remembering the size.* Every change is written to =~/.config/lol/settings=, a plist
+*Remembering the size.* Every change is written to =~/.lol/settings=
+(=~/.config/lol/settings= until 2026-10-17; a file there is moved at boot,
+[[file:session-persistence.org][session-persistence.org]] §3), a plist
 the Lisp reader reads back — =(:FONT-SIZE 20)= — by =save-setting=
 ([[file:../initramfs/settings.lisp][initramfs/settings.lisp]]), atomically (a temp file and a rename). =run-browser-fb=
 reads it at start. Neither direction ever signals, =*read-eval*= is off when reading,
@@ -371,7 +373,8 @@ its =cmap= covers and draws =.notdef= for the rest.
   following the cell, the world having repaired the screen (=draw-browser= having run,
   before Morphic's §12 made every pane a morph), the screendump differing, the status
   line, a letter typed after the chord not being swallowed, and the size landing in
-  =~/.config/lol/settings= (diskless: that nothing is written). 18/18 at tag #26.
+  =~/.lol/settings= (diskless: that nothing is written) — 18/18 at tag #26; 19/19 with the disk on
+  2026-10-17, which adds that the file is =HOME/.lol/settings=.
   =check-scroll=, =check-clipboard= and =check-pointer= pass at 18 px
   (=check-clipboard= needed =*gutter-w*= → =tv-gutter-w=).
 

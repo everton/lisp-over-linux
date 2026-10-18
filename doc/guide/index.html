@@ -166,7 +166,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where">firmware → <code>BOOTX64.EFI</code></span>
     There is no bootloader. The kernel's <code>bzImage</code> <em>is</em> an EFI application (the "EFI stub"),
     and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:390</span></a>).
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:392</span></a>).
     The kernel's command line is compiled in (
     <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:398</span></a>). It says
     <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is
@@ -185,7 +185,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
     <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:557</span></a>.
     Then it <code>execve</code>s the Lisp. <code>execve</code> replaces the program, not the process, so the Lisp
     <em>is</em> PID 1. Details are on <a href="system.html">Storage, privilege, network</a>.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:161</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:165</span></a></span>
     <code>save-lisp-and-die</code> named this function as the image's <code>:toplevel</code>
     (<a href="build.html">How the image is built</a>). One binary plays three roles, chosen by
     <code>argv</code>. The <code>worker</code> and <code>job</code> roles exist so that the image can run

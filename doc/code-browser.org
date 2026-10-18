@@ -1808,7 +1808,7 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
     cache. The file is the build host's DejaVu Sans Mono (=LOL_FONT= overrides),
     copied into the cpio, never committed. The size lives in the one shared =font=
     object: =SuperL-= / - / 0= and =C-x C-= / C-- / C-0= change it, the status line
-    says so, =~/.config/lol/settings= remembers it; default 18 px (11×21 cells) for
+    says so, =~/.lol/settings= remembers it; default 18 px (11×21 cells) for
     the laptop's 14-inch 1080p panel. Every layout metric — =+row-h+=, =+bar-h+=, the
     matrix cells, status line, cards, halo, debugger, gutter — is now a function of
     the current font (the + names are symbol macros), so a size change plus a redraw
@@ -2350,9 +2350,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   open questions, is [[file:session-persistence.org][session-persistence.org]].)/
   [FILE-OUT DONE, 2026-10-16 — no longer deferred] [[file:../initramfs/file-out.lisp][file-out.lisp]] writes each
   changed definition back into the checkout's own =.lisp= file (verbatim, exactly-once
-  match; the rest to =~/.local/share/lol/changes-unfolded.lisp=), and the change set
+  match; the rest to =~/.lol/journal/changes-unfolded.lisp=), and the change set
   itself now survives power-off: [[file:../initramfs/journal.lisp][journal.lisp]] appends every Accept to
-  =~/.local/share/lol/changes.lisp= and replays it at boot; the journal view (Spotter
+  =~/.lol/journal/changes.lisp= and replays it at boot; the journal view (Spotter
   "journal") holds =F= file out. Status: [[file:session-persistence.org][session-persistence.org]] §8.
 - *Not a phase, but shipped alongside them: the module index* (§4⅔). [DONE —
   =subj-modules= / =subj-module= in [[file:../initramfs/present.lisp][present.lisp]]; =SuperL-m= — it was the browser's

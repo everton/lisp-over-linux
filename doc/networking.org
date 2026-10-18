@@ -268,7 +268,7 @@ TCP* (an answer too big for UDP comes back truncated; we repeat it over TCP with
 the 2-byte length prefix), a *TTL cache* with *negative caching* (an NXDOMAIN is
 remembered for the SOA's minimum, at most five minutes), and *timeouts and
 retries* over every server, two rounds. *Overrides* come first: our =/etc/hosts=,
-then =~/.config/lol/hosts= (yours to edit), then =(setf (dns-override "name")
+then =~/.lol/hosts= (yours to edit; =~/.config/lol/hosts= until 2026-10-17, moved at boot), then =(setf (dns-override "name")
 "10.0.2.2")= at the REPL. *AAAA* records are asked for only when there is an IPv6
 default route (§2f). The API the other tracks use is [[file:../initramfs/dns.lisp::defun resolve-host][=resolve-host=]] → =#(93 184 215
 14)= (IPv4 when there is one) and =resolve-addresses= (all of them, v4 first — the
@@ -687,7 +687,8 @@ picks the strongest one in range and roams — the job it is good at. Otherwise 
 caches =STATUS= + =SIGNAL_POLL= in =*wifi-state*=, which is all the systray reads.
 
 *Known networks*, never in git or the image:
-- =~/.config/lol/wifi/<SSID in hex>.net=, one readable plist each, created 0600
+- =~/.lol/wifi/<SSID in hex>.net= (=~/.config/lol/wifi/= until 2026-10-17; moved at
+  boot by =migrate-lol-home=, [[file:session-persistence.org][session-persistence.org]] §3), one readable plist each, created 0600
   by =open(2)= itself in a 0700 directory, and written *only after* a typed
   passphrase actually connects;
 - the host's NetworkManager keyfiles. They are root-only (0600) on the host, so

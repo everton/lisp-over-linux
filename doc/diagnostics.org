@@ -212,6 +212,15 @@ backtrace waiting for it.
    A crash midway leaves the plain file, and the next boot finishes it (the gzip is
    written to =.tmp= and renamed, so a half-written archive never looks finished).
 
+Right after =session-boot=, and so the first thing the new log records, the
+supervisor runs [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] (2026-10-17): a file left at a
+pre-2026-10-17 place (=~/.config/lol/…=, =~/.local/share/lol=, =~/.local/state/lol=)
+is renamed into =~/.lol/=, one =lol-home: moved OLD -> NEW= line each, or
+=lol-home: NOT moved …= with the reason when the new place exists or the rename
+fails ([[file:session-persistence.org][session-persistence.org]] §3). =grep lol-home ~/.lol/log/session.log= shows
+what a boot moved. The logs themselves did not move: =~/.lol/log/= was already
+there.
+
 A log that passes 16 MB mid-session is set aside the same way and started afresh,
 so even a session that runs for weeks cannot fill the disk.
 

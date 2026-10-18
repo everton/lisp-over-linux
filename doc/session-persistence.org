@@ -8,7 +8,7 @@ sources and the leave menu's save / don't-save entries now exist — [[file:../i
 differs from this plan, how it was tested). *Image snapshots (§2a, Phase 5) are NOT
 built* and remain a plan. Every open question in §7 was *decided by default
 2026-10-16* and reviewed by the user 2026-10-17: every default kept except §7.8, the
-paths, which become one =~/.lol/= tree — the decision is written under each one.
+paths, which became one =~/.lol/= tree (built 2026-10-17, with a move from the old places at boot) — the decision is written under each one.
 §§0–6 are the design as written on 2026-10-03 against tag #25, kept as the record
 of why; where the build went another way, §8.2 says so.
 
@@ -447,6 +447,8 @@ This pile is small, and it is data, not code. One printed plist,
   (=~/.local/share=: data worth backing up). That is from memory of the spec and was
   not re-checked here. The journal and file-outs are data; the desk is state. /Estimate/ that the split is worth having. A single
   =~/.lol/= is the simpler alternative, and is an open question.
+  /Superseded 2026-10-17:/ the user chose the single tree (§7.8); the desk is
+  =~/.lol/desk/desk.lisp=. The paths in §§2–2c are left as the design wrote them.
 
 ** 2d. Hybrids
 
@@ -460,19 +462,55 @@ This pile is small, and it is data, not code. One printed plist,
 
 * 3. Where things live, and when there is no disk
 
+Since 2026-10-17 everything the environment keeps about you is under one folder,
+=~/.lol/= (§7.8), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]. The persistence files:
+
 | Path                                   | What                                  | Written                        |
 |----------------------------------------+---------------------------------------+--------------------------------|
-| =~/.local/share/lol/changes.lisp=      | the journal                           | on every Accept, =fsync=       |
-| =~/.local/share/lol/changes-unfolded.lisp= | what file-out could not place       | on File out                    |
-| =~/.local/state/lol/desk.lisp=         | tabs, Workspaces, clipboard, recents  | Save and quit; autosave        |
-| =~/.local/share/lol/image=, =image.prev=, =image.build=, =booting= | the optional image (§2a)  | on Save image only             |
+| =~/.lol/journal/changes.lisp=          | the journal                           | on every Accept, =fsync=       |
+| =~/.lol/journal/changes-damaged.lisp=  | a torn tail cut off at boot           | at boot, when the reader stops |
+| =~/.lol/journal/changes-unfolded.lisp= | what file-out could not place         | on File out                    |
+| =~/.lol/journal/changes-discarded-N.lisp= | a discarded journal, moved aside   | on the journal view's =D=      |
+| =~/.lol/journal/replay-off=            | you: "do not replay" (=touch= it from Debian) | never by the image     |
+| =~/.lol/desk/desk.lisp=, =desk-autosave.lisp= | tabs, Workspaces, clipboard, recents | Save and quit; autosave   |
+| =~/.lol/image=, =image.prev=, =image.build=, =booting= | the optional image (§2a, /not built/) | on Save image only |
+
+and, beside them, the rest of the tree:
+
+| Path                  | What                                               | Module                            | Was (before 2026-10-17)               |
+|-----------------------+----------------------------------------------------+-----------------------------------+---------------------------------------|
+| =~/.lol/settings=     | preferences: font size, tap-to-click, =:desk-clipboard= | [[file:../initramfs/settings.lisp][settings.lisp]] | =~/.config/lol/settings=              |
+| =~/.lol/hosts=        | =/etc/hosts=-style name overrides                  | [[file:../initramfs/dns.lisp][dns.lisp]]                          | =~/.config/lol/hosts=                 |
+| =~/.lol/wifi/=        | saved networks; folder 0700, files 0600            | [[file:../initramfs/wifi.lisp][wifi.lisp]]                         | =~/.config/lol/wifi/=                 |
+| =~/.lol/agent/=       | =anthropic-api-key= (0600), =settings.lisp=, =conversations/= | [[file:../initramfs/agent.lisp][agent.lisp]], [[file:../initramfs/agent-store.lisp][agent-store.lisp]] | =~/.config/lol/anthropic-api-key=, =~/.config/lol/agent.lisp= (conversations were already here) |
+| =~/.lol/journal/=     | the table above                                    | [[file:../initramfs/journal.lisp][journal.lisp]], [[file:../initramfs/file-out.lisp][file-out.lisp]] | =~/.local/share/lol/=                 |
+| =~/.lol/desk/=        | the table above                                    | [[file:../initramfs/desk.lisp][desk.lisp]]                         | =~/.local/state/lol/=                 |
+| =~/.lol/web/chrome/=  | the web pane's own Chrome profile                  | [[file:../initramfs/web.lisp][web.lisp]]                          | =~/.config/lol/chrome/=               |
+| =~/.lol/ct/<name>/=   | a container's overlay uppers                       | [[file:../initramfs/containers.lisp][containers.lisp]], =lol-ct.c=   | unchanged                             |
+| =~/.lol/log/=         | session, kernel, stderr, network logs              | [[file:../initramfs/session-log.lisp][session-log.lisp]]                  | unchanged                             |
+
+*Moving from the old layout.* A laptop that ran an older image has files at the
+"Was" places. [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] runs in =supervisor-main= right after
+=session-boot= (so it can log) and before anything reads a setting, the key or the
+journal. For each old path that exists it does a =renameat2(…, RENAME_NOREPLACE)=
+— a rename within =/home=, one filesystem, so a folder of any size moves in one step
+and nothing is copied — and writes =lol-home: moved OLD -> NEW= to =session.log=.
+The rules: it /never overwrites/ (the flag makes the refusal atomic; old and new
+both present is logged as "both kept" and left alone, except two folders, whose
+entries are moved one by one under the same rule); it /never deletes/ a file (an old
+folder goes with =rmdir(2)=, which only removes an empty one, so a file whose move
+failed keeps its folder); it is /idempotent/ (a second boot finds nothing to move);
+and it never signals. Nothing for you to do on the laptop. Tested by
+[[file:../poc/lol-home-test.lisp][poc/lol-home-test.lisp]] (33 checks, fake =HOME=s in =/tmp=) and in the guest by
+[[file:../check-persist.lisp][check-persist.lisp]]'s boot 5 and [[file:../check-files.lisp][check-files.lisp]] (the test disk keeps a
+settings file at the old place on purpose).
 
 - *Ownership is free.* PID 1 runs as the user ([[file:storage.org][storage.org]] §5), so every file
   above is created as =1000:1000= with no =chown= anywhere. Debian sees them as the
   user's own files.
 - *Diskless boots* (QEMU without =test-disk.img=, =lol.disk=none=, another machine):
   /verified/ in [[file:../initramfs/preinit.c::int main][preinit's =main=]], =HOME= is then set to =/=, and we
-  run as root. So =~/.local/share/lol= would be =/.local/share/lol= on the
+  run as root. So =~/.lol= would be =/.lol= on the
   *initramfs*. It is writable and evaporates, which is exactly the silent failure to
   avoid. Persistence must detect "no disk" explicitly: no =$LOL_ROOTD_PID=, or =/home=
   not in =/proc/mounts= (=home-read-only-p= already parses that file). It then
@@ -618,13 +656,18 @@ is ever built (it is left untouched here because this is a plan).
 6. *Persist the clipboard history?* It is the place a pasted password would live.
    Options: keep it, keep only the last N entries, or never.
    /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ never, unless you ask: the setting =:desk-clipboard N= (in
-   =~/.config/lol/settings=, [[file:../initramfs/settings.lisp][settings.lisp]]) keeps the newest N (at most 50).
+   =~/.lol/settings=, [[file:../initramfs/settings.lisp][settings.lisp]]) keeps the newest N (at most 50).
 7. *Workspace text*: always restored, or only Workspaces you named or explicitly kept?
    /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ always restored, with its point (§2c's design).
 8. *Paths*: XDG (=~/.local/share/lol= + =~/.local/state/lol=) or one =~/.lol/=?
-   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ XDG, as §3's table. (The project also has =~/.lol/= — the container
-   state and the logs — and =~/.config/lol/=; one tree would be a later, mechanical
-   move.)
+   /Decided by default 2026-10-16 (XDG); changed by the user on review 2026-10-17:
+   one =~/.lol/= tree./ Built the same day: [[file:../initramfs/lol-home.lisp][lol-home.lisp]], loaded second, is
+   the only place that names a home path — [[file:../initramfs/lol-home.lisp::defun lol-path][=lol-path=]] answers =~/.lol/<sub>=,
+   or =NIL= with no real home — and every module asks it. The journal and its kin
+   are in =~/.lol/journal/=, the desk in =~/.lol/desk/=, and what was in
+   =~/.config/lol/= moved with them (settings, hosts, Wi-Fi, the agent's key and
+   settings, the web profile): §3's table. Files at the old places are /moved/ at
+   boot by [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] (§3, "Moving from the old layout").
 9. *Image snapshots at all?* They mean preinit exec'ing a user-writable file with
    five capabilities (§2a, Security), plus a boot-marker scheme in C. Worth it, or
    is the opaque pile acceptable to lose?
@@ -647,11 +690,11 @@ is ever built (it is left untouched here because this is a plan).
 | File / place | What it does |
 |--------------+--------------|
 | [[file:../initramfs/registry.lisp::defvar *accept-hooks*][=*accept-hooks*=]] (registry.lisp) | run after every /successful/ Accept with the name, kind, label, package and exact text; a hook's string becomes =*accept-note*=, which the status line appends ("Accepted: foo - NOT journalled: …") |
-| [[file:../initramfs/journal.lisp::defun journal-accept][=journal-accept=]] | appends one record (§2b's shape) to =~/.local/share/lol/changes.lisp=: =O_APPEND=, =fsync=, created 0600 |
+| [[file:../initramfs/journal.lisp::defun journal-accept][=journal-accept=]] | appends one record (§2b's shape) to =~/.lol/journal/changes.lisp=: =O_APPEND=, =fsync=, created 0600 |
 | [[file:../initramfs/journal.lisp::defun boot-replay-journal][=boot-replay-journal=]] | called by =supervisor-main= after the network (so the net REPL is up) and before =run-browser-fb=; prints one line, logs every skipped entry to =session.log= ([[file:diagnostics.org][diagnostics.org]]) |
 | [[file:../initramfs/journal.lisp::defun classify-record][=classify-record=]] + [[file:../initramfs/journal.lisp::defun run-record][=run-record=]] | each record: /retired/ (text already the image's), /needs-rebuild/ (a =defstruct=), /pending/ (another build), else Accepted again inside =handler-case= + =with-timeout= (30 s) with warnings muffled; /failed/ on anything that signals |
 | [[file:../initramfs/journal.lisp::defun quarantine-tail][=quarantine-tail=]] | a record that will not read stops the reader; the tail is appended to =changes-damaged.lisp= and the journal rewritten as its readable prefix |
-| [[file:../initramfs/journal.lisp::defun replay-disabled-p][=replay-disabled-p=]] | =lol.replay=off= on the kernel command line, or a file =~/.local/share/lol/replay-off=: the journal is read, nothing in it runs, the desk is not restored |
+| [[file:../initramfs/journal.lisp::defun replay-disabled-p][=replay-disabled-p=]] | =lol.replay=off= on the kernel command line, or a file =~/.lol/journal/replay-off=: the journal is read, nothing in it runs, the desk is not restored |
 | =subj-journal= (Spotter "journal") | this boot's report by status, then this session's Accepts; =a= Accept / =d= drop a pending or failed entry, =F= file out, =D= discard. It opens by itself next to the desk when replay left something for you |
 | [[file:../initramfs/file-out.lisp::defun file-out-changes][=file-out-changes=]] | §2b's fold-back: verbatim, exactly once, atomic; else =changes-unfolded.lisp= |
 | [[file:../initramfs/desk.lisp::defun desk-data][=desk-data=]] / [[file:../initramfs/desk.lisp::defun restore-desk][=restore-desk=]] | §2c: references out ([[file:../initramfs/desk.lisp::defgeneric desk-ref][=desk-ref=]]), a whitelist back ([[file:../initramfs/desk.lisp::defun desk-subject][=desk-subject=]]), trails cut at the first opaque pane, Workspace text + point, recents, the file manager's sort/hidden settings |
@@ -696,12 +739,16 @@ is ever built (it is left untouched here because this is a plan).
   no test entry loops), the torn tail, replay-off, pending Accept/drop, discard,
   file-out (exactly once, already, duplicated text, born), the desk round trip, no
   symbol interned by reading a desk.
-- *Guest*: [[file:../check-persist.lisp][check-persist.lisp]], five boots of one writable copy of
+- *Guest*: [[file:../check-persist.lisp][check-persist.lisp]], six boots of one writable copy of
   =test-disk.img=, §5's plan almost exactly: boot 1 Accepts and saves; debugfs finds
   the journal and the desk owned by 1000, =dumpe2fs= says clean, the fixture changed in
   exactly one place; boot 2 has everything back and is killed with =-9= after an
   Accept and a torn record; boot 3 has that Accept (the =fsync=) and reports the cut;
-  boot 4 honours replay-off; boot 5, diskless, writes nothing under =/.local=.
+  boot 4 honours replay-off, then (added 2026-10-17) renames the journal, the desk and
+  a 24 px font size back to the pre-2026-10-17 places and syncs; boot 5 must find them
+  moved into =~/.lol= (old folders gone, three moves in =session.log=), the font at
+  24 px and the journal replayed; boot 6, diskless, writes nothing under =/.lol= or
+  =/.local=.
 - /Not a finding/: the first guest run had two FAILs that were the harness, not
   persistence — =between-markers= refuses any answer containing =~= (it could be the
   echo of a FORMAT string), and =file-out-summary= names =~/.local/…=. The probes now

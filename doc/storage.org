@@ -337,9 +337,14 @@ copies =test-disk.img= (=cp --sparse=always=) into its scratch directory and att
 /that copy/ writable (the harness's =*disk-copy*=); the copy is deleted at the end,
 and the pristine image is never opened for writing. What the session keeps lives in
 the user's home, owned by the user like every other write here:
-=~/.local/share/lol/changes.lisp= (the journal), =changes-unfolded.lisp=,
-=changes-damaged.lisp=, and =~/.local/state/lol/desk.lisp= (+ =desk-autosave.lisp=)
-— [[file:session-persistence.org][session-persistence.org]] §3. All of it is written before =release-disk=
+=~/.lol/journal/changes.lisp= (the journal), =changes-unfolded.lisp=,
+=changes-damaged.lisp=, and =~/.lol/desk/desk.lisp= (+ =desk-autosave.lisp=)
+— [[file:session-persistence.org][session-persistence.org]] §3. Since 2026-10-17 /everything/ the image keeps
+in your home is under that one =~/.lol/= (settings, Wi-Fi, the agent, the journal,
+the desk, the containers, the logs), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]. Files
+left at the older XDG places (=~/.config/lol=, =~/.local/share/lol=,
+=~/.local/state/lol=) are renamed into it at boot, never overwriting — the table and
+the rules are in §3 there. All of it is written before =release-disk=
 makes =/home= read-only, and none of it on a diskless boot.
 
 The same image backs the file manager's screenshots: [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]]

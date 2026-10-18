@@ -262,7 +262,7 @@ stdout, so a tiny shell moves them before becoming Chrome
 <pre>/sbin/lol-ct -n web -e LANG=C.UTF-8 -- /bin/sh -c \
   'exec 3&lt;&amp;0 4&gt;&amp;1 &gt;&gt;/tmp/lol-chrome-1.log 2&gt;&amp;1 &lt;/dev/null;
    exec /usr/bin/google-chrome --headless=new --remote-debugging-pipe \
-        --user-data-dir=~/.config/lol/chrome --password-store=basic ...'</pre>
+        --user-data-dir=~/.lol/web/chrome --password-store=basic ...'</pre>
 
 <figure>
 <svg viewBox="0 0 940 170">
@@ -414,7 +414,7 @@ event and becomes a new trail.</p>
 </div>
 
 <h3>3.7 Its life</h3>
-<p>Its profile lives in <code>~/.config/lol/chrome</code>, so logins and cookies survive reboots.
+<p>Its profile lives in <code>~/.lol/web/chrome</code>, so logins and cookies survive reboots.
 If Chrome dies, every tab says so and <span class="key">r</span> restarts it. At power-off,
 <span class="fn">web-shutdown</span> sends <code>Browser.close</code> first, so Chrome writes its
 profile while <code>/home</code> is still writable. Measured in the guest with one simple page:

@@ -538,7 +538,8 @@ for.
 
 A Chrome *profile* is the directory that holds cookies (your logins), history,
 saved passwords and cache. =*web-profile*= is =NIL= by default, which means
-=~/.config/lol/chrome/=: *our own* profile, separate from the one the desktop
+=~/.lol/web/chrome/= (=~/.config/lol/chrome/= until 2026-10-17, moved at boot with the
+rest of the [[file:session-persistence.org][=~/.lol/= tree]]): *our own* profile, separate from the one the desktop
 Chrome uses (=~/.config/google-chrome=). Two reasons it is not the default:
 
 - *A profile is locked by the Chrome using it.* The desktop Chrome is usually

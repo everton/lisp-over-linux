@@ -57,7 +57,7 @@ The same day the image gained the *agent* — an LLM client in Lisp with the ima
 introspection as its tools ([[file:agent.org][agent.org]]).
 Userland, 2026-10-12: the environment draws with a TrueType font (the build host's
 DejaVu Sans Mono, copied into the cpio by =build.sh=; Cozette as the fallback) whose
-size =SuperL-= / - / 0= change at run time and =~/.config/lol/settings= remembers
+size =SuperL-= / - / 0= change at run time and =~/.lol/settings= remembers
 ([[file:fonts.org][fonts.org]]).
 The same day the *terminal
 pane* landed ([[file:terminal.org][terminal.org]]): =terminal.lisp=, =pty.lisp=, =terminal-pane.lisp=
@@ -72,6 +72,11 @@ environment; =build.sh= bakes a =*build-stamp*= (the revision, =+dirty=, UTC tim
 into the heap; =SuperL-q= offers "Save and shut down" / "Shut down without saving"
 (or "nothing is kept" without a disk), and the menu's =s= asks the same in text.
 =lol.replay=off= on the cmdline boots without replay.
+Userland, 2026-10-17: *one =~/.lol/= tree* (the user's review of
+[[file:session-persistence.org][session-persistence.org]] §7.8). =lol-home.lisp=, loaded second, names every path
+the image keeps in your home; =supervisor-main= calls =migrate-lol-home= right after
+=session-boot=, renaming anything left at =~/.config/lol=, =~/.local/share/lol= or
+=~/.local/state/lol= into =~/.lol= (never overwriting, each move in =session.log=).
 Userland, 2026-10-16, after a session froze on the laptop: *crash diagnostics*
 ([[file:diagnostics.org][diagnostics.org]]). =session-log.lisp= keeps =~/.lol/log/= (a session log with a
 pulse, STALL reports with every thread's backtrace, the agent's turns and calls;
@@ -199,6 +204,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
 
   | [[file:../initramfs/registry.lisp][=registry.lisp=]]    | =load-recording= + the definition registry (=source-of=, =senders=) — loaded first, plainly; its last form records its *own* source (=record-source=), since =load-recording= cannot load the file that defines it |
   | [[file:../initramfs/logcount-fix.lisp][=logcount-fix.lisp=]] | *first*: patches SBCL 2.6.8's =LOGCOUNT= routine for CPUs without POPCNT (QEMU's default qemu64), then self-tests with POPCNT switched off — without it, compiling arithmetic at runtime faults the guest ([[file:inspector-history.org][inspector-history.org]] §5.6) |
+  | [[file:../initramfs/lol-home.lisp][=lol-home.lisp=]]    | =~/.lol=: the /one/ place that names where things are kept (=lol-path=, =NIL= with no real home), and =migrate-lol-home=, which the supervisor runs right after =session-boot= to rename files at the pre-2026-10-17 XDG places into =~/.lol= — second, so the logs and every later module can ask it ([[file:session-persistence.org][session-persistence.org]] §3) |
   | [[file:../poc/deflate.lisp][=poc/deflate.lisp=]] | =lol.deflate=: the DEFLATE / zlib / gzip *writer* (=inflate.lisp= is the reader) — it gzips the previous boot's logs; =host-client/png.lisp= loads it too |
   | [[file:../initramfs/session-log.lisp][=session-log.lisp=]] | =~/.lol/log=: the session log, the pulse and STALL watcher, unhandled errors ending only their thread, LDB off, fd 2 into =stderr.log=, per-boot archiving — early, so every later module can log ([[file:diagnostics.org][diagnostics.org]]) |
   | [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] | SBCL's *own* source, read on demand from the =./sbcl= tree on the mounted =/home= (logical =SYS:= path → file → the form at the recorded offset, cut out by a textual scanner); =show-reference= appends it below a builtin's facts ([[file:code-browser.org][code-browser.org]], "Two kinds of subject") |
@@ -221,7 +227,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../poc/inflate.lisp][=poc/inflate.lisp=]] | =lol.inflate=: DEFLATE / zlib / gzip in pure Lisp ([[file:previews.org][previews.org]]) — the file manager's =.gz= previews |
   | [[file:../poc/image.lisp][=poc/image.lisp=]]   | =lol.image=: image files -> canvas pixels (uses inflate; [[file:previews.org][previews.org]]) — the file manager's image previews |
   | [[file:../initramfs/files.lisp][=files.lisp=]]       | the file system as data: lstat/readdir/rename/symlink/… via =sb-unix= + libc, bounded =find-files=, the atomic save, the Spotter's path grammar ([[file:file-manager.org][file-manager.org]]) |
-  | [[file:../initramfs/settings.lisp][=settings.lisp=]]    | =~/.config/lol/settings=: the user's preferences as a READable plist (=setting=, =save-setting=), e.g. the font size; never signals, writes nothing without a real home ([[file:fonts.org][fonts.org]] §6) |
+  | [[file:../initramfs/settings.lisp][=settings.lisp=]]    | =~/.lol/settings=: the user's preferences as a READable plist (=setting=, =save-setting=), e.g. the font size; never signals, writes nothing without a real home ([[file:fonts.org][fonts.org]] §6) |
   | [[file:../initramfs/file-views.lisp][=file-views.lisp=]]  | folders and files as SUBJECTS: =present= / =present-preview= / =commands-for=, the sniffers and archive readers ([[file:file-manager.org][file-manager.org]]) |
   | [[file:../poc/terminal.lisp][=poc/terminal.lisp=]] | =lol.terminal=: the VT engine — UTF-8 bytes in, a cell grid out; keys, mouse and paste encoded back ([[file:terminal.org][terminal.org]]) |
   | [[file:../initramfs/pty.lisp][=pty.lisp=]]         | pseudo-terminals: =/dev/ptmx=, =posix_spawn= with =POSIX_SPAWN_SETSID= so the child's controlling terminal is the slave ([[file:terminal.org][terminal.org]] §3) |
@@ -251,9 +257,9 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/http.lisp][=http.lisp=]]        | the HTTP/1.1 client, =http-request= (chunked, redirects, streaming) ([[file:networking.org][networking.org]] §2e) |
   | [[file:../initramfs/wifi.lisp][=wifi.lisp=]]        | Wi-Fi: rfkill, the host's =wpa_supplicant= and its control socket, saved / imported networks, the systray item ([[file:networking.org][networking.org]] §7) |
   | [[file:../initramfs/net-views.lisp][=net-views.lisp=]]   | the network as a subject: =SuperL-n=, the Spotter's "network"/"wifi" (uses shell + wifi) |
-  | [[file:../initramfs/journal.lisp][=journal.lisp=]]     | the change journal: every Accept appended (fsync'd) to =~/.local/share/lol/changes.lisp=, replayed at boot one guarded entry at a time; the journal view ([[file:session-persistence.org][session-persistence.org]]) |
+  | [[file:../initramfs/journal.lisp][=journal.lisp=]]     | the change journal: every Accept appended (fsync'd) to =~/.lol/journal/changes.lisp=, replayed at boot one guarded entry at a time; the journal view ([[file:session-persistence.org][session-persistence.org]]) |
   | [[file:../initramfs/file-out.lisp][=file-out.lisp=]]    | file-out: write each changed definition back into its =.lisp= file in the checkout, verbatim |
-  | [[file:../initramfs/desk.lisp][=desk.lisp=]]        | the desk: tabs, Workspace text, recents saved to =~/.local/state/lol/= and restored at boot; the autosave service; the console's =s= |
+  | [[file:../initramfs/desk.lisp][=desk.lisp=]]        | the desk: tabs, Workspace text, recents saved to =~/.lol/desk/= and restored at boot; the autosave service; the console's =s= |
   | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]  | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel= |
 
 Ordering constraints, so you know which moves are safe: =line-editor= must precede

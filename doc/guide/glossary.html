@@ -40,7 +40,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>EFISTUB</dt>
   <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
     <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:390</span></a>;
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:392</span></a>;
     <a href="../micro-distro.org">micro-distro.org</a>).</dd>
   <dt>initramfs, cpio</dt>
   <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
