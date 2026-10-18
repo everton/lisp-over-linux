@@ -9,7 +9,8 @@ no drift over 3 minutes). The recorder (=recorder.lisp=, =SuperL-r= / =SuperL-S-
 tray, the recorder pane and the recordings) and the full-screen player
 (=player.lisp=, the screen lent to the host's MPlayer) pass =check-recorder.lisp= in
 QEMU, and so does the damage log (step 5: =damage-log.lisp=, recorded as rects and
-encoded after the stop) — 39 checks; a recording made on the laptop is owed. §13 is what shipped, what
+encoded after the stop) — 39 checks. *On the laptop (2026-10-18) the user recorded a
+live take with sound and played it back: everything worked* (§13.6). §13 is what shipped, what
 changed against this design, and what was measured. Written first for the user to
 review, the way [[file:morphic.org][morphic.org]] was; the user then said to go on alone (2026-10-18), so
 §12's defaults stand as decided. Every claim about /our/ code, the kernel tree, the
@@ -932,3 +933,11 @@ test), and the log's size on a long take of real work.
 Worth noting back: the bar moving with your voice, the stale count of a long take,
 the CPU while recording (=top= in a terminal), and whether the two modes keep the
 sound on the picture.
+
+*First take on the laptop (2026-10-18, its =result.lisp=):* live, 18.4 s, one segment,
+1920×1200, 1.3 MB; *552 frames — 30.0 a second exactly — with 7 stale*, so the encoder
+kept up at full resolution; H.264 + AAC 48 kHz. The user's verdict: the recording,
+the sound and the player all worked. Its loudest moment was *0 dB*, full scale: the
+mic touched its ceiling somewhere and may have clipped — if speech sounds harsh,
+lower =Capture Volume= or the headset mic's boost. Not yet tried there: a logged
+take, a long one, the clap test for sync.
