@@ -909,3 +909,26 @@ pointer drawer took one argument where it is called with three.
 /To prove on the laptop:/ that a logged take's sound sits on its picture as closely
 as a live one's (a clap on camera — or a key pressed with the mic near it — is the
 test), and the log's size on a long take of real work.
+
+** 13.6 Try it on the laptop (what QEMU could not show)
+
+1. Boot the image built from =main= (=./build.sh --install-host=).
+2. Plug the headset in. =SuperL-r=: the tray turns red, =REC 00:01 ######=. *Talk,
+   and watch the bar move* — the one thing QEMU's silent card could not prove. A
+   bar that stays at =......= while you speak is a mic problem: the headset's mute
+   switch, or the capture gain (=(mixer-controls)= shows =Capture Volume= and the
+   mic boosts; =Capture Source= picks the input).
+3. Work for a while, =SuperL-r= to pause, again to resume, =SuperL-S-r= to stop:
+   =SAVING n%=, then the status line names the file.
+4. Spotter =record=: the recorder pane, the new recording first. Enter shows its
+   result (length, size, frames, *stale* frames — a high count means the encoder
+   could not keep up at 1920×1200 — and the loudest moment); =p= plays it.
+5. *Sync*: in a short take, tap the desk or clap once next to the mic while pressing
+   a key that changes the screen (say, typing into the Workspace). In the playback,
+   the sound and the change should be together; §5.1 measured 27 ms on the host.
+6. The same with =m= in the recorder pane first — a *logged* take (=REC LOG=), encoded
+   after the stop: a longer =SAVING= at the end, nearly no CPU while recording.
+
+Worth noting back: the bar moving with your voice, the stale count of a long take,
+the CPU while recording (=top= in a terminal), and whether the two modes keep the
+sound on the picture.
