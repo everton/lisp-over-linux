@@ -1402,7 +1402,7 @@
       (when (eq (getf it :icon) :agent)
         (setf pen (+ 5 (draw-agent-icon canvas pen (if (eq (getf it :tone) :off) *ui-dim* *agent-icon-color*)))))
       (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen (text-dy +bar-h+)
-                                        (if (member (getf it :kind) '(:battery :wifi :wired :agent))   ; :agent — agent-ui.lisp
+                                        (if (member (getf it :kind) '(:battery :wifi :wired :agent :recording))   ; :agent — agent-ui.lisp; :recording — recorder.lisp
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
     (values x0 clip)))
@@ -2754,6 +2754,10 @@
           (funcall 'web-open) nil)
          ((member key '(#\n #\N))                                              ; the network view
           (when (fboundp 'open-network) (funcall 'open-network)) nil)
+         ((member key '(#\r #\R))                     ; the screen recorder (recorder.lisp):
+          (when (fboundp 'recorder-key)               ; r record/pause/resume, S-r stop
+            (funcall 'recorder-key (or (eql key #\R) (lol.canvas:shift-p state))))
+          nil)
          ((member key '(#\l #\L))                                              ; the CL-USER package
           (new-trail (find-package :cl-user)) nil)
          ((member key '(#\h #\H)) (open-clipboard-manager) nil)               ; clipboard history

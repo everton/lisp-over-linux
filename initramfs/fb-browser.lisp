@@ -1208,6 +1208,19 @@
 ;;; rectangle under the arrow, and simply do not draw it again.
 (defparameter +cursor-idle-ms+ 3000 "Mouse inactivity, in ms, before the pointer hides.")
 (defvar *cursor-hidden* nil "Is the pointer currently hidden for inactivity?")
+
+;;; Every write of ours to /dev/fb0 is in the five functions below — PUT-CURSOR,
+;;; PRESENT-FRAME, PRESENT-REPAIR, MOVE-CURSOR, HIDE-CURSOR — which is what makes
+;;; these two hooks enough (doc/screencast.org §1, §8.2):
+(defvar *frame-tap* nil
+  "A function called (no arguments) each time a repair or a whole frame is presented:
+   the screen recorder's \"the canvas changed\" (recorder.lisp). NIL: nothing to tell.")
+(defvar *screen-lent* nil
+  "True while another program owns /dev/fb0 — the host's MPlayer playing a video
+   full screen (player.lisp). Only one process may write the screen at a time
+   (doc/processes.org), so while it is lent nothing of ours is sent: the world goes
+   on repairing the CANVAS, and the whole frame is presented when the screen comes
+   back.")
 (defvar *pointer-active-at* 0 "Internal-real-time of the last mouse activity.")
 
 (defun ms-since (time)
@@ -1221,6 +1234,7 @@
 
 (defun put-cursor (canvas x y)
   "Show the pointer at X,Y over CANVAS's pixels, sending only the arrow's patch."
+  (when *screen-lent* (return-from put-cursor nil))
   (let* ((patch (or *cursor-patch*
                     (setf *cursor-patch* (lol.canvas:make-canvas +cursor-w+ +cursor-h+))))
          (dst (lol.canvas:canvas-pixels patch))
@@ -1237,6 +1251,8 @@
 (defun present-frame (canvas)
   "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is
    hidden for inactivity)."
+  (when *frame-tap* (funcall *frame-tap*))
+  (when *screen-lent* (return-from present-frame nil))
   (lol.fb:present-fb canvas)
   (when (and *fb-mouse* (not *cursor-hidden*)) (put-cursor canvas *cursor-x* *cursor-y*)))
 
@@ -1250,6 +1266,8 @@
   "Send what LOL.MORPH:WORLD-REPAIR just redrew: the whole frame when FULL (then
    exactly what the loop always did), else each rect alone. The pointer goes back on
    top if a rect ran under it, and is moved if it moved since it was last drawn."
+  (when (and *frame-tap* (or full rects)) (funcall *frame-tap*))
+  (when *screen-lent* (return-from present-repair nil))
   (cond
     (full (present-frame canvas))
     (rects
@@ -1264,6 +1282,7 @@
   "The pointer moved and nothing else changed: put back what was under it (straight
    from CANVAS), then draw it at its new place. Two tiny writes instead of a frame.
    A hidden pointer has nothing to put back; it just reappears."
+  (when *screen-lent* (return-from move-cursor nil))
   (unless *cursor-hidden*
     (lol.fb:present-fb-rect canvas old-x old-y +cursor-w+ +cursor-h+))
   (setf *cursor-hidden* nil)
@@ -1277,6 +1296,7 @@
 
 (defun hide-cursor (canvas)
   "Take the pointer off the screen: re-send the canvas pixels under it."
+  (when *screen-lent* (return-from hide-cursor nil))
   (unless *cursor-hidden*
     (lol.fb:present-fb-rect canvas *cursor-x* *cursor-y* +cursor-w+ +cursor-h+)
     (setf *cursor-hidden* t)))
@@ -1512,7 +1532,11 @@
         ;; overlay on top), the pointer to the morph under it
         (dolist (e (input-events kb ms kev xres yres))
           (when (or (eq e :eof)
-                    (eq :quit (lol.morph:world-dispatch *world* e))
+                    ;; the screen lent to the player (player.lisp): its keys are the
+                    ;; player's, turned into MPlayer's commands; the world gets none
+                    (if (and *screen-lent* (fboundp 'player-event))
+                        (progn (funcall 'player-event e) nil)
+                        (eq :quit (lol.morph:world-dispatch *world* e)))
                     *world-quit*)
             (return-from fb-cycle :quit)))
         ;; a bare move: the frame is still right, only the arrow is in the wrong place
@@ -2331,6 +2355,13 @@
      ("Vol+ / Vol- keys"   "volume up / down 5% (held: repeats)")
      ("Mute key"           "mute / unmute (the tray says VOL)")
      ("Mic-mute key"       "microphone off / on"))
+    ("Recording  (doc/screencast.org)"
+     ("Super-r"            "record the screen + the mic;")
+     (""                   "  again: pause / resume")
+     ("Super-S-r"          "stop, save, show the result")
+     ("Spotter \"record\""  "the recorder: level, recordings")
+     ("  p / w on one"     "play it full screen / in a window")
+     ("  playing"          "SPC pause, arrows seek, q back"))
     ("Workspace & source"
      ("Tab"                "complete the symbol (else indent)")
      ("C-< / C->  M-< M->" "start / end of the buffer")
