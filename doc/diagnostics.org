@@ -43,6 +43,42 @@ least four causes, and each needs a different witness.
 4. *The kernel is stuck* (a driver, the Wi-Fi firmware, the display). No Lisp code
    sees that. §6.
 
+A fifth, found on the laptop on 2026-10-17 and a special case of the first: *the
+console was stopped*. A terminal's line discipline has software flow control:
+with the =IXON= input flag on, the byte Ctrl-S (XOFF, "transmit off") is taken by
+the kernel — it never reaches the program — and *stops the terminal's output*;
+every later =write(2)= to it blocks until a Ctrl-Q (XON). The environment's raw
+mode cleared =ICANON=, =ECHO= and =ISIG= but left =IXON= on, so a =C-s= typed in it
+(alone, or inside =C-x C-s=) stopped the console silently, and the freeze came
+later, at the next write: a Workspace =(play …)= whose =defun= had not been
+evaluated made the compiler print "undefined function: PLAY" to =*error-output*=,
+which is the console, and the environment's thread waited in
+=FLUSH-OUTPUT-BUFFER= — the STALL report (§3) showed exactly that frame. Pressing
+=C-q= would have released it. Fixed twice: raw mode clears =IXON= and =IXOFF=
+([[file:../initramfs/line-editor.lisp::defconstant +ixon][line-editor.lisp]], so =C-s= / =C-q= are keys like any other), and the Workspace's
+=ws-eval= captures =*error-output*= as it does =*standard-output*=, so a warning
+lands in the Workspace and not on a console nobody sees. =check-clipboard.lisp=
+section L asserts both; the freeze was reproduced in QEMU first (after a QMP
+=C-s=, a write to =*stderr*= blocked; after =C-q= it went through).
+
+The same test found a second key that does it, which no termios flag governs:
+*Scroll Lock*. The console's default keymap binds it to =Hold= (=K_HOLD=,
+=0x0209=; =defkeymap.c_shipped= has it at keycode 70 in the plain and Alt tables),
+and the VT's =fn_hold= ([[file:../linux/drivers/tty/vt/keyboard.c::static void fn_hold][=drivers/tty/vt/keyboard.c=]]) calls =stop_tty()= itself — the
+console stops whatever =IXON= says. The laptop's own keyboard has no Scroll Lock;
+an external one does. Now [[file:../initramfs/fb-browser.lisp::defun unbind-console-hold][=unbind-console-hold=]] rewrites every keymap entry that
+holds =Hold= on that key to =K_HOLE= (VoidSymbol) when the environment starts,
+through =KDGKBENT= / =KDSKBENT= (=0x4B46= / =0x4B47=, the latter needing
+=CAP_SYS_TTY_CONFIG=, one of PID 1's five capabilities) — the way
+=unbind-console-ctrl-dot= already took Compose off =Ctrl-.=. Section L asserts
+that a QMP =scroll_lock= no longer stops the console.
+
+And the Workspace's message got shorter on the way: =ws-eval= now keeps what the
+compiler said apart from what the form printed, as one short note per message
+(=ws-compiler-notes=). =C-x C-e= on =(zz-nothing 1 2)= says only
+=(ZZ-NOTHING 1 2) error: The function ZZ-NOTHING is undefined.=, and a =defun= that
+calls something undefined says ~=> ZZ-F   [undefined function: ZZ-BAR]~.
+
 * 2. The logs
 
 Everything goes to =~/.lol/log/= — on the laptop that is the host's =/home=, which

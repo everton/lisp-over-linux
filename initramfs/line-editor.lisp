@@ -27,6 +27,16 @@
 (defconstant +vmin-off+     (+ 17 6))      ; c_cc[VMIN]
 (defconstant +icanon\|echo+ #x0A)          ; ICANON(0x02) | ECHO(0x08), both in c_lflag's low byte
 (defconstant +isig+         #x01)          ; ISIG — generates SIGINT/SIGQUIT from Ctrl-C/\
+;; IXON (0x0400) and IXOFF (0x1000) live in c_iflag, in its SECOND byte (0x04, 0x10).
+;; With IXON on, the tty driver takes Ctrl-S (XOFF) and Ctrl-Q (XON) for itself: the
+;; byte never reaches us, and Ctrl-S STOPS the terminal's output — every later write to
+;; it blocks until a Ctrl-Q. Found 2026-10-17: a C-s typed in the environment (alone,
+;; or in C-x C-s) left the console stopped, and the next compiler warning printed to
+;; *error-output* froze the environment's thread in FLUSH-OUTPUT-BUFFER (the STALL
+;; report showed it; check-clipboard.lisp asserts it no longer can). So raw mode
+;; clears both.
+(defconstant +iflag-byte1-off+ 1)          ; byte offset of c_iflag's second byte
+(defconstant +ixon\|ixoff+  #x14)          ; IXON(0x04) | IXOFF(0x10), in that byte
 
 (sb-alien:define-alien-routine ("tcgetattr" %tcgetattr) sb-alien:int
   (fd sb-alien:int) (tio (sb-alien:* sb-alien:unsigned-char)))
@@ -60,6 +70,8 @@
                 (setf (sb-alien:deref ,work ,i) (sb-alien:deref ,saved ,i)))
               (setf (sb-alien:deref ,work +lflag-off+)            ; clear ICANON|ECHO [|ISIG]
                     (logand (sb-alien:deref ,work +lflag-off+) (lognot ,mask)))
+              (setf (sb-alien:deref ,work +iflag-byte1-off+)      ; clear IXON|IXOFF: C-s, C-q
+                    (logand (sb-alien:deref ,work +iflag-byte1-off+) (lognot +ixon\|ixoff+)))
               (setf (sb-alien:deref ,work +vtime-off+) 0          ; VTIME=0, VMIN=1:
                     (sb-alien:deref ,work +vmin-off+)  1)         ; block for one keystroke
               (%tcsetattr ,g-fd 0 ,work)           ; 0 = TCSANOW

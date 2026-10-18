@@ -24,6 +24,10 @@
 ;;;;      move the Spotter's selection; SuperL-q asks how to leave
 ;;;;   K. undo: C-_ takes back typing, C-/ goes further, a motion ends the run and
 ;;;;      C-x u then redoes (Emacs's undo-the-undo)
+;;;;   L. C-s and C-q reach the environment (IXON off): after C-s the console still takes
+;;;;      a write; Scroll Lock (the VT's Hold) no longer stops it either; a Workspace
+;;;;      eval's compiler warning is a short note, and Do it on an undefined call says
+;;;;      just the error
 ;;;;
 ;;;; The touchpad's emulated buttons (two-finger press = middle, bottom-right press =
 ;;;; right) cannot be driven here — QEMU emulates no touchpad — so they were checked by
@@ -265,6 +269,36 @@
                     (prin1-to-string (format nil "~a~%" (read-from-string start)))))
     (qmp-chord "ctrl" "x") (qmp-key "u") (sleep 0.6)
     (check "and C-x u again, the line typed after it" (ws-text-has (format nil "~%undo me"))))
+
+  (format t "~&~%== L. C-s and C-q are keys, not flow control ==~%")
+  ;; Until 2026-10-17 raw mode left IXON on: the tty driver ate C-s as XOFF and STOPPED
+  ;; the console, and the next write to it (a compiler warning on *error-output*)
+  ;; froze the environment's thread. Now both reach us, and nothing can stop the console.
+  (let ((write-form "(let ((th (sb-thread:make-thread (lambda () (format sb-sys:*stderr* \"probe~%\") (finish-output sb-sys:*stderr*) :wrote)))) (handler-case (sb-thread:join-thread th :timeout 3) (sb-thread:join-thread-error () :blocked)))"))
+    (qmp-chord "ctrl" "s") (sleep 0.8)
+    (check "after C-s the console still takes a write (no XOFF)"
+           (string= (probe write-form 6) ":WROTE"))
+    (qmp-chord "ctrl" "q") (sleep 0.8)
+    (check "the console's raw mode has IXON and IXOFF off"
+           (yes "(let ((tio (sb-alien:make-alien sb-alien:unsigned-char 60))) (%tcgetattr 0 tio) (prog1 (zerop (logand #x14 (sb-alien:deref tio 1))) (sb-alien:free-alien tio)))"))
+    ;; a compiler warning from the Workspace lands in the Workspace, not on the console
+    (check "a Workspace warning is captured as a short note, not printed to the console"
+           (search "(\"undefined function: ZZ-NEVER-DEFINED\")"
+                   (probe "(nth-value 3 (ws-eval (quote (zz-never-defined 1))))" 6)))
+    ;; Scroll Lock is the VT's Hold: it stops the console whatever the termios say
+    (check "Scroll Lock no longer holds the console (Hold taken off the keymap)"
+           (progn (qmp-key "scroll_lock") (sleep 0.8)
+                  (prog1 (string= (probe write-form 6) ":WROTE")
+                    (qmp-key "scroll_lock") (sleep 0.5))))
+    (check "the keymap's keycode 70 holds nothing in the plain and Alt tables"
+           (yes "(and (eql (console-kbent 0 70) +k-hole+) (eql (console-kbent 8 70) +k-hole+))"))
+    ;; Do it on an undefined call, by real keys: one short line, the error alone
+    (probe "(let ((tv (pane-tv (current-pane)))) (lol.textview:tv-key tv :end 4) (ws-insert tv (format nil \"~%(zz-nothing 1 2)\")) t)")
+    (qmp-chord "ctrl" "x") (qmp-chord "ctrl" "e") (sleep 1.5)
+    (let ((status (probe "*browser-status*")))
+      (format t "~&  status: ~a~%" status)
+      (check "Do it on an undefined function says just the error"
+             (string= status "\"(ZZ-NOTHING 1 2) error: The function ZZ-NOTHING is undefined.\""))))
   t)
 
 (run-guest-checks "check-clipboard" #'checks)

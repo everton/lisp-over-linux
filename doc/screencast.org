@@ -521,6 +521,21 @@ screen is 1280×800; its sound card is QEMU's own codec, not the laptop's ALC289
 ([[file:micro-distro.org][micro-distro.org]], "Booting from the host's GRUB"), or copy =iso_root/= to the
 USB stick as =build.sh= prints.
 
+*First boot on the laptop (2026-10-17, from =~/.lol/log= read back on Debian):* the
+card was found and the codec configured — =kernel.log= has =ALC289: picked fixup
+(pin match)= and =autoconfig for ALC289=: one speaker line out (0x17), one
+headphone out (0x21), inputs =Internal Mic=0x12=, =Headset Mic=0x19=,
+=Headphone Mic=0x1b= (§2.1's nodes, as Debian's kernel sees them). =session.log='s
+=sound:= line: 25 controls, volume set to 51 % (50 % rounded onto Master's 0–87 steps),
+and =restore-audio= *had* to switch on =Master Playback Switch=, =Capture Switch= and
+raise =Capture Volume= from its minimum — so the codec's own boot defaults are mute
+for playback and for the mic, and §3.1's job is not optional. (The HDMI codec, #2,
+is driven by the generic parser since =SND_HDA_CODEC_HDMI= is off; it shows no
+outputs and is harmless.) The first =(play …)= then froze the environment — not
+sound's fault: [[file:diagnostics.org][diagnostics.org]] §1, the stopped console, fixed the same night.
+Picture, sound in the headset and the volume keys on the laptop are still to be
+seen.
+
 *** 1. Is there sound at all?
 
 - The tray should show =VOL 50%= (the first boot's level; after that, the last one
@@ -547,7 +562,12 @@ ffmpeg -f lavfi -i testsrc2=size=640x400:rate=30 -f lavfi -i sine=frequency=440 
 
 Use your Workspace, or keep the test apart in a *new* one: =SuperL-S-e= opens
 another Workspace tab (the desk keeps its text across reboots, like the first).
-Paste this, put the caret after its last parenthesis and press =C-x C-e= (/Do it/):
+Paste this, put the caret after its *last* parenthesis and press =C-x C-e= (/Do it/).
+The status line must then end in ~=> PLAY~ — the function's name, which is what a
+=defun= returns. If it does not, the =defun= was not evaluated, and a =(play …)=
+will only report "undefined function: PLAY" (in the status line since 2026-10-17; on
+the first laptop try that warning went to the console and froze the environment —
+[[file:diagnostics.org][diagnostics.org]] §1, the stopped console):
 
 #+begin_src lisp
 (defun play (file &key window)

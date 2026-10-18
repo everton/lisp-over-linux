@@ -789,17 +789,65 @@
     (substitute #\Space #\Newline (format nil "~s" form))))
 
 (defun ws-eval (form)
-  "Eval FORM; return (values OK RESULT-or-CONDITION OUTPUT). OUTPUT is whatever the
-   form printed — *standard-output* / *trace-output* are bound to a string stream so
-   a =(format t …)= in the Workspace is captured (the notebook transcript) instead of
-   vanishing behind the framebuffer. Errors are caught, never thrown — a bad form
-   must not take down the browser (nor PID 1); output printed before it still returns."
-  (let ((out (make-string-output-stream)))
-    (handler-case
-        (let ((v (let ((*standard-output* out) (*trace-output* out)) (eval form))))
-          (values t v (get-output-stream-string out)))
-      (serious-condition (c) (values nil c (get-output-stream-string out))))))
+  "Eval FORM; return (values OK RESULT-or-CONDITION OUTPUT NOTES). OUTPUT is whatever
+   the form printed — *standard-output* / *trace-output* are bound to a string stream
+   so a =(format t …)= in the Workspace is captured (the notebook transcript) instead
+   of vanishing behind the framebuffer. NOTES are the compiler's messages, one short
+   string each (\"undefined function: PLAY\", WS-COMPILER-NOTES): EVAL compiles, and
+   the compiler writes to *error-output* — on the guest the console, which nobody
+   sees under KD_GRAPHICS and which, stopped by a stray XOFF, once froze the
+   environment on the write (2026-10-17, line-editor.lisp's IXON note). So
+   *error-output* is captured too, and what in it is not the compiler's joins OUTPUT.
+   Errors are caught, never thrown — a bad form must not take down the browser (nor
+   PID 1); output printed before it still returns."
+  (let ((out (make-string-output-stream)) (err (make-string-output-stream)))
+    (flet ((finish (ok v)
+             (multiple-value-bind (printed notes)
+                 (ws-compiler-notes (get-output-stream-string err))
+               (values ok v (concatenate 'string (get-output-stream-string out) printed)
+                       notes))))
+      (handler-case
+          (let ((v (let ((*standard-output* out) (*trace-output* out) (*error-output* err))
+                     (eval form))))
+            (finish t v))
+        (serious-condition (c) (finish nil c))))))
 
+(defun ws-compiler-notes (text)
+  "Split TEXT, what reached *error-output* during an eval, into (values PRINTED NOTES).
+   SBCL's compiler messages are the lines starting with ';' — a context ('; in: …'),
+   then '; caught STYLE-WARNING:' and the message indented under it, and at the end a
+   'compilation unit finished' summary repeating it. NOTES keeps each message once,
+   joined onto one line, without the COMMON-LISP-USER:: prefix (the Workspace's own
+   package): (\"undefined function: ZZ-NOTHING\"). PRINTED is every other line — what
+   the form itself wrote to *error-output*."
+  (let ((printed '()) (notes '()) (current nil) (in-caught nil))
+    (flet ((end-note ()
+             (when current
+               (let ((s (ws-remove-string "COMMON-LISP-USER::"
+                                       (format nil "~{~a~^ ~}" (reverse current)))))
+                 (pushnew s notes :test #'string=))
+               (setf current nil))))
+      (with-input-from-string (in text)
+        (loop for line = (read-line in nil) while line
+              do (cond ((not (and (plusp (length line)) (char= (char line 0) #\;)))
+                        (end-note) (setf in-caught nil) (push line printed))
+                       ((search "; caught " line :end2 (min 9 (length line)))
+                        (end-note) (setf in-caught t))
+                       ((search "compilation unit finished" line)
+                        (end-note) (setf in-caught nil))
+                       (in-caught
+                        (let ((s (string-trim "; " line)))
+                          (if (plusp (length s)) (push s current) (progn (end-note) (setf in-caught nil)))))))
+        (end-note)))
+    (values (format nil "~{~a~%~}" (reverse printed)) (reverse notes))))
+
+(defun ws-remove-string (prefix string)
+  "STRING with every occurrence of PREFIX taken out."
+  (with-output-to-string (s)
+    (loop with start = 0
+          for hit = (search prefix string :start2 start)
+          do (write-string string s :start start :end (or hit (length string)))
+             (if hit (setf start (+ hit (length prefix))) (loop-finish)))))
 (defun ws-insert (tv string)
   "Insert STRING into TV at the caret, via the editor's own keys (so layout,
    syntax and the caret all stay consistent)."
@@ -817,18 +865,21 @@
 (defun workspace-do-it (pane &optional toplevel)
   "Eval the form before point (C-x C-e), the selection when there is one, or with
    TOPLEVEL the top-level form around the caret (C-c C-e); show the value (or error),
-   and any printed output, in the status line."
+   and any printed output, in the status line. The compiler's notes follow a value
+   (\"=> FOO   [undefined function: BAR]\"); an error stands alone — calling an
+   undefined function both warns and fails, and the failure says it all."
   (multiple-value-bind (form foundp) (form-before-point (pane-tv pane) toplevel)
     (if (not foundp)
         (setf *browser-status* (if toplevel "Do it: no form here" "Do it: no form before point"))
-        (multiple-value-bind (ok res out) (ws-eval form)
+        (multiple-value-bind (ok res out notes) (ws-eval form)
           (let ((printed (ws-trim-output out)))
             (setf *browser-status*
                   (if ok (let ((*print-length* 40) (*print-level* 5))
-                           (format nil "~a ~@[~a  ~]=> ~s" (form-echo form)
-                                   (and printed (substitute #\Space #\Newline printed)) res))
+                           (format nil "~a ~@[~a  ~]=> ~s~@[   [~{~a~^; ~}]~]" (form-echo form)
+                                   (and printed (substitute #\Space #\Newline printed)) res notes))
                       (format nil "~a ~@[~a  ~]error: ~a" (form-echo form)
-                              (and printed (substitute #\Space #\Newline printed)) res))))))))
+                              (and printed (substitute #\Space #\Newline printed))
+                              (ws-remove-string "COMMON-LISP-USER::" (princ-to-string res))))))))))
 
 (defun workspace-print-it (pane)
   "Eval the form before point and weave the transcript into the buffer, inline after

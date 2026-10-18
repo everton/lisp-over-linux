@@ -506,6 +506,40 @@
                                                      (* (sb-alien:array sb-alien:unsigned-char 4))))
             fd #x4B47 (sb-alien:addr e)))))
 
+(defun console-kbent (table index &optional value (fd 0))
+  "Read (KDGKBENT, 0x4B46) the console keymap's entry for keycode INDEX in TABLE (0
+   plain, 1 Shift, 4 Ctrl, 8 Alt — a bit per modifier), or with VALUE set it
+   (KDSKBENT, 0x4B47; needs CAP_SYS_TTY_CONFIG, which PID 1 keeps). Returns the
+   entry's value (a K(type,value) code, linux/keyboard.h), or NIL when the ioctl
+   fails (off a console). struct kbentry: kb_table, kb_index (bytes), kb_value (u16)."
+  (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 4)))
+    (setf (sb-alien:deref e 0) table
+          (sb-alien:deref e 1) index
+          (sb-alien:deref e 2) (ldb (byte 8 0) (or value 0))
+          (sb-alien:deref e 3) (ldb (byte 8 8) (or value 0)))
+    (when (zerop (sb-alien:alien-funcall
+                  (sb-alien:extern-alien "ioctl" (function sb-alien:int sb-alien:int sb-alien:unsigned-long
+                                                           (* (sb-alien:array sb-alien:unsigned-char 4))))
+                  fd (if value #x4B47 #x4B46) (sb-alien:addr e)))
+      (logior (sb-alien:deref e 2) (ash (sb-alien:deref e 3) 8)))))
+
+(defconstant +k-hold+ #x0209 "K(KT_SPEC,9): the console's Hold, fn_hold in drivers/tty/vt/keyboard.c.")
+(defconstant +k-hole+ #x0200 "K(KT_SPEC,0): VoidSymbol, a key that does nothing.")
+
+(defun unbind-console-hold (&optional (fd 0))
+  "Take Hold off Scroll Lock in every table of the console keymap. Hold is the VT's
+   own pause: fn_hold calls stop_tty(), which stops the console's OUTPUT until the key
+   is pressed again — whatever the termios flags say, so clearing IXON (line-editor.lisp)
+   does not cover it. A stopped console makes the next write to it block, and the
+   environment's thread writes there (*error-output*): found 2026-10-17, after the C-s
+   freeze (doc/diagnostics.org §1), by a QMP scroll_lock in QEMU. defkeymap binds it
+   to keycode 70 (KEY_SCROLLLOCK) in the plain and Alt tables; all 256 tables are
+   scanned, since a loaded keymap may put it elsewhere in that key's row. Returns how
+   many entries were changed (0 off a console, or when none held it)."
+  (loop for table below 256
+        count (and (eql (console-kbent table 70 nil fd) +k-hold+)
+                   (console-kbent table 70 +k-hole+ fd))))
+
 (defun read-keyboard-evdev (fd)
   "Drain a keyboard's evdev queue, tracking Ctrl / Shift / Super / Alt held state
    (NOTE-MODIFIER-KEY). Text still arrives through the cooked tty (fd 0); this fd
@@ -1551,6 +1585,7 @@
         (setf *value-prompt* 'run-value-prompt)   ; the shell asks; an overlay reads
         (setf *chooser* 'run-chooser)             ; ... and shows its menus and halos
         (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
+        (ignore-errors (unbind-console-hold))     ; Scroll Lock must not stop the console
         ;; the touchpad: does a tap click? Off unless the settings say so.
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
