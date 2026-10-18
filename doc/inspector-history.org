@@ -957,6 +957,14 @@ noticing later — a rotted image link is exactly the quiet, nothing-breaks drif
   here, not yet reported upstream), and the closure-copy caveat — plus restart-frame,
   which the plan had ruled out as expensive. Tests: poc/frame-locals-test.lisp,
   check-debugger.lisp. §6 gained its costing.
+- *2026-10-17* — the indirect-variable setter bug reduced to a 30-line reproduction
+  against stock =./sbcl= 2.6.8 (no project code: =Memory fault at 0xa8= on the
+  read-back), and a one-function fix to =set-compiled-debug-var-slot= in
+  =debug-int.lisp= — the indirect case written through the parent frame pointer, as
+  the read path does — tested by loading it into stock 2.6.8 before the reproduction
+  (=acc= reads back 100, the frame returns =(103 3)=); not tested as a rebuilt SBCL.
+  The report is drafted for the user to file on SBCL's Launchpad; until then it is
+  still /not reported upstream/, and =set-indirect-frame-var= stays.
 - *2026-10-02* — §5.6 *resolved*: an SBCL 2.6.8 register mismatch in =LOGCOUNT='s
   no-POPCNT path, reached only because QEMU's default CPU has no POPCNT. Bisected
   host-image vs. guest vs. =-cpu max= vs. a hand-cleared feature bit; fixed at build
