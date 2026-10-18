@@ -124,8 +124,12 @@
 (defmethod commands-for ((s subj-network))
   (list (make-command :label "Scan for Wi-Fi networks" :key "s" :action #'wifi-scan)
         (make-command :label "Disconnect Wi-Fi" :key "d" :action #'wifi-disconnect)
-        (make-command :label "Import NetworkManager profiles" :key "i" :action #'request-nm-import)
-        (make-command :label "Check the clock (SNTP)" :key "t" :action #'sync-clock)))
+        ;; off the environment's thread, as the keys do (SUBJECT-KEY below): an SNTP
+        ;; exchange per server can take seconds, and the screen must not wait
+        (make-command :label "Import NetworkManager profiles" :key "i"
+                      :action (lambda () (in-background "nm-import" #'request-nm-import)))
+        (make-command :label "Check the clock (SNTP)" :key "t"
+                      :action (lambda () (in-background "sntp" #'sync-clock)))))
 
 ;;; ---- acting: keys on the network view ------------------------------------------
 

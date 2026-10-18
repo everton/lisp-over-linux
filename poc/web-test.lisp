@@ -23,6 +23,7 @@
 
 (let ((*load-verbose* nil) (*load-print* nil))
   (handler-bind ((warning #'muffle-warning))
+    (load (merge-pathnames "poc/host-logging.lisp" *root-dir*))   ; web-cdp.lisp logs (session-log.lisp)
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
     (dolist (m '("initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/examples.lisp" "initramfs/stage.lisp"
@@ -350,6 +351,26 @@
                  (web-tab-frame-w (tab)) (web-tab-frame-h (tab)))
          (format t "~&  Chrome PSS, all processes: ~,1f MB~%" (/ (pss-kb) 1024.0)))
     (web-shutdown))
+  ;; a Chrome that stops reading its command pipe: the write gives up after
+  ;; +CDP-WRITE-SECONDS+ instead of blocking the environment's thread for good. The
+  ;; stand-in is a process that never reads its stdin (sleep), with 200 KB to write
+  ;; into a 64 KB pipe.
+  (let* ((p (sb-ext:run-program "/bin/sleep" '("30") :input :stream :output :stream :wait nil))
+         (c (%make-chrome :process p :to-fd (sb-sys:fd-stream-fd (sb-ext:process-input p))
+                          :from-fd (sb-sys:fd-stream-fd (sb-ext:process-output p))))
+         (+cdp-write-seconds+ 1)
+         (t0 (get-internal-real-time)))
+    (set-nonblocking (chrome-to-fd c))
+    (let ((err (handler-case (progn (cdp-write-octets c (make-array 200000 :element-type '(unsigned-byte 8))) nil)
+                 (error (e) (princ-to-string e))))
+          (secs (/ (- (get-internal-real-time) t0) internal-time-units-per-second)))
+      (check "a Chrome that stops reading: the write gives up (no freeze)"
+             (and err (search "stopped reading" err) (< secs 3)))
+      (check "... and closes the pipe, so later writes fail at once"
+             (and (null (chrome-to-fd c))
+                  (handler-case (progn (cdp-write-octets c (make-array 1 :element-type '(unsigned-byte 8))) nil)
+                    (error () t)))))
+    (ignore-errors (sb-ext:process-kill p 9)) (ignore-errors (sb-ext:process-close p)))
   (let ((ok (every #'cdr *results*)))
     (format t "~&===== ~a (~d checks) =====~%" (if ok "ALL PASS" "FAILURES") (length *results*))
     (sb-ext:exit :code (if ok 0 1))))

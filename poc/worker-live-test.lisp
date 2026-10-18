@@ -17,6 +17,7 @@
 
 (let ((*load-verbose* nil) (*load-print* nil))
   (handler-bind ((warning #'muffle-warning))
+    (load (merge-pathnames "poc/host-logging.lisp" *root-dir*))   ; web-cdp.lisp logs (session-log.lisp)
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
     (dolist (m '("initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/examples.lisp" "initramfs/stage.lisp" "initramfs/worker.lisp"

@@ -312,19 +312,42 @@
          (to (sb-sys:fd-stream-fd (sb-ext:process-input p)))
          (from (sb-sys:fd-stream-fd (sb-ext:process-output p))))
     (set-nonblocking from)
+    (set-nonblocking to)                 ; a write must never wait on Chrome for good
     (%make-chrome :process p :to-fd to :from-fd from :log log)))
 
 ;;; ---- writing ------------------------------------------------------------------
 
+(defparameter +cdp-write-seconds+ 5
+  "How long a write may wait for Chrome to make room in its command pipe.")
+
 (defun cdp-write-octets (c octets)
-  "Write all of OCTETS to Chrome's command pipe. The pipe is BLOCKING on our side, so
-   a short write just means 'the rest next'; EINTR (a signal landed) is retried."
+  "Write all of OCTETS to Chrome's command pipe. A short write means 'the rest next';
+   EINTR (a signal landed) is retried. The pipe is NON-blocking: when it is full —
+   64 KB that Chrome has not read, because it is hung or stopped — we wait for room
+   at most +CDP-WRITE-SECONDS+. It used to block, and the writer is the
+   environment's thread: a stuck Chrome froze the screen (review of 2026-10-16).
+   Past the wait the pipe is CLOSED: half a message has corrupted the stream anyway,
+   and Chrome exits when its command pipe closes, which the reader sees as EOF, so
+   the pane says Chrome exited and offers r to restart it."
+  (unless (chrome-to-fd c) (error "Chrome's command pipe is closed (it stopped reading)"))
   (sb-sys:with-pinned-objects (octets)
-    (let ((sap (sb-sys:vector-sap octets)) (n (length octets)) (off 0))
+    (let ((sap (sb-sys:vector-sap octets)) (n (length octets)) (off 0)
+          (deadline (+ (get-internal-real-time) (* +cdp-write-seconds+ internal-time-units-per-second))))
       (loop while (< off n) do
         (multiple-value-bind (w err) (sb-unix:unix-write (chrome-to-fd c) sap off (- n off))
           (cond (w (incf off w))
                 ((eql err sb-unix:eintr))
+                ((eql err sb-unix:ewouldblock)
+                 (let ((left (/ (- deadline (get-internal-real-time)) internal-time-units-per-second)))
+                   (unless (and (plusp left)
+                                (sb-sys:wait-until-fd-usable (chrome-to-fd c) :output left))
+                     (let ((fd (shiftf (chrome-to-fd c) nil)))
+                       ;; the number stays OURS until the stream is closed: a bare
+                       ;; close(fd) could see it reused, and a later write land elsewhere
+                       (ignore-errors (close (sb-ext:process-input (chrome-process c)) :abort t))
+                       (session-log "web: Chrome did not read its pipe for ~d s (fd ~d closed)"
+                                    +cdp-write-seconds+ fd))
+                     (error "Chrome stopped reading its command pipe (~d s)" +cdp-write-seconds+))))
                 (t (error "chrome pipe write failed (errno ~a) — has Chrome exited?" err))))))))
 
 (defun cdp-send (c method &optional params &key session callback)

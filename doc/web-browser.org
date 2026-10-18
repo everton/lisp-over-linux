@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (39 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (41 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -154,6 +154,14 @@ exec 3<&0 4>&1 >>/tmp/lol-chrome-1.log 2>&1 </dev/null; exec google-chrome --hea
 stdout, our reply pipe. Chrome's own messages then go to a log file, so they can
 never interleave with the protocol. Our end of the reply pipe is non-blocking:
 =web-cdp.lisp= reads whatever is there and never waits on it.
+
+Since 2026-10-17 the *command* pipe is non-blocking too. A Chrome that stops
+reading (hung, or stopped) fills its 64 KB, and the writer is the environment's
+thread, so a blocking write froze the screen. [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]] now waits at most
+=+cdp-write-seconds+= (5) for room. After that it closes the pipe: half a message has
+corrupted the stream anyway. Chrome exits when its command pipe closes, so the pane
+reports "Chrome exited" and =r= restarts it. =poc/web-test.lisp= asserts it with a
+child process that never reads its stdin.
 
 ** 3.3 Tabs, sessions, and frames
 

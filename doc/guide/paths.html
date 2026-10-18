@@ -46,7 +46,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     On the console, Alt-. (or Esc then .) arrives as the bytes <code>ESC .</code>. An ESC followed within 20 ms by a printable
     byte becomes that character with the Meta bit (8) set. A lone ESC becomes <code>:escape</code>, which the shell keeps as a
     "sticky" Meta for the next key.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1464</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1509</span></a></span>
     The loop ORs in the held modifiers from evdev and calls <code>browser-key</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2478</span></a></span>
     The first real branch: Meta and <code>.</code> in a pane with a textview. It comes before the editing branch, or the
@@ -123,7 +123,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1435</span></a></span>
     Each list pane caches its own preview pane and rebuilds it only when the selection moves:
     <code>(open-pane subject :preview t)</code>, which calls <code>present-preview</code>, not <code>present</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#file-view" href="../../initramfs/file-views.lisp"><code>file-view</code><span class="loc">initramfs/file-views.lisp:652</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#file-view" href="../../initramfs/file-views.lisp"><code>file-view</code><span class="loc">initramfs/file-views.lisp:656</span></a></span>
     <code>lstat</code>s the path, follows a link, reads a capped prefix (<a class="ref" data-ref="initramfs/files.lisp#read-prefix" href="../../initramfs/files.lisp"><code>read-prefix</code><span class="loc">initramfs/files.lisp:600</span></a>)
     and identifies the bytes by magic number (<a class="ref" data-ref="initramfs/file-views.lisp#sniff" href="../../initramfs/file-views.lisp"><code>sniff</code><span class="loc">initramfs/file-views.lisp:238</span></a>), not by extension.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#image-view" href="../../initramfs/file-views.lisp"><code>image-view</code><span class="loc">initramfs/file-views.lisp:574</span></a></span>

@@ -117,14 +117,14 @@ why: an inlined <code>sb-posix</code> entry point cannot be recompiled in the gu
   <text x="730" y="150" class="lbl">Remote eval, no authentication:</text><text x="730" y="166" class="lbl">off by default since tag #26;</text><text x="730" y="182" class="lbl">the menu's 't' toggles it.</text>
 </svg>
 <figcaption>The lease step, as first built. Since the network track (2026-10-12) the boot calls
-<a class="ref" data-ref="initramfs/dhcp.lisp#network-up" href="../../initramfs/dhcp.lisp"><code>network-up</code><span class="loc">initramfs/dhcp.lisp:524</span></a>, which does this on every wired link through
-<a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-configure" href="../../initramfs/dhcp.lisp"><code>dhcp-configure</code><span class="loc">initramfs/dhcp.lisp:430</span></a>, then installs the
+<a class="ref" data-ref="initramfs/dhcp.lisp#network-up" href="../../initramfs/dhcp.lisp"><code>network-up</code><span class="loc">initramfs/dhcp.lisp:552</span></a>, which does this on every wired link through
+<a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-configure" href="../../initramfs/dhcp.lisp"><code>dhcp-configure</code><span class="loc">initramfs/dhcp.lisp:458</span></a>, then installs the
 default route, writes <code>/etc/resolv.conf</code> and checks the clock through the lease's hooks, and starts the
 <code>netd</code> thread (renewals, Wi-Fi). DNS, SNTP, HTTP/HTTPS and Wi-Fi: <a href="../networking.org">networking.org</a> §2c–f, §7.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:452</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:294</span></a>,
-    <a class="ref" data-ref="initramfs/dhcp.lisp#build-dhcp" href="../../initramfs/dhcp.lisp"><code>build-dhcp</code><span class="loc">initramfs/dhcp.lisp:92</span></a> (the packet, byte by byte),
+  <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:480</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:322</span></a>,
+    <a class="ref" data-ref="initramfs/dhcp.lisp#build-dhcp" href="../../initramfs/dhcp.lisp"><code>build-dhcp</code><span class="loc">initramfs/dhcp.lisp:116</span></a> (the packet, byte by byte),
     <a class="ref" data-ref="initramfs/net.lisp#bring-up-interface" href="../../initramfs/net.lisp"><code>bring-up-interface</code><span class="loc">initramfs/net.lisp:68</span></a> (an <code>ifreq</code> built in a byte vector and
     passed to <code>ioctl</code>).</li>
   <li>The REPL server: <a class="ref" data-ref="initramfs/net.lisp#start-net-repl" href="../../initramfs/net.lisp"><code>start-net-repl</code><span class="loc">initramfs/net.lisp:392</span></a>,
