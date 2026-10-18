@@ -31,7 +31,8 @@
 ;;;;
 ;;;;   URL      "http://…" or "https://…" (TLS through tls.lisp; needs /mnt/host)
 ;;;;   HEADERS  an alist (("Authorization" . "…") …); Host, Connection and
-;;;;            Content-Length are ours
+;;;;            Content-Length are ours. Authorization, Cookie and X-Api-Key are
+;;;;            dropped when a redirect leaves the origin (STRIP-CREDENTIALS)
 ;;;;   BODY     a string (sent as UTF-8) or an octet vector, or NIL
 ;;;;   WANT     :string (decoded per the Content-Type charset, UTF-8 by default),
 ;;;;            :octets, or :stream — an octet input stream over the body; the caller
@@ -159,8 +160,10 @@
           (loop while (< off (length octets))
                 do (multiple-value-bind (n err)
                        (sb-unix:unix-write (conn-fd c) octets off (- (length octets) off))
-                     (unless n (http-fail "writing to ~a: ~a" (conn-host c) (sb-int:strerror err)))
-                     (incf off n)))))))
+                     (cond (n (incf off n))
+                           ;; EINTR: SO_SNDTIMEO makes a write unrestartable too (signal(7))
+                           ((eql err sb-unix:eintr))
+                           (t (http-fail "writing to ~a: ~a" (conn-host c) (sb-int:strerror err))))))))))
 
 (defun conn-close (c)
   (when (conn-tls c) (ignore-errors (tls-close (conn-tls c))))
@@ -363,6 +366,18 @@
                                      all :external-format (list (charset-of rheaders) :replacement #\?)))))))))))
       (unless keep-open (conn-close c)))))
 
+(defparameter +credential-headers+
+  '("authorization" "proxy-authorization" "cookie" "x-api-key")
+  "Request headers that say who we are; dropped when a redirect leaves the origin.")
+
+(defun same-origin-p (a b)
+  (and (eq (url-scheme a) (url-scheme b))
+       (string-equal (url-host a) (url-host b))
+       (= (url-port a) (url-port b))))
+
+(defun strip-credentials (headers)
+  (remove-if (lambda (h) (member (car h) +credential-headers+ :test #'string-equal)) headers))
+
 (defun http-request (url &key (method :get) headers body (want :string) on-chunk
                               (timeout 30) connect-timeout (redirects 5))
   "Make an HTTP(S) request; see the file header for every argument.
@@ -381,7 +396,13 @@
           (if (and (member status '(301 302 303 307 308)) location (plusp redirects))
               (progn
                 (decf redirects)
-                (setf u (merge-location u location))
+                (let ((next (merge-location u location)))
+                  ;; a redirect to ANOTHER origin (scheme, host or port) must not carry
+                  ;; our credentials along: a server we never chose would receive the API
+                  ;; key, and an https -> http hop would send it in the clear
+                  (unless (same-origin-p u next)
+                    (setf headers (strip-credentials headers)))
+                  (setf u next))
                 (when (or (= status 303) (and (member status '(301 302)) (eq method :post)))
                   (setf method :get body-octets nil)))
               (return (values status rheaders rbody (url-string u)))))))))

@@ -68,8 +68,8 @@
                    do (setf (aref req (+ 40 k)) (ldb (byte 8 (* 8 (- 3 k))) secs)
                             (aref req (+ 44 k)) (ldb (byte 8 (* 8 (- 3 k))) frac)))
              (sb-bsd-sockets:socket-send s req 48)
-             (multiple-value-bind (b len) (ignore-errors (sb-bsd-sockets:socket-receive s buf 64))
-               (declare (ignore b))
+             ;; EINTR-proof (dhcp.lisp): a GC during the wait is not a lost answer
+             (let ((len (socket-receive-patiently s buf (deadline-in timeout))))
                (let ((t4 (now-ntp)))
                  (when (and len (>= len 48)
                             (= (logand (aref buf 0) 7) 4)                 ; mode 4 = server

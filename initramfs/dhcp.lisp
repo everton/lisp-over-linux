@@ -76,6 +76,30 @@
            (%setsockopt fd +sol-socket+ +so-rcvtimeo+ tv 16))
       (sb-alien:free-alien tv))))
 
+;;; SO_RCVTIMEO has a catch: a socket read with a receive timeout is NEVER restarted
+;;; after a signal handler runs, even with SA_RESTART (signal(7), "Interruption of
+;;; system calls"). SBCL stops every thread with a signal for each GC, so any read
+;;; here can come back early with EINTR, and SB-BSD-SOCKETS reports that as an
+;;; empty receive (NIL), while a real timeout SIGNALS. Read as "timed out", an EINTR
+;;; ended a DHCP attempt, a DNS query or an SNTP exchange on whatever GC happened to
+;;; land in it (review of 2026-10-16).
+
+(defun deadline-in (seconds)
+  "The internal-real-time SECONDS from now."
+  (+ (get-internal-real-time) (round (* seconds internal-time-units-per-second))))
+
+(defun socket-receive-patiently (socket buf deadline)
+  "SB-BSD-SOCKETS:SOCKET-RECEIVE into BUF, reading again after an EINTR until DEADLINE
+   (internal-real-time) has passed. -> the length received, or NIL on timeout or
+   error. Each read is still bounded by the socket's own SO_RCVTIMEO."
+  (loop
+    (multiple-value-bind (b len)
+        (handler-case (sb-bsd-sockets:socket-receive socket buf (length buf))
+          (error () (return nil)))           ; EAGAIN: the socket's timeout ran out
+      (declare (ignore b))
+      (cond (len (return len))
+            ((>= (get-internal-real-time) deadline) (return nil))))))   ; EINTR: again
+
 (defun group-octets (bytes &optional (n 4))
   "A DHCP option that lists several addresses is just their bytes end to end:
    (10 0 2 3 8 8 8 8) -> ((10 0 2 3) (8 8 8 8))."
@@ -169,19 +193,22 @@
            (+ ihl 8)))))
 
 (defun dhcp-receive (sock buf)
-  "One packet's worth of DHCP reply, as (values VECTOR LENGTH) of the DHCP part, or
-   NIL on timeout. From the PACKET socket when there is one, else the UDP socket."
+  "One packet's worth of DHCP reply, as (values VECTOR LENGTH) of the DHCP part,
+   :INTERRUPTED when a signal (a GC) cut the wait short, or NIL on timeout. From the
+   PACKET socket when there is one, else the UDP socket."
   (if *dhcp-raw-fd*
       (let ((n (sb-sys:with-pinned-objects (buf)
                  (%recv *dhcp-raw-fd* (sb-sys:vector-sap buf) (length buf) 0))))
-        (when (plusp n)
-          (let ((off (dhcp-reply-from-ip-packet buf n)))
-            (if off
-                (values (subseq buf off n) (- n off))
-                (values :other 0)))))
+        (cond ((plusp n)
+               (let ((off (dhcp-reply-from-ip-packet buf n)))
+                 (if off
+                     (values (subseq buf off n) (- n off))
+                     (values :other 0))))
+              ((and (minusp n) (eql (sb-alien:get-errno) sb-unix:eintr)) :interrupted)))
       (multiple-value-bind (b len) (sb-bsd-sockets:socket-receive sock buf (length buf))
         (declare (ignore b))
-        (and len (plusp len) (values buf len)))))
+        (cond ((null len) :interrupted)        ; SB-BSD-SOCKETS' EINTR (a timeout signals)
+              ((plusp len) (values buf len))))))
 
 (defun dhcp-xchg (sock packet xid tries)
   "Broadcast PACKET and wait for a matching (same XID) DHCP reply, retrying up to
@@ -201,6 +228,7 @@
           (handler-case
               (multiple-value-bind (v len) (dhcp-receive sock buf)
                 (cond ((null v) (loop-finish))           ; the socket's own timeout
+                      ((eq v :interrupted))                 ; a GC's signal: listen on
                       ((eq v :other) (when *dhcp-stats* (incf (getf *dhcp-stats* :seen))))
                       (t (when *dhcp-stats* (incf (getf *dhcp-stats* :seen)))
                          (let ((reply (parse-dhcp v len)))

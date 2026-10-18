@@ -346,7 +346,11 @@ apart arrive as three calls), and =:want :stream= wraps it in a Gray stream the
 caller closes. Every request says =Connection: close= — one request per
 connection, no pool — which is the right trade until something measures it.
 Redirects 301/302/303/307/308 are followed; a 303, and a 301/302 answering a POST,
-become a GET. Timeouts are =SO_SNDTIMEO= (on Linux it bounds =connect()= too) and
+become a GET. A redirect to *another origin* (scheme, host or port) drops
+=Authorization=, =Proxy-Authorization=, =Cookie= and =X-Api-Key= first
+([[file:../initramfs/http.lisp::defun strip-credentials][=strip-credentials=]], 2026-10-17). Before that, a server we never chose would
+have received the API key, and an https→http hop would have sent it in the clear.
+=poc/http-test.lisp= asserts both directions against two loopback ports. Timeouts are =SO_SNDTIMEO= (on Linux it bounds =connect()= too) and
 =SO_RCVTIMEO= per read. =:connect-timeout= (2026-10-13) bounds the connect alone
 when it should be shorter than =:timeout=: the agent waits 300 s between two reads of
 a long answer, but gives a connect 15 s — with one timeout for both, an unanswered
@@ -390,6 +394,18 @@ in any thread looked like a network timeout in the thread doing HTTPS.
 is a =WANT_*= that came back well before any timeout could fire (under half a
 second) without =EAGAIN= (11), which is what a real timeout leaves. =tls-connect=,
 =tls-read= and =tls-write= then make the same call again, up to 200 times.
+
+*The UDP side had the same bug, found by the 2026-10-16 review.* SB-BSD-SOCKETS
+returns NIL from =socket-receive= on =EINTR=, and SIGNALS on a real timeout
+(=EAGAIN=). Every site wrapped it in =ignore-errors=, which makes the two look the
+same. So a GC landing in a DHCP attempt, a DNS query, an SNTP exchange or a
+=wpa_supplicant= request ended it as "no answer".
+[[file:../initramfs/dhcp.lisp::defun socket-receive-patiently][=socket-receive-patiently=]] reads again after an =EINTR= until its own deadline,
+and all four now use it (=dhcp-receive= reports =:interrupted= and the attempt keeps
+listening). Plain HTTP writes got the same treatment as its reads: =conn-write=
+retries =EINTR=. =poc/http-test.lisp= proves the premise first. With another thread
+interrupting the reader every 100 ms, a plain receive returns NIL within 0.5 s,
+while the patient one waits out its 2 s deadline.
 
 ** (f) IPv6 — on since tag #26, and nothing breaks
 

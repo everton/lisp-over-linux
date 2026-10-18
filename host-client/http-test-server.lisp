@@ -12,6 +12,9 @@
 ;;;;   /redirect  302 -> /len (relative Location)
 ;;;;   /echo      echoes the method, the request body and its length
 ;;;;   /utf8      a UTF-8 body with a charset
+;;;;   /creds     echoes the credential headers it received (x-api-key, authorization,
+;;;;              cookie), so a client's redirect manners can be checked
+;;;;   /to?URL    302 -> URL (any origin: the cross-origin redirect)
 ;;;;   anything else: 404
 ;;;;
 ;;;; Used by poc/http-test.lisp (loopback, on the host) and by check-net.lisp (the
@@ -52,7 +55,6 @@
 
 (defun serve (stream)
   (multiple-value-bind (method path headers body) (read-request stream)
-    (declare (ignore headers))
     (cond
       ((equal path "/len")
        (respond stream 200 :headers '(("Content-Length" . "11") ("Content-Type" . "text/plain"))
@@ -74,6 +76,15 @@
        (let ((reply (format nil "~a ~d ~a" method (length body) body)))
          (respond stream 200 :headers (list (cons "Content-Length" (princ-to-string (length reply))))
                              :body reply)))
+      ((equal path "/creds")
+       (let ((reply (format nil "~{~a~^;~}"
+                            (loop for k in '("x-api-key" "authorization" "cookie")
+                                  for v = (cdr (assoc k headers :test #'string=))
+                                  when v collect (format nil "~a=~a" k v)))))
+         (respond stream 200 :headers (list (cons "Content-Length" (princ-to-string (length reply))))
+                             :body reply)))
+      ((and path (> (length path) 4) (string= "/to?" path :end2 4))
+       (respond stream 302 :headers (list (cons "Location" (subseq path 4)) '("Content-Length" . "0"))))
       ((equal path "/utf8")
        ;; built from code points, so this file's own encoding cannot matter
        (let ((octets (sb-ext:string-to-octets (format nil "ol~c, ~c" (code-char #xe1) (code-char #x3bb))

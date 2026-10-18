@@ -201,8 +201,8 @@
      (let ((octets (sb-ext:string-to-octets command :external-format :utf-8))
            (buf (make-array 65536 :element-type '(unsigned-byte 8))))
        (sb-bsd-sockets:socket-send s octets (length octets))
-       (multiple-value-bind (b len) (sb-bsd-sockets:socket-receive s buf 65536)
-         (declare (ignore b))
+       ;; EINTR-proof (dhcp.lisp): a GC during the wait is not "did not answer"
+       (let ((len (socket-receive-patiently s buf (deadline-in timeout))))
          (unless (and len (plusp len)) (error "wpa_supplicant did not answer ~s" command))
          (string-right-trim '(#\Newline)
                             (sb-ext:octets-to-string buf :end len :external-format '(:utf-8 :replacement #\?))))))))

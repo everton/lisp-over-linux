@@ -66,6 +66,15 @@
        (multiple-value-bind (st h body url) (http-request (local "/redirect"))
          (declare (ignore h))
          (and (= st 200) (equal body "hello, len!") (search "/len" url))))
+(lol.http-test-server:start-test-http-server (1+ *port*))   ; a second ORIGIN (another port)
+(sleep 0.2)
+(let ((creds '(("X-Api-Key" . "sk-secret") ("Authorization" . "Bearer t") ("Cookie" . "a=b"))))
+  (check "same-origin redirect keeps the credentials"
+         (search "x-api-key=sk-secret"
+                 (http-get (local (format nil "/to?~a" (local "/creds"))) :headers creds)))
+  (check "cross-origin redirect drops them (key, authorization, cookie)"
+         (equal "" (http-get (local (format nil "/to?http://127.0.0.1:~d/creds" (1+ *port*)))
+                             :headers creds))))
 (check "POST body arrives" (equal (http-get (local "/echo") :method :post :body "abc")
                                   "POST 3 abc"))
 (check "UTF-8 charset decoded"
@@ -76,6 +85,33 @@
 (check "URL parsing: [v6]:port, query, fragment"
        (let ((u (parse-url "https://[::1]:8443/a?b=c#frag")))
          (and (equal (url-host u) "::1") (= (url-port u) 8443) (equal (url-path u) "/a?b=c"))))
+
+(format t "~&a GC's signal is not a timeout (SO_RCVTIMEO + EINTR, dhcp.lisp)~%")
+;; a UDP socket nobody writes to; another thread interrupts the reader every 100 ms,
+;; as SBCL's stop-for-GC signal does. The plain receive comes back EARLY with NIL;
+;; the patient one waits out its deadline
+(flet ((interrupted-wait (fn)
+         (let* ((s (make-instance 'sb-bsd-sockets:inet-socket :type :datagram :protocol :udp))
+                (buf (make-array 64 :element-type '(unsigned-byte 8)))
+                (reader sb-thread:*current-thread*) (stop nil)
+                (pest (sb-thread:make-thread
+                       (lambda () (loop until stop do (sleep 0.1)
+                                        (ignore-errors (sb-thread:interrupt-thread reader (lambda () nil))))))))
+           (unwind-protect
+                (progn (sb-bsd-sockets:socket-bind s #(127 0 0 1) 0)
+                       (set-rcv-timeout (sb-bsd-sockets:socket-file-descriptor s) 1)
+                       (let ((t0 (get-internal-real-time)) (r (funcall fn s buf)))
+                         (list r (/ (- (get-internal-real-time) t0) internal-time-units-per-second 1.0))))
+             (setf stop t) (sb-thread:join-thread pest)
+             (sb-bsd-sockets:socket-close s)))))
+  (check "the plain receive returns early on EINTR (the bug's shape)"
+         (destructuring-bind (r secs)
+             (interrupted-wait (lambda (s buf) (nth-value 1 (ignore-errors (sb-bsd-sockets:socket-receive s buf 64)))))
+           (and (null r) (< secs 0.5))))
+  (check "socket-receive-patiently waits out its deadline (2 s)"
+         (destructuring-bind (r secs)
+             (interrupted-wait (lambda (s buf) (socket-receive-patiently s buf (deadline-in 2))))
+           (and (null r) (>= secs 1.9)))))
 
 (format t "~&DNS (host resolver ~{~a~^, ~})~%" (mapcar #'address-string *dns-servers*))
 (check "A record for example.com" (= 4 (length (resolve-host "example.com"))))

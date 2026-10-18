@@ -165,14 +165,11 @@
            (set-rcv-timeout (sb-bsd-sockets:socket-file-descriptor s) *dns-timeout*)
            (sb-bsd-sockets:socket-connect s server 53)       ; a "connected" UDP socket
            (sb-bsd-sockets:socket-send s query (length query)) ; only hears from SERVER
-           (let ((deadline (+ (get-universal-time) *dns-timeout* 1)))
-             (loop while (<= (get-universal-time) deadline)
-                   do (multiple-value-bind (b len)
-                          (ignore-errors (sb-bsd-sockets:socket-receive s buf 4096))
-                        (declare (ignore b))
-                        (cond ((null len) (return nil))          ; timeout / error
-                              ((and (>= len 12) (= (u16-at buf 0) (u16-at query 0)))
-                               (return (subseq buf 0 len))))))))  ; else: stray, keep waiting
+           (let ((deadline (deadline-in *dns-timeout*)))
+             (loop (let ((len (socket-receive-patiently s buf deadline)))   ; EINTR-proof (dhcp.lisp)
+                     (cond ((null len) (return nil))           ; timeout / error
+                           ((and (>= len 12) (= (u16-at buf 0) (u16-at query 0)))
+                            (return (subseq buf 0 len))))))))  ; else: stray, keep waiting
       (ignore-errors (sb-bsd-sockets:socket-close s)))))
 
 (defun read-n-octets (stream n)
