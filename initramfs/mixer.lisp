@@ -215,6 +215,144 @@
 (defun mic-switch ()
   (find "Capture Switch" (mixer-controls) :key (lambda (c) (getf c :name)) :test #'string=))
 
+;;; ---- the microphone: which one, and how loud ----------------------------------------
+;;;
+;;; Found on the laptop (2026-10-18), by the first take's sound being noisy: the codec
+;;; had recorded the BUILT-IN mic — =Capture Source= was "Internal Mic" — at the
+;;; capture volume's maximum, +30 dB, because RESTORE-AUDIO used to raise every volume
+;;; it found at its minimum to the top. The take's noise floor was -35 dB and its peaks
+;;; +2.5 dB (clipped). Debian's PipeWire keeps the same control at step 52, +21.75 dB.
+;;; So: the gain is set in dB, from the scale the driver publishes for the control (its
+;;; TLV, below), to the saved :CAPTURE-DB or *DEFAULT-CAPTURE-DB*; and the input is
+;;; chosen — the headset's when its jack senses a plug — instead of left to chance.
+
+(defconstant +ctl-tlv-read+ #xc008551a
+  "SNDRV_CTL_IOCTL_TLV_READ: _IOWR('U', 0x1a, struct snd_ctl_tlv), struct snd_ctl_tlv
+   being { u32 numid; u32 length; u32 tlv[] } — 8 bytes, then the TLV itself.")
+
+(defun control-db-scale (control)
+  "A control's decibel scale as (values MIN-DB STEP-DB), from its TLV — a small
+   type-length-value record the driver attaches to a volume: type 1
+   (SNDRV_CTL_TLVT_DB_SCALE), length 8, then the minimum and the step, both in
+   hundredths of a dB (the step's bit 16 says whether the minimum means mute). The
+   ALC289's Capture Volume: -17.25 dB, 0.75 dB a step, 0..63 (measured 2026-10-18).
+   NIL when there is none."
+  (with-control-fd (fd sb-unix:o_rdonly)
+    (let ((b (snd-bytes 72)))
+      (setf (snd-u32 b 0) (getf control :numid) (snd-u32 b 4) 64)
+      (when (and (ctl-ioctl fd +ctl-tlv-read+ b) (= 1 (snd-u32 b 8)))
+        (let ((min (snd-u32 b 16)))
+          (values (/ (if (logbitp 31 min) (- min (ash 1 32)) min) 100.0)
+                  (/ (ldb (byte 16 0) (snd-u32 b 20)) 100.0)))))))
+
+(defparameter *default-capture-db* 21.75
+  "The capture gain on a first boot: what Debian's PipeWire uses on this laptop (step
+   52 of the ALC289's Capture Volume). The first take, at +30 dB, clipped.")
+
+(defun capture-control () (find-control "Capture Volume"))
+
+(defun capture-db ()
+  "The capture gain now, in dB, or NIL."
+  (let ((c (capture-control)))
+    (when c
+      (multiple-value-bind (min step) (control-db-scale c)
+        (and min (+ min (* step (first (getf c :values)))))))))
+
+(defun set-capture-db (db)
+  "Set the capture gain to the step nearest DB. -> the dB it became, or NIL."
+  (let ((c (capture-control)))
+    (when c
+      (multiple-value-bind (min step) (control-db-scale c)
+        (when (and min (plusp step))
+          (let ((n (max (getf c :min) (min (getf c :max) (round (- db min) step)))))
+            (mixer-write c n)
+            (+ min (* step n))))))))
+
+;;; enumerated controls: their values are u32 item numbers at value.enumerated.item
+;;; (offset 72), their item names read one by one through ELEM_INFO with
+;;; value.enumerated.item set (84) and the name back at 88 — offsets measured with a C
+;;; compiler against <sound/asound.h>, 2026-10-18 (items @80, item @84, name @88).
+
+(defun enum-items (control)
+  "An enumerated CONTROL's item names, in order."
+  (with-control-fd (fd sb-unix:o_rdonly)
+    (let ((info (snd-bytes 272)))
+      (setf (snd-u32 info 0) (getf control :numid))
+      (when (ctl-ioctl fd +ctl-elem-info+ info)
+        (loop for i below (snd-u32 info 80)
+              collect (let ((b (snd-bytes 272)))
+                        (setf (snd-u32 b 0) (getf control :numid) (snd-u32 b 84) i)
+                        (ctl-ioctl fd +ctl-elem-info+ b)
+                        (map 'string #'code-char
+                             (subseq b 88 (or (position 0 b :start 88 :end 152) 152)))))))))
+
+(defun enum-value (control)
+  "The name of the item an enumerated CONTROL has selected, or NIL."
+  (with-control-fd (fd sb-unix:o_rdonly)
+    (let ((v (snd-bytes 1224)))
+      (setf (snd-u32 v 0) (getf control :numid))
+      (when (ctl-ioctl fd +ctl-elem-read+ v)
+        (nth (snd-u32 v 72) (enum-items control))))))
+
+(defun set-enum-value (control item)
+  "Select ITEM (a name) in an enumerated CONTROL. T on success."
+  (let ((i (position item (enum-items control) :test #'string=)))
+    (when i
+      (with-control-fd (fd)
+        (let ((v (snd-bytes 1224)))
+          (setf (snd-u32 v 0) (getf control :numid))
+          (dotimes (ch (max 1 (getf control :count))) (setf (snd-u32 v (+ 72 (* 4 ch))) i))
+          (ctl-ioctl fd +ctl-elem-write+ v))))))
+
+(defvar *mic-choice* nil
+  "A mic chosen by hand (M in the recorder pane), which CHOOSE-MIC then keeps — for a
+   headset whose jack does not sense it. NIL: follow the jack.")
+
+(defun mic-source-control () (find-control "Capture Source"))
+
+(defun mic-source ()
+  "Which input the codec records: \"Internal Mic\", \"Headset Mic\", … or NIL."
+  (let ((c (mic-source-control))) (and c (enum-value c))))
+
+(defun headset-plugged-p ()
+  "Does a jack sense a plug with a mic? A real (not phantom) mic jack reading 1. On the
+   laptop that control is \"Headphone Mic Jack\", the combo jack's sense."
+  (some (lambda (c) (let ((n (getf c :name)))
+                      (and (search "Mic Jack" n) (not (search "Phantom" n))
+                           (some #'plusp (getf c :values)))))
+        (mixer-controls)))
+
+(defun choose-mic ()
+  "The headset's mic when its jack senses a plug, else the built-in one, unless the
+   user chose by hand this session (*MIC-CHOICE*). -> the source now in use."
+  (let ((c (mic-source-control)))
+    (when c
+      (let* ((items (enum-items c))
+             (want (or *mic-choice*
+                       (and (headset-plugged-p) (find "Headset Mic" items :test #'string=))
+                       (find "Internal Mic" items :test #'string=))))
+        (when (and want (string/= want (or (enum-value c) "")))
+          (set-enum-value c want))
+        (enum-value c)))))
+
+
+(defun next-mic ()
+  "Choose the next input by hand. -> its name."
+  (let* ((c (mic-source-control)) (items (and c (enum-items c))))
+    (when items
+      (let* ((now (enum-value c))
+             (next (nth (mod (1+ (or (position now items :test #'string=) -1)) (length items)) items)))
+        (setf *mic-choice* next)
+        (set-enum-value c next)
+        next))))
+
+(defun step-capture-db (delta)
+  "Raise or lower the capture gain by DELTA dB and remember it (:CAPTURE-DB)."
+  (let* ((now (or (capture-db) *default-capture-db*))
+         (db (set-capture-db (+ now delta))))
+    (when (and db (fboundp 'save-setting)) (funcall 'save-setting :capture-db db))
+    db))
+
 ;;; ---- boot: what alsactl would have done ------------------------------------------
 
 (defparameter *default-volume* 50 "The volume on a first boot, in percent.")
@@ -223,8 +361,10 @@
   "Put the card in a usable state, as Debian's alsactl / WirePlumber would: every
    playback and capture SWITCH on (so nothing is silent by accident — the HD-Audio
    driver's own boot defaults are not a promise), every other output volume that sits
-   at its minimum raised to its maximum (Master stays the one knob), the capture
-   volume likewise, and Master set to the user's saved level (:VOLUME in
+   at its minimum raised to its maximum (Master stays the one knob; NOT the capture
+   volume — its top, +30 dB, clipped the first take: see the microphone section above), the
+   capture gain set to the saved :CAPTURE-DB (else +21.75 dB), the headset's mic chosen
+   when its jack senses a plug (CHOOSE-MIC), and Master set to the user's saved level (:VOLUME in
    ~/.lol/settings, else *DEFAULT-VOLUME*), muted if :MUTED was saved. Logs what it
    did. NIL with no card. Called by the supervisor at boot."
   (let ((controls (mixer-controls)))
@@ -237,7 +377,7 @@
                         (some #'zerop (getf c :values)))
                    (mixer-write c 1) (push name changed))
                   ((and (eq (getf c :type) :integer) (not (eq c vol))
-                        (or (search "Playback Volume" name) (string= name "Capture Volume"))
+                        (search "Playback Volume" name)
                         (every (lambda (v) (= v (getf c :min))) (getf c :values)))
                    (mixer-write c (getf c :max)) (push name changed)))))
         (let ((level (if (fboundp 'setting) (funcall 'setting :volume *default-volume*)
@@ -245,10 +385,14 @@
           (set-volume-percent (if (integerp level) level *default-volume*)))
         (when (and (fboundp 'setting) (funcall 'setting :muted nil))
           (set-muted t))
+        ;; the mic: the saved gain (not the maximum — §mic above), the headset if plugged
+        (let ((db (if (fboundp 'setting) (funcall 'setting :capture-db *default-capture-db*) *default-capture-db*)))
+          (set-capture-db (if (realp db) db *default-capture-db*)))
+        (choose-mic)
         (when (fboundp 'session-log)
-          (funcall 'session-log "sound: card ~d, ~d controls; volume ~a% via ~s~@[, muted~]; switched on / raised: ~{~a~^, ~}"
+          (funcall 'session-log "sound: card ~d, ~d controls; volume ~a% via ~s~@[, muted~]; mic ~a at ~@[~,2f dB~]; switched on / raised: ~{~a~^, ~}"
                    *mixer-card* (length controls) (volume-percent) (getf vol :name)
-                   (volume-muted-p) (reverse changed)))
+                   (volume-muted-p) (mic-source) (capture-db) (reverse changed)))
         t))))
 
 ;;; ---- the keys ---------------------------------------------------------------------
