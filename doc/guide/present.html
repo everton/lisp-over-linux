@@ -206,7 +206,7 @@ redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcapti
     Turns raw bytes into a key and a state mask: control bytes become a letter with the Ctrl bit, <code>ESC [</code>
     sequences become arrows, <code>ESC x</code> becomes Meta-x. The mask uses X11's bit layout so both backends share
     <code>browser-key</code>: Shift bit 0, Ctrl 2, Meta 3, Super 6 (<a class="ref" data-ref="poc/canvas.lisp#shift-p" href="../../poc/canvas.lisp"><code>shift-p</code><span class="loc">poc/canvas.lisp:55</span></a>).</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#read-keyboards" href="../../initramfs/fb-browser.lisp"><code>read-keyboards</code><span class="loc">initramfs/fb-browser.lisp:1097</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#read-keyboards" href="../../initramfs/fb-browser.lisp"><code>read-keyboards</code><span class="loc">initramfs/fb-browser.lisp:1105</span></a></span>
     Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
     <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
     This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
@@ -223,7 +223,7 @@ redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcapti
     In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1423</span></a>)
     and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1594</span></a>) — its panel; its list is a
     morph of its own, a list body, which records where it drew its rows: what its clicks and the halo read back.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1173</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1181</span></a></span>
     <code>lol.fb:present-fb</code> of what the world repaired, then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
 </ol>
 

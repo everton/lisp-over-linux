@@ -166,7 +166,7 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where">firmware → <code>BOOTX64.EFI</code></span>
     There is no bootloader. The kernel's <code>bzImage</code> <em>is</em> an EFI application (the "EFI stub"),
     and <code>build.sh</code> copies it to <code>iso_root/efi/boot/bootx64.efi</code>
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:399</span></a>).
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh step 4" href="../../build.sh"><code>build.sh step 4</code><span class="loc">build.sh:400</span></a>).
     The kernel's command line is compiled in (
     <a class="ref" data-ref="kernel/config-7.2.5#&quot;CONFIG_CMDLINE=&quot;" data-label="CONFIG_CMDLINE" href="../../kernel/config-7.2.5"><code>CONFIG_CMDLINE</code><span class="loc">kernel/config-7.2.5:398</span></a>). It says
     <code>initrd=initramfs.cpio</code>, so the stub loads the second file from the same partition. That is
@@ -176,16 +176,16 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
     The cpio list maps <code>initramfs/preinit</code> to <code>/init</code> and <code>initramfs/lisp-init</code>
     to <code>/sbin/lisp</code>. It also ships glibc's loader, <code>libc</code> and <code>libm</code>, because
     the SBCL runtime is a dynamically linked program.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/preinit.c#&quot;int main(void)&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:589</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/preinit.c#&quot;int main(void)&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:594</span></a></span>
     Why C first? An SBCL executable finds its own heap by reading <code>/proc/self/exe</code>, so
     <code>/proc</code> has to be mounted before SBCL starts. preinit then does the privileged work once, while
     it is still root:
     <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:270</span></a>,
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:494</span></a>,
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:557</span></a>.
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:499</span></a>,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:562</span></a>.
     Then it <code>execve</code>s the Lisp. <code>execve</code> replaces the program, not the process, so the Lisp
     <em>is</em> PID 1. Details are on <a href="system.html">Storage, privilege, network</a>.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:165</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:168</span></a></span>
     <code>save-lisp-and-die</code> named this function as the image's <code>:toplevel</code>
     (<a href="build.html">How the image is built</a>). One binary plays three roles, chosen by
     <code>argv</code>. The <code>worker</code> and <code>job</code> roles exist so that the image can run
@@ -193,10 +193,10 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:84</span></a></span>
     It prints diagnostics, runs DHCP (<a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:480</span></a>),
     starts the network REPL only if the boot asked for it, and then calls
-    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1510</span></a>. That function catches every
+    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1524</span></a>. That function catches every
     error, so a broken environment drops you at the menu instead of killing PID 1. A kernel panics if PID 1
     exits, so every path here either loops or powers off.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1510</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1524</span></a></span>
     The environment: one loop that redraws when something changed, then blocks in <code>poll(2)</code> on the
     keyboard and mouse. It opens on the Workspace. Everything from here on is the subject of
     <a href="present.html">present and the shell</a> and <a href="pixels.html">Pixels and input</a>.</li>

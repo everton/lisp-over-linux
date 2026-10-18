@@ -1,0 +1,717 @@
+#+TITLE: Screencasts — recording the environment, with sound, from inside it
+#+STARTUP: showall
+
+*STATUS (2026-10-17): step 0 BUILT, the rest DESIGN.* Kernel tag #29 (sound), =/dev/snd=
+for the user, =mixer.lisp= and the volume keys are built and pass =check-sound.lisp= in
+QEMU (15 checks) — not yet on the laptop: §8.5 is the checklist for that session, and
+plays recordings with the host's MPlayer from a Workspace. Steps 1–5 (§10) are not
+built. Written first for the user to review, the way [[file:morphic.org][morphic.org]] was: §12 lists the decisions taken by default, to be confirmed or
+changed. Every claim about /our/ code, the kernel tree, the host's ffmpeg and the
+laptop's sound hardware was checked on this date; the ones that could *not* be checked
+without building something are marked /to prove/, and §10 says in which step each one
+gets proved.
+
+The point: the project is about to be shown to other people, and a two-minute video
+of the environment — with the author's voice explaining it — says more than any
+screenshot. That video should be made *from inside the environment, on the laptop*:
+start recording with a key, talk, pause, resume, stop, watch the encode, play the
+result back in a pane, and only then hand the file to the world.
+
+Sound is *required* (the user's decision, 2026-10-17). That makes this a kernel tag
+as well as userland work: tag #28 had no sound at all (=# CONFIG_SOUND is not set=); tag #29 adds it
+([[file:kernel-config.org][kernel-config.org]] §9, snapshot [[file:../kernel/config-7.2.5][kernel/config-7.2.5]]).
+
+* 0. The shape, in one picture
+
+#+begin_example
+   PID 1 (the environment's thread)            container "default" (the host's Debian)
+   ───────────────────────────────            ─────────────────────────────────────────
+   world-repair ─► present-repair ──► /dev/fb0
+                        │
+                        └─ tap: "the canvas changed"
+                                │
+   sampler (30 fps, only a copy │                ┌──────────────── ffmpeg ─────────────────┐
+   of the canvas + the pointer) ▼                │ in 0: rawvideo bgra on stdin            │
+   bounded queue ─► writer thread ─── pipe ────► │ in 1: -f alsa plughw:0,0  (the mic)     │
+                                                 │ out : seg-NNN.mp4 (H.264 + AAC)         │
+   recorder pane / tray ◄── fd 3: mic levels ─── │ out : 8 kHz mono s16 PCM (the meter)    │
+                        ◄── -progress lines ──── │                                         │
+                                                 └─────────────────────────────────────────┘
+   stop ─► ffmpeg -f concat -c copy ─► NAME.mp4 ─► ffprobe -of json ─► the result view
+   play ─► *screen-lent* ─► the host's mplayer -vo fbdev2 -slave (keys ─► its stdin) ─► hand back
+#+end_example
+
+Two ideas carry it. The pixels are *already in Lisp memory* — the environment draws
+into a canvas and copies rects of it to the framebuffer — so recording is "copy the
+canvas sometimes", not "read the screen back". And the encoder, the decoder and the
+ALSA library are the *host's* (ffmpeg and libasound in the default container), the
+same rule as OpenSSL and Chrome (AGENTS.md: host programs are used at runtime, from
+=/mnt/host=, never baked in). The image grows by a few hundred lines of Lisp and a
+handful of kernel options.
+
+* 1. What already exists, checked
+
+| Piece                              | Where                                        | What it gives us                                                                                                                                                                                                                                                                                                                                                                    |
+|------------------------------------+----------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| One exit for every pixel           | [[file:../initramfs/fb-browser.lisp::defun present-repair][fb-browser.lisp, =present-repair=]]            | Every write to =/dev/fb0= is in =fb-browser.lisp= lines 1150–1205: =present-frame=, =present-repair= (the rects =world-repair= redrew), and the pointer's =move-cursor= / =put-cursor=. The terminal rows and the web frame paint /into the canvas/ (=paint-into=) and leave through the same calls. A grep for =present-fb= outside =poc/fb.lisp= finds nothing else in the image. |
+| The frame as data                  | [[file:../poc/canvas.lisp::defstruct (canvas][poc/canvas.lisp, =canvas=]]                    | A =(unsigned-byte 32)= vector of the whole screen, 1920×1200 on the laptop = 9.2 MB.                                                                                                                                                                                                                                                                                                |
+| The pointer is *not* in it         | [[file:../initramfs/fb-browser.lisp::defun put-cursor][fb-browser.lisp, =put-cursor=]]                | The arrow is written to the framebuffer only. A recording must draw it onto its own copy, at =*cursor-x*= / =*cursor-y*=, unless =*cursor-hidden*=.                                                                                                                                                                                                                                 |
+| ffmpeg                             | the host's =/usr/bin/ffmpeg= (libavcodec 63) | Encoders present: =libx264=, =aac=, =libopus=, =libvpx-vp9=; the =alsa= device both ways (=ffmpeg -devices=). Reached in the default container ([[file:containers.org][containers.org]]); it needs no capability.                                                                                                                                                                                            |
+| Our =/dev= in the container        | [[file:../initramfs/lol-ct.c::devices, plus /dev/pts][lol-ct.c]]                                     | lol-ct bind-mounts our =/dev=, so a =/dev/snd= the user owns is usable inside.                                                                                                                                                                                                                                                                                                      |
+| A way to own device nodes          | [[file:../initramfs/preinit.c::static void give_devices][preinit.c, =give_devices=]]                    | devtmpfs makes nodes root-owned 0600; lol-rootd hands =fb*=, =tty*=, =input/event*=, =rfkill= to the user at boot and every second after. =/dev/snd= is one more line.                                                                                                                                                                                                              |
+| Extra fds into a container program | [[file:web-browser.org][web-browser.org]]                              | Chrome's DevTools pipe is fds 3/4, moved by a =/bin/sh= — the same trick carries the mic meter on fd 3.                                                                                                                                                                                                                                                                             |
+| A service in the poll              | [[file:../initramfs/fb-browser.lisp::defun fb-service-call][fb-browser.lisp, =*fb-services*=]]             | Other fds that wake the loop (the web pane, workers). The recorder's progress and meter pipes, and the player's stdout, are more services, so an idle recorder costs nothing.                                                                                                                                                                                                       |
+| JSON                               | [[file:../initramfs/json.lisp][json.lisp]] (=lol.json=)                       | Reads =ffprobe -of json=.                                                                                                                                                                                                                                                                                                                                                           |
+| A way to give the screen away      | [[file:../initramfs/fb-browser.lisp::defun present-repair][fb-browser.lisp]]                              | Because every write of ours is in those four functions, one special (=*screen-lent*=) stops them all while the host's player owns =/dev/fb0= (§8).                                                                                                                                                                                                                                  |
+| Where files go                     | [[file:../initramfs/lol-home.lisp][lol-home.lisp]]                                | =lol-path=; nothing written without a real home (diskless boots refuse to record).                                                                                                                                                                                                                                                                                                  |
+
+* 2. The laptop's sound, checked on its Debian
+
+Checked 2026-10-17 on the build host, which *is* the laptop (=/sys/class/dmi/id=:
+Dell XPS 13 9300, i7-1065G7):
+
+- *Controller:* =00:1f.3 Intel Ice Lake-LP Smart Sound Technology Audio Controller
+  [8086:34c8]=. Three drivers can bind it (=snd_soc_avs=, =snd_sof_pci_intel_icl=,
+  =snd_hda_intel=) and Debian's kernel chose *=snd_hda_intel=*
+  (=snd_intel_dspcfg.dsp_driver= is 0, "decide by the hardware").
+- *Codecs:* =Realtek ALC289= (codec 0) and =Intel Icelake HDMI= (codec 2).
+- *The microphone is analogue, on the codec.* Node 0x12 is =[Fixed] Mic at Oth
+  Mobile-In= with the control "Internal Mic Boost Volume"; nodes 0x19 / 0x1b are the
+  headset jack's mics.
+- *PCMs:* =00-00: ALC289 Analog : playback 1 : capture 1=, plus four HDMI playbacks.
+- PipeWire on the host records =s32le 2ch 48000Hz= from that source.
+
+*Why this matters.* On many Intel laptops the built-in mics are /digital/ (DMIC) and
+wired to the DSP, and then only SOF works — which needs the DSP's firmware and a
+topology file copied from the host, as the Wi-Fi firmware is ([[file:networking.org][networking.org]] §7).
+Here the mic goes through the Realtek codec, which plain HD-Audio drives without any
+firmware. So the plan is the *legacy HDA path*, and SOF is ruled out on purpose (it is
+not even built, so =snd_intel_dspcfg= cannot pick it).
+
+*A trap ruled out early:* the container's libasound reads the host's ALSA config, and
+the host has =/etc/alsa/conf.d/99-pipewire-default.conf=, which points ALSA's
+=default= device at PipeWire. There is no PipeWire in the guest, so every command
+line here names the card directly: =plughw:0,0= (=plug= converts the format/rate the
+hardware offers into what ffmpeg asks for; bare =hw:= would refuse a mismatch).
+
+** 2.1 The headset: wired, through the jack (the user's, 2026-10-17)
+
+The user narrates through a *wired headset on the 3.5 mm jack*, so that is the mic the
+recorder is built for; the built-in one is the fallback. It is the *same codec and the
+same driver*: the jack is the ALC289's, and node 0x19 is its headset mic ("Headset Mic
+Boost Volume"; node 0x1b is the "Headphone Mic"). Nothing is added to tag #29 for it.
+
+What the jack adds is *choosing the mic*. The XPS's jack is a combo jack (one 4-pole
+plug carries both earphones and mic), and the kernel's HDA code handles it:
+=alc269.c= has the Dell chain =ALC269_FIXUP_DELL4_MIC_NO_PRESENCE= → =ALC269_FIXUP_HEADSET_MODE=,
+which declares 0x19 the headset mic "without its own jack detect" and lets the
+codec's headset mode tell a headset from plain earphones. The fixup, the
+auto-mic switch (capture follows the plug) and the jack's state are all *inside the
+kernel*, so whatever works under Debian's kernel works under ours — on Debian,
+PipeWire only reads that state and moves its default source. In the guest the
+recorder reads it itself:
+
+- the card's *jack controls* (the HDA driver exposes each jack as a boolean control,
+  "… Jack") through the same =controlC0= ioctls as the mixer (§3.1), so the pane says
+  *which* mic it is recording — =Mic  headset (jack)= or =Mic  built-in= — and the
+  preflight warns "recording the built-in mic: is the headset plugged in?";
+- the jack controls send events on =controlC0= (=SNDRV_CTL_IOCTL_SUBSCRIBE_EVENTS=), one
+  more service fd: plugging or unplugging during a take is noted in the result.
+
+/To prove on the laptop (step 0):/ the control names, that our kernel picks the same
+fixup as Debian's (=dmesg='s =autoconfig for ALC289= lines, read with root on the host
+and in =kernel.log= in the guest), that auto-mic switches capture to 0x19 on plugging
+in, and that a 3-pole earphone is not mistaken for a headset. If auto-mic does not
+switch, the recorder selects the input itself through the capture source control.
+
+*Measured on the host's Debian (2026-10-17, read-only through =mixer.lisp=):* the jack
+controls are =Headphone Mic Jack= (the combo jack's sense: =1= with a plug in) and three
+/phantom/ jacks, =Internal Mic Phantom Jack=, =Headset Mic Phantom Jack= and
+=Speaker Phantom Jack= (always =1=: they stand for fixed devices, so that a mixer can
+show them). The input is chosen by =Capture Source= (enumerated). The full control
+list is in §8.5.
+
+*Ruled out (2026-10-17): Bluetooth headsets.* The laptop has paired Bluetooth earbuds,
+which is why the question came up. A Bluetooth mic would need the kernel's Bluetooth
+stack and the AX201's Bluetooth firmware, the host's =bluetoothd= with a D-Bus system
+bus, and *PipeWire* in the guest, because the mic only exists in the hands-free profile
+(HFP), which BlueZ alone does not implement. HFP audio is also phone quality (8 kHz, or
+16 kHz with mSBC). That is a project of its own, and the wrong mic to narrate with.
+USB headsets are not planned either; if one is ever wanted, it is a single kernel
+option (=SND_USB_AUDIO=, no firmware) and a card picker in the preflight.
+
+** 2.2 The speakers
+
+/To prove on the laptop (step 0):/ that the internal speakers play under our kernel.
+=alc269.c= has a Dell fixup for this family (=ALC289_FIXUP_DELL_SPK1=), applied by the
+codec's PCI subsystem id (Dell 096d), so it should — but speaker amps are where laptops
+surprise. The headset's earphones (§2.1) are the usual output for playback anyway,
+and the mic does not depend on the speakers.
+
+* 3. Kernel tag #29: what to enable (BUILT 2026-10-17)
+
+No modules (=# CONFIG_MODULES is not set=), so everything is =y=. Symbols checked in
+=./linux= (7.2.5), where HD-Audio moved to =sound/hda/= and the Realtek driver split
+by codec family:
+
+| Option                                          | Kconfig                            | Why                                                                                                                                                                                                                                                                                                            |
+|-------------------------------------------------+------------------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =SOUND=, =SND=                                  | =sound/Kconfig=                    | The sound core: =/dev/snd/controlC0=, =pcmC0D0p/c=, =timer=.                                                                                                                                                                                                                                                   |
+| =SND_PCM=                                       | =sound/core/Kconfig= (selected)    | The PCM device ffmpeg reads and writes.                                                                                                                                                                                                                                                                        |
+| =SND_HDA_INTEL=                                 | =sound/hda/controllers/Kconfig=    | The controller. "depends on PCI" (on since the keystone, AGENTS.md); selects =SND_HDA= and =SND_INTEL_DSP_CONFIG=.                                                                                                                                                                                             |
+| =SND_HDA_CODEC_REALTEK=, =SND_HDA_CODEC_ALC269= | =sound/hda/codecs/realtek/Kconfig= | The ALC289 is handled by =alc269.c= (=case 0x10ec0289=). Selects =SND_HDA_CODEC_REALTEK_LIB=, which selects =SND_HDA_GENERIC= (+ its LEDs, =SND_HDA_SCODEC_COMPONENT=). Depends on =INPUT= (on). The other ALCxxx default to =y= under the menu; turn them off with =EXPERT= or leave them (a few tens of KB). |
+| =SND_HDA_GENERIC=                               | =sound/hda/codecs/Kconfig=         | Also what drives QEMU's =hda-duplex= codec in the checks (§9).                                                                                                                                                                                                                                                 |
+| *not* SOF, *not* AVS                            |                                    | §2: the mic needs no DSP.                                                                                                                                                                                                                                                                                      |
+| *not* =SND_HDA_CODEC_HDMI_INTEL=                | =sound/hda/codecs/hdmi/Kconfig=    | HDMI audio wants the i915 audio component (=SND_HDA_I915=); we run on efifb with no i915. Nothing to gain.                                                                                                                                                                                                     |
+
+Per AGENTS.md, the tag bump touches =kernel-config.org= (table + change log + the
+audit greps), =sbcl-init.org=, =micro-distro.org=, and the snapshot
+=kernel/config-7.2.5=.
+
+** 3.1 Userland for the card
+
+- *Device nodes:* =give_devices= gains =chown_dir_matching("/dev/snd", "", uid, gid)=
+  (the function already skips non-character entries, so =by-path/= is left alone).
+- *The mixer.* On Debian, WirePlumber and =alsactl= set the codec's switches and gains
+  at boot; the guest has neither, and the host has no =amixer= installed. So the image
+  sets them itself (*BUILT 2026-10-17*) through the ALSA *control* interface: =ioctl=
+  on =/dev/snd/controlC0= with =SNDRV_CTL_IOCTL_ELEM_LIST= / =ELEM_INFO= /
+  =ELEM_READ= / =ELEM_WRITE=, a short pure-Lisp module ([[file:../initramfs/mixer.lisp][mixer.lisp]]) in the style of
+  =net.lisp='s ioctls. =restore-audio= at boot turns every playback and capture switch
+  on, raises any other volume found at its minimum, and sets Master to the saved
+  =:volume= (default 50 %); =audio-key= serves the volume, mute and mic-mute keys;
+  =sound-tray-item= is the tray's =VOL=. Later it gives the recorder pane a mic-gain
+  row. Whether the ALC289's boot defaults actually needed this is not known yet: the
+  boot log's =sound:= line lists what it switched on (the laptop half of step 0). It is
+  didactic: an ALSA "control" is a numbered element with a name, a type and a range —
+  the same thing =alsamixer= shows.
+
+* 4. Recording: the frames
+
+** 4.1 The tap
+
+=present-repair= and =present-frame= call one function, =note-frame-changed=, when a
+recording is running (a special being =nil= otherwise: one test per repair). It sets a
+flag; it does not copy. Copying at the rate of repairs would be wrong in both
+directions — an idle screen makes no repairs (the video would have holes) and a busy
+one makes more than 30 a second.
+
+** 4.2 The sampler: a constant frame rate
+
+Video files want a constant rate. A sampler deadline (one more entry in =fb-cycle='s
+=earliest-timeout=, like the tray's tick) fires every 1/30 s while recording. On each:
+
+- if the canvas changed or the pointer moved since the last sample, copy the canvas
+  (=replace= on the pixel vector: ~1–2 ms for 9.2 MB), draw the pointer onto the copy,
+  and queue it;
+- else queue *the same* buffer again (no copy). ffmpeg sees a frame either way.
+
+Buffers come from a small pool (4 × 9.2 MB) so the GC sees no garbage.
+
+** 4.3 Never stall the environment
+
+A recorder that blocks the environment's thread freezes the screen — and the
+watchdog's STALL report ([[file:diagnostics.org][diagnostics.org]]) would say so. So the sampler only
+*queues*; a writer thread (named, with =with-main-activity=-style labels so a stall
+report names it) writes to ffmpeg's stdin. When the queue is full the *newest frame is
+dropped* and counted — never waited for. The count is shown live and in the result
+(§6): a recording with drops says so instead of looking fine and stuttering.
+
+** 4.4 What appears in the frame
+
+Everything on screen, including the pointer (§4.2) and the tray's REC indicator. The
+recorder's own pane is visible if it is open — the usual move is to start with
+=SuperL-r= from wherever you are and never open the pane until you stop.
+
+* 5. Recording: two ways to the file
+
+** 5.1 Live encoding (proposed default)
+
+One ffmpeg per segment (§5.3), started in the default container:
+
+#+begin_example
+ffmpeg -hide_banner -nostats -progress pipe:2 \
+  -thread_queue_size 64 -use_wallclock_as_timestamps 1 \
+    -f rawvideo -pix_fmt bgra -s 1920x1200 -r 30 -i pipe:0 \
+  -thread_queue_size 1024 -f alsa -ac 2 -ar 48000 -i plughw:0,0 \
+  -map 0:v -map 1:a \
+    -c:v libx264 -preset ultrafast -crf 23 -pix_fmt yuv420p \
+    -c:a aac -b:a 160k -af aresample=async=1 \
+    -movflags +faststart  seg-001.mp4 \
+  -map 1:a -ac 1 -ar 8000 -f s16le pipe:3
+#+end_example
+
+The last output is the *mic meter*: 16 000 bytes a second of mono samples, whose peak
+per 50 ms the recorder draws as a level bar. "Was the mic on?" is the classic way a
+screencast is lost, and this answers it before you have talked for ten minutes.
+
+*Measured on the laptop's own Debian (2026-10-17)*, 10 s of 1920×1200 at 30 fps of
+=testsrc2= (a noisy picture, worse than a UI) piped as raw =bgra= into =libx264
+ultrafast=: *4.1× real time, ~0.95 CPU-seconds per recorded second* (including the
+process generating the frames) — about one of the eight hardware threads. =ultrafast=
+alone on the same picture runs 12×; =veryfast= 4.2×. File size for that noisy test:
+20 MB for 10 s; a UI that mostly sits still compresses far better (/to measure/ on a
+real recording, step 2).
+
+/To prove (step 1, on the host, with =-f pulse= standing in for =-f alsa=):/ that
+=-use_wallclock_as_timestamps= on the raw pipe plus ALSA's own wall-clock stamps keep
+lips and pointer in sync, and how far they drift in ten minutes. The fallback if they
+do not: stamp nothing, rely on the constant 30 fps on one side and the sample count on
+the other, which is exact as long as no frame is dropped (and drops are counted).
+
+** 5.2 The damage log (the option)
+
+The other way records *nothing but what changed*, and encodes after stop:
+
+- =seg-NNN.dmg=: a header (width, height, the start time on =CLOCK_MONOTONIC=), one full
+  frame, then records =(time-ns x y w h pixels)= — exactly the rects =world-repair=
+  returned, plus a small record for each pointer move (position only; the arrow is
+  drawn at encode time). Pixels compressed with =lol.deflate=, the writer the log
+  archives already use ([[file:../poc/deflate.lisp][poc/deflate.lisp]]).
+- =seg-NNN.flac=: the mic, from an audio-only ffmpeg (=-f alsa -i plughw:0,0 -c:a flac=),
+  its start time written next to it on the same clock.
+- *Encode* (at stop): a background thread replays the log into a canvas, samples it at
+  30 fps the way §4.2 does live, and pipes those frames with the FLAC into ffmpeg.
+
+|                                          | Live (§5.1)          | Damage log (§5.2)                                                                                                            |
+|------------------------------------------+----------------------+------------------------------------------------------------------------------------------------------------------------------|
+| CPU while recording                      | ~1 thread            | the copies of changed rects + deflate; near zero when idle                                                                   |
+| Wait after stop                          | seconds (a concat)   | the whole encode (≈ duration / 4)                                                                                            |
+| Frames dropped under load                | possible, counted    | none: every repair is in the log                                                                                             |
+| Re-encode later (other fps, size, codec) | lossy from the MP4   | exact, from the log                                                                                                          |
+| Disk while recording                     | the MP4              | the log (/to measure/: typing repairs one text line at a time, so it should be small; a playing web video is the worst case) |
+| New code                                 | the sampler + writer | that plus the log format, its replayer, an encode job                                                                        |
+
+The log is the better recording and the worse experience; live is the reverse. Both
+share the sampler, the meter, the segments and the result view, so the log is a
+second writer, not a second recorder.
+
+** 5.3 Pause and resume: segments
+
+ffmpeg cannot pause an ALSA input, and a paused recording should not contain the
+pause. So *a pause ends a segment* (=SIGINT= to ffmpeg: it finishes the file cleanly)
+and *resume starts the next* (=seg-002=, …). Stop ends the last one and joins them:
+
+#+begin_example
+ffmpeg -f concat -safe 0 -i segments.txt -c copy -movflags +faststart NAME.mp4
+#+end_example
+
+=-c copy= re-encodes nothing — the segments share every parameter, so the join takes
+seconds. A paused recorder keeps the mic meter running (so you can check the level
+before resuming) and shows =❚❚ 01:23= in the tray.
+
+** 5.4 Files
+
+A recording is a folder =~/.lol/rec/2026-10-17-1530/= (via =lol-path=, mode 0700)
+holding the segments, =segments.txt=, =ffmpeg.log= (stderr, for when it fails) and
+the finished =NAME.mp4= (0600 — chmod it to share). See §12 for the
+question whether the finished file belongs in =~/Videos= instead.
+
+Before recording, =statvfs= the home: refuse with less than 1 GB free, warn on the
+pane below 5 minutes' worth at the measured rate.
+
+* 6. Encoding progress and the result
+
+ffmpeg's =-progress pipe:2= writes =key=value= blocks; checked on the host, the keys
+include =frame=, =fps=, =out_time_us=, =dup_frames=, =drop_frames=, =speed= and a
+final =progress=end=. The recorder reads them as one more service fd.
+
+- *While recording live:* =out_time_us= is the recorded length; =speed= below 1.0 means
+  the encoder is falling behind — the pane says so in red before frames start dropping.
+- *While encoding (concat; the damage log's encode):* the total is known (the sum of
+  the segments), so the tray and the pane show =⟳ encoding 42% · 3.9× · 0:21 left=.
+- *The result:* =ffprobe -v error -of json -show_format -show_streams NAME.mp4=, read
+  with =lol.json=, becomes the *result view* — duration, size, resolution, frame rate,
+  video and audio codecs, the number of segments, frames dropped, the mic's peak level
+  over the whole take (a take that never rose above -40 dB gets a warning: you
+  probably recorded silence), and commands: *Play*, *Show in files* (=SuperL-f= at the
+  folder), *Rename*, *Delete*, and (damage log) *Re-encode*.
+
+The output is MP4 with H.264 (=yuv420p=, which every player and browser takes) and AAC
+at 48 kHz, =+faststart= so a web page can play it before it has all of it — the file
+you can attach to an issue, a README or a message as it is.
+
+* 7. The interface
+
+** 7.1 Keys (checked free: no =SuperL-r= is bound in =poc/= or =initramfs/=)
+
+| Key                       | Does                                                                                                   |
+|---------------------------+--------------------------------------------------------------------------------------------------------|
+| =SuperL-r=                | Not recording: preflight (§7.3), a 3-2-1 in the status line, record. Recording: pause. Paused: resume. |
+| =SuperL-S-r=              | Stop: end the last segment, join, encode, and open the result view.                                    |
+| =SuperL-r= while encoding | Opens the recorder pane (where the progress is).                                                       |
+
+Both go in the =SuperL-?= cheatsheet under a "Recording" group (the rule Morphic set:
+every global key appears there). Spotter: =record=, =recordings=.
+
+** 7.2 The recorder pane and the tray
+
+The tray item (=tray-items=, [[file:systray.org][systray.org]]) is the recorder's face while you work:
+=● REC 01:23 ▮▮▮▯▯= (the mic level), =❚❚ 01:23=, =⟳ 42%=, =✓ 2:14= (done: click opens
+the result), or nothing.
+
+The pane (=subj-recorder=, a =present= subject like any other):
+
+#+begin_example
+ Recorder                                         ● recording  01:23
+ ──────────────────────────────────────────────────────────────────
+  Mic        ▮▮▮▮▮▮▮▯▯▯▯▯▯  -12 dB       gain  [-] 64% [+]
+  Video      1920×1200 @ 30   live · libx264 ultrafast · speed 4.0×
+  Segments   2 (paused once)   frames dropped 0
+  Disk       41 GB free  (≈ 9 h at this rate)
+ ──────────────────────────────────────────────────────────────────
+  [SuperL-r pause]   [SuperL-S-r stop]   [m mode: live / log]
+ ──────────────────────────────────────────────────────────────────
+ Recordings
+  2026-10-17-1530  lol-tour.mp4      2:14   38 MB  ✓
+  2026-10-16-2210  first-try.mp4     0:41   11 MB  ✓  (silent!)
+#+end_example
+
+Each row of "Recordings" drills into its result view (§6); =RET= on it plays.
+
+** 7.3 Preflight: every failure says why
+
+Like the agent's preflight ([[file:agent.org][agent.org]] §14.8), checked before anything starts,
+each failure a red block in the pane with its cause and what to do:
+
+1. a sound card (=/proc/asound/cards= non-empty) — else "this kernel has no sound:
+   tag #29 or later";
+2. =/dev/snd/pcmC0D0c= openable by us — else "lol-rootd has not given /dev/snd yet";
+3. a home on disk (=lol-path=) and free space;
+4. the default container and its =ffmpeg= with =libx264= and =aac=;
+5. which mic (§2.1): the headset's when its jack says plugged in — else a warning, not
+   a refusal: "recording the built-in mic: is the headset plugged in?";
+6. one second of mic: peak above the noise floor — else "the mic is silent: check
+   the gain row, or the headset's own mute switch", with the gain row right there.
+
+* 8. Playback, without leaving the environment: the host's player
+
+*Decided (the user, 2026-10-17): we do not build a player; we use one from the host.*
+Decoding, A/V sync, seeking and the audio output are a player's whole job, and the
+host already has players that do it well. Our part is to lend it the screen and pass
+it the keys.
+
+** 8.1 What the host has, checked
+
+Checked on the host's Debian on 2026-10-17:
+
+| Player                             | Installed       | Can it show a picture with no X and no DRM?                                                                              | How we would drive it                                                                                                                                                               |
+|------------------------------------+-----------------+--------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| *MPlayer* 1.5 (=/usr/bin/mplayer=) | yes             | yes: =-vo fbdev= / =fbdev2= write =/dev/fb0=                                                                             | =-slave=: plain-text commands on stdin (=pause=, =seek=, =volume=, =get_time_pos=, =get_time_length=, =osd_show_progression=, =quit= — all in =mplayer -input cmdlist=); =-ao alsa= |
+| *VLC* 3 (=cvlc=, =libvlc.so.5=)    | yes             | yes: the =fb= video output (=--fbdev=, =--no-fb-tty=); =vmem= renders into memory, but only through libvlc's C callbacks | =rc= interface, or libvlc from C — and =libvlc-dev= (its headers) is not installed                                                                                                  |
+| ffplay                             | yes             | no: SDL2, whose drivers need X, Wayland or DRM — we have efifb                                                           |                                                                                                                                                                                     |
+| mpv                                | *not installed* | (would be =--vo=drm=: DRM again)                                                                                         |                                                                                                                                                                                     |
+| totem                              | yes             | no: GTK                                                                                                                  |                                                                                                                                                                                     |
+
+** 8.2 The proposal: MPlayer on the framebuffer, the screen lent
+
+Only one process may write =/dev/fb0= /at a time/ ([[file:processes.org][processes.org]]): two writers
+overwrite each other's pixels and nobody owns the result. So playing is a *hand-off*,
+the way leaving to the console already is:
+
+1. *Lend the screen.* A special =*screen-lent*= makes the presenting functions do
+   nothing. That is enough to stop *every* write of ours, because all of them are
+   =present-frame=, =present-repair=, =move-cursor= and =put-cursor= in
+   [[file:../initramfs/fb-browser.lisp::defun present-repair][fb-browser.lisp]] (§1). The world keeps running: the tray's clock, a
+   streaming agent reply, a terminal's output all still repair the canvas; they just
+   reach the screen after the hand-back.
+2. *Run the host's player* in the default container (our =/dev= is bind-mounted, so
+   =/dev/fb0= and =/dev/snd= are there, owned by the user):
+
+   #+begin_example
+   mplayer -slave -quiet -idle -nolirc -nomouseinput -noconsolecontrols \
+     -vo fbdev2:/dev/fb0 -ao alsa:device=plughw=0.0 \
+     -ss T  NAME.mp4
+   #+end_example
+
+   A recording is at the screen's own size (1920×1200, §5.1), so it fills the screen
+   with no scaling; a file of another size gets =-vf scale= to fit (MPlayer's software
+   scaler — fbdev2 has none of its own).
+3. *Keys stay ours.* The environment keeps reading the keyboard (evdev and the tty,
+   as always) and turns each key into a slave command on MPlayer's stdin; MPlayer's
+   own key handling is off (=-noconsolecontrols=), so nothing reaches it any other way.
+4. *Progress* is MPlayer's own on-screen display (=osd_show_progression=: a bar with
+   the time, drawn into its frames), shown on every seek and pause. The environment
+   asks =get_time_pos= / =get_time_length= too, to remember where you stopped.
+5. *Hand back.* On =q= or end of file (=-idle= keeps MPlayer alive at the end, so the
+   last frame stays until you press =q=), MPlayer is quit, =*screen-lent*= cleared,
+   and the whole frame presented once (=present-frame=) — everything that happened
+   meanwhile appears at once.
+
+Controls (slave commands, checked in =mplayer -input cmdlist=):
+
+| Key                      | Command                                      |
+|--------------------------+----------------------------------------------|
+| =SPC=                    | =pause= (a toggle)                           |
+| =←= / =→=, =S-←= / =S-→= | =seek -5= / =seek 5=, =seek -30= / =seek 30= |
+| =0=–=9=                  | =seek N0 1= (percent)                        |
+| =-= / =+=                | =volume -5= / =volume 5=                     |
+| =o=                      | =osd_show_progression=                       |
+| =q=, =Esc=               | =quit=, then the hand-back                   |
+
+Pause and seek are MPlayer's: nothing is restarted, and A/V sync is MPlayer's problem
+(it has solved it for twenty years). An ALSA underrun on resuming from a pause is
+MPlayer's to recover from, as it does on any desktop.
+
+What we write: the hand-off and the key table, about 150 lines; no decoder, no pane.
+
+** 8.3 What the hand-off costs
+
+- *Full screen only.* The video does not sit in a pane or a window; you see it the
+  way you would in a player's full-screen mode, then you are back exactly where you
+  were. For "watch the take before sharing it", that is the right view anyway.
+- *No pointer, no overlays* while it plays: nothing of ours is drawn.
+- *A safety net:* if MPlayer dies or hangs, the hand-back still happens — a dead child
+  is noticed in the poll (its stdout closes); =SuperL-Esc= always kills it and takes the
+  screen back. A player must never be able to leave the screen without an owner.
+
+*Proved in QEMU (2026-10-17, tag #28, OVMF + efifb at 1280×800, the host's MPlayer
+run from a terminal pane in the default container — the recipe of §8.5):* both
+=fbdev2= (full screen) and =fbdev= with =-geometry= (a window) draw on efifb's fixed
+32-bpp mode as it is, with correct colours; the environment keeps running under it
+and our =KD_GRAPHICS= tty is left alone; =q= typed into the pane quits it. Three
+facts learned, each now in §8.5: =fbdev2= /centres/ the picture without scaling it
+(=-vf scale= to the screen's size fills it); =fbdev= *does not clip* — a window whose
+right edge passes the screen's wraps onto the left of the next line; and the
+=do_connect: could not connect to socket= MPlayer prints is LIRC (the infrared-remote
+client), silenced by =-nolirc=.
+
+/Still to prove on the laptop:/ the frame rate at 1920×1200, and (tag #29) that
+=-ao alsa= reaches the headset.
+
+** 8.4 Ruled out, and why
+
+- *Our own decoder into a pane* (the first version of this section: ffmpeg decoding
+  to =bgra= over a pipe into a =video-body=, ~400 lines). It would have let the video
+  sit in a window, but it meant writing pause, seeking and A/V sync ourselves — a
+  player. The user's call: use the host's. If an in-pane player is ever wanted, the
+  way that still uses a host player is libvlc's =vmem= (VLC decodes into our memory,
+  plays its own sound) through a small C helper, since =libvlc-dev= is not installed
+  and libvlc calls back from its own threads, which PID 1 should not host.
+- *Not ruled out — later, as step 4b: MPlayer in a window's rect* (=-vo fbdev
+  -geometry X:Y -vf scale=W:H=; per =man mplayer=, =-geometry= is honoured by =fbdev=
+  but not =fbdev2=). It works (§8.5), but it is two writers on one screen again, so
+  as a built mode it needs rules: our presents leave the rect out (a hole in the screen
+  we own); anything that covers it (an overlay, a window raised above, the halo)
+  pauses MPlayer; the pointer is hidden over it; a moved or resized window restarts
+  MPlayer at =-ss= in its new place (a fraction of a second's hiccup); and a paused
+  frame is read back from =/dev/fb0= into the window's own store, so our repairs keep
+  it. About half a day on top of the full-screen hand-off.
+- *VLC's =fb= output:* it works the same way, but by default it takes the tty
+  (=--fb-tty=); MPlayer's fbdev2 does less, and its slave protocol is plain text. VLC
+  stays the second choice if fbdev2 misbehaves on efifb.
+- *ffplay* and *mpv:* §8.1 — no framebuffer output (ffplay) or not installed (mpv).
+- *Chrome's =<video>= in the web pane:* the screencast it is drawn from is JPEG at
+  Chrome's chosen rate (blurrier and choppier than the file — the thing you want to
+  judge), and headless Chrome's audio output in the container is untried. It stays a
+  useful last check: "does it play in a browser?"
+
+** 8.5 Try it on the laptop (tag #29: picture and sound)
+
+Tag #29 is built (§3, [[file:kernel-config.org][kernel-config.org]] §9), and so are =/dev/snd= for the user,
+[[file:../initramfs/mixer.lisp][mixer.lisp]] and the volume keys (§3.1). The player of §8.2 — lending the screen —
+is not built yet, so for now the host's MPlayer runs in a terminal pane and draws
+over the environment. That is enough to judge picture *and* sound on the real
+machine. Everything below was run in QEMU on 2026-10-17 exactly as written (QEMU's
+screen is 1280×800; its sound card is QEMU's own codec, not the laptop's ALC289).
+
+*** 0. Boot the tag #29 image
+
+=./build.sh --install-host= copies it to =/boot/lisp= for the host's GRUB entry
+([[file:micro-distro.org][micro-distro.org]], "Booting from the host's GRUB"), or copy =iso_root/= to the
+USB stick as =build.sh= prints.
+
+*** 1. Is there sound at all?
+
+- The tray should show =VOL 50%= (the first boot's level; after that, the last one
+  you set). No =VOL= at all means no card: the boot's =session.log=
+  (=~/.lol/log=) has a =sound:= line when =restore-audio= found one.
+- Press the laptop's volume keys: the status line says =Volume 55%= and the tray
+  follows; Mute says =Volume muted= / =VOL mute=. The keys are the ones the host's
+  StumpWM binds to =pactl= (=XF86AudioRaiseVolume= & co.); here they reach the
+  card through =mixer.lisp=, so they work everywhere in the environment. /If they
+  do nothing on the laptop, note it/ — its Fn keys may arrive on another device
+  than the AT keyboard (the =input devices= view, SuperL-Space, lists them).
+
+*** 2. A test clip, once
+
+In a terminal (=SuperL-Return=): colour bars, a running clock and a 440 Hz tone, 20 s.
+Any video of yours does as well.
+
+#+begin_example
+ffmpeg -f lavfi -i testsrc2=size=640x400:rate=30 -f lavfi -i sine=frequency=440 \
+       -t 20 -c:v libx264 -pix_fmt yuv420p -c:a aac ~/lol-test.mp4
+#+end_example
+
+*** 3. Play it from a Workspace
+
+Use your Workspace, or keep the test apart in a *new* one: =SuperL-S-e= opens
+another Workspace tab (the desk keeps its text across reboots, like the first).
+Paste this, put the caret after its last parenthesis and press =C-x C-e= (/Do it/):
+
+#+begin_src lisp
+(defun play (file &key window)
+  "Play FILE (in your home) with the host's mplayer, in a new tab that takes its keys:
+   full screen, or with :WINDOW T a 640x400 window against the right edge."
+  (open-terminal
+   (container-command-line
+    (append (list "mplayer" "-really-quiet" "-nolirc" "-ao" "alsa:device=plughw=0.0")
+            (if window
+                (list "-vo" "fbdev" "-geometry" "100%:50%" "-vf" "scale=640:400")
+                (list "-vo" "fbdev2" "-vf" (format nil "scale=~d:~d" *fb-xres* *fb-yres*)))
+            (list (namestring (merge-pathnames file (user-homedir-pathname))))))
+   :title "mplayer"))
+#+end_src
+
+Then, each with =C-x C-e= after it:
+
+#+begin_src lisp
+(play "lol-test.mp4" :window t)   ; a window, flush right, centred vertically
+(play "lol-test.mp4")             ; the whole screen
+#+end_src
+
+What it does: =container-command-line= ([[file:../initramfs/containers.lisp][containers.lisp]]) wraps the argv to run
+in the default container, where the host's =mplayer= is; =open-terminal= runs that
+on a pty in a *new tab* ([[file:terminal.org][terminal.org]]), so while that tab has the focus your keys
+go to MPlayer. =*fb-xres*= / =*fb-yres*= are the screen's size, so the same text
+fills 1920×1200 on the laptop and 1280×800 in QEMU. =C-x C-e=, not =C-c C-c=: Accept
+would journal =play= and compile it back in on every boot
+([[file:session-persistence.org][session-persistence.org]]) — fine if you want to keep it, but a test helper needn't.
+
+*** 4. The keys, and getting back
+
+MPlayer's own: =SPC= pause, =←= / =→= 10 s, =↑= / =↓= a minute, =9= / =0= its
+volume, =o= its on-screen clock, =q= quit. After =q= the tab says
+=exited with code 0=; =Return= closes it and you are back where you were.
+
+Two things you will see, both what §8.2's hand-off is for:
+
+- *The environment still paints.* In QEMU the tray's clock appeared over the
+  full-screen video every second (its strip is repainted by itself), and a pane
+  that changes repaints over a window. The video is not damaged, only covered.
+- *The last frame stays after =q=*: nothing of ours knows it is there.
+  =SuperL-Tab= twice repaints almost everything; thin strips in the gutters stay
+  until something redraws them.
+
+*** 5. The same from the terminal
+
+#+begin_example
+mplayer -really-quiet -nolirc -ao alsa:device=plughw=0.0 -vo fbdev \
+        -geometry 100%:50% -vf scale=640:400 ~/lol-test.mp4
+mplayer -really-quiet -nolirc -ao alsa:device=plughw=0.0 -vo fbdev2 \
+        -vf scale=1920:1200 ~/lol-test.mp4
+#+end_example
+
+=-geometry X:Y= is the window's top-left corner, in pixels or as a percentage of the
+room left over. *Keep it inside the screen*: fbdev does not clip, and a window past
+the right edge wraps onto the left (seen in QEMU with =1000:150= on a 1280-wide
+screen). Without =-vf scale=, fbdev2 shows the clip at its own size, centred.
+=-ao alsa:device=plughw=0.0= is MPlayer's spelling of =plughw:0,0=: not ALSA's
+=default=, which the host's ALSA configuration points at PipeWire (§2).
+
+*** 6. If it plays without sound
+
+- Is the tray at =VOL mute= or a low level? The volume keys fix both.
+- Headset: plugging it in moves the sound from the speakers to it — the kernel's
+  own auto-mute (the =Auto-Mute Mode= control). The jack's state is a control too:
+  in a Workspace, =C-c C-p= on =(getf (find-control "Headphone Mic Jack") :values)=
+  prints =(1)= when something is plugged in.
+- All the controls and their values: =C-c C-p= on =(mixer-controls)=. On the host's
+  Debian (read through the same code, 2026-10-17) the ALC289 has =Master=,
+  =Headphone= and =Speaker= playback volumes and switches (0–87), =Capture=
+  volume (0–63) and switch, =Capture Source=, =Auto-Mute Mode=, the three mic boosts
+  (0–3), and the jacks =Headphone Mic Jack= (the combo jack's sense) and the
+  /phantom/ jacks of the built-in mic and speaker. =restore-audio= switched every
+  playback and capture switch on at boot.
+- *Why not =pactl=, as on the host?* =pactl= is a client of a sound *server* — on
+  Debian, PipeWire answering the PulseAudio protocol — which then writes these same
+  ALSA controls. =alsa-utils= (=amixer=) was not replaced by it: it is the layer
+  below, and is simply not installed on the host. The image runs no sound server,
+  so =pactl= in the container would find nobody to talk to; =mixer.lisp= writes the
+  controls directly, which is what both tools end in. (The StumpWM bindings step by
+  =1000= — raw PulseAudio units of 65536, so about 1.5 %, not the 10 % their comment
+  says. Ours step 5 %, =*volume-step*=.)
+
+*Worth noting back from the laptop:* sound in the headset (and in the speakers,
+§2.2); smooth motion at 1920×1200 (drop =-really-quiet= to see MPlayer's =A-V= and
+dropped-frame counts); tearing; colours; the volume keys; and whether the
+=VOL= level you set is there after a reboot.
+
+* 9. Tests
+
+- *Host, =poc/recorder-test.lisp=:* the sampler against a scripted canvas (constant
+  rate, pointer drawn, a repeat frame not copied, a full queue drops and counts); the
+  damage log written and replayed equals the canvas pixel for pixel; the =-progress=
+  and =ffprobe= parsers against recorded output; segments joined by real host ffmpeg
+  into one file of the summed length.
+- *Guest, =check-recording.lisp=* (=LOL_GUEST_HOSTROOT=1= for the container's ffmpeg),
+  booted with sound — devices checked present in this QEMU:
+  =-audiodev wav,id=snd0,path=OUT.wav -device intel-hda -device hda-duplex,audiodev=snd0=.
+  The =wav= backend records the guest's /playback/ and gives silence as capture, so:
+  record 5 s over QMP keys, pause 2 s, resume 3 s, stop; assert the preflight passes,
+  the file has one video and one audio stream, its length is 8 s ± 0.2, frames dropped
+  0, the tray went ● → ❚❚ → ● → ⟳ → ✓; then *play* a file holding a 1 kHz tone
+  (=ffmpeg -f lavfi -i sine=1000=) and assert QEMU's =OUT.wav= is not silent and has
+  energy near 1 kHz — the player's audio, proved end to end. The file's picture is
+  =testsrc= (known colour bars), so a QMP screendump during play shows /its/ pixels,
+  not the environment's; =SPC= stops =get_time_pos= advancing; =q= hands the screen
+  back and the next screendump equals the environment painted afresh; a =kill -9= of
+  MPlayer hands it back too. The silent-mic warning is asserted as well (capture /is/
+  silence there).
+- *On the laptop, by hand:* the headset's mic and earphones, plugging and unplugging
+  mid-take, the built-in mic as fallback, the speakers, a ten-minute take for drift.
+
+* 10. Plan, in steps that each leave a working system
+
+0. *Sound in the kernel* (tag #29, §3) + =/dev/snd= to the user + =mixer.lisp=.
+   *BUILT 2026-10-17 and proved in QEMU* (=check-sound.lisp=: recording and playing
+   through the container, the volume keys); *the laptop half is owed* (§8.5). Done
+   when, on QEMU and the laptop, =ffmpeg -f alsa -i plughw:0,0 -t 3 a.wav= in the
+   container records the mic and =-f alsa plughw:0,0= plays it back — with the
+   headset plugged in, into its earphones, and recording *its* mic (§2.1). Record the
+   mixer and jack controls the codec actually has, their boot defaults, and the fixup
+   our kernel picked, here.
+1. *Prove A/V sync on the host* (§5.1), before any Lisp: the exact command line, the
+   drift in ten minutes.
+2. *Live recorder*: tap, sampler, writer, segments, preflight, tray, keys, cheatsheet.
+3. *Progress and result view*, the recordings list, the silent-take warning.
+4. *The player* (§8): the screen hand-off, the key table, MPlayer's slave protocol, the file manager's and the result view's *Play*.
+5. *The damage log* (§5.2) as the second mode.
+6. Later, each optional: an on-screen *key display* (the environment is keyboard-first;
+   a viewer cannot see =C-c C-c= being pressed — drawn into the recorded frame only),
+   *system audio* (=SND_ALOOP= + mixing the loopback with the mic, so a web page's
+   sound is in the take), a *trim* in the result view (=-ss/-to -c copy=), an *export*
+   to WebM or GIF.
+
+Steps 0–4 are the user's request; 5 is the documented option; 6 is not owed.
+
+* 11. Costs and risks
+
+- *CPU:* ~1 thread live; the damage log much less while recording, then an encode.
+  The laptop has eight threads; the environment uses one.
+- *Battery and heat* on a long take: say so in the pane, nothing more.
+- *MPlayer's fbdev2 on efifb* (§8.3) is unproven; VLC's =fb= output is the second
+  choice, and the hand-back is guarded so a failing player cannot keep the screen.
+- *The combo jack* (§2.1): if headset mode misdetects the plug, the mic is silent or
+  the built-in one is used; the preflight's mic and level checks catch both before
+  you talk.
+- *The speakers* (§2.2) may need a fixup we do not get; the headset always works.
+- *Mixer defaults* (§3.1) unknown until step 0.
+- *A slow disk or a full one*: the writer drops and counts, ffmpeg's error goes to
+  =ffmpeg.log= and the pane; the environment never waits.
+- *Kernel size:* the HDA core plus the Realtek driver; measure at tag #29 and record
+  it in =kernel-config.org=.
+
+* 12. Decisions taken by default (to review)
+
+| Question                                        | Default                                                                      | Alternative                                                             |
+|-------------------------------------------------+------------------------------------------------------------------------------+-------------------------------------------------------------------------|
+| Live encoding or damage log as the default mode | *Live* (no wait after stop); log selectable with =m=                         | Log by default, live as the option                                      |
+| Frame rate                                      | *30 fps*                                                                     | 60 (smoother pointer, ~2× CPU) or 15                                    |
+| Resolution                                      | *Native* (1920×1200)                                                         | Downscaled at encode to 1280×800 (smaller files)                        |
+| Audio source                                    | *The wired headset's mic* (built-in as fallback, with a warning)             | Mic + system audio (step 6)                                             |
+| The REC indicator in the video                  | *Visible*                                                                    | Masked out of the recorded copy                                         |
+| Format                                          | *MP4: H.264 yuv420p + AAC 48 kHz, faststart*                                 | WebM: VP9 + Opus                                                        |
+| Where the finished file goes                    | *=~/.lol/rec/<date>/NAME.mp4=* (one tree, the lol-home rule)                 | =~/Videos/= (it is your content, made to leave the machine)             |
+| Keys                                            | *=SuperL-r= record/pause/resume, =SuperL-S-r= stop*                          | —                                                                       |
+| The player                                      | *The host's MPlayer, full screen on the framebuffer, the screen lent* (§8.2) | VLC's =fb= output; or in a pane via libvlc =vmem= and a C helper (§8.4) |

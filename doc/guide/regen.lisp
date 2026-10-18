@@ -383,7 +383,7 @@
      "initramfs/logcount-fix.lisp" "poc/fb.lisp" "initramfs/framebuffer.lisp" "initramfs/files.lisp"
      "initramfs/sysinfo.lisp" "initramfs/meminfo.lisp" "initramfs/process.lisp"
      "initramfs/net.lisp" "initramfs/dhcp.lisp" "initramfs/dns.lisp" "initramfs/sntp.lisp"
-     "initramfs/tls.lisp" "initramfs/http.lisp" "initramfs/wifi.lisp")
+     "initramfs/tls.lisp" "initramfs/http.lisp" "initramfs/wifi.lisp" "initramfs/mixer.lisp")
     ("data" "pure formats and algorithms: bytes in, values out, no I/O of their own"
      "poc/inflate.lisp" "poc/deflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
     ("model" "the image describing itself: captured source, CLOS via the MOP, SBCL's own source"
