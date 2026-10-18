@@ -28,7 +28,7 @@
 ;;;; reason=WRONG_KEY". One thread here listens for those.
 ;;;;
 ;;;; Which networks we know (credentials never go into git or the image):
-;;;;   - ~/.config/lol/wifi/<ssid in hex>.net — one readable plist per network, mode
+;;;;   - ~/.lol/wifi/<ssid in hex>.net — one readable plist per network, mode
 ;;;;     0600, written when a connection with a typed passphrase SUCCEEDS;
 ;;;;   - the host's NetworkManager profiles: root-only on the host, so lol-rootd copies
 ;;;;     them to /tmp/lol-nm-import/ on request (preinit.c, ROOTD_SIG_NMIMPORT) — the
@@ -295,7 +295,8 @@
 ;;; ---- credentials ---------------------------------------------------------------------
 
 (defun wifi-config-dir ()
-  (format nil "~a/.config/lol/wifi/" (string-right-trim "/" (or (sb-ext:posix-getenv "HOME") "/tmp"))))
+  "~/.lol/wifi/ (LOL-PATH); a diskless boot keeps what it saves in /tmp until power-off."
+  (or (lol-path "wifi/") "/tmp/lol-wifi/"))
 
 (defun credentials-file (ssid) (format nil "~a~a.net" (wifi-config-dir) (ssid-hex ssid)))
 
@@ -308,7 +309,7 @@
          (read s nil nil))))))
 
 (defun save-wifi-credentials (ssid creds)
-  "Write CREDS (:psk / :security) for SSID to ~/.config/lol/wifi/ (a 0700
+  "Write CREDS (:psk / :security) for SSID to ~/.lol/wifi/ (a 0700
    directory). The FILE is created 0600 by open(2) itself — O_CREAT|O_EXCL with the
    mode — never chmod'ed after the fact: a passphrase must not sit world-readable
    even for a moment."
@@ -330,7 +331,7 @@
       path)))
 
 (defun saved-networks ()
-  "Every network saved under ~/.config/lol/wifi/, as plists (:ssid :psk :security)."
+  "Every network saved under ~/.lol/wifi/, as plists (:ssid :psk :security)."
   (remove nil (mapcar #'read-plist-file (directory (concatenate 'string (wifi-config-dir) "*.net")))))
 
 (defun forget-wifi-network (ssid)

@@ -40,7 +40,7 @@
 (let ((*load-verbose* nil))
   (handler-bind ((warning #'muffle-warning))
     (load (merge-pathnames "initramfs/registry.lisp" *root*))
-    (dolist (m '("poc/deflate.lisp" "initramfs/session-log.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
+    (dolist (m '("initramfs/lol-home.lisp" "poc/deflate.lisp" "initramfs/session-log.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/tour.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
                  "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
@@ -75,8 +75,8 @@
 
 (format t "~&== Accept appends ==~%")
 (yes "persistence on (a test home)" (persistence-available-p))
-(ok "the journal lives under ~/.local/share/lol"
-    (journal-file) (concatenate 'string *dir* ".local/share/lol/changes.lisp"))
+(ok "the journal lives under ~/.lol/journal"
+    (journal-file) (concatenate 'string *dir* ".lol/journal/changes.lisp"))
 (accept-source "(defun zz-journal-a () 42)")
 (let ((rs (records)))
   (ok "one record after one Accept" (length rs) 1)
@@ -133,7 +133,7 @@
   (yes "the report names the stop" (getf *replay-report* :stop))
   (yes "the tail was quarantined" (getf *replay-report* :quarantined))
   (yes "changes-damaged.lisp has it"
-       (search "zz-torn" (slurp-utf-8 (persist-path :data "changes-damaged.lisp"))))
+       (search "zz-torn" (slurp-utf-8 (persist-path :journal "changes-damaged.lisp"))))
   (ok "the journal reads clean again (its retired records gone too)" (nth-value 1 (records)) nil)
   (accept-source "(defun zz-after-torn () 1)")
   (ok "an Accept after the cut is readable" (getf (car (last (records))) :name) "ZZ-AFTER-TORN"))
@@ -141,12 +141,12 @@
 ;;; ---- 4. replay-off, pending by hand, discard -----------------------------------------
 
 (format t "~&== replay-off, pending, discard ==~%")
-(append-synced (persist-path :data "replay-off") "")
+(append-synced (persist-path :journal "replay-off") "")
 (setf *replay-report* nil)
 (replay-journal)
 (yes "replay-off is reported" (getf *replay-report* :disabled))
 (ok "every entry skipped" (remove-duplicates (mapcar #'re-status (getf *replay-report* :entries))) '(:skipped))
-(delete-path (persist-path :data "replay-off"))
+(delete-path (persist-path :journal "replay-off"))
 
 (append-synced (journal-file) (print-record (rec "(defun zz-from-old-build () :old)" :build "older" :seq 500)))
 (setf *replay-report* nil)
@@ -192,7 +192,7 @@
   (ok "the file changed in exactly that one place"
       after (replace-once "(* 2 x))" "(* 3 x))" *module-text*))
   (yes "the born one is in changes-unfolded.lisp"
-       (search "(defun zz-fo-born () :new)" (slurp-utf-8 (persist-path :data "changes-unfolded.lisp"))))
+       (search "(defun zz-fo-born () :new)" (slurp-utf-8 (persist-path :journal "changes-unfolded.lisp"))))
   (ok "a second file-out finds it already there"
       (getf (first (file-out-changes :defns (list (find :function (gethash 'zz-fo-a *registry*) :key #'defn-kind))
                                      :unfolded-path nil))

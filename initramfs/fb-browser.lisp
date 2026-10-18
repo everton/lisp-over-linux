@@ -306,7 +306,7 @@
   "Does a tap on the touchpad click? NIL (the default, the user's choice 2026-10-16):
    only a PHYSICAL press of the pad clicks, and a finger merely touching it never
    does, however firm or brief. T turns the tap rule below back on. Read from
-   ~/.config/lol/settings (:TAP-TO-CLICK T) when the browser starts; setting it in
+   ~/.lol/settings (:TAP-TO-CLICK T) when the browser starts; setting it in
    the Workspace takes effect on the next contact.")
 (defvar *tap-down-us* nil "When the finger landed, in microseconds, or NIL for no contact.")
 (defvar *tap-x* nil "Where it landed, in pad units — the origin the travel test measures from.")
@@ -1525,7 +1525,7 @@
   (handler-case
       (progn
         ;; the font: the TrueType file build.sh copied in, at the size the user last
-        ;; chose (~/.config/lol/settings); the bitmap blob if that file is missing or
+        ;; chose (~/.lol/settings); the bitmap blob if that file is missing or
         ;; empty. Loaded ONCE — SuperL-= resizes this same object (doc/fonts.org).
         (unless *bfont*
           (set-browser-font

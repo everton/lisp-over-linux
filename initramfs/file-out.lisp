@@ -153,7 +153,7 @@
             (when (and (eq (getf r :status) :folded) (string= (getf r :reason) (car cell)))
               (setf (getf r :status) :unfolded
                     (getf r :reason) (format nil "writing ~a failed: ~a" (car cell) c)))))))
-    (let ((path (if (eq unfolded-path :default) (persist-path :data "changes-unfolded.lisp") unfolded-path))
+    (let ((path (if (eq unfolded-path :default) (persist-path :journal "changes-unfolded.lisp") unfolded-path))
           (text (unfolded-text results)))
       (when (and path (plusp (length text)))
         (append-synced path text :mode #o644)))
@@ -164,7 +164,7 @@
                       for n = (count s results :key (lambda (r) (getf r :status)))
                       when (plusp n) collect (format nil "~d ~(~a~)" n s))))
     (if counts
-        (format nil "file out: ~{~a~^, ~}~:[~; (unfolded ones in ~~/.local/share/lol/changes-unfolded.lisp)~]"
+        (format nil "file out: ~{~a~^, ~}~:[~; (unfolded ones in ~~/.lol/journal/changes-unfolded.lisp)~]"
                 counts (find :unfolded results :key (lambda (r) (getf r :status))))
         "file out: nothing changed this session")))
 

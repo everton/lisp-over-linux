@@ -59,9 +59,7 @@
 (defun conversation-store-dir ()
   "~/.lol/agent/conversations, or NIL when there is no home on a disk (a diskless boot
    runs with HOME=/, which is the initramfs, gone at power-off)."
-  (let ((home (ignore-errors (home-directory))))
-    (when (and home (string/= home "/") (eq (followed-type home) :directory))
-      (path-join home ".lol/agent/conversations"))))
+  (lol-path "agent/conversations"))
 
 (defun ensure-private-directory (path)
   "mkdir -p PATH, each folder this makes 0700 (one that exists is left as it is)."

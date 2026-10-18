@@ -56,13 +56,9 @@
 (defvar *log-dir* nil "When set, the log directory, whatever HOME says (the host test).")
 
 (defun log-dir ()
-  "$HOME/.lol/log/ on a boot with a real home (the laptop's /home survives a reset);
+  "~/.lol/log/ (LOL-PATH, lol-home.lisp) on a boot with a real home (the laptop's /home survives a reset);
    /tmp/lol-log/ on a diskless boot, where HOME is /."
-  (or *log-dir*
-      (let ((home (sb-ext:posix-getenv "HOME")))
-        (if (and home (string/= home "") (string/= home "/"))
-            (format nil "~a/.lol/log/" (string-right-trim "/" home))
-            "/tmp/lol-log/"))))
+  (or *log-dir* (lol-path "log/") "/tmp/lol-log/"))
 
 (defun log-path (base) (format nil "~a~a.log" (log-dir) base))
 

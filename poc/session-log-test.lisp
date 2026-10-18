@@ -16,6 +16,7 @@
 ;;;;
 ;;;; Prints one line per check and exits non-zero on any failure.
 
+(load (merge-pathnames "../initramfs/lol-home.lisp" *load-truename*))   ; LOG-DIR asks LOL-PATH
 (load (merge-pathnames "deflate.lisp" *load-truename*))
 (load (merge-pathnames "inflate.lisp" *load-truename*))
 (load (merge-pathnames "../initramfs/session-log.lisp" *load-truename*))

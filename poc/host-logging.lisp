@@ -15,6 +15,7 @@
 ;;;; All original code, under this project's MIT licence.
 
 (let ((here (make-pathname :name nil :type nil :defaults *load-truename*)))
+  (load (merge-pathnames "../initramfs/lol-home.lisp" here))   ; LOL-PATH: where the logs live
   (load (merge-pathnames "deflate.lisp" here))
   (load (merge-pathnames "../initramfs/session-log.lisp" here)))
 

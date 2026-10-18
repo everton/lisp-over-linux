@@ -415,7 +415,7 @@
                                     (when (conversation-authority c) (setf (conversation-authority c) :ask))))
             (make-command :label "Allow all writes (stop asking, this session)"
                           :action (lambda () (allow-all-writes :conversation c))))
-        (make-command :label "Allow all writes, always (save to ~/.config/lol/agent.lisp)"
+        (make-command :label "Allow all writes, always (save to ~/.lol/agent/settings.lisp)"
                       :action (lambda () (allow-all-writes :conversation c :save t)))
         (make-command :label "Inspect the conversation object" :target (subj-object c))
         (make-command :label "The agent's state and modes" :target (subj-agent))))
@@ -459,7 +459,7 @@
                                            "not used: the endpoint is not https://api.anthropic.com")
                                           ((agent-api-key) (format nil "present (~a)" (agent-key-path)))
                                           (t (format nil "MISSING — put it in ~a"
-                                                     (or (agent-key-path) "~/.config/lol/anthropic-api-key (no /home on this boot)")))))
+                                                     (or (agent-key-path) "~/.lol/agent/anthropic-api-key (no /home on this boot)")))))
                  (make-item :label "session cost" :detail (format-cost (session-cost))))
            (mapcar (lambda (c)
                      (make-item :label (conversation-title c) :group "conversations"
@@ -475,7 +475,7 @@
         (make-command :label "Authority: allow" :action (lambda () (setf *agent-authority* :allow)))
         (make-command :label "Agent off" :action (lambda () (setf *agent-initiative* :off)))
         (make-command :label "Agent on (reacting)" :action (lambda () (setf *agent-initiative* :reacting)))
-        (make-command :label "Reload ~/.config/lol/agent.lisp" :action #'load-agent-settings)
+        (make-command :label "Reload ~/.lol/agent/settings.lisp" :action #'load-agent-settings)
         (make-command :label "Forget the cached API key" :action #'forget-agent-key)))
 
 ;;; Every subject gains Ask (§8.1): one :AROUND method, no per-subject work.
@@ -873,7 +873,7 @@
   "The approval request's restarts as chooser entries — the restarts themselves, not
    a parallel list: what you pick is what gets invoked. Below them, ALLOW ALL: run this
    call and stop asking, for the session (5) or for good (6, saved in
-   ~/.config/lol/agent.lisp) — see ALLOW-ALL-WRITES."
+   ~/.lol/agent/settings.lisp) — see ALLOW-ALL-WRITES."
   (let* ((call (approval-call c))
          (conv (approval-conversation c))
          (group (format nil "approve #~d · ~a" (call-number call) (call-name call))))
@@ -901,7 +901,7 @@
          (list (menu-entry "Allow all — stop asking this session"
                            (lambda () (allow-all-writes :conversation conv) (invoke-restart allow))
                            :key "5" :group group)
-               (menu-entry "Allow all — always (saved to ~/.config/lol/agent.lisp)"
+               (menu-entry "Allow all — always (saved to ~/.lol/agent/settings.lisp)"
                            (lambda ()
                              ;; a settings file that cannot be written must not cost you
                              ;; the call: fall back to this session only

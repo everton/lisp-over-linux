@@ -66,6 +66,8 @@ POC_DIR="$MICRO/poc"
 LISP_SOURCES=(
   "$INITRAMFS_DIR/logcount-fix.lisp" # FIRST: repairs SBCL 2.6.8's no-POPCNT LOGCOUNT (qemu64 has
                                      #   no POPCNT; without this, compiling arithmetic crashes the guest)
+  "$INITRAMFS_DIR/lol-home.lisp"     # ~/.lol: the ONE place naming where things are kept (lol-path),
+                                     #   and the boot-time move from the old XDG layout — before every user
   "$POC_DIR/deflate.lisp"            # lol.deflate: DEFLATE/zlib/gzip WRITERS (gzips the last boot's logs)
   "$INITRAMFS_DIR/session-log.lisp"  # ~/.lol/log: session log, pulse, stall watcher, crash capture,
                                      #   per-boot archiving — early, so every later module can log
@@ -92,7 +94,7 @@ LISP_SOURCES=(
   "$POC_DIR/image.lisp"              # lol.image: PNG/GIF/BMP/... -> canvas pixels (image previews; uses inflate)
   "$INITRAMFS_DIR/files.lisp"        # the file system as data: lstat/readdir/rename/... via sb-unix + libc
                                      #   (doc/file-manager.org; after sysinfo for *utc-offset*)
-  "$INITRAMFS_DIR/settings.lisp"     # ~/.config/lol/settings: the user's preferences, e.g. the font size (uses files)
+  "$INITRAMFS_DIR/settings.lisp"     # ~/.lol/settings: the user's preferences, e.g. the font size (uses files)
   "$INITRAMFS_DIR/file-views.lisp"   # folders & files as SUBJECTS: present/preview/commands (uses present + files)
   "$POC_DIR/terminal.lisp"           # lol.terminal: the VT engine — bytes in, a grid of cells out (doc/terminal.org)
   "$INITRAMFS_DIR/pty.lisp"          # pseudo-terminals via posix_spawn: a program on a pty, as a session leader
@@ -128,7 +130,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/http.lisp"         # HTTP/1.1 client: http-request, chunked, redirects (uses dns + tls)
   "$INITRAMFS_DIR/wifi.lisp"         # Wi-Fi: rfkill, the HOST's wpa_supplicant, its control socket (uses dhcp)
   "$INITRAMFS_DIR/net-views.lisp"    # the network as a subject: SuperL-n, the Spotter (uses shell + wifi)
-  "$INITRAMFS_DIR/journal.lisp"      # every Accept appended to ~/.local/share/lol/changes.lisp, replayed
+  "$INITRAMFS_DIR/journal.lisp"      # every Accept appended to ~/.lol/journal/changes.lisp, replayed
                                      #   at boot, + the journal view (doc/session-persistence.org)
   "$INITRAMFS_DIR/file-out.lisp"     # write live edits back into the checkout's .lisp files (uses journal)
   "$INITRAMFS_DIR/desk.lisp"         # the desk: tabs + Workspace text saved/restored (uses every subject)

@@ -398,8 +398,8 @@
      "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter — and the desk it runs in"
      "poc/shell.lisp" "poc/file-manager.lisp" "poc/morphic.lisp" "poc/overlays.lisp")
-    ("persistence" "what a session keeps on /home: the change journal and its replay, file-out, the desk"
-     "initramfs/journal.lisp" "initramfs/file-out.lisp" "initramfs/desk.lisp")
+    ("persistence" "what a session keeps on /home, all under ~/.lol: where (and the move from the old layout), the change journal and its replay, file-out, the desk"
+     "initramfs/lol-home.lisp" "initramfs/journal.lisp" "initramfs/file-out.lisp" "initramfs/desk.lisp")
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"
      "initramfs/fb-browser.lisp" "initramfs/repl.lisp" "initramfs/supervisor.lisp"
      "initramfs/session-log.lisp")

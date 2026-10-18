@@ -1,6 +1,6 @@
 ;;;; journal.lisp — the change journal: every Accept kept on the disk, replayed at boot.
 ;;;;
-;;;;   ~/.local/share/lol/changes.lisp      one printed plist per Accept, appended + fsync'd
+;;;;   ~/.lol/journal/changes.lisp      one printed plist per Accept, appended + fsync'd
 ;;;;
 ;;;; The image is a frozen heap in a RAM-only initramfs, so until this file existed a
 ;;;; definition you Accepted (C-c C-c) lived exactly as long as the machine stayed on.
@@ -104,15 +104,14 @@
                                     t)))))))))
 
 (defun persist-path (place name)
-  "The file NAME under the XDG directory for PLACE: :DATA is ~/.local/share/lol
-   (worth keeping: the journal, file-out leftovers), :STATE is ~/.local/state/lol
-   (reused on restart: the desk). NIL when persistence is off."
+  "The file NAME under PLACE's folder in ~/.lol (LOL-PATH, lol-home.lisp): :JOURNAL is
+   ~/.lol/journal (the journal, its damaged tail, file-out leftovers, replay-off),
+   :DESK is ~/.lol/desk (tabs and Workspaces). NIL when persistence is off.
+   (Until 2026-10-17 these were XDG's ~/.local/share/lol and ~/.local/state/lol;
+   MIGRATE-LOL-HOME moves them at boot.)"
   (when (persistence-available-p)
-    (path-join (path-join (or *persist-home* (home-directory))
-                          (ecase place
-                            (:data ".local/share/lol")
-                            (:state ".local/state/lol")))
-               name)))
+    (lol-path (concatenate 'string (ecase place (:journal "journal/") (:desk "desk/")) name)
+              (or *persist-home* (home-directory)))))
 
 (defun ensure-directories-under-home (path)
   "mkdir -p for PATH's folder, one component at a time (MAKE-DIRECTORY is mkdir(2),
@@ -123,7 +122,7 @@
           do (push d dirs))
     (dolist (d dirs) (make-directory d))))
 
-(defun journal-path () (persist-path :data "changes.lisp"))
+(defun journal-path () (persist-path :journal "changes.lisp"))
 
 ;;; ---- writing: append one record, and make it durable ---------------------------------
 
@@ -259,7 +258,7 @@
    its readable prefix. Without this the NEXT Accept would be appended after the torn
    record and swallowed into it, unreadable forever."
   (let ((tail (subseq text (getf stop :offset))))
-    (append-synced (persist-path :data "changes-damaged.lisp")
+    (append-synced (persist-path :journal "changes-damaged.lisp")
                    (format nil ";; ~a: cut from changes.lisp at character ~d (~a)~%~a~%"
                            (get-universal-time) (getf stop :offset) (getf stop :reason) tail))
     (write-records path records)))
@@ -285,8 +284,8 @@
   (let ((cmdline (ignore-errors
                   (with-open-file (s "/proc/cmdline") (read-line s nil "")))))
     (cond ((and cmdline (search "lol.replay=off" cmdline)) "lol.replay=off on the command line")
-          ((let ((f (persist-path :data "replay-off"))) (and f (path-exists-p f)))
-           "~/.local/share/lol/replay-off exists")
+          ((let ((f (persist-path :journal "replay-off"))) (and f (path-exists-p f)))
+           "~/.lol/journal/replay-off exists")
           (t nil))))
 
 (defun record-defn (form)
@@ -479,7 +478,7 @@
   (let ((path (journal-path)))
     (cond ((null path) "no disk - there is no journal")
           ((not (path-exists-p path)) "the journal is already empty")
-          (t (rename-path path (persist-path :data (format nil "changes-discarded-~d.lisp"
+          (t (rename-path path (persist-path :journal (format nil "changes-discarded-~d.lisp"
                                                            (get-universal-time))))
              (setf *journal-seq* 0)
              "journal moved aside (changes-discarded-*.lisp); the next boot replays nothing"))))

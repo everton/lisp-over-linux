@@ -25,7 +25,7 @@
   (handler-bind ((warning #'muffle-warning))
     (load (merge-pathnames "poc/host-logging.lisp" *root-dir*))   ; web-cdp.lisp logs (session-log.lisp)
     (load (merge-pathnames "initramfs/registry.lisp" *root-dir*))
-    (dolist (m '("initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
+    (dolist (m '("initramfs/lol-home.lisp" "initramfs/sbcl-source.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/examples.lisp" "initramfs/stage.lisp"
                  "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
                  "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"

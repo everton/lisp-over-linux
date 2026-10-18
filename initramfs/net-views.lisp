@@ -113,7 +113,7 @@
                           (make-item :label (cond ((null creds) "not known — c asks for the passphrase")
                                                   ((eq (getf creds :from) :networkmanager)
                                                    "known from the host's NetworkManager")
-                                                  (t "saved in ~/.config/lol/wifi/"))
+                                                  (t "saved in ~/.lol/wifi/"))
                                      :kind (if creds :class nil)))))))
 
 (defmethod commands-for ((s subj-wifi-network))

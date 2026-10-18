@@ -38,8 +38,10 @@
 ;;; ---- where containers live ---------------------------------------------------
 
 (defun containers-directory ()
-  "~/.lol/ct — one subdirectory per container."
-  (path-join (path-join (home-directory) ".lol") "ct"))
+  "~/.lol/ct — one subdirectory per container. With no real home (a diskless boot,
+   HOME=/) it is $HOME/.lol/ct all the same, because that is the default lol-ct.c
+   computes for itself from $HOME: the two must agree."
+  (or (lol-path "ct") (path-join (path-join (home-directory) ".lol") "ct")))
 
 (defun valid-container-name-p (name)
   "A container name becomes a directory name and a hostname (lol-NAME): letters,

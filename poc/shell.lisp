@@ -515,7 +515,7 @@
   "The SuperL-= / SuperL-- / SuperL-0 (and C-x C-+ / C-- / C-0) command. HOW is
    :bigger, :smaller or :reset. Resizes the ONE shared font in place, so the next
    frame relays out everything; says the new size in the status line; and remembers
-   it in ~/.config/lol/settings when there is a home to write to. Steps are 2 px
+   it in ~/.lol/settings when there is a home to write to. Steps are 2 px
    below 20 and 3 above — at 12 px one pixel is 8%, at 30 it is 3% and too small to see."
   (let* ((f *bfont*)
          (now (lol.canvas:font-size f))

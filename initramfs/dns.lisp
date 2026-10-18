@@ -30,7 +30,7 @@
 ;;;;   - a TTL cache, positive and negative, so a page of 30 requests to one host is
 ;;;;     one query;
 ;;;;   - timeouts and retries across every server the lease named;
-;;;;   - overrides first, /etc/hosts-style: our /etc/hosts, then ~/.config/lol/hosts
+;;;;   - overrides first, /etc/hosts-style: our /etc/hosts, then ~/.lol/hosts
 ;;;;     (yours to edit), then anything (setf (dns-override ...)) said at the REPL;
 ;;;;   - AAAA (IPv6) only when there is an IPv6 default route — asking for addresses
 ;;;;     we cannot reach just makes every connect try a dead path first.
@@ -302,8 +302,7 @@
         (and address (list (if (stringp address) (parse-ip-address address) address)))))
 
 (defun hosts-files ()
-  (list "/etc/hosts"
-        (format nil "~a/.config/lol/hosts" (or (sb-ext:posix-getenv "HOME") "/"))))
+  (remove nil (list "/etc/hosts" (lol-path "hosts"))))   ; no ~/.lol/hosts on a diskless boot
 
 (defun hosts-file-lookup (name)
   "Addresses for NAME in the hosts files (\"ADDRESS name alias…\" per line, # comments)."

@@ -87,6 +87,10 @@
   ;; FIRST, before anything writes a log line: set the last session's logs aside,
   ;; take fd 2, start the watcher (session-log.lisp, doc/diagnostics.org)
   (session-boot)
+  ;; SECOND, before anything reads a setting, a key or the journal: move files kept
+  ;; at the pre-2026-10-17 places (~/.config/lol, ~/.local/share/lol,
+  ;; ~/.local/state/lol) into ~/.lol, each move in the session log (lol-home.lisp)
+  (migrate-lol-home :log (lambda (line) (session-log "lol-home: ~a" line)))
   (when (previous-session-unclean-p)
     (setf *browser-status* "the last session ended without a shutdown — see ~/.lol/log/archive/"))
   (format t "~%Supervisor up — I am PID ~a, SBCL ~a on ~a ~a.~%"

@@ -26,7 +26,7 @@
 ;;;; own package so that LISP-APROPOS can skip it; it filters by FILE instead (the
 ;;;; registry knows which file every definition came from), which needs no package.
 ;;;;
-;;;; THE KEY. Read at RUNTIME from ~/.config/lol/anthropic-api-key (on /home, so it
+;;;; THE KEY. Read at RUNTIME from ~/.lol/agent/anthropic-api-key (on /home, so it
 ;;;; is never in the frozen heap build.sh saves — §11), kept in one special variable,
 ;;;; never printed, never logged, and sent ONLY to https://api.anthropic.com. Any
 ;;;; other endpoint (a mock server, a broker) gets no key at all.
@@ -40,11 +40,11 @@
 ;; there must not collide with — or silently redefine — ours.
 
 ;;; ===========================================================================
-;;; Settings: special variables, overridable from ~/.config/lol/agent.lisp
+;;; Settings: special variables, overridable from ~/.lol/agent/settings.lisp
 ;;; ===========================================================================
 
 (defvar *agent-model* "claude-opus-5-5"
-  "The model asked. Change it with SETF, or :MODEL in ~/.config/lol/agent.lisp.")
+  "The model asked. Change it with SETF, or :MODEL in ~/.lol/agent/settings.lisp.")
 (defvar *agent-max-tokens* 32000
   "The cap on one reply — a ceiling, not a spend. Streaming makes a large one safe.")
 (defvar *agent-effort* nil
@@ -104,14 +104,9 @@
    rates). A cache WRITE costs 1.25x input (the 5-minute cache). A model missing here
    is still usable; its cost just shows as unknown.")
 
-(defun home-path (relative)
-  "RELATIVE under $HOME, or NIL when there is no real home (a diskless boot runs as
-   root with HOME unset or /). Never hard-codes /home/<user>."
-  (let ((home (ignore-errors (home-directory))))
-    (and home (string/= home "/") (path-join home relative))))
-
-(defun agent-key-path () (home-path ".config/lol/anthropic-api-key"))
-(defun agent-settings-path () (home-path ".config/lol/agent.lisp"))
+;; Both NIL when there is no real home (a diskless boot): LOL-PATH, lol-home.lisp.
+(defun agent-key-path () (lol-path "agent/anthropic-api-key"))
+(defun agent-settings-path () (lol-path "agent/settings.lisp"))
 
 (defvar *agent-api-key* nil
   "The key, once read — in this one variable only, never in the saved image (it is
@@ -123,7 +118,7 @@
     (string-trim " " (subseq r (1+ (or (position #\Newline r :from-end t) -1))))))
 
 (defun agent-api-key ()
-  "The API key from ~/.config/lol/anthropic-api-key, or NIL. A file that exists but
+  "The API key from ~/.lol/agent/anthropic-api-key, or NIL. A file that exists but
    may not be read (wrong owner, mode 0000) is its own failure, said in words — never
    a bare FILE-ERROR, and never anything of the contents."
   (or *agent-api-key*
@@ -153,12 +148,12 @@
           (list :max-rounds '*agent-max-rounds* #'integerp)
           (list :initiative '*agent-initiative* (one-of :off :reacting :interacting))
           (list :authority '*agent-authority* (one-of :read-only :ask :allow))))
-  "What ~/.config/lol/agent.lisp may set: key, the variable, and a check.")
+  "What ~/.lol/agent/settings.lisp may set: key, the variable, and a check.")
 
 (defvar *agent-settings-loaded* nil)
 
 (defun load-agent-settings ()
-  "Read ~/.config/lol/agent.lisp — ONE plist, e.g.
+  "Read ~/.lol/agent/settings.lisp — ONE plist, e.g.
      (:model \"claude-sonnet-5-5\" :max-tokens 16000 :authority :ask)
    READ, never LOAD, and with *READ-EVAL* off: a settings file must not be able to run
    code (#. would). Unknown keys and ill-typed values are reported and skipped.
@@ -180,7 +175,7 @@
     (nreverse set)))
 
 (defun save-agent-setting (key value)
-  "Set KEY to VALUE in ~/.config/lol/agent.lisp, keeping every other setting there, so
+  "Set KEY to VALUE in ~/.lol/agent/settings.lisp, keeping every other setting there, so
    it holds on the next boot too. The file is READ (never LOADed) by
    LOAD-AGENT-SETTINGS; it is rewritten whole through a temporary file and a rename, so
    a crash leaves the old file or the new one, never half of one. Returns the plist."
@@ -205,7 +200,7 @@
   "Stop asking: from now on every write tool runs without a TOOL-APPROVAL-REQUEST.
    Sets *AGENT-AUTHORITY* to :ALLOW for this session (and CONVERSATION's own authority,
    if it has one, which would otherwise win). With SAVE, also writes :AUTHORITY :ALLOW
-   to ~/.config/lol/agent.lisp, so it holds after a reboot. The way back is
+   to ~/.lol/agent/settings.lisp, so it holds after a reboot. The way back is
    ASK-BEFORE-WRITES (or SuperL-Space › agent › authority)."
   (setf *agent-authority* :allow)
   (when (and conversation (conversation-authority conversation))
@@ -215,7 +210,7 @@
 
 (defun ask-before-writes (&key save)
   "Undo ALLOW-ALL-WRITES: every write tool asks again. With SAVE, also in
-   ~/.config/lol/agent.lisp."
+   ~/.lol/agent/settings.lisp."
   (setf *agent-authority* :ask)
   (when save (save-agent-setting :authority :ask))
   :ask)
@@ -1211,7 +1206,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
         (unless key
           (error 'agent-api-error :kind "no_api_key"
                  :message (format nil "no API key: put it in ~a (mode 0600)"
-                                  (or (agent-key-path) "~/.config/lol/anthropic-api-key — and this boot has no /home"))))
+                                  (or (agent-key-path) "~/.lol/agent/anthropic-api-key — and this boot has no /home"))))
         (push (cons "x-api-key" key) h)))
     (reverse h)))
 
@@ -1411,7 +1406,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
   (or (ignore-errors (nth-value 1 (agent-parse-url *agent-endpoint*))) "the API"))
 
 (defun key-file-name ()
-  (or (agent-key-path) "~/.config/lol/anthropic-api-key (and this boot has no /home)"))
+  (or (agent-key-path) "~/.lol/agent/anthropic-api-key (and this boot has no /home)"))
 
 (defun offline-reason ()
   "Why this machine has no way out, from the lease table — one clause."

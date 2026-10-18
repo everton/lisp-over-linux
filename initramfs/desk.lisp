@@ -1,7 +1,7 @@
 ;;;; desk.lisp — the desk: which tabs were open, and what the Workspaces said.
 ;;;;
-;;;;   ~/.local/state/lol/desk.lisp            written by "Save and shut down"
-;;;;   ~/.local/state/lol/desk-autosave.lisp   written every few minutes, when it changed
+;;;;   ~/.lol/desk/desk.lisp                   written by "Save and shut down"
+;;;;   ~/.lol/desk/desk-autosave.lisp          written every few minutes, when it changed
 ;;;;
 ;;;; The journal (journal.lisp) keeps DEFINITIONS. Everything else a session builds up
 ;;;; lives in the heap — the tabs, the trail of panes in each, the Workspace you were
@@ -43,8 +43,8 @@
 (defparameter +desk-version+ 1)
 (defparameter +desk-autosave-seconds+ 300 "How often the autosave looks for a change.")
 
-(defun desk-path () (persist-path :state "desk.lisp"))
-(defun desk-autosave-path () (persist-path :state "desk-autosave.lisp"))
+(defun desk-path () (persist-path :desk "desk.lisp"))
+(defun desk-autosave-path () (persist-path :desk "desk-autosave.lisp"))
 
 ;;; ---- subjects <-> references ---------------------------------------------------------
 

@@ -296,7 +296,7 @@
   "The em size, in pixels, an outline font starts at. Chosen for a 14-inch 1920x1080
    panel (~157 dpi): 18 px makes DejaVu Sans Mono's cell 11 x 21, so a full-screen
    pane holds about 170 columns by 45 rows — readable at arm's length, where the old
-   6 x 15 bitmap was not. ~/.config/lol/settings overrides it (doc/fonts.org §6).")
+   6 x 15 bitmap was not. ~/.lol/settings overrides it (doc/fonts.org §6).")
 
 (defstruct (glyph (:constructor make-glyph (coverage w h left top)))
   "One rasterised outline glyph, as cached: a W x H coverage bitmap (octets, 0..255)

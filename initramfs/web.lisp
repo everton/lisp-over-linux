@@ -50,7 +50,7 @@
 
 (defvar *web-profile* nil
   "Chrome's profile directory (--user-data-dir): cookies, logins, history, cache. NIL
-   means ~/.config/lol/chrome/ — OUR profile, not the one the host's own Chrome uses.
+   means ~/.lol/web/chrome/ — OUR profile, not the one the host's own Chrome uses.
    Point it at ~/.config/google-chrome to reuse your desktop logins, but only while
    the desktop Chrome is NOT running (a profile is locked by the process using it),
    and see doc/web-browser.org §7.3 on why its saved cookies may not decrypt here.")
@@ -219,7 +219,9 @@
     (string-right-trim "/" (if (and h (plusp (length h))) h "/tmp"))))
 
 (defun web-profile-dir ()
-  (or *web-profile* (format nil "~a/.config/lol/chrome" (web-home-dir))))
+  "~/.lol/web/chrome (LOL-PATH); on a diskless boot /tmp/lol-web/chrome, which the
+   container shares with us (lol-ct.c binds /tmp)."
+  (or *web-profile* (lol-path "web/chrome") "/tmp/lol-web/chrome"))
 
 (defun web-downloads-dir () (format nil "~a/Downloads" (web-home-dir)))
 
