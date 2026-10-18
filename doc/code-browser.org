@@ -2405,7 +2405,9 @@ image. See [[file:../poc/README.org][poc/README.org]]. What remains is the model
   small ones: X's double click (the word) and triple click (the line) into PRIMARY,
   =C-n= / =C-p= in the Spotter and the menus, and =SuperL-q= asking whether to drop
   to the supervisor's console or power off. And Emacs's *undo* in every editor
-  (=C-_=, =C-/=, =C-x u=; [[file:clipboard.org][clipboard.org]] §6½).
+  (=C-_=, =C-/=, =C-x u=; [[file:clipboard.org][clipboard.org]] §6½), and since 2026-10-17 its
+  *incremental search* in every text view, read-only ones too (=C-s= / =C-r=, checked
+  against Emacs's own answers; =C-x C-x= back to where it began; §6¾ there).
 - *Not a phase: the file manager* (2026-10-03). [DONE — [[file:file-manager.org][file-manager.org]]] With
   no shell on the machine, the browser became the only way to change the user's disk.
   Built the browser's way: folders and files are SUBJECTS ([[file:../initramfs/file-views.lisp][file-views.lisp]] over the

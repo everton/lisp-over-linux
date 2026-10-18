@@ -131,7 +131,7 @@ the laptop that path exists again under the mounted <code>/home</code>.</p>
 <h2><code>load-recording</code> and the registry</h2>
 <p>The compiled image keeps no source files, and the source locations SBCL records point at the build host.
 So how does the browser show source? The build loads each module through
-<a class="ref" data-ref="initramfs/registry.lisp#load-recording" href="../../initramfs/registry.lisp"><code>load-recording</code><span class="loc">initramfs/registry.lisp:154</span></a> instead of <code>load</code>:</p>
+<a class="ref" data-ref="initramfs/registry.lisp#load-recording" href="../../initramfs/registry.lisp"><code>load-recording</code><span class="loc">initramfs/registry.lisp:185</span></a> instead of <code>load</code>:</p>
 <figure>
 <svg viewBox="0 0 960 300" role="img" aria-label="load-recording first LOADs the file, which compiles and defines everything; then record-source reads the same text again with *read-eval* off, and for each top-level form that is a definition, register-source pushes a DEFN record holding the verbatim text into *registry*, keyed by name. save-lisp-and-die freezes the table; at run time source-of reads it and accept-source updates it.">
   <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>
@@ -166,7 +166,7 @@ pass needs them. The read pass evaluates nothing. Its only output is text, filed
     <em>above</em> a <code>defun</code> is captured with it.</li>
   <li><code>registry.lisp</code> itself is loaded with plain <code>load</code>, because it is the file that defines
     <code>load-recording</code>. Its last form records its own text
-    (<a class="ref" data-ref="initramfs/registry.lisp#&quot;(when *load-truename* (record-source&quot;" data-label="self-record" href="../../initramfs/registry.lisp"><code>self-record</code><span class="loc">initramfs/registry.lisp:404</span></a>).</li>
+    (<a class="ref" data-ref="initramfs/registry.lisp#&quot;(when *load-truename* (record-source&quot;" data-label="self-record" href="../../initramfs/registry.lisp"><code>self-record</code><span class="loc">initramfs/registry.lisp:435</span></a>).</li>
 </ul>
 <div class="ruled-out">Until 2026-10-12, <code>registry.lisp</code> was the one module missing from its own
 registry. Drilling <code>accept-source</code> showed a "reference — SBCL's own, compiled into the core" view

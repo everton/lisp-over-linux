@@ -275,7 +275,40 @@
               (repaired-only-p (list b))))
   (check "the screen is right" (screen-right-p))
   (keys "bs")
-  (check "the screen is right" (screen-right-p)))
+  (check "the screen is right" (screen-right-p))
+  ;; C-s / C-r (poc/textview.lisp, "Incremental search"): the matches are part of what
+  ;; a row shows, the prompt is the status line's content — both found by their keys
+  (let ((origin (cons (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv))))
+    (keys "C-s")
+    (check "C-s: the status line shows the prompt (only it changed)"
+           (and (repaired-only-p (list (status) b)) (drew-p (status))
+                (lol.textview:tv-isearch tv) (screen-right-p)))
+    (keys "e")
+    (check "a letter moves to a match: the rows that light up, and the prompt"
+           (and (repaired-only-p (list (status) b)) (drew-p b) (screen-right-p)))
+    (keys "C-s C-s")
+    (check "C-s again: the next match, the screen right" (screen-right-p))
+    (keys "q q q")
+    (check "a failing string: the screen right" (screen-right-p))
+    (keys "C-g")
+    (check "C-g strips the failing part: still searching" (and (lol.textview:tv-isearch tv) (screen-right-p)))
+    (keys "C-r bs")
+    (check "C-r, DEL: the screen right" (screen-right-p))
+    (keys "C-g")
+    (check "C-g again: cancelled, point back where it began, no match lit"
+           (and (null (lol.textview:tv-isearch tv))
+                (equal origin (cons (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv)))
+                (screen-right-p)))
+    (keys "C-s e ret")
+    (check "Enter ends a search where it stands: the mark at its start, the screen right"
+           (and (null (lol.textview:tv-isearch tv)) (equal (lol.textview:tv-mark tv) origin)
+                (screen-right-p)))
+    (keys "C-x C-x")
+    (check "C-x C-x: back to the start, the region shown, the screen right"
+           (and (equal origin (cons (lol.textview:tv-point-line tv) (lol.textview:tv-point-col tv)))
+                (lol.textview:tv-mark-active tv) (screen-right-p)))
+    (keys "C-g C-s e right")
+    (check "a motion key ends the search AND moves" (and (null (lol.textview:tv-isearch tv)) (screen-right-p)))))
 (keys "s-1")
 ;; a change made behind the shell's back (the agent, a service, the REPL): found by
 ;; the pane's signature, nothing else redrawn

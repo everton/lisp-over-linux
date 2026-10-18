@@ -1730,6 +1730,7 @@
    clear box, (x0 x1 y0 y1), or NIL (the STATUS-LINE morph keeps it for clicks)."
   (lol.canvas:fill-rect canvas 0 (- h (status-h)) w (status-h) *ui-hi*)
   (cond (*minibuffer* (draw-minibuffer canvas w h))
+        ((isearch-tv) (draw-isearch-prompt canvas w h (isearch-tv)))
         (*browser-status*
          (lol.canvas:draw-string canvas *bfont* *browser-status* 10 (status-text-y h) *ui-accent*)
          nil)
@@ -1747,6 +1748,8 @@
          (let ((mb *minibuffer*))
            (list :minibuffer (mb-prompt mb) (mb-text mb) (mb-point mb) (mb-hint mb)
                  (mb-secret mb) (mb-single-key mb))))
+        ((isearch-tv)
+         (cons :isearch (multiple-value-list (lol.textview:tv-isearch-prompt (isearch-tv)))))
         (*browser-status* (list :status *browser-status*))
         ((carried-label) (list :carrying (carried-label)))
         (t (list :hints (status-hints cur)))))
@@ -2125,6 +2128,96 @@
                                 (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))
       rect)))
 
+;;; ---- incremental search: C-s / C-r ------------------------------------------
+;;; The search itself is the text view's (poc/textview.lisp, "Incremental search");
+;;; here are only its three joints with the shell. It is NOT the minibuffer above,
+;;; though it is drawn where the minibuffer is: the minibuffer takes every key until
+;;; Enter, while an Emacs search ends on ANY key that is not a search key and then
+;;; lets that key act — so BROWSER-KEY hands keys to the search first, and a key the
+;;; search answers :EXIT for goes on through BROWSER-KEY as if no search had run.
+
+(defvar *isearch-tv* nil
+  "The text view a C-s / C-r search is running in, or NIL. Kept so a search left
+   behind — focus moved elsewhere by a click or a key — can be ended.")
+
+(defun isearch-target (p)
+  "The text view P's keys go to: its focused side pane's, else its own (or NIL)."
+  (when p
+    (if (and (pane-editing-side p) (pane-side p))
+        (pane-tv (pane-side p))
+        (pane-tv p))))
+
+(defun isearch-tv ()
+  "The text view searching right now, where keyboard focus is — or NIL."
+  (let ((tv (isearch-target (current-pane))))
+    (and tv (eq tv *isearch-tv*) (lol.textview:tv-isearch tv) tv)))
+
+(defun start-isearch (tv forward)
+  "C-s (FORWARD) / C-r in TV: start searching. Readable in any text, editable or not."
+  (end-isearch)
+  (setf *isearch-tv* tv *browser-status* nil *pending-prefix* nil)
+  (lol.textview:tv-isearch-start tv forward)
+  nil)
+
+(defun isearch-ended (mark-set)
+  (setf *isearch-tv* nil)
+  (when mark-set (setf *browser-status* "Mark saved where search started")))
+
+(defun end-isearch ()
+  "End a running search where it stands (a click, focus moving away)."
+  (when (and *isearch-tv* (lol.textview:tv-isearch *isearch-tv*))
+    (isearch-ended (lol.textview:tv-isearch-exit *isearch-tv*)))
+  (setf *isearch-tv* nil))
+
+(defun isearch-key (key state)
+  "A key while a search runs. -> T when the search took it; NIL when BROWSER-KEY
+   must go on and handle it (it ended the search). C-y / Shift-Insert yank the
+   clipboard's newest entry into the string, as in Emacs."
+  (let ((tv (isearch-tv)))
+    (cond
+      ((null tv) (end-isearch) nil)
+      ((or (and (lol.canvas:ctrl-p state) (member key '(#\y #\Y)))
+           (and (lol.canvas:shift-p state) (eq key :insert)))
+       (lol.textview:tv-isearch-yank tv (lol.clipboard:clip-yank))
+       t)
+      (t (multiple-value-bind (what mark-set) (lol.textview:tv-isearch-key tv key state)
+           (ecase what
+             (:search t)
+             (:done (isearch-ended mark-set) t)
+             (:cancel (isearch-ended nil) (setf *browser-status* "Quit") t)
+             (:exit (isearch-ended mark-set) nil)))))))
+
+(defun exchange-point-and-mark (tv)
+  "C-x C-x."
+  (unless (lol.textview:tv-exchange-point-and-mark tv)
+    (setf *browser-status* "No mark set in this buffer")))
+
+(defparameter *isearch-fail* !#FF6B6B
+  "The part of a search string that matches nothing (Emacs's isearch-fail face): the
+   red the debugger names a condition in.")
+
+(defun draw-isearch-prompt (canvas w h tv)
+  "The search's echo line over the status line, Emacs's way: \"I-search: \" (or
+   \"Failing wrapped I-search backward: \" …) in amber, the string, the part of it that
+   matches nothing in red, and a complaint, if any, dim at the end."
+  (multiple-value-bind (prompt string failing message) (lol.textview:tv-isearch-prompt tv)
+    (let* ((y (- h (status-h)))
+           (ty (status-text-y h))
+           (px (+ 10 (lol.canvas:string-px *bfont* prompt)))
+           (good (subseq string 0 (or failing (length string))))
+           (bad (subseq string (length good)))
+           (bx (+ px (lol.canvas:string-px *bfont* good)))
+           (ex (+ bx (lol.canvas:string-px *bfont* bad))))
+      (lol.canvas:fill-rect canvas 0 y w (status-h) *ui-hi*)
+      (lol.canvas:fill-rect canvas 0 y w 2 *ui-amber*)
+      (lol.canvas:draw-string canvas *bfont* prompt 10 ty *ui-amber*)
+      (lol.canvas:draw-string canvas *bfont* good px ty *ui-text*)
+      (lol.canvas:draw-string canvas *bfont* bad bx ty *isearch-fail*)
+      (lol.canvas:fill-rect canvas ex (1- ty) 2 (1+ (line-h)) *ui-accent*)
+      (when message
+        (lol.canvas:draw-string canvas *bfont* (format nil " [~a]" message) (+ ex 4) ty *ui-dim*))
+      nil)))
+
 ;;; ---- a subject's own keys, and its own hints --------------------------------
 ;;; Two generic functions so a subject type can bring keys to its LIST pane without
 ;;; this file naming it — the file manager (poc/file-manager.lisp) is the first user:
@@ -2426,7 +2519,9 @@
             (not (and (lol.canvas:ctrl-p state)
                       (or (member key '(#\c #\x))
                           (and *pending-prefix* (member key '(#\e #\o)))
-                          (and (eq *pending-prefix* :c-c) (eql key #\c))))))
+                          (and (eq *pending-prefix* :c-c) (eql key #\c))
+                          ;; searching only reads, too
+                          (and (null *pending-prefix*) (member key '(#\s #\r)))))))
        (setf *browser-status* "the agent is writing here — C-g stops it"
              *pending-prefix* nil)
        nil)
@@ -2478,6 +2573,8 @@
            ;; C-x C-s — save, the Emacs way. A file pane writes its file (safely: a
            ;; temp file and a rename, poc/file-manager.lisp); anywhere else there is
            ;; no file to write, and saying so beats doing nothing.
+           ;; C-x C-x — back to the mark (where a search began), the region shown
+           ((and (eq prefix :c-x) c (eql key #\x) tv) (exchange-point-and-mark tv))
            ((and (eq prefix :c-x) c (eql key #\s))
             (if (file-pane-p p)
                 (funcall 'save-file-pane p)
@@ -2502,6 +2599,9 @@
            ((and (eq prefix :c-c) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
             (workspace-do-it p t)))
          nil))
+      ;; C-s / C-r — incremental search (after the chords: C-x C-s is still save)
+      ((and c tv (member key '(#\s #\S #\r #\R)))
+       (start-isearch tv (member key '(#\s #\S))) nil)
       ;; C-; comments the line or the region (or uncomments it)
       ((and c (eql key #\;) tv) (editor-toggle-comment tv) nil)
       ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
@@ -2545,6 +2645,10 @@
          ;; sees it too, not just the M-. branch here.
          (state (if meta (logior state 8) state)))
     (setf *pending-meta* nil)
+    ;; a C-s / C-r search running here takes its keys first; one that ends it (any
+    ;; key that is not a search key) then carries on below and does what it does
+    (when (and *isearch-tv* (isearch-key key state))
+      (return-from browser-key nil))
     ;; the text-size repeat (below) lasts only while the keys are + - 0
     (when (and (eq *pending-prefix* :text-scale) (not (member key '(#\+ #\= #\- #\_ #\0))))
       (setf *pending-prefix* nil))
@@ -2676,10 +2780,16 @@
       ((and (pane-tv p) (or (and (lol.canvas:meta-p state) (member key '(#\w #\W)))
                             (and (lol.canvas:ctrl-p state) (eq key :insert))))
        (editor-copy (pane-tv p)) nil)                   ; copying is reading, so allowed
+      ((and (pane-tv p) (eq *pending-prefix* :c-x) (lol.canvas:ctrl-p state) (member key '(#\x #\X)))
+       (setf *pending-prefix* nil)
+       (exchange-point-and-mark (pane-tv p)) nil)                    ; C-x C-x
       ;; C-x starts the text-size chord here too; any other key drops a pending one
       ((and (pane-tv p) (lol.canvas:ctrl-p state) (member key '(#\x #\X)))
        (setf *pending-prefix* :c-x) nil)
       ((and (pane-tv p) (eq *pending-prefix* :c-x)) (setf *pending-prefix* nil) nil)
+      ;; C-s / C-r — searching is reading, so a read-only text has it too
+      ((and (pane-tv p) (lol.canvas:ctrl-p state) (member key '(#\s #\S #\r #\R)))
+       (start-isearch (pane-tv p) (member key '(#\s #\S))) nil)
       ((pane-tv p)
        (case key
          (:up        (lol.textview:tv-key (pane-tv p) :up 0))
@@ -3005,6 +3115,7 @@
    in the half that already has focus behaves as it always did, and Ctrl-click /
    SuperL-click keep their meanings either side, because a modified click is an
    explicit command rather than a 'put me over there'."
+  (end-isearch)                          ; a press ends a search, as in Emacs
   (let ((split (pane-split-x p)))
     (cond
       ;; the column, on the header band above it: nothing (as it always was)

@@ -30,7 +30,11 @@
            ;; undo (shell.lisp drives it: C-_ / C-/ / C-x u)
            #:tv-undo-checkpoint #:tv-undo-note #:tv-undo #:tv-undo-count
            ;; what the view shows, row by row: the damage a change needs (poc/morphic.lisp)
-           #:tv-frame-key #:tv-row-keys #:tv-row-rect #:tv-prefix-same-p))
+           #:tv-frame-key #:tv-row-keys #:tv-row-rect #:tv-prefix-same-p
+           ;; incremental search, C-s / C-r (shell.lisp routes the keys; below)
+           #:tv-isearch #:tv-isearch-start #:tv-isearch-key #:tv-isearch-yank
+           #:tv-isearch-exit #:tv-isearch-prompt #:tv-isearch-spans #:*isearch-last*
+           #:tv-mark #:tv-exchange-point-and-mark))
 
 (in-package :lol.textview)
 
@@ -62,7 +66,13 @@
   (undo-list '())                  ; states before each change, newest first
   (undo-pending nil)               ; during a run of undos: the states still to visit
   (undo-run nil)                   ; T while the last command was an undo
-  (undo-inserts 0))                ; self-inserts folded into the newest record
+  (undo-inserts 0)                 ; self-inserts folded into the newest record
+  ;; search — see "Incremental search" below
+  (isearch nil)                    ; an ISEARCH while C-s / C-r is running, else NIL
+  (mark nil))                      ; Emacs's mark when no region shows: (LINE . COL),
+                                   ; where a search began or C-SPC was last set — what
+                                   ; C-x C-x goes back to. Not moved by edits (Emacs's
+                                   ; is a marker); clamped when used.
 
 (defun tv-line-height (tv) (+ (font-ch (tv-font tv)) 3))
 (defun tv-cw (tv) (font-cw (tv-font tv)))
@@ -385,7 +395,30 @@
       (collapse tv)
       (setf (tv-anchor-line tv) (tv-point-line tv)
             (tv-anchor-col tv)  (tv-point-col tv)
-            (tv-mark-active tv) t)))
+            (tv-mark-active tv) t
+            (tv-mark tv) (cons (tv-point-line tv) (tv-point-col tv)))))
+
+(defun tv-exchange-point-and-mark (tv)
+  "Emacs C-x C-x: put point where the mark is and the mark where point was, with the
+   region between them shown. With a region up, its two ends swap; without one, the
+   saved mark (a search's start, the last C-SPC) is used. -> NIL when there is no mark
+   at all (Emacs: \"No mark set in this buffer\")."
+  (cond
+    ((selection-p tv)
+     (rotatef (tv-point-line tv) (tv-anchor-line tv))
+     (rotatef (tv-point-col tv) (tv-anchor-col tv))
+     (ensure-visible tv)
+     t)
+    ((tv-mark tv)
+     (destructuring-bind (ml . mc) (tv-mark tv)
+       (setf (tv-mark tv) (cons (tv-point-line tv) (tv-point-col tv))
+             (tv-anchor-line tv) (tv-point-line tv) (tv-anchor-col tv) (tv-point-col tv)
+             (tv-point-line tv) ml (tv-point-col tv) mc)
+       (clamp-point tv)
+       (setf (tv-mark-active tv) t)          ; Emacs activates the region it swaps to
+       (ensure-visible tv)
+       t))
+    (t nil)))
 
 (defun move-page (tv dir extend)
   "Move point one screenful (visible-lines) in DIR (:up / :down) — PageUp/PageDown.
@@ -457,6 +490,7 @@
        (<= (tv-y tv) py (+ (tv-y tv) (tv-h tv)))))
 
 (defun tv-click (tv px py)
+  (when (tv-isearch tv) (tv-isearch-exit tv))   ; a click ends a search, as in Emacs
   (let* ((l (line-at-y tv py)) (c (col-at-x tv l px)))
     (setf (tv-point-line tv) l (tv-point-col tv) c)
     (collapse tv)                     ; a fresh click starts a new selection
@@ -467,6 +501,333 @@
   (let* ((l (line-at-y tv py)) (c (col-at-x tv l px)))
     (setf (tv-point-line tv) l (tv-point-col tv) c)
     (ensure-visible tv)))
+
+;;; ---- Incremental search: C-s / C-r, the Emacs way ---------------------------
+;;; Emacs's isearch is not a prompt you fill in and then send: every key you type moves
+;;; point to the next match AT ONCE, and the search is a mode the buffer is in until a
+;;; key that is not a search key ends it. That shapes the code. The state lives HERE,
+;;; on the view (TV-ISEARCH), not in the shell's minibuffer: the minibuffer takes every
+;;; key and answers through Enter, while isearch must let any other key end the search
+;;; and then still DO what that key does (C-a: stop searching and go to the line's
+;;; start). So TV-ISEARCH-KEY answers what became of the key — :SEARCH (taken),
+;;; :DONE (Enter: taken, search over), :CANCEL (C-g: back where it began) or :EXIT
+;;; (search over, the key NOT taken: the caller handles it as if no search had run).
+;;;
+;;; The semantics are isearch.el's, and were checked key for key against Emacs 30 -Q
+;;; in batch (`execute-kbd-macro' on a temp buffer; the cases are poc/isearch-test.lisp):
+;;;
+;;;   - a typed character extends the string and searches again from the START of the
+;;;     current match (forward), so "fo" then "o" stays on the same word; backward, the
+;;;     match at point is kept while it still matches and ends before the origin;
+;;;   - C-s / C-r again: the next match. A repeat that finds nothing says "Failing"; the
+;;;     NEXT one wraps round the buffer ("Wrapped", and "Overwrapped" once past where it
+;;;     began). C-r after C-s first only turns round: point goes to the other end of the
+;;;     same match (isearch-repeat-on-direction-change is nil by default);
+;;;   - C-s on an empty string searches for the last string again (*ISEARCH-LAST*);
+;;;   - DEL undoes the last STEP, not the last character: after a C-s it goes back to
+;;;     the previous match. Every step pushes a state (Emacs's isearch-cmds); DEL pops;
+;;;   - C-g while the string matches: cancel, point back at the origin. While it fails:
+;;;     strip the steps that failed and keep searching;
+;;;   - Enter or any other key ends it with point at the match, and the mark is left at
+;;;     the origin ("Mark saved where search started"), so C-x C-x goes back;
+;;;   - lower-case strings ignore case, a string with a capital is exact (search-upper-
+;;;     case); text yanked in by C-w / C-y is lower-cased first unless the string
+;;;     already has a capital (its 'not-yanks value);
+;;;   - a space matches any run of spaces and tabs (isearch-lax-whitespace).
+;;;
+;;; Where we differ, and why: matches never cross a line (the buffer is a vector of
+;;; lines and a search string has no newline — Emacs's C-j / C-q C-j are not bound);
+;;; C-w yanks a Lisp TOKEN (the word our M-f moves by), where Emacs's word stops at a
+;;; hyphen; there is no M-c / M-r / M-e (case toggle, regexp, edit the string), no
+;;; search ring beyond the last string, and Enter on an empty string just ends (Emacs
+;;; starts a non-incremental search).
+;;;
+;;; Positions are conses (LINE . COL). The current match lies between point and
+;;; IS-OTHER, Emacs's isearch-other-end: point at its end forward, at its start backward.
+
+(defvar *isearch-last* nil
+  "The last string a search ended with (not a cancelled one): C-s C-s looks for it
+   again. Emacs keeps a ring of them; one is the part of it anyone uses.")
+
+(defstruct (isearch (:conc-name is-))
+  (string "")
+  (forward t)
+  origin                 ; (LINE . COL) where the search began — C-g goes back there
+  (success t)            ; NIL while the string has no match: "Failing"
+  (wrapped nil)          ; T once a repeat has gone round the end of the buffer
+  other                  ; (LINE . COL): the end of the current match away from point
+  message                ; "No previous search string", or NIL
+  (states '()))          ; every step's state, newest first (the current one on top)
+
+(defun pos< (a b) (or (< (car a) (car b)) (and (= (car a) (car b)) (< (cdr a) (cdr b)))))
+(defun tv-point-pos (tv) (cons (tv-point-line tv) (tv-point-col tv)))
+
+(defun isearch-fold-p (string)
+  "Ignore case? Emacs's search-upper-case: yes, unless STRING has a capital."
+  (notany #'upper-case-p string))
+
+(defun blank-char-p (c) (member c '(#\Space #\Tab)))
+
+(defun isearch-match-at (pattern line i limit fold)
+  "Does PATTERN match LINE at column I without passing column LIMIT? -> its end, or
+   NIL. A space in PATTERN matches a run of one or more spaces/tabs; the longest run
+   is tried first and shorter ones after, which is how a regexp's [ \\t]+ backtracks."
+  (let ((plen (length pattern)))
+    (labels ((m (p j)
+               (cond ((= p plen) j)
+                     ((char= (char pattern p) #\Space)
+                      (let ((k j))
+                        (loop while (and (< k limit) (blank-char-p (char line k))) do (incf k))
+                        (loop for e from k above j thereis (m (1+ p) e))))
+                     ((and (< j limit)
+                           (if fold
+                               (char-equal (char pattern p) (char line j))
+                               (char= (char pattern p) (char line j))))
+                      (m (1+ p) (1+ j)))
+                     (t nil))))
+      (m 0 i))))
+
+(defun isearch-find (tv string forward from)
+  "The next match of STRING in TV from position FROM: forward, the first one starting
+   at or after FROM; backward, the last one ending at or before it. -> (values START
+   END) as positions, or NIL."
+  (let* ((lines (tv-lines tv)) (n (length lines)) (fold (isearch-fold-p string)))
+    (if forward
+        (loop for l from (max 0 (car from)) below n
+              for line = (aref lines l)
+              do (loop for c from (if (= l (car from)) (min (cdr from) (length line)) 0)
+                         to (length line)
+                       for e = (isearch-match-at string line c (length line) fold)
+                       when e do (return-from isearch-find (values (cons l c) (cons l e)))))
+        (loop for l from (min (car from) (1- n)) downto 0
+              for line = (aref lines l)
+              for limit = (if (= l (car from)) (min (cdr from) (length line)) (length line))
+              do (loop for c from limit downto 0
+                       for e = (isearch-match-at string line c limit fold)
+                       when e do (return-from isearch-find (values (cons l c) (cons l e))))))
+    nil))
+
+(defun isearch-line-matches (string line)
+  "Every match of STRING in LINE, left to right and not overlapping: ((START . END) …)
+   — what Emacs's lazy highlighting paints."
+  (let ((fold (isearch-fold-p string)) (out '()) (c 0) (n (length line)))
+    (loop while (<= c n)
+          do (let ((e (isearch-match-at string line c n fold)))
+               (if e
+                   (progn (push (cons c e) out) (setf c (max e (1+ c))))
+                   (incf c))))
+    (nreverse out)))
+
+(defun isearch-goto (tv pos)
+  "Put point at POS during a search: the region follows point unless C-SPC set the mark
+   (then the search grows the region, as in Emacs), and the match is scrolled into view
+   — sideways too, which a read-only pane with no caret would otherwise never do."
+  (setf (tv-point-line tv) (car pos) (tv-point-col tv) (cdr pos))
+  (clamp-point tv)
+  (unless (tv-mark-active tv) (collapse tv))
+  (ensure-visible tv)
+  (follow-caret-horizontally tv))
+
+(defun isearch-push (tv is)
+  (push (list (is-string is) (is-forward is) (is-success is) (is-wrapped is) (is-other is)
+              (is-message is) (tv-point-pos tv))
+        (is-states is)))
+
+(defun isearch-restore (tv is state)
+  (destructuring-bind (string forward success wrapped other message pos) state
+    (setf (is-string is) string (is-forward is) forward (is-success is) success
+          (is-wrapped is) wrapped (is-other is) other (is-message is) message)
+    (isearch-goto tv pos)))
+
+(defun tv-isearch-start (tv forward)
+  "C-s (FORWARD true) or C-r: start searching TV from point."
+  (unless (tv-mark-active tv) (collapse tv))
+  (let ((is (make-isearch :forward forward :origin (tv-point-pos tv))))
+    (setf (tv-isearch tv) is)
+    (isearch-push tv is)
+    is))
+
+(defun isearch-search (tv is)
+  "Look for the string from point in the search's direction. Found: point to the far
+   end of the match. Not found: 'Failing', and point back where the last step left it."
+  (multiple-value-bind (start end) (isearch-find tv (is-string is) (is-forward is) (tv-point-pos tv))
+    (if start
+        (progn (setf (is-success is) t
+                     (is-other is) (if (is-forward is) start end))
+               (isearch-goto tv (if (is-forward is) end start)))
+        (progn (setf (is-success is) nil)
+               (isearch-goto tv (seventh (first (is-states is))))))))
+
+(defun isearch-add (tv is s &key yank)
+  "Add S to the search string (a typed character, or text C-w / C-y yanked in) and
+   search again — from the current match, so a longer string can stay where it is."
+  (when (and yank (isearch-fold-p (is-string is))) (setf s (string-downcase s)))
+  (setf (is-string is) (concatenate 'string (is-string is) s)
+        (is-message is) nil)
+  ;; a failing string stays failing however long it gets: no search
+  (when (is-success is)
+    (let* ((string (is-string is)) (pt (tv-point-pos tv))
+           (line (line-at tv (car pt)))
+           (origin (is-origin is))
+           (here (and (not (is-forward is))
+                      (isearch-match-at string line (cdr pt) (length line)
+                                        (isearch-fold-p string)))))
+      (if (and here (not (pos< origin (cons (car pt) here))))
+          ;; backward: the longer string still matches at point, ending before the
+          ;; origin — stay
+          (setf (is-other is) (cons (car pt) here))
+          (progn
+            (when (is-other is)
+              (isearch-goto tv (if (is-forward is)
+                                   (is-other is)
+                                   (let ((after (cons (car (is-other is)) (1+ (cdr (is-other is))))))
+                                     (if (pos< origin after) origin after)))))
+            (isearch-search tv is)))))
+  (isearch-push tv is))
+
+(defun isearch-repeat (tv is forward)
+  "C-s (FORWARD) or C-r during a search."
+  (if (eq forward (is-forward is))
+      (cond ((string= (is-string is) "")
+             (if *isearch-last*
+                 (setf (is-string is) *isearch-last*)
+                 (setf (is-message is) "No previous search string")))
+            ((not (is-success is))
+             ;; the repeat after a failure goes round the end of the buffer
+             (setf (is-wrapped is) t)
+             (isearch-goto tv (if forward
+                                  (cons 0 0)
+                                  (let ((l (1- (length (tv-lines tv)))))
+                                    (cons l (length (line-at tv l))))))))
+      ;; the other direction: turn round on the same match first
+      (setf (is-forward is) forward (is-success is) t))
+  (if (string= (is-string is) "")
+      (setf (is-success is) t)
+      (isearch-search tv is))
+  (isearch-push tv is))
+
+(defun isearch-delete (tv is)
+  "DEL: back one step — a character typed, or a C-s that moved to the next match."
+  (when (rest (is-states is))
+    (pop (is-states is))
+    (isearch-restore tv is (first (is-states is)))))
+
+(defun tv-isearch-exit (tv &key cancel)
+  "End TV's search. Point stays at the match, the string is remembered for C-s C-s,
+   and the mark is left where the search began (unless a region was being grown) ->
+   T when that mark was set: Emacs then says \"Mark saved where search started\".
+   CANCEL (C-g) instead puts point back at the origin and remembers nothing."
+  (let ((is (tv-isearch tv)))
+    (when is
+      (setf (tv-isearch tv) nil)
+      (if cancel
+          (progn (isearch-goto tv (is-origin is)) nil)
+          (progn
+            (when (plusp (length (is-string is))) (setf *isearch-last* (is-string is)))
+            (unless (or (tv-mark-active tv) (equal (is-origin is) (tv-point-pos tv)))
+              (setf (tv-mark tv) (is-origin is))
+              t))))))
+
+(defun isearch-abort (tv is)
+  "C-g: cancel a search that matches; strip the failing steps off one that does not."
+  (if (and (is-success is) (null (is-message is)))
+      (progn (tv-isearch-exit tv :cancel t) :cancel)
+      (progn
+        (loop while (and (rest (is-states is))
+                         (destructuring-bind (s f success w o message p) (first (is-states is))
+                           (declare (ignore s f w o p))
+                           (or (not success) message)))
+              do (pop (is-states is)))
+        (isearch-restore tv is (first (is-states is)))
+        :search)))
+
+(defun isearch-word-at (tv is)
+  "What C-w yanks: from the match's end (point forward, the other end backward) to the
+   end of the next token on that line — the word M-f would move over."
+  (let* ((from (if (and (not (is-forward is)) (is-other is)) (is-other is) (tv-point-pos tv)))
+         (line (line-at tv (car from)))
+         (c (min (cdr from) (length line))) (e c))
+    (loop while (and (< e (length line)) (word-boundary-p (char line e))) do (incf e))
+    (loop while (and (< e (length line)) (not (word-boundary-p (char line e)))) do (incf e))
+    (subseq line c e)))
+
+(defun tv-isearch-yank (tv text)
+  "C-y / Shift-Insert during a search: add TEXT's first line to the string."
+  (let ((is (tv-isearch tv)))
+    (when (and is text)
+      (let ((s (subseq text 0 (position #\Newline text))))
+        (when (plusp (length s)) (isearch-add tv is s :yank t))))))
+
+(defun tv-isearch-key (tv key state)
+  "A key while TV is searching -> (values WHAT MARK-SET): WHAT is :SEARCH (the key was
+   a search key), :DONE (Enter: search over), :CANCEL (C-g: back at the origin) or
+   :EXIT (search over, KEY not taken — the caller must now handle it as usual).
+   MARK-SET is TV-ISEARCH-EXIT's answer when the search ended."
+  (let ((is (tv-isearch tv))
+        (ctrl (lol.canvas:ctrl-p state)) (meta (lol.canvas:meta-p state))
+        (super (lol.canvas:super-p state)))
+    (cond
+      ((null is) :exit)
+      (super (values :exit (tv-isearch-exit tv)))
+      ((and ctrl (member key '(#\s #\S))) (isearch-repeat tv is t) :search)
+      ((and ctrl (member key '(#\r #\R))) (isearch-repeat tv is nil) :search)
+      ((and ctrl (member key '(#\g #\G))) (isearch-abort tv is))
+      ((and ctrl (member key '(#\w #\W)))
+       (let ((w (isearch-word-at tv is)))
+         (when (plusp (length w)) (isearch-add tv is w :yank t)))
+       :search)
+      ((and (eq key :backspace) (not ctrl) (not meta)) (isearch-delete tv is) :search)
+      ((member key '(:return #\Return #\Newline)) (values :done (tv-isearch-exit tv)))
+      ((and (characterp key) (graphic-char-p key) (not ctrl) (not meta))
+       (isearch-add tv is (string key))
+       :search)
+      (t (values :exit (tv-isearch-exit tv))))))
+
+(defun isearch-overwrapped-p (tv is)
+  (and (is-wrapped is)
+       (if (is-forward is)
+           (pos< (is-origin is) (tv-point-pos tv))
+           (pos< (tv-point-pos tv) (is-origin is)))))
+
+(defun tv-isearch-prompt (tv)
+  "What the echo area shows during TV's search -> (values PROMPT STRING FAILING-FROM
+   MESSAGE), or NIL: PROMPT is Emacs's (\"Failing wrapped I-search backward: \"),
+   FAILING-FROM the index in STRING where the part that matches nothing begins (NIL
+   when it all matches), MESSAGE a complaint such as \"No previous search string\"."
+  (let ((is (tv-isearch tv)))
+    (when is
+      (let* ((p (concatenate 'string
+                             (if (is-success is) "" "failing ")
+                             (cond ((not (is-wrapped is)) "")
+                                   ((isearch-overwrapped-p tv is) "overwrapped ")
+                                   (t "wrapped "))
+                             "I-search" (if (is-forward is) "" " backward") ": "))
+             (ok (find-if #'third (is-states is)))         ; the newest step that matched
+             (good (and ok (first ok))))
+        (values (concatenate 'string (string-upcase (subseq p 0 1)) (subseq p 1))
+                (is-string is)
+                (and (not (is-success is)) good
+                     (< (length good) (length (is-string is)))
+                     (string= good (is-string is) :end2 (length good))
+                     (length good))
+                (is-message is))))))
+
+(defun tv-isearch-spans (tv li line)
+  "What a search lights on line LI (its text LINE): ((START END CURRENT-P) …), or NIL.
+   The current match is the one point stands at; the others are every match on the
+   line, shown only while the string matches (Emacs's lazy highlight)."
+  (let ((is (tv-isearch tv)))
+    (when (and is (plusp (length (is-string is))))
+      (let* ((pt (tv-point-pos tv)) (other (is-other is))
+             (cur (and other (= (car other) li) (= (car pt) li)
+                       (let ((a (min (cdr pt) (cdr other))) (b (max (cdr pt) (cdr other))))
+                         (and (< a b) (cons (min a (length line)) (min b (length line))))))))
+        (append
+         (when cur (list (list (car cur) (cdr cur) t)))
+         (when (is-success is)
+           (loop for (s . e) in (isearch-line-matches (is-string is) line)
+                 unless (and cur (= s (car cur)) (= e (cdr cur)))
+                   collect (list s e nil))))))))
 
 ;;; ---- the lexer -----------------------------------------------------------
 ;;; One left-to-right pass producing coloured runs. Same shape as colorize-lisp
@@ -587,6 +948,10 @@
 (defparameter *caret*   !#7FDBCA)
 (defparameter *cur-ln*  !#21252C)
 (defparameter *scroll*  !#39404A)
+(defparameter *isearch-cur*   !#7A5418)  ; the match a search stands on: a dim amber,
+                                         ; under the text (Emacs's isearch face)
+(defparameter *isearch-other* !#3A4130)  ; the other matches in view (lazy-highlight):
+                                         ; quieter, so the current one still leads
 
 (defun tv-draw (canvas tv)
   "Paint TV into its rect on CANVAS. -> (values DEPTH IN-STRING): the lexer's state at
@@ -635,6 +1000,13 @@
                      ;; a selected newline shows as a sliver past end-of-line
                      (fill-rect canvas xa (- ly 2)
                                 (max 4 (- xb xa)) lh *sel*)))
+                 ;; a search's matches, under the text (see "Incremental search")
+                 (loop for (s e cur) in (tv-isearch-spans tv li line)
+                       when (and (< s maxcol) (> e hs))
+                         do (let ((xa (x-of-col tv (max s hs)))
+                                  (xb (x-of-col tv (min e maxcol))))
+                              (fill-rect canvas xa (- ly 2) (- xb xa) lh
+                                         (if cur *isearch-cur* *isearch-other*))))
                  ;; gutter line number
                  (draw-string canvas font (format nil "~3d" (1+ li))
                               (+ x0 pad) ly *gutter*)
@@ -685,7 +1057,7 @@
 ;;;   the ROWS    per screen row, what that row shows — its line number, its text, the
 ;;;               lexer's state entering it (an open paren or string on one line changes
 ;;;               the colours of the lines below), the current-line band, the selection
-;;;               band, the caret.
+;;;               band, the caret, a search's matches on it.
 ;;;
 ;;; The morph keeps both as they were when drawn; when they differ now it damages the
 ;;; whole view (the frame) or just the rows that differ. Rows are TV-LINE-HEIGHT bands
@@ -733,7 +1105,8 @@
                  (setf (aref out row)
                        (list li line depth instr tint runs band
                              (and (= li (tv-point-line tv)) (not sel))                ; the band
-                             (and (tv-focus tv) (= li (tv-point-line tv)) (tv-point-col tv))))
+                             (and (tv-focus tv) (= li (tv-point-line tv)) (tv-point-col tv))
+                             (tv-isearch-spans tv li line)))                         ; a search's matches
                  ;; the lexer's state entering the next line, as TV-DRAW carries it
                  (when (and (not tint) (eq (tv-syntax tv) :lisp))
                    (multiple-value-bind (r d s) (lex-line line depth instr)

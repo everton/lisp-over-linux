@@ -238,6 +238,8 @@ the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-ke
 | middle click in text    | =mouse-yank-primary=            | =primary= → =insert-text= at the click             | =pane-middle-click=       |
 | drag a row onto text    | (a drop, not a selection)       | a readable reference, =insert-text= where it lands | =drop-reference-at= (§5½) |
 | =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)    | — (=tv-undo=, §6½)                                 | =editor-undo=             |
+| =C-s=, =C-r=            | =isearch-forward= / =-backward= | — (=tv-isearch-key=, §6¾)                          | =start-isearch=           |
+| =C-x C-x=               | =exchange-point-and-mark=       | — (=tv-exchange-point-and-mark=, §6¾)              | =exchange-point-and-mark= |
 | =SuperL-h=, tray icon   | the manager (§7)                | =clip-filter= / =clip-promote= / =clip-delete=     | =open-clipboard-manager=  |
 
 Where each key comes from, since the console delivers them unevenly:
@@ -326,6 +328,93 @@ keysyms, so neither trick is needed there.
 
 Host test: [[file:../poc/undo-test.lisp][poc/undo-test.lisp]] (=sbcl --script poc/undo-test.lisp=, 18
 assertions); in the guest, section K of [[file:../check-clipboard.lisp][check-clipboard.lisp]].
+
+* 6¾. Search — =C-s= / =C-r=, and the mark it leaves
+
+The third history an Emacs hand expects beside the kill ring and undo is the one of
+/where you were looking/. =C-s= searches forward, =C-r= backward, in any text view —
+the Workspace, a source, a file, and read-only text too (searching is reading).
+(Built 2026-10-17; this doc holds it because §6 is where the editor's Emacs keys
+already live, and its yank keys, =C-w= / =C-y=, are the kill ring's.)
+
+*Incremental, and a mode rather than a prompt.* Every key you type moves to the next
+match /at once/, and the search lasts until a key that is not a search key — and
+then /that key still acts/: =C-s foo C-a= stops on "foo" and goes to the start of
+its line. That is why it is not the shell's minibuffer, though it is drawn where the
+minibuffer is: the minibuffer takes every key until Enter. The state lives on the
+text view ([[file:../poc/textview.lisp::defstruct (isearch][=isearch=]], the view's =isearch= slot), and
+[[file:../poc/textview.lisp::defun tv-isearch-key][=tv-isearch-key=]] says what became of each key — /taken/, /done/ (Enter),
+/cancelled/ (=C-g=), or /exit/: the search is over and the key was not taken, so
+[[file:../poc/shell.lisp::defun browser-key][=browser-key=]] goes on and handles it as if no search had run
+([[file:../poc/shell.lisp::defun isearch-key][=isearch-key=]] is the joint).
+
+*The semantics are =isearch.el='s, checked key for key against Emacs 30 =-Q=* in
+batch — =execute-kbd-macro= on a temp buffer, then =point= and =(mark t)=; each case
+is a check in the host test, with Emacs's answer written in:
+
+| keys                              | what happens                                                                                    |
+|-----------------------------------+-------------------------------------------------------------------------------------------------|
+| a character                       | the string grows; the search goes again from the /start/ of the current match, so it can stay   |
+| =C-s= / =C-r= again               | the next match; at the end "Failing", and the repeat after that wraps round the buffer          |
+| after a wrap                      | "Wrapped", then "Overwrapped" once past where the search began — at once if it began at the top |
+| =C-r= after =C-s=                 | turns round on the same match first (point to its other end), then goes back                    |
+| =C-s= on an empty string          | the last string searched for again ("No previous search string" if there is none)               |
+| =DEL=                             | back one /step/ — after a =C-s=, to the previous match, not off the string's last letter        |
+| =C-g=                             | while it matches: cancel, point back where it began; while failing: drop the failing steps      |
+| Enter, or any other key           | stop at the match; the mark is left at the start ("Mark saved where search started")            |
+| =C-w= / =C-y= (or =Shift-Insert=) | add the next word at the match / the clipboard's newest entry                                   |
+| a capital in the string           | the search becomes exact; all lower case ignores case (=search-upper-case=)                     |
+| a space                           | matches any run of spaces and tabs (=isearch-lax-whitespace=, on by default in Emacs)           |
+
+A yanked word is lower-cased first unless the string already has a capital, so
+=C-w= on "Bar" does not turn a case-blind search exact — the =not-yanks= value of
+=search-upper-case=, which Emacs's =isearch-yank-string= applies that way.
+
+*The steps are a stack.* Each key that changes the search pushes its whole state —
+string, direction, success, wrapped, the current match and point — and =DEL= pops
+one (Emacs's =isearch-cmds=). That is the whole of "undo a step", and of =C-g='s
+"strip what fails": pop until a state that matched.
+
+*The mark, and =C-x C-x=.* A finished search leaves Emacs's mark where it began, so
+=C-x C-x= ([[file:../poc/textview.lisp::defun tv-exchange-point-and-mark][=tv-exchange-point-and-mark=]]) goes back there with the region between
+shown. The view had no mark apart from its selection anchor, so it gained one, the
+=mark= slot: set by a search's end and by =C-SPC=. With =C-SPC= already set, a
+search /grows the region/ to the match instead, as in Emacs (=C-SPC C-s baz RET=
+selects up to "baz"). Unlike Emacs's mark the slot is not a marker — an edit above
+it does not move it — and it is clamped when used.
+
+*What you see.* The match point stands on is a dim amber band under its text, the
+other matches in view a quieter olive one (Emacs's =isearch= and =lazy-highlight=
+faces); neither is the accent, which a function name already wears. The bands are
+part of what a row shows ([[file:../poc/textview.lisp::defun tv-row-keys][=tv-row-keys=]]), so the world repairs exactly the rows a
+key changed ([[file:morphic.org][morphic.org]] §13). The status line shows Emacs's prompt —
+"Failing wrapped I-search backward: " and the like — with the part of the string
+that matches nothing in red ([[file:../poc/shell.lisp::defun draw-isearch-prompt][=draw-isearch-prompt=]]). A match off to the right
+scrolls the view sideways even in a read-only pane, which has no caret to follow.
+
+*How the keys arrive.* On the console =C-s= is byte 19, which a terminal's line
+discipline takes as XOFF while =IXON= is on — it used to stop the console
+([[file:diagnostics.org][diagnostics.org]] §1); raw mode clears =IXON=, so it is a key like any other.
+=C-x C-s= is still save: the chord is decided before =C-s= is looked at.
+
+*Where it differs from Emacs, deliberately:*
+
+- *A match never crosses a line.* The buffer is a vector of lines and the string has
+  no newline in it (Emacs's =C-j= / =C-q C-j= are not bound).
+- *=C-w= adds a Lisp token* — what =M-f= moves over here — where Emacs's word stops
+  at a hyphen.
+- *No =M-c= / =M-r= / =M-e=* (toggle case, regexp, edit the string), no search ring
+  beyond the last string, and =C-y= adds only the first line of what it yanks.
+- *Enter on an empty string just ends the search*; Emacs starts a non-incremental one.
+- *A click ends a search* where it stands, then places the caret; so does a key
+  that moves focus to another pane.
+- *Lists are not searched.* =C-s= is for text; a list has its own filter (=/= in a
+  folder, the Spotter everywhere).
+
+Host test: [[file:../poc/isearch-test.lisp][poc/isearch-test.lisp]] (=sbcl --script poc/isearch-test.lisp=, 77
+assertions; 42 cases were run in Emacs first); the repaired screen equals a fresh
+paint through a search in [[file:../poc/morphic-test.lisp][poc/morphic-test.lisp]]; in the guest,
+[[file:../check-isearch.lisp][check-isearch.lisp]] (17) drives it with QMP keys.
 
 * 7. The manager — a sketch
 

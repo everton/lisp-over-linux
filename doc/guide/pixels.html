@@ -71,7 +71,7 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
   <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §12): an object with bounds that
     draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a> redraws only what is damaged, and in each damaged rect only the
     morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
-    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1423</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1594</span></a>), or the
+    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1474</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1645</span></a>), or the
     column beside it — and what is IN a pane, its body, is a morph of its own (a list, a text view, a grid, a stage, a
     page, a terminal: <a class="ref" data-ref="poc/shell.lisp#pane-body" href="../../poc/shell.lisp"><code>pane-body</code><span class="loc">poc/shell.lisp:143</span></a>). A key in a text view redraws the lines it changed, nothing else;
     what else changed is found by each morph's signature
@@ -84,9 +84,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     an alist of the screen y of each painted row and its index. A click is resolved against that map
     (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:360</span></a>). The map is needed because section headers make "row N
     on screen" differ from "item N".</li>
-  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:591</span></a> colours Lisp with a small line lexer
-    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:519</span></a>). The editing keys are in
-    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:759</span></a>. The buffer is a vector of line strings that is
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:956</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:880</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:1132</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
     (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
@@ -94,8 +94,8 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
   <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:242</span></a> is the host twin: the X11 wire protocol over a Unix socket,
     written in Lisp. It is deliberately <em>not</em> in the image.</li>
-  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1154</span></a> composites
-    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1195</span></a> repairs only the old and new
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1188</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1229</span></a> repairs only the old and new
     rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
 </ul>
 
@@ -139,21 +139,21 @@ for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/mor
     <code>/proc/bus/input/devices</code>, and <a class="ref" data-ref="initramfs/fb-browser.lisp#input-device-kind" href="../../initramfs/fb-browser.lisp"><code>input-device-kind</code><span class="loc">initramfs/fb-browser.lisp:387</span></a> classifies
     each one by its bitmasks: <code>:mouse</code> (REL_X), <code>:pad</code> or <code>:tablet</code> (ABS_X, with PROP deciding),
     <code>:keyboard</code> (EV_KEY + EV_REP, which rules out the power button).</li>
-  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:985</span></a> opens everything and starts
-    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:933</span></a>
-    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1031</span></a>
+  <li>The device set: <a class="ref" data-ref="initramfs/fb-browser.lisp#open-input-devices" href="../../initramfs/fb-browser.lisp"><code>open-input-devices</code><span class="loc">initramfs/fb-browser.lisp:1019</span></a> opens everything and starts
+    the inotify watch (<code>INOTIFY_USER</code>, tag #26). <a class="ref" data-ref="initramfs/fb-browser.lisp#rescan-input-devices" href="../../initramfs/fb-browser.lisp"><code>rescan-input-devices</code><span class="loc">initramfs/fb-browser.lisp:967</span></a>
+    keeps the open set equal to what the kernel lists. <a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1065</span></a>
     drops a device that reports <code>POLLHUP</code> (unplugged) before anyone reads it.</li>
-  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:883</span></a> rebinds the decoder's
+  <li>One decoder, many devices: <a class="ref" data-ref="initramfs/fb-browser.lisp#with-device-state" href="../../initramfs/fb-browser.lisp"><code>with-device-state</code><span class="loc">initramfs/fb-browser.lisp:917</span></a> rebinds the decoder's
     special variables to one device's saved values (<code>progv</code>) for one drain. <code>read-mouse</code> does not know there
     is more than one device.</li>
   <li><code>*fb-mouse*</code> / <code>*fb-kbd*</code> are now the markers <code>:pointers</code> / <code>:keyboards</code>, not fds.
-    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1087</span></a>),
+    <code>(read-mouse *fb-mouse* w h)</code> means "every ready pointer" (<a class="ref" data-ref="initramfs/fb-browser.lisp#read-pointers" href="../../initramfs/fb-browser.lisp"><code>read-pointers</code><span class="loc">initramfs/fb-browser.lisp:1121</span></a>),
     so the older loops (debugger, Spotter) did not change.</li>
   <li>An absolute device reports positions in its own range, read with <code>EVIOCGABS</code>
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:421</span></a>). A touchpad's motion is integrated as relative
-    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:557</span></a>), and a tap is a click.</li>
+    (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:591</span></a>), and a tap is a click.</li>
   <li>A press goes to the morph under the pointer, in that morph's coordinates: a tab, a breadcrumb, a window's title
-    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:2940</span></a>) decides what was under the pointer from what
+    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:3101</span></a>) decides what was under the pointer from what
     <em>that body</em> recorded when it last drew: its list rows, its text, its grid's cells. A press on a row that moves
     is not a click: the <em>hand</em> picks the row's subject up, to be dropped on another morph
     (<a class="ref" data-ref="poc/morph.lisp#world-drop" href="../../poc/morph.lisp"><code>world-drop</code><span class="loc">poc/morph.lisp:719</span></a>).</li>

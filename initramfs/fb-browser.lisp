@@ -2334,6 +2334,15 @@
      ("C-x Space"          "rectangle mark (column block)")
      ("C-x h"              "select all")
      ("C-_ / C-/ / C-x u"  "undo (again: further; Emacs redo)"))
+    ("Search  (doc/clipboard.org)"
+     ("C-s / C-r"          "search forward / back as you type")
+     ("  C-s / C-r again"  "the next match; then wrap round")
+     ("  C-s C-s"          "the last string again")
+     ("  DEL / C-g"        "back a step / cancel (C-g: drop")
+     (""                   "  the part that fails first)")
+     ("  C-w / C-y"        "add the next word / the clipboard")
+     ("  RET / any key"    "stop at the match (the key acts)")
+     ("C-x C-x"            "back to where the search began"))
     ("Clipboard  (Emacs + PC)"
      ("C-w / S-Delete"     "cut the region")
      ("M-w / C-Insert"     "copy the region")
