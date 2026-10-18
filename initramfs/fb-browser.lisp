@@ -1213,7 +1213,8 @@
 ;;; PRESENT-FRAME, PRESENT-REPAIR, MOVE-CURSOR, HIDE-CURSOR — which is what makes
 ;;; these two hooks enough (doc/screencast.org §1, §8.2):
 (defvar *frame-tap* nil
-  "A function called (no arguments) each time a repair or a whole frame is presented:
+  "A function called with (RECTS FULL) each time a repair (its rects) or a whole frame
+   (FULL) is presented:
    the screen recorder's \"the canvas changed\" (recorder.lisp). NIL: nothing to tell.")
 (defvar *screen-lent* nil
   "True while another program owns /dev/fb0 — the host's MPlayer playing a video
@@ -1251,7 +1252,7 @@
 (defun present-frame (canvas)
   "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is
    hidden for inactivity)."
-  (when *frame-tap* (funcall *frame-tap*))
+  (when *frame-tap* (funcall *frame-tap* nil t))
   (when *screen-lent* (return-from present-frame nil))
   (lol.fb:present-fb canvas)
   (when (and *fb-mouse* (not *cursor-hidden*)) (put-cursor canvas *cursor-x* *cursor-y*)))
@@ -1266,7 +1267,7 @@
   "Send what LOL.MORPH:WORLD-REPAIR just redrew: the whole frame when FULL (then
    exactly what the loop always did), else each rect alone. The pointer goes back on
    top if a rect ran under it, and is moved if it moved since it was last drawn."
-  (when (and *frame-tap* (or full rects)) (funcall *frame-tap*))
+  (when (and *frame-tap* (or full rects)) (funcall *frame-tap* rects full))
   (when *screen-lent* (return-from present-repair nil))
   (cond
     (full (present-frame canvas))

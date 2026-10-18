@@ -21,6 +21,10 @@
 ;;;;   G. the player: a test clip played full screen — the screen lent (*SCREEN-LENT*),
 ;;;;      the screendump the clip's bars, not the environment; q gives the screen back
 ;;;;      and the next screendump is the environment again
+;;;;   H. the same take from a DAMAGE LOG (step 5): m in the recorder pane switches,
+;;;;      REC LOG in the tray, a .dmg written, pause / resume / stop, the logs replayed
+;;;;      and encoded: the spans' length, 2 segments, H.264 + AAC, 30 frames a second,
+;;;;      each segment's sound offset read from ffmpeg, the logs removed, the colours
 ;;;;
 ;;;; All original code, under this project's MIT licence.
 
@@ -161,6 +165,52 @@
   (check "q ends it and gives the screen back" (string= "NIL" (row "*screen-lent*" (probe "*screen-lent*"))))
   (check "no player left" (string= "NIL" (probe "*player*")))
   (check "the screen is the environment again, every point"
-         (= 48 (row "grid points equal, back" (screen-matches-canvas "back")))))
+         (= 48 (row "grid points equal, back" (screen-matches-canvas "back"))))
+  (format t "~&~%== H. the same, from a damage log (step 5) ==~%")
+  ;; back to the Workspace, the recorder in :LOG mode by its own key (m in its pane)
+  (probe "(progn (open-recorder) t)") (sleep 1)
+  (qmp-key "m") (sleep 1)
+  (check "m in the recorder pane switches to the damage log" (string= ":LOG" (row "*rec-mode*" (probe "*rec-mode*"))))
+  (qmp-hold "meta_l" "1") (sleep 1)
+  (let ((t0 (get-internal-real-time)) t1 t2 t3)
+    (qmp-hold "meta_l" "r") (sleep 1)
+    (check "SuperL-r starts a logged recording" (string= "(:RECORDING :LOG)" (row "state, mode" (probe "(list (rec-state *rec*) (rec-mode *rec*))"))))
+    (check "the tray says REC LOG" (search "REC LOG" (row "tray" (probe "(getf (recorder-tray-item) :text)"))))
+    (qmp-type "logged") (sleep 2)
+    (check "the log is being written" (string= "T" (row "a .dmg exists" (probe "(and (directory (rec-file \"seg-*.dmg\")) t)"))))
+    (setf t1 (get-internal-real-time))
+    (qmp-hold "meta_l" "r")
+    (check "SuperL-r pauses it" (wait-until "(eq (rec-state *rec*) :paused)" 10))
+    (sleep 1)
+    (setf t2 (get-internal-real-time))
+    (qmp-hold "meta_l" "r") (sleep 1)
+    (qmp-type " more") (sleep 2)
+    (setf t3 (get-internal-real-time))
+    (qmp-events (key-event t "meta_l")) (sleep 0.2) (qmp-events (key-event t "shift")) (sleep 0.2)
+    (qmp-events (key-event t "r")) (sleep 0.1) (qmp-events (key-event nil "r")) (sleep 0.2)
+    (qmp-events (key-event nil "shift")) (qmp-events (key-event nil "meta_l"))
+    (check "SuperL-S-r stops it, and the logs are encoded and joined" (wait-until "(eq (rec-state *rec*) :done)" 120))
+    (row "result" (probe "(rec-result *rec*)"))
+    (let ((dur (ignore-errors (read-from-string (probe "(getf (rec-result *rec*) :duration)"))))
+          (expected (/ (+ (- t1 t0) (- t3 t2)) internal-time-units-per-second)))
+      (row "recorded spans by the host's clock (s)" (float expected))
+      (check "as long as the two recorded spans" (and (realp dur) (< (abs (- dur expected)) 1.0))))
+    (check "made from a log, 2 segments, H.264 + AAC"
+           (string= "(:LOG 2 \"h264\" \"aac\")"
+                    (probe "(let ((r (rec-result *rec*))) (list (getf r :mode) (getf r :segments) (getf r :video) (getf r :audio)))")))
+    (check "frames = 30 x the time (+/- a second's worth)"
+           (string= "T" (probe "(let ((r (rec-result *rec*))) (< (abs (- (getf r :frames) (* 30 (getf r :duration)))) 30))")))
+    (check "each segment's sound start was read from ffmpeg (0 <= offset < 1 s)"
+           (string= "T" (row "offsets" (probe "(let ((o (getf (rec-result *rec*) :offsets))) (and (= 2 (length o)) (every (lambda (x) (and x (<= 0 x 1))) o)))"))))
+    (check "the logs and the sound files were removed"
+           (string= "NIL" (probe "(append (directory (rec-file \"seg-*.dmg\")) (directory (rec-file \"seg-*.flac\")))"))))
+  (probe "(nth-value 1 (container-run-output (format nil \"ffmpeg -v error -y -sseof -1 -i ~a -frames:v 1 -f rawvideo -pix_fmt bgr0 /tmp/last.raw\" (getf (rec-result *rec*) :file)) :timeout 30))" 40)
+  (let ((means (probe "(let* ((px (lol.canvas:canvas-pixels *fb-canvas*)) (n (length px)) (raw (with-open-file (s \"/tmp/last.raw\" :element-type '(unsigned-byte 8)) (let ((b (make-array (file-length s) :element-type '(unsigned-byte 8)))) (read-sequence b s) b)))) (flet ((mean (f) (round (loop for i below n by 97 sum (funcall f i)) (ceiling n 97)))) (list (mean (lambda (i) (ldb (byte 8 16) (aref px i)))) (mean (lambda (i) (ldb (byte 8 0) (aref px i)))) (mean (lambda (i) (aref raw (+ 2 (* 4 i))))) (mean (lambda (i) (aref raw (* 4 i)))))))" 20)))
+    (row "canvas R B / file R B (means)" means)
+    (check "the replayed picture is the screen (red and blue within 6)"
+           (let ((m (ignore-errors (read-from-string means))))
+             (and (listp m) (= 4 (length m))
+                  (<= (abs (- (first m) (third m))) 6) (<= (abs (- (second m) (fourth m))) 6))))))
+
 
 (run-guest-checks "recorder" #'checks)

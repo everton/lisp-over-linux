@@ -134,6 +134,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/wifi.lisp"         # Wi-Fi: rfkill, the HOST's wpa_supplicant, its control socket (uses dhcp)
   "$INITRAMFS_DIR/net-views.lisp"    # the network as a subject: SuperL-n, the Spotter (uses shell + wifi)
   "$INITRAMFS_DIR/player.lisp"       # play a video with the HOST's mplayer, the screen lent (doc/screencast.org §8)
+  "$INITRAMFS_DIR/damage-log.lisp"   # the screen as a log of rects: written while recording, replayed after (doc/screencast.org §5.2)
   "$INITRAMFS_DIR/recorder.lisp"     # screencasts: the canvas + the mic into the host's ffmpeg (doc/screencast.org)
   "$INITRAMFS_DIR/journal.lisp"      # every Accept appended to ~/.lol/journal/changes.lisp, replayed
                                      #   at boot, + the journal view (doc/session-persistence.org)

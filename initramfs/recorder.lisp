@@ -83,6 +83,11 @@
   message                ; the last thing to tell the user
   result                 ; plist from ffprobe when done
   after                  ; while :finishing, what comes next: :paused or :stop
+  (mode :live)           ; :live encodes while recording; :log keeps a damage log (§5.2)
+  (logs '())            ; :log — the finished segments: (:dmg :audio :alog :t0 :seconds)
+  log-wall               ; :log — the running segment's start, wall-clock seconds
+  (seg-seconds 0)        ; the length of the segment closed last
+  (offsets '())         ; :log — each segment's sound start minus its picture's, seconds
   w h)
 
 (defvar *rec* nil "The recording in progress, or the last one (its result), or NIL.")
@@ -96,6 +101,13 @@
 (defvar *rec-pointer* nil "(x y hidden) at the last sample.")
 (defvar *rec-writer* nil)
 (defvar *rec-meter* nil)
+(defvar *rec-refreshed* 0 "When the recorder panes were last re-presented (internal time).")
+(defvar *rec-log-queue* '() "Records for the log writer, oldest first; :END stops it.")
+(defvar *rec-log-cv* (sb-thread:make-waitqueue :name "recorder log"))
+(defvar *rec-log-thread* nil)
+(defparameter *rec-mode* :live
+  "How the next recording is made: :LIVE (encoded as it goes) or :LOG (a damage log,
+   encoded after the stop — doc/screencast.org §5.2). The recorder pane's m switches.")
 
 (defconstant +o-nonblock+ #o4000 "O_NONBLOCK on x86-64 Linux (asm-generic/fcntl.h); sb-unix has no name for it.")
 
@@ -125,7 +137,48 @@
 
 ;;; ---- the tap: called by PRESENT-REPAIR and PRESENT-FRAME (fb-browser.lisp) -------
 
-(defun rec-note-frame () (setf *rec-dirty* t))
+(defun rec-log-p () (and (rec-recording-p) (eq (rec-mode *rec*) :log)))
+
+(defun rec-us ()
+  "Microseconds since the running segment began (internal time is in µs in SBCL)."
+  (round (* 1000000 (- (rec-now) (rec-seg-start *rec*))) internal-time-units-per-second))
+
+(defun rec-log (record)
+  "Hand RECORD to the log writer thread."
+  (sb-thread:with-mutex (*rec-lock*)
+    (setf *rec-log-queue* (append *rec-log-queue* (list record)))
+    (sb-thread:condition-notify *rec-log-cv*)))
+
+(defun rec-log-canvas-rects (canvas rects)
+  "In :LOG mode, the rects a repair just sent, cut out of CANVAS now (a copy, cheap);
+   the writer thread compresses them (damage-log.lisp)."
+  (let ((cut (loop for r in rects
+                   for c = (apply #'clip-rect canvas r)
+                   when c collect (destructuring-bind (x y w h) c
+                                    (list x y w h (canvas-rect-pixels canvas x y w h))))))
+    (when cut (rec-log (list :rects (rec-us) cut)))))
+
+(defun rec-note-frame (&optional rects full)
+  "The tap: RECTS were just presented (or, FULL, the whole frame)."
+  (setf *rec-dirty* t)
+  (when (and (rec-log-p) (or rects full) *fb-canvas*)
+    (rec-log-canvas-rects *fb-canvas*
+                          (if full
+                              (list (list 0 0 (lol.canvas:canvas-w *fb-canvas*) (lol.canvas:canvas-h *fb-canvas*)))
+                              rects))))
+
+(defun rec-log-loop (stream)
+  "The log writer thread: records from the queue into the .dmg STREAM until :END."
+  (unwind-protect
+       (loop
+         (let ((rec (sb-thread:with-mutex (*rec-lock*)
+                      (loop until *rec-log-queue* do (sb-thread:condition-wait *rec-log-cv* *rec-lock*))
+                      (pop *rec-log-queue*))))
+           (when (eq rec :end) (return))
+           (ecase (first rec)
+             (:rects (dmg-write-rects stream (second rec) (third rec)))
+             (:pointer (apply #'dmg-write-pointer stream (rest rec))))))
+    (close stream)))
 (setf *frame-tap* 'rec-note-frame)
 
 ;;; ---- files ------------------------------------------------------------------------
@@ -165,12 +218,23 @@
          ;; the second output: the mic for the meter, 8000 samples/s mono s16
          "-map" "1:a" "-ac" "1" "-ar" "8000" "-f" "s16le" "-y" (rec-meter-fifo))))
 
-(defun rec-spawn (argv &key input)
-  "Run ARGV in the default container; stderr appended to ffmpeg.log. INPUT :STREAM
-   gives the process a stdin pipe we write. Returns the SB-EXT:PROCESS."
+(defun rec-audio-argv (out)
+  "The ffmpeg command for a :LOG segment's sound: the mic alone into OUT (FLAC,
+   lossless), and the meter's FIFO. -loglevel info, because its stderr (the .alog
+   file) must say when the first sample was taken: the input's \"start:\" — for a live
+   device, the wall clock (checked on the host, 2026-10-18). The replay lines the
+   picture up on it (REC-ENCODE-LOG)."
+  (list "ffmpeg" "-hide_banner" "-loglevel" "info" "-nostats" "-y"
+        "-thread_queue_size" "1024" "-f" "alsa" "-ac" "2" "-i" *rec-audio-device*
+        "-map" "0:a" "-c:a" "flac" out
+        "-map" "0:a" "-ac" "1" "-ar" "8000" "-f" "s16le" "-y" (rec-meter-fifo)))
+
+(defun rec-spawn (argv &key input (error-file "ffmpeg.log"))
+  "Run ARGV in the default container; stderr appended to ERROR-FILE in the recording's
+   folder. INPUT :STREAM gives the process a stdin pipe we write. -> the SB-EXT:PROCESS."
   (sb-ext:run-program *lol-ct* (rest (container-command-line argv :cwd (rec-dir *rec*)))
                       :input input :output nil
-                      :error (rec-file "ffmpeg.log") :if-error-exists :append
+                      :error (rec-file error-file) :if-error-exists :append
                       :wait nil :environment (container-environment)))
 
 (defun rec-run (argv)
@@ -274,58 +338,105 @@
 ;;; ---- segments ----------------------------------------------------------------------------
 
 (defun rec-segment-path (n) (rec-file (format nil "seg-~3,'0d.mp4" n)))
+(defun rec-segment-number ()
+  (1+ (if (eq (rec-mode *rec*) :log) (length (rec-logs *rec*)) (length (rec-segments *rec*)))))
+
+(defun wall-seconds ()
+  "The wall clock, as a float of seconds — what ffmpeg's live inputs stamp with."
+  (multiple-value-bind (s us) (sb-ext:get-time-of-day) (+ s (/ us 1d6))))
+
+(defun rec-start-meter ()
+  (unless (and *rec-meter* (sb-thread:thread-alive-p *rec-meter*))
+    (let ((path (rec-meter-fifo)))
+      (setf *rec-meter* (sb-thread:make-thread (lambda () (rec-meter-loop path)) :name "rec-meter")))))
 
 (defun rec-start-segment ()
-  "Start ffmpeg for the next segment and the writer that feeds it."
-  (let* ((n (1+ (length (rec-segments *rec*))))
-         (p (rec-spawn (rec-segment-argv (rec-segment-path n)) :input :stream)))
-    (setf (rec-process *rec*) p
-          (rec-fd *rec*) (sb-sys:fd-stream-fd (sb-ext:process-input p))
-          (rec-seg-start *rec*) (rec-now)
-          (rec-next-slot *rec*) (rec-now)
-          (rec-slot *rec*) 0
-          *rec-dirty* t
-          (rec-state *rec*) :recording)
-    (let ((fd (rec-fd *rec*)))
-      (setf *rec-writer* (sb-thread:make-thread (lambda () (rec-writer-loop fd)) :name "rec-writer")))
-    (unless (and *rec-meter* (sb-thread:thread-alive-p *rec-meter*))
-      (let ((path (rec-meter-fifo)))
-        (setf *rec-meter* (sb-thread:make-thread (lambda () (rec-meter-loop path)) :name "rec-meter"))))))
+  "Start the next segment: :LIVE, ffmpeg and the writer that feeds it; :LOG, the
+   damage log (its first record the whole screen) and the mic's ffmpeg."
+  (let ((n (rec-segment-number)))
+    (if (eq (rec-mode *rec*) :log)
+        (let ((stream (open (rec-file (format nil "seg-~3,'0d.dmg" n)) :direction :output
+                            :element-type '(unsigned-byte 8) :if-exists :supersede)))
+          (dmg-write-header stream (rec-w *rec*) (rec-h *rec*))
+          (setf *rec-log-queue* '()
+                (rec-process *rec*) (rec-spawn (rec-audio-argv (rec-file (format nil "seg-~3,'0d.flac" n)))
+                                               :error-file (format nil "seg-~3,'0d.alog" n))
+                (rec-seg-start *rec*) (rec-now)
+                (rec-log-wall *rec*) (wall-seconds)
+                (rec-next-slot *rec*) (rec-now)
+                (rec-slot *rec*) 0
+                *rec-pointer* nil
+                (rec-state *rec*) :recording)
+          (rec-note-frame nil t)                ; the log begins with the whole screen
+          (setf *rec-log-thread* (sb-thread:make-thread (lambda () (rec-log-loop stream)) :name "rec-log")))
+        (let ((p (rec-spawn (rec-segment-argv (rec-segment-path n)) :input :stream)))
+          (setf (rec-process *rec*) p
+                (rec-fd *rec*) (sb-sys:fd-stream-fd (sb-ext:process-input p))
+                (rec-seg-start *rec*) (rec-now)
+                (rec-next-slot *rec*) (rec-now)
+                (rec-slot *rec*) 0
+                *rec-dirty* t
+                (rec-state *rec*) :recording)
+          (let ((fd (rec-fd *rec*)))
+            (setf *rec-writer* (sb-thread:make-thread (lambda () (rec-writer-loop fd)) :name "rec-writer")))))
+    (rec-start-meter)))
 
 (defun rec-close-segment ()
   "On the environment's thread, at once: stop sampling and count the segment's time.
    The slow part, REC-END-SEGMENT, then runs on a thread."
-  (incf (rec-elapsed *rec*) (rec-seconds (- (rec-now) (rec-seg-start *rec*))))
-  (setf (rec-state *rec*) :finishing))
+  (let ((secs (rec-seconds (- (rec-now) (rec-seg-start *rec*)))))
+    (incf (rec-elapsed *rec*) secs)
+    (setf (rec-seg-seconds *rec*) secs (rec-state *rec*) :finishing)))
+
+(defun rec-stop-process (p &key (grace 1))
+  "End ffmpeg P gracefully: GRACE seconds, then SIGINT (flush, write the index),
+   20 s, then SIGKILL. -> its exit code."
+  (sleep grace)
+  (when (sb-ext:process-alive-p p) (sb-ext:process-kill p sb-unix:sigint))
+  (let ((deadline (+ (rec-now) (* 20 internal-time-units-per-second))))
+    (loop while (and (sb-ext:process-alive-p p) (< (rec-now) deadline)) do (sleep 0.05))
+    (when (sb-ext:process-alive-p p) (sb-ext:process-kill p sb-unix:sigkill)))
+  (sb-ext:process-wait p)
+  (sb-ext:process-exit-code p))
 
 (defun rec-end-segment ()
   "Finish the running segment (on a thread — never the environment's: it can take
-   seconds). The writer drains the queue and stops; ffmpeg's stdin is closed; then,
-   after a second to read the last frames, ffmpeg gets SIGINT, its graceful stop: it
-   flushes the encoder and writes the file's index (+faststart). -shortest alone is not
-   enough: the meter's output is the live mic only and never ends (found 2026-10-18:
-   every segment waited for the timeout). So exit 255 — ffmpeg's answer to SIGINT —
-   is success too, when ffprobe finds a video in the file. -> the path, or NIL."
-  (let ((n (1+ (length (rec-segments *rec*))))
-        (p (rec-process *rec*)))
-    (sb-thread:with-mutex (*rec-lock*)
-      (setf *rec-queue* (append *rec-queue* (list :end)))
-      (sb-thread:condition-notify *rec-queue-cv*))
-    (ignore-errors (sb-thread:join-thread *rec-writer* :timeout 60))
-    (ignore-errors (close (sb-ext:process-input p)))
-    (sleep 1)
-    (when (sb-ext:process-alive-p p) (sb-ext:process-kill p sb-unix:sigint))
-    (let ((deadline (+ (rec-now) (* 20 internal-time-units-per-second))))
-      (loop while (and (sb-ext:process-alive-p p) (< (rec-now) deadline)) do (sleep 0.05))
-      (when (sb-ext:process-alive-p p) (sb-ext:process-kill p sb-unix:sigkill)))
-    (sb-ext:process-wait p)
-    (setf (rec-process *rec*) nil (rec-fd *rec*) nil)
-    (let ((path (rec-segment-path n)) (code (sb-ext:process-exit-code p)))
-      (if (and (member code '(0 255)) (probe-file path)
-               (ignore-errors (getf (probe-video path) :video)))
-          (progn (setf (rec-segments *rec*) (append (rec-segments *rec*) (list path))) path)
-          (progn (rec-say "segment ~d failed (ffmpeg exit ~a) — see ~a" n code (rec-file "ffmpeg.log"))
-                 nil)))))
+   seconds). :LIVE: the writer drains the queue and stops; ffmpeg's stdin is closed;
+   then, after a second to read the last frames, ffmpeg gets SIGINT, its graceful stop:
+   it flushes the encoder and writes the file's index (+faststart). -shortest alone is
+   not enough: the meter's output is the live mic only and never ends (found
+   2026-10-18: every segment waited for the timeout). So exit 255 — ffmpeg's answer to
+   SIGINT — is success too, when ffprobe finds a video in the file. :LOG: the log
+   writer drains and closes the .dmg, the mic's ffmpeg is stopped the same way.
+   -> the segment, or NIL."
+  (let ((n (rec-segment-number)) (p (rec-process *rec*)))
+    (if (eq (rec-mode *rec*) :log)
+        (progn
+          (rec-log :end)
+          (ignore-errors (sb-thread:join-thread *rec-log-thread* :timeout 120))
+          (let ((code (rec-stop-process p :grace 0))
+                (seg (list :dmg (rec-file (format nil "seg-~3,'0d.dmg" n))
+                           :audio (rec-file (format nil "seg-~3,'0d.flac" n))
+                           :alog (rec-file (format nil "seg-~3,'0d.alog" n))
+                           :t0 (rec-log-wall *rec*) :seconds (rec-seg-seconds *rec*))))
+            (setf (rec-process *rec*) nil)
+            (if (and (member code '(0 255)) (probe-file (getf seg :audio)) (probe-file (getf seg :dmg)))
+                (progn (setf (rec-logs *rec*) (append (rec-logs *rec*) (list seg))) seg)
+                (progn (rec-say "segment ~d's sound failed (ffmpeg exit ~a) — see ~a" n code (getf seg :alog))
+                       nil))))
+        (progn
+          (sb-thread:with-mutex (*rec-lock*)
+            (setf *rec-queue* (append *rec-queue* (list :end)))
+            (sb-thread:condition-notify *rec-queue-cv*))
+          (ignore-errors (sb-thread:join-thread *rec-writer* :timeout 60))
+          (ignore-errors (close (sb-ext:process-input p)))
+          (let ((code (rec-stop-process p)) (path (rec-segment-path n)))
+            (setf (rec-process *rec*) nil (rec-fd *rec*) nil)
+            (if (and (member code '(0 255)) (probe-file path)
+                     (ignore-errors (getf (probe-video path) :video)))
+                (progn (setf (rec-segments *rec*) (append (rec-segments *rec*) (list path))) path)
+                (progn (rec-say "segment ~d failed (ffmpeg exit ~a) — see ~a" n code (rec-file "ffmpeg.log"))
+                       nil)))))))
 
 ;;; ---- the sampler: a service in the poll loop -----------------------------------------------
 
@@ -350,18 +461,27 @@
           (changed (incf (rec-stale *rec*))))      ; no buffer: repeat, and say so later
     (rec-enqueue *rec-last*)))
 
+(defun rec-log-pointer ()
+  "In :LOG mode, a slot logs only where the pointer is, and only when it changed."
+  (let ((pointer (list *cursor-x* *cursor-y* (or *cursor-hidden* (null *fb-mouse*)))))
+    (unless (equal pointer *rec-pointer*)
+      (setf *rec-pointer* pointer)
+      (rec-log (list* :pointer (rec-us) pointer)))))
+
 (defun rec-service-run (canvas dirty)
   (declare (ignore dirty))
   (when (rec-recording-p)
     ;; every slot that is due gets a frame, so a late wake-up still writes the right
     ;; NUMBER of frames: the count is the clock
     (loop while (and (rec-recording-p) (>= (rec-now) (rec-next-slot *rec*)))
-          do (rec-sample canvas)
+          do (if (rec-log-p) (rec-log-pointer) (rec-sample canvas))
              (incf (rec-slot *rec*))
              (setf (rec-next-slot *rec*)
                    (+ (rec-seg-start *rec*)
                       (round (* (rec-slot *rec*) internal-time-units-per-second) *rec-fps*))))
-    (unless (sb-thread:thread-alive-p *rec-writer*)
+    (unless (if (rec-log-p)
+                (sb-ext:process-alive-p (rec-process *rec*))
+                (sb-thread:thread-alive-p *rec-writer*))
       (rec-say "the encoder stopped (see ffmpeg.log); recording ended")
       (ignore-errors (rec-stop))))
   (when (rec-pane-shown-p) (refresh-recorder-panes))
@@ -402,7 +522,7 @@
   (let* ((stamp (rec-stamp))
          (dir (ensure-private-dir (format nil "~a~a/" (rec-root) stamp))))
     (ensure-private-dir (rec-root))
-    (setf *rec* (%make-rec :state :preflight :dir dir :name (format nil "screencast-~a.mp4" stamp)
+    (setf *rec* (%make-rec :state :preflight :mode *rec-mode* :dir dir :name (format nil "screencast-~a.mp4" stamp)
                            :w (lol.canvas:canvas-w *fb-canvas*) :h (lol.canvas:canvas-h *fb-canvas*)))
     (let ((fifo (rec-meter-fifo)))
       (unless (probe-file fifo) (%mkfifo fifo #o600)))
@@ -448,10 +568,13 @@
       (rec-in-background "rec-stop"
                          (lambda ()
                            (when running (rec-end-segment))
+                           (setf (rec-state *rec*) :joining (rec-progress *rec*) 0)
+                           ;; a logged take is encoded now, into the same segments a live
+                           ;; one already has
+                           (when (eq (rec-mode *rec*) :log) (rec-encode-logs))
                            (if (null (rec-segments *rec*))
                                (setf (rec-state *rec*) :failed)
-                               (progn (setf (rec-state *rec*) :joining (rec-progress *rec*) 0)
-                                      (rec-finish)))))
+                               (rec-finish))))
       (forget-rec-tray)
       (format nil "Stopped at ~a — saving…" (mm-ss (rec-time))))))
 
@@ -482,7 +605,7 @@
               (dolist (seg segs) (ignore-errors (delete-file seg)))
               (ignore-errors (delete-file list)) (ignore-errors (delete-file prog))))
         (let ((result (probe-video out)))
-          (setf result (append result (list :stale (rec-stale *rec*) :frames (rec-frames *rec*)
+          (setf result (append result (list :mode (rec-mode *rec*) :offsets (rec-offsets *rec*) :stale (rec-stale *rec*) :frames (rec-frames *rec*)
                                             :segments (length segs) :peak (round (rec-peak *rec*))
                                             :file out)))
           (with-open-file (s (rec-file "result.lisp") :direction :output :if-exists :supersede)
@@ -494,6 +617,70 @@
       (setf (rec-state *rec*) :failed)
       (rec-say "~a" e)))
   (forget-rec-tray))
+
+(defun alog-start (path)
+  "The wall-clock time ffmpeg's ALSA input took its first sample, from the
+   \"Duration: N/A, start: 1792339442.244653\" line it prints at -loglevel info, or NIL."
+  (with-open-file (s path :if-does-not-exist nil)
+    (when s
+      (loop with found = nil
+            for line = (read-line s nil) while line
+            for i = (search "start: " line)
+            when (and i (search "Duration" line))
+              do (setf found (let ((*read-default-float-format* 'double-float))
+                               (ignore-errors
+                                (read-from-string line t nil :start (+ i 7)
+                                                             :end (or (position #\, line :start (+ i 7)) (length line))))))
+            finally (return (and (realp found) found))))))
+
+(defun rec-encode-log (seg out done total)
+  "Encode one :LOG segment SEG into OUT: replay its .dmg at *REC-FPS* (the pointer
+   drawn on each frame) into ffmpeg's stdin, with its FLAC shifted by -itsoffset so
+   that both start where they started: the sound's first sample (ALOG-START) minus
+   the log's own start (:T0), both on the wall clock. DONE / TOTAL are frames over the
+   whole take, for the percentage. -> frames written."
+  (let* ((frames (round (* (getf seg :seconds) *rec-fps*)))
+         (audio-start (alog-start (getf seg :alog)))
+         (offset (if audio-start (- audio-start (getf seg :t0)) 0d0))
+         (p (rec-spawn (append (list "ffmpeg" "-hide_banner" "-loglevel" "warning" "-nostats" "-y"
+                                     "-f" "rawvideo" "-pix_fmt" "bgr0"
+                                     "-s" (format nil "~dx~d" (rec-w *rec*) (rec-h *rec*))
+                                     "-r" (princ-to-string *rec-fps*) "-i" "pipe:0"
+                                     "-itsoffset" (format nil "~,3f" offset) "-i" (getf seg :audio)
+                                     "-map" "0:v" "-map" "1:a")
+                               *rec-video-args* *rec-audio-args*
+                               (list "-shortest" "-movflags" "+faststart" out))
+                       :input :stream))
+         (fd (sb-sys:fd-stream-fd (sb-ext:process-input p)))
+         (written 0))
+    (rec-say "encoding ~a: ~d frames, the sound ~,3f s after the picture began~@[ (no start: line — assumed 0)~]"
+             (file-namestring out) frames offset (null audio-start))
+    (setf (rec-offsets *rec*) (append (rec-offsets *rec*) (list (and audio-start (float offset 1.0)))))
+    (with-open-file (s (getf seg :dmg) :element-type '(unsigned-byte 8))
+      (dmg-replay s *rec-fps* frames
+                  (lambda (frame)
+                    (let ((px (lol.canvas:canvas-pixels frame)))
+                      (when (write-all fd px (* 4 (length px)))
+                        (incf written)
+                        (incf (rec-frames *rec*))
+                        (setf (rec-progress *rec*) (min 99 (floor (* 100 (+ done written)) (max 1 total)))))))
+                  :draw-pointer #'draw-cursor))
+    (ignore-errors (close (sb-ext:process-input p)))
+    (sb-ext:process-wait p)
+    (unless (and (eql 0 (sb-ext:process-exit-code p)) (probe-file out))
+      (error "encoding ~a failed (ffmpeg exit ~a, see ffmpeg.log)" out (sb-ext:process-exit-code p)))
+    written))
+
+(defun rec-encode-logs ()
+  "Every :LOG segment into an .mp4, then the same join as a live take. Deletes the
+   logs and the sound files once each segment is encoded."
+  (let ((total (loop for s in (rec-logs *rec*) sum (round (* (getf s :seconds) *rec-fps*))))
+        (done 0))
+    (loop for seg in (rec-logs *rec*) for n from 1
+          do (let ((out (rec-segment-path n)))
+               (incf done (rec-encode-log seg out done total))
+               (setf (rec-segments *rec*) (append (rec-segments *rec*) (list out)))
+               (dolist (k '(:dmg :audio :alog)) (ignore-errors (delete-file (getf seg k))))))))
 
 (defun progress-out-time-us (path)
   "The last out_time_us= ffmpeg's -progress wrote to PATH, or NIL."
@@ -550,7 +737,8 @@
   (when *rec*
     (case (rec-state *rec*)
       (:recording (list :kind :recording :tone :low
-                        :text (format nil "REC ~a ~a" (mm-ss (rec-time)) (meter-bar (rec-level *rec*) 6))))
+                        :text (format nil "REC~:[~; LOG~] ~a ~a" (eq (rec-mode *rec*) :log)
+                                      (mm-ss (rec-time)) (meter-bar (rec-level *rec*) 6))))
       ((:paused) (list :kind :recording :tone :warn :text (format nil "PAUSED ~a" (mm-ss (rec-time)))))
       (:finishing (if (eq (rec-after *rec*) :paused)
                       (list :kind :recording :tone :warn :text (format nil "PAUSED ~a" (mm-ss (rec-time))))
@@ -591,6 +779,11 @@
                          (and (member (rec-state r) '(:recording :paused :finishing)) (mm-ss (rec-time))))
                "idle")
            :detail (and r (rec-message r)) :kind (and r (eq (rec-state r) :failed) :condition))
+      (row "Recorder — SuperL-r record / pause / resume, SuperL-S-r stop"
+           (format nil "mode: ~(~a~) — m switches" (if (rec-active-p) (rec-mode r) *rec-mode*))
+           :detail (if (eq (if (rec-active-p) (rec-mode r) *rec-mode*) :log)
+                       "a damage log while you record, encoded after the stop"
+                       "encoded as it records (about one thread)"))
       (when (and r (member (rec-state r) '(:recording :paused)))
         (row "Recorder — SuperL-r record / pause / resume, SuperL-S-r stop"
              (format nil "mic ~a ~4d dB" (meter-bar (rec-level r) 20) (round (rec-level r)))
@@ -624,12 +817,13 @@
                            (and (getf r :peak) (< (getf r :peak) -50))))
       (row "frames" (format nil "~a written~@[, ~a stale (the encoder fell behind)~]" (getf r :frames)
                             (let ((n (getf r :stale))) (and n (plusp n) n))))
-      (row "segments" (princ-to-string (getf r :segments))))
+      (row "segments" (princ-to-string (getf r :segments)))
+      (row "made" (if (eq (getf r :mode) :log) "from a damage log, encoded after the stop" "encoded live")))
     (make-view :title (pathname-name (getf r :file)) :kind :list :subject s :items (nreverse items))))
 
 (defmethod subject-hints ((s subj-recorder) pane)
   (declare (ignore pane))
-  '(("Super-r" . "record/pause/resume") ("Super-S-r" . "stop") ("ret" . "open") ("p" . "play")))
+  '(("Super-r" . "record/pause/resume") ("Super-S-r" . "stop") ("m" . "live / log") ("ret" . "open") ("p" . "play")))
 (defmethod subject-hints ((s subj-recording) pane)
   (declare (ignore pane))
   '(("p" . "play") ("w" . "play in a window") ("f" . "show in files") ("D" . "delete")))
@@ -655,8 +849,14 @@
 
 (defmethod subject-key ((s subj-recorder) pane key state)
   (declare (ignore state))
-  (let ((r (selected-recording pane)))
-    (and r (member key '(#\p #\w #\f #\D)) (recording-key r key))))
+  (if (eql key #\m)
+      (progn (setf *browser-status*
+                   (if (rec-active-p) "not while recording"
+                       (format nil "the next recording: ~(~a~)"
+                               (setf *rec-mode* (if (eq *rec-mode* :live) :log :live)))))
+             (setf *rec-refreshed* 0) (refresh-recorder-panes) t)
+      (let ((r (selected-recording pane)))
+        (and r (member key '(#\p #\w #\f #\D)) (recording-key r key)))))
 
 (defmethod subject-key ((s subj-recording) pane key state)
   (declare (ignore pane state))
@@ -672,7 +872,6 @@
 (defun rec-pane-shown-p ()
   (some (lambda (trail) (some (lambda (p) (subj-recorder-p (pane-subject p))) trail)) *trails*))
 
-(defvar *rec-refreshed* 0)
 (defun refresh-recorder-panes ()
   "Re-present the recorder panes, at most twice a second."
   (when (> (- (rec-now) *rec-refreshed*) (floor internal-time-units-per-second 2))
