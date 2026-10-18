@@ -129,6 +129,35 @@
                        :source (string-trim '(#\Newline #\Space #\Tab) text))
             (gethash name *registry*)))))
 
+(defun trailing-comment-end (text pos)
+  "Where the form that ended at POS in TEXT really ends: past a comment on the rest of
+   its last line, and past the indented comment-only lines that continue it —
+
+     (defparameter *x* 1)   ; what x is,
+                            ; carried on
+
+   Without this the span of the NEXT form began at POS, so that comment was filed as
+   the first lines of the next definition (tv-draw's source opened with the comment of
+   the defparameter above it, 2026-10-18). A comment at column 0 is left alone: that is
+   a comment written above the next form, and belongs to it. READ also swallows the one
+   whitespace character after a form (READ-PRESERVING-WHITESPACE would not), so POS is
+   first stepped back over it — else a newline eaten there puts us on the next line."
+  (flet ((line-end (from) (or (position #\Newline text :start from) (length text)))
+         (blank-p (c) (member c '(#\Space #\Tab))))
+    (when (and (plusp pos) (<= pos (length text))
+               (member (char text (1- pos)) '(#\Space #\Tab #\Newline #\Return)))
+      (decf pos))
+    (let* ((eol (line-end pos))
+           (k (or (position-if-not #'blank-p text :start pos :end eol) eol)))
+      (if (or (= k eol) (char/= (char text k) #\;))
+          pos                                  ; nothing but blanks, or more code
+          (loop with p = (min (length text) (1+ eol))
+                for e = (line-end p)
+                for j = (position-if-not #'blank-p text :start p :end e)
+                while (and j (> j p) (char= (char text j) #\;))   ; indented, comment only
+                do (setf p (min (length text) (1+ e)))
+                finally (return (if (< p (length text)) (1- p) (length text))))))))
+
 (defun record-source (path)
   "The capture half of LOAD-RECORDING: read PATH's top-level forms WITHOUT
    evaluating them and file each definition's verbatim text in *REGISTRY*. Split out
@@ -143,7 +172,9 @@
                   for form = (handler-case (read s nil :eof)
                                (serious-condition () :eof))   ; stop cleanly on a form we can't read
                   until (eq form :eof)
-                  do (register-source form (subseq text start (file-position s)) path)
+                  do (let ((end (trailing-comment-end text (file-position s))))
+                       (file-position s end)
+                       (register-source form (subseq text start end) path))
                      ;; follow IN-PACKAGE so the NEXT forms intern in the right package
                      (when (and (consp form) (symbolp (first form))
                                 (string= (symbol-name (first form)) "IN-PACKAGE"))

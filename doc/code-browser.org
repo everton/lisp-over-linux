@@ -249,6 +249,18 @@ exact. A pleasant accident: the comment block *above* a =defun= falls inside the
 next form's span — which is precisely where it belongs. Trim leading blank lines
 and the browser shows you the code the way you wrote it, comments included.
 
+The accident has a wrong half, found on 2026-10-18: a comment *after* a form on its
+last line — =(defparameter *x* 1)   ; what x is= — and the indented comment lines
+continuing it were filed as the first lines of the *next* definition. =tv-draw='s
+source opened with the comment of the =defparameter= above it, and
+=check-clipboard.lisp='s double click (aimed at line 0's =defun=) selected "the". 57
+one-line definitions in the tree end in such a comment. Now
+[[file:../initramfs/registry.lisp::defun trailing-comment-end][=trailing-comment-end=]] extends each form's span past its own trailing comment and
+its indented continuation lines; a comment at column 0 still goes with the form
+below it. One trap on the way: =READ= also consumes the single whitespace character
+after a form, so the position it leaves can already be on the next line — the
+function steps back over it first.
+
 =register-source= dispatches on the head of the form (=defun=, =defmacro=,
 =defgeneric=, =defmethod=, =defclass=, =defvar=, =define-condition=, …) to
 derive =(kind name)=. Anything else becomes a =:toplevel= entry — so even
