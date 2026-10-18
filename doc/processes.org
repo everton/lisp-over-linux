@@ -68,11 +68,11 @@ does the non-drawing process send to the one that draws*.
 
 ** Three answers, by how much the peer sends
 
-| What the peer sends | Who owns the screen | Cost |
-|---------------------+---------------------+------|
-| a *view* — labels, kinds, targets | the environment | ~350 lines (§2) |
-| a *pixel buffer* + damage rects | the environment, as compositor | ~450 lines + 4 invariants (§3) |
-| *nothing* — it takes the whole screen | the peer, temporarily | near zero |
+| What the peer sends                   | Who owns the screen            | Cost                           |
+|---------------------------------------+--------------------------------+--------------------------------|
+| a *view* — labels, kinds, targets     | the environment                | ~350 lines (§2)                |
+| a *pixel buffer* + damage rects       | the environment, as compositor | ~450 lines + 4 invariants (§3) |
+| *nothing* — it takes the whole screen | the peer, temporarily          | near zero                      |
 
 The third row is the one that gets forgotten. If only one thing is visible at a
 time you need no compositor at all: suspend, restore text mode, hand over the
@@ -156,14 +156,14 @@ the table below assumes; §7½ says why.
 
 ** What already exists
 
-| Need | Status |
-|------+--------|
-| AF_UNIX sockets | =CONFIG_UNIX=y= (see [[file:kernel-config.org][kernel-config.org]]); =/tmp= is a tmpfs |
-| =local-socket= in the heap | =build.sh= requires =sb-bsd-sockets= before the save |
-| A socket fd in the event loop | =socket-file-descriptor=; =fbb-wait='s docstring already anticipates a fourth slot |
-| Waking for non-input reasons | the stage heartbeat, =live-stage-timeout= (since Morphic step 5, the world's step deadlines) |
-| Reading untrusted forms | =*read-eval*= nil, as =registry.lisp= and =model.lisp= already do |
-| A client connect/retry idiom | [[file:../host-client/qmp.lisp][host-client/qmp.lisp]], liftable wholesale |
+| Need                          | Status                                                                                       |
+|-------------------------------+----------------------------------------------------------------------------------------------|
+| AF_UNIX sockets               | =CONFIG_UNIX=y= (see [[file:kernel-config.org][kernel-config.org]]); =/tmp= is a tmpfs                                   |
+| =local-socket= in the heap    | =build.sh= requires =sb-bsd-sockets= before the save                                         |
+| A socket fd in the event loop | =socket-file-descriptor=; =fbb-wait='s docstring already anticipates a fourth slot           |
+| Waking for non-input reasons  | the stage heartbeat, =live-stage-timeout= (since Morphic step 5, the world's step deadlines) |
+| Reading untrusted forms       | =*read-eval*= nil, as =registry.lisp= and =model.lisp= already do                            |
+| A client connect/retry idiom  | [[file:../host-client/qmp.lisp][host-client/qmp.lisp]], liftable wholesale                                                     |
 
 ** Security: narrower than the net REPL, on purpose
 
@@ -368,16 +368,16 @@ recording in full, because the reasoning looks wrong right up until the last ste
 Every =define-alien-routine= in the image, against what =sb-posix= 2.6.8 actually
 provides (checked in =sbcl/contrib/sb-posix/=, not assumed):
 
-| Site | What it does | In sb-posix? | Verdict |
-|------+--------------+--------------+---------|
-| =line-editor.lisp= termios | hand-counted offsets into a 60-byte blob | *yes* — groveled =struct termios= + every constant | looked like the one clear win; see below |
-| =fb-browser.lisp= =poll= + pollfd array | hand-built 8-byte slots | *no* — no =poll=/=select=/=epoll= at all | stays, by necessity |
-| =process.lisp= =reboot(2)= | =extern-alien "reboot"= | *no* | stays |
-| =dhcp.lisp= =setsockopt= (SO_RCVTIMEO) | | *no* — and =sb-bsd-sockets= has no receive-timeout option either | stays |
-| =net.lisp= / =fb.lisp= / =fb-browser.lisp= =ioctl= | thin wrapper each | yes, but *thin* | stays — see below |
-| =net.lisp= =socket= | | =sb-bsd-sockets='s job | stays |
-| =fb.lisp= / =fb-browser.lisp= =open=/=read=/=close= | | yes | stays — marginal |
-| /new capability/ =fork=, =waitpid=, =mmap= | not used yet | *yes*, with real added value | deferred with §5 |
+| Site                                                | What it does                             | In sb-posix?                                                     | Verdict                                  |
+|-----------------------------------------------------+------------------------------------------+------------------------------------------------------------------+------------------------------------------|
+| =line-editor.lisp= termios                          | hand-counted offsets into a 60-byte blob | *yes* — groveled =struct termios= + every constant               | looked like the one clear win; see below |
+| =fb-browser.lisp= =poll= + pollfd array             | hand-built 8-byte slots                  | *no* — no =poll=/=select=/=epoll= at all                         | stays, by necessity                      |
+| =process.lisp= =reboot(2)=                          | =extern-alien "reboot"=                  | *no*                                                             | stays                                    |
+| =dhcp.lisp= =setsockopt= (SO_RCVTIMEO)              |                                          | *no* — and =sb-bsd-sockets= has no receive-timeout option either | stays                                    |
+| =net.lisp= / =fb.lisp= / =fb-browser.lisp= =ioctl=  | thin wrapper each                        | yes, but *thin*                                                  | stays — see below                        |
+| =net.lisp= =socket=                                 |                                          | =sb-bsd-sockets='s job                                           | stays                                    |
+| =fb.lisp= / =fb-browser.lisp= =open=/=read=/=close= |                                          | yes                                                              | stays — marginal                         |
+| /new capability/ =fork=, =waitpid=, =mmap=          | not used yet                             | *yes*, with real added value                                     | deferred with §5                         |
 
 ** The one that looked like a win, and the finding that killed it
 
@@ -616,14 +616,14 @@ pipes. Messages are READable forms, each ended by a NUL byte — the framing
 [[file:../initramfs/web-cdp.lisp][web-cdp.lisp]] already uses for Chrome's DevTools pipe, with s-expressions where
 Chrome has JSON. Six heads, and a frame with any other head is dropped unread:
 
-| Direction | Message | Meaning |
-|-----------+---------+---------|
-| child → parent | =(:hello :pid N)= | I am up, and this is my pid |
-| parent → child | =(:present H)= | present your subject number H |
-| child → parent | =(:view H DATA)= | here it is, as plain data |
-| child → parent | =(:invalidate H)= | H may have changed — ask if you care |
-| child → parent | =(:error TEXT)= | a job that does not exist, or a step that failed |
-| parent → child | =(:quit)= | goodbye (closing the pipe means the same) |
+| Direction      | Message           | Meaning                                          |
+|----------------+-------------------+--------------------------------------------------|
+| child → parent | =(:hello :pid N)= | I am up, and this is my pid                      |
+| parent → child | =(:present H)=    | present your subject number H                    |
+| child → parent | =(:view H DATA)=  | here it is, as plain data                        |
+| child → parent | =(:invalidate H)= | H may have changed — ask if you care             |
+| child → parent | =(:error TEXT)=   | a job that does not exist, or a step that failed |
+| parent → child | =(:quit)=         | goodbye (closing the pipe means the same)        |
 
 =DATA= is a view with every live thing taken out: title, kind, selection, text,
 and per row the label, detail, kind, group, disposition — and a *handle* where the
@@ -780,12 +780,12 @@ sets it to =sandbox-try-accept=: re-exec the image as =("try")=, send
 =*sandbox-seconds*= (10). The child Accepts it in its own heap and answers
 =(:accepted NAME)= or =(:error TEXT)=.
 
-| The child … | PID 1 … | Why |
-|-------------+---------+-----|
-| answered =:accepted= | accepts it | it loaded somewhere first |
-| answered =:error= | accepts it *anyway* | an error is what PID 1 already survives — and the child may have failed only for lack of state PID 1 has (a class defined with Do it an hour ago); refusing would be a false alarm |
-| died (pipe closed, no answer) | *refuses* (=accept-refused=) | it would have died too |
-| did not answer in time | *refuses*, kills the child | it would have hung |
+| The child …                   | PID 1 …                      | Why                                                                                                                                                                                |
+|-------------------------------+------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| answered =:accepted=          | accepts it                   | it loaded somewhere first                                                                                                                                                          |
+| answered =:error=             | accepts it *anyway*          | an error is what PID 1 already survives — and the child may have failed only for lack of state PID 1 has (a class defined with Do it an hour ago); refusing would be a false alarm |
+| died (pipe closed, no answer) | *refuses* (=accept-refused=) | it would have died too                                                                                                                                                             |
+| did not answer in time        | *refuses*, kills the child   | it would have hung                                                                                                                                                                 |
 
 So the sandbox refuses *only* what PID 1 could not have survived. That rule is
 also why the child does *not* first replay this session's earlier Accepts to make

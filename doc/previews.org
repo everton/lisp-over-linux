@@ -211,11 +211,11 @@ for free), memory input only, and exports four functions with plain C types:
 =lol_stbi_load= (always RGBA8), =lol_stbi_free=, =lol_stbi_reason=. What it costs,
 measured:
 
-| | |
-|-+-|
-| =libstbi.so= (stripped, gcc -O2) | 47 136 bytes |
-| its dependencies (=ldd=) | =libm.so.6=, =libc.so.6=, =ld-linux-x86-64.so.2= — all already in the cpio |
-| build | =poc/build-stbi.sh OUTDIR=, under a second; fails if =ldd= shows anything else |
+|                                  |                                                                                |
+|----------------------------------+--------------------------------------------------------------------------------|
+| =libstbi.so= (stripped, gcc -O2) | 47 136 bytes                                                                   |
+| its dependencies (=ldd=)         | =libm.so.6=, =libc.so.6=, =ld-linux-x86-64.so.2= — all already in the cpio     |
+| build                            | =poc/build-stbi.sh OUTDIR=, under a second; fails if =ldd= shows anything else |
 
 On the Lisp side ([[file:../poc/image.lisp::defun decode-stbi][decode-stbi]]) the library is loaded *lazily*, on the first
 JPEG, with =load-shared-object ... :dont-save t=. A shared object loaded /before/
@@ -318,19 +318,19 @@ mean difference is 0.65/255 (the box edges are placed slightly differently).
 
 * 9. What is NOT supported, and why
 
-| Format | Why not |
-|--------+---------|
-| Lossy WebP (VP8) | A video codec's keyframe: intra prediction, a DCT variant, a boolean arithmetic coder. =libwebp= could do it (§4: 600 KB + =libsharpyuv=), not taken |
-| AVIF | An AV1 video frame in an ISO-BMFF box: =libavif= + =dav1d=, megabytes |
-| HEIC | HEVC in the same box, patent-encumbered; =libheif= + =libde265= |
-| JPEG XL | =libjxl= is C++ (=libstdc++=), and large |
-| TIFF | A container of /everything/ (LZW, JPEG, Deflate, planar, tiles, 32-bit float). Uncompressed + LZW TIFF would be cheap with the GIF and inflate code if ever needed |
-| SVG | Not an image but a program: XML + CSS + path rasterising. =librsvg= drags in cairo, pango, glib |
-| PDF | A page-description language with fonts; =mupdf= / =poppler= |
-| Video | Container + codec; the same story as AVIF, many times over |
-| Animation | GIF and WebP previews show the first frame |
-| Colour management | ICC profiles, PNG =gAMA=/=cHRM= are ignored — pixels are taken as sRGB |
-| 16-bit precision | Rounded to 8 bits: the framebuffer has 8 per channel |
+| Format            | Why not                                                                                                                                                            |
+|-------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Lossy WebP (VP8)  | A video codec's keyframe: intra prediction, a DCT variant, a boolean arithmetic coder. =libwebp= could do it (§4: 600 KB + =libsharpyuv=), not taken               |
+| AVIF              | An AV1 video frame in an ISO-BMFF box: =libavif= + =dav1d=, megabytes                                                                                              |
+| HEIC              | HEVC in the same box, patent-encumbered; =libheif= + =libde265=                                                                                                    |
+| JPEG XL           | =libjxl= is C++ (=libstdc++=), and large                                                                                                                           |
+| TIFF              | A container of /everything/ (LZW, JPEG, Deflate, planar, tiles, 32-bit float). Uncompressed + LZW TIFF would be cheap with the GIF and inflate code if ever needed |
+| SVG               | Not an image but a program: XML + CSS + path rasterising. =librsvg= drags in cairo, pango, glib                                                                    |
+| PDF               | A page-description language with fonts; =mupdf= / =poppler=                                                                                                        |
+| Video             | Container + codec; the same story as AVIF, many times over                                                                                                         |
+| Animation         | GIF and WebP previews show the first frame                                                                                                                         |
+| Colour management | ICC profiles, PNG =gAMA=/=cHRM= are ignored — pixels are taken as sRGB                                                                                             |
+| 16-bit precision  | Rounded to 8 bits: the framebuffer has 8 per channel                                                                                                               |
 
 =image-format= still /recognises/ TIFF, AVIF, HEIC, JPEG XL, PDF and SVG by their
 magic bytes, so the file manager can say "HEIC — no preview" rather than
@@ -342,20 +342,20 @@ Host numbers — Intel i7-1065G7 (laptop), SBCL 2.6.8 (=./sbcl=), files loaded w
 plain =load= (SBCL compiles each top-level form natively as it loads, so this is
 the speed the image gets). Timer granularity is 4 ms.
 
-| What | Size | Time |
-|------+------+------|
-| =gunzip=, 2 MB random data (stored blocks) | 1953 KB | ~8 ms |
-| =gunzip=, the =poc/*.lisp= sources | ~490 KB | ~4 ms |
-| PNG RGB 2000x1500 (plasma) | 2.3 MB | ~175 ms |
-| PNG RGB 3000x2000 (plasma, no blur) | 9.9 MB | ~265 ms |
-| PNG RGB 3000x2000, Adam7 | 10 MB | ~265 ms |
-| JPEG baseline 2000x1500 (stb) | 287 KB | ~20 ms |
-| JPEG progressive 2000x1500 (stb) | 279 KB | ~40 ms |
-| JPEG progressive 3000x2000 (stb) | 1.7 MB | ~145 ms |
-| lossless WebP 2000x1500 | 1.8 MB | ~200 ms |
-| =scale-to-fit= 3000x2000 -> 640x480 | | ~20 ms |
-| loading =inflate.lisp= + =image.lisp= (compiling them) | | ~1.3 s |
-| heap the two files add (after GC) | | ~0.75 MB |
+| What                                                   | Size    | Time     |
+|--------------------------------------------------------+---------+----------|
+| =gunzip=, 2 MB random data (stored blocks)             | 1953 KB | ~8 ms    |
+| =gunzip=, the =poc/*.lisp= sources                     | ~490 KB | ~4 ms    |
+| PNG RGB 2000x1500 (plasma)                             | 2.3 MB  | ~175 ms  |
+| PNG RGB 3000x2000 (plasma, no blur)                    | 9.9 MB  | ~265 ms  |
+| PNG RGB 3000x2000, Adam7                               | 10 MB   | ~265 ms  |
+| JPEG baseline 2000x1500 (stb)                          | 287 KB  | ~20 ms   |
+| JPEG progressive 2000x1500 (stb)                       | 279 KB  | ~40 ms   |
+| JPEG progressive 3000x2000 (stb)                       | 1.7 MB  | ~145 ms  |
+| lossless WebP 2000x1500                                | 1.8 MB  | ~200 ms  |
+| =scale-to-fit= 3000x2000 -> 640x480                    |         | ~20 ms   |
+| loading =inflate.lisp= + =image.lisp= (compiling them) |         | ~1.3 s   |
+| heap the two files add (after GC)                      |         | ~0.75 MB |
 
 The guest's QEMU CPU is slower than this laptop; real hardware boots this same
 laptop. In the guest (tag #25, [[file:../check-files.lisp][check-files.lisp]]) =libstbi.so= loads from

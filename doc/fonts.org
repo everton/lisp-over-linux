@@ -58,16 +58,16 @@ records where each table starts; nothing is copied out.
 
 The tables a monospace font needs, and what we take from each:
 
-| table  | holds                                       | we use                                                       |
-|--------+---------------------------------------------+--------------------------------------------------------------|
-| =head= | global facts                                | =unitsPerEm= (2048); whether =loca= is 16- or 32-bit          |
+| table  | holds                                       | we use                                                                           |
+|--------+---------------------------------------------+----------------------------------------------------------------------------------|
+| =head= | global facts                                | =unitsPerEm= (2048); whether =loca= is 16- or 32-bit                             |
 | =hhea= | horizontal layout header                    | ascender 1901, descender −483, lineGap 0; how many glyphs have their own advance |
-| =maxp= | limits                                      | the number of glyphs (3377 in DejaVu Sans Mono)               |
-| =cmap= | character code → glyph number               | the format 12 subtable (all of Unicode), else format 4 (U+0000–U+FFFF) |
-| =hmtx= | per-glyph advance width + left bearing      | the advance — 1233 units for *every* glyph here              |
-| =loca= | where each glyph's outline starts in =glyf= | offsets; equal neighbours mean "no outline" (a space)         |
-| =glyf= | the outlines                                | contours of points, and composite glyphs                      |
-| =name= | human-readable strings                      | the full name, "DejaVu Sans Mono", for the status line        |
+| =maxp= | limits                                      | the number of glyphs (3377 in DejaVu Sans Mono)                                  |
+| =cmap= | character code → glyph number               | the format 12 subtable (all of Unicode), else format 4 (U+0000–U+FFFF)           |
+| =hmtx= | per-glyph advance width + left bearing      | the advance — 1233 units for *every* glyph here                                  |
+| =loca= | where each glyph's outline starts in =glyf= | offsets; equal neighbours mean "no outline" (a space)                            |
+| =glyf= | the outlines                                | contours of points, and composite glyphs                                         |
+| =name= | human-readable strings                      | the full name, "DejaVu Sans Mono", for the status line                           |
 
 (The numbers were checked against the file with an independent reader — Perl's
 =unpack= on the raw bytes — and the charset with =fc-query=, not against our parser;
@@ -241,18 +241,18 @@ is no relayout pass, because layout is redone every frame anyway.
 *The metric accessors* ([[file:../poc/widgets.lisp][poc/widgets.lisp]] unless noted), and what they were as
 constants:
 
-| accessor                       | is                                           | at 6×15 (the old constant) |
-|--------------------------------+----------------------------------------------+----------------------------|
-| =char-w=, =line-h=             | the font's cell                              | 6, 15                      |
-| =+row-h+= → =(row-h)=          | a list row: cell + 5                         | 20                         |
-| =+bar-h+= → =(bar-h)=          | a header band / breadcrumb / the tab strip   | 20                         |
-| =card-head-h=                  | a card's title strip: cell + 9              | 24                         |
-| =+cell-w+=, =+cell-h+=         | a dispatch-matrix cell: 13 chars × (cell + 3) | 78 × 18                   |
-| =text-dy=                      | how far down a band to draw text, centred    | (was =(+ y 3)=)            |
-| =status-h= (shell)             | the status line / minibuffer: cell + 7       | 22                         |
-| =tv-gutter-w= (textview)       | the line-number gutter: 4 chars + 16         | 40 (=*gutter-w*=)          |
-| =tv-line-height= (textview)    | a text-view line: cell + 3                   | 18 (always derived)        |
-| =stage-transcript-h=, =dbg-row-h=, =dbg-band-h= | the stage strip, debugger rows and title band | 92, 17, 24 |
+| accessor                                        | is                                            | at 6×15 (the old constant) |
+|-------------------------------------------------+-----------------------------------------------+----------------------------|
+| =char-w=, =line-h=                              | the font's cell                               | 6, 15                      |
+| =+row-h+= → =(row-h)=                           | a list row: cell + 5                          | 20                         |
+| =+bar-h+= → =(bar-h)=                           | a header band / breadcrumb / the tab strip    | 20                         |
+| =card-head-h=                                   | a card's title strip: cell + 9                | 24                         |
+| =+cell-w+=, =+cell-h+=                          | a dispatch-matrix cell: 13 chars × (cell + 3) | 78 × 18                    |
+| =text-dy=                                       | how far down a band to draw text, centred     | (was =(+ y 3)=)            |
+| =status-h= (shell)                              | the status line / minibuffer: cell + 7        | 22                         |
+| =tv-gutter-w= (textview)                        | the line-number gutter: 4 chars + 16          | 40 (=*gutter-w*=)          |
+| =tv-line-height= (textview)                     | a text-view line: cell + 3                    | 18 (always derived)        |
+| =stage-transcript-h=, =dbg-row-h=, =dbg-band-h= | the stage strip, debugger rows and title band | 92, 17, 24                 |
 
 =+row-h+= and friends kept their names as *symbol macros*: the compiler replaces the
 symbol with a call, =(row-h)=, at each of the hundred places that use it. That kept
@@ -278,14 +278,14 @@ counted by =x-of-col= / =col-at-x= so clicks still land).
 
 *The keys* (=browser-key= in [[file:../poc/shell.lisp][shell.lisp]], calling [[file:../poc/shell.lisp::defun change-font-size][=change-font-size=]]):
 
-| keys                                           | does                                         |
-|------------------------------------------------+----------------------------------------------|
-| =SuperL-== or =SuperL-+=                       | bigger                                       |
-| =SuperL--=                                     | smaller                                      |
-| =SuperL-0=                                     | back to the size the font was loaded at      |
-| =C-x C-== (or =C-x C-+=), =C-x C--=, =C-x C-0= | the same, Emacs's =text-scale-adjust= keys   |
-| then a bare =+= (or ===), =-=, =0=             | repeats, without the =C-x= — as in Emacs     |
-| =Ctrl= + wheel                                 | up bigger, down smaller, as in web browsers  |
+| keys                                           | does                                        |
+|------------------------------------------------+---------------------------------------------|
+| =SuperL-== or =SuperL-+=                       | bigger                                      |
+| =SuperL--=                                     | smaller                                     |
+| =SuperL-0=                                     | back to the size the font was loaded at     |
+| =C-x C-== (or =C-x C-+=), =C-x C--=, =C-x C-0= | the same, Emacs's =text-scale-adjust= keys  |
+| then a bare =+= (or ===), =-=, =0=             | repeats, without the =C-x= — as in Emacs    |
+| =Ctrl= + wheel                                 | up bigger, down smaller, as in web browsers |
 
 Steps are 2 px below 20 and 3 px above (one pixel at 12 px is 8 %, at 30 px 3 % and
 too small to notice), clamped to 10–40 px; from 18 the sizes go 20, 23, 26, 29 … 40.
@@ -380,18 +380,18 @@ its =cmap= covers and draws =.notdef= for the rest.
 
 * 10. The map — where everything is
 
-| you want to…                          | look at                                                          |
-|---------------------------------------+------------------------------------------------------------------|
-| parse a .ttf / look up a glyph        | =parse-ttf=, =glyph-index=, =glyph-outline= ([[file:../poc/ttf.lisp][ttf.lisp]])                |
-| turn an outline into coverage         | =rasterize-glyph=, =accumulate-line=, =walk-contour= ([[file:../poc/ttf.lisp][ttf.lisp]])       |
-| the font object, its size, the cache  | =defstruct font=, =set-font-size=, =font-glyph= ([[file:../poc/canvas.lisp][canvas.lisp]])         |
-| draw text / measure it                | =draw-string=, =string-px= ([[file:../poc/canvas.lisp][canvas.lisp]])                               |
-| a layout metric                       | =char-w=, =line-h=, =row-h=, =text-dy= … ([[file:../poc/widgets.lisp][widgets.lisp]])               |
-| mouse pixel ↔ (line, column)          | =x-of-col=, =col-at-x= ([[file:../poc/textview.lisp][textview.lisp]])                               |
-| the keys, loading, switching fonts    | =change-font-size=, =open-browser-font=, =set-font= ([[file:../poc/shell.lisp][shell.lisp]])     |
-| where the size is kept                | =setting=, =save-setting= ([[file:../initramfs/settings.lisp][settings.lisp]])                          |
-| which file ships                      | step 2a′ of [[file:../build.sh][build.sh]]; [[file:../initramfs/initramfs.sbcl.list][initramfs.sbcl.list]]                       |
-| the pixels reach the screen           | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]                          |
+| you want to…                         | look at                                                          |
+|--------------------------------------+------------------------------------------------------------------|
+| parse a .ttf / look up a glyph       | =parse-ttf=, =glyph-index=, =glyph-outline= ([[file:../poc/ttf.lisp][ttf.lisp]])           |
+| turn an outline into coverage        | =rasterize-glyph=, =accumulate-line=, =walk-contour= ([[file:../poc/ttf.lisp][ttf.lisp]])  |
+| the font object, its size, the cache | =defstruct font=, =set-font-size=, =font-glyph= ([[file:../poc/canvas.lisp][canvas.lisp]])    |
+| draw text / measure it               | =draw-string=, =string-px= ([[file:../poc/canvas.lisp][canvas.lisp]])                         |
+| a layout metric                      | =char-w=, =line-h=, =row-h=, =text-dy= … ([[file:../poc/widgets.lisp][widgets.lisp]])          |
+| mouse pixel ↔ (line, column)         | =x-of-col=, =col-at-x= ([[file:../poc/textview.lisp][textview.lisp]])                           |
+| the keys, loading, switching fonts   | =change-font-size=, =open-browser-font=, =set-font= ([[file:../poc/shell.lisp][shell.lisp]]) |
+| where the size is kept               | =setting=, =save-setting= ([[file:../initramfs/settings.lisp][settings.lisp]])                        |
+| which file ships                     | step 2a′ of [[file:../build.sh][build.sh]]; [[file:../initramfs/initramfs.sbcl.list][initramfs.sbcl.list]]                        |
+| the pixels reach the screen          | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]                             |
 
 * 11. Gotchas, and what was ruled out
 

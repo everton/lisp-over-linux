@@ -13,12 +13,12 @@ protocol as a package or a class ([[file:code-browser.org][code-browser.org]] §
 already does — trails and tabs, the nav split's preview, breadcrumbs, the Spotter,
 the right-button menu and the halo — works on files without a line of new chrome.
 
-| file | layer |
-|------+-------|
-| [[file:../initramfs/files.lisp][initramfs/files.lisp]] | the disk as *data*: lstat, readdir, rename, links, the atomic save, sort, filter, the bounded find, the Spotter's path grammar. Headless. |
+| file                      | layer                                                                                                                                              |
+|---------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------|
+| [[file:../initramfs/files.lisp][initramfs/files.lisp]]      | the disk as *data*: lstat, readdir, rename, links, the atomic save, sort, filter, the bounded find, the Spotter's path grammar. Headless.          |
 | [[file:../initramfs/file-views.lisp][initramfs/file-views.lisp]] | the data as *subjects*: =present= / =present-preview= / =commands-for=, the sniffers, the archive readers. Pure — reads the disk, never writes it. |
-| [[file:../poc/file-manager.lisp][poc/file-manager.lisp]] | the *hands*: the keys, the minibuffer prompts, every operation that changes the disk, =C-x C-s=. |
-| [[file:../poc/files-test.lisp][poc/files-test.lisp]] | the host test, in a scratch directory (69 checks). |
+| [[file:../poc/file-manager.lisp][poc/file-manager.lisp]]     | the *hands*: the keys, the minibuffer prompts, every operation that changes the disk, =C-x C-s=.                                                   |
+| [[file:../poc/files-test.lisp][poc/files-test.lisp]]       | the host test, in a scratch directory (69 checks).                                                                                                 |
 
 * 1. Why a subject, and not a separate app
 
@@ -77,13 +77,13 @@ our own readdir.
 =readdir(3)= returns a pointer to a =struct dirent=. On x86-64 Linux — glibc and musl
 agree — it is:
 
-| offset | field | type | |
-|--------+-------+------+---|
-| 0 | =d_ino= | u64 | the inode number |
-| 8 | =d_off= | i64 | an opaque cookie for =seekdir= |
-| 16 | =d_reclen= | u16 | this record's length |
-| 18 | =d_type= | u8 | =DT_DIR= 4, =DT_REG= 8, =DT_LNK= 10, … 0 = unknown |
-| 19 | =d_name= | char[] | NUL-terminated |
+| offset | field      | type   |                                                    |
+|--------+------------+--------+----------------------------------------------------|
+|      0 | =d_ino=    | u64    | the inode number                                   |
+|      8 | =d_off=    | i64    | an opaque cookie for =seekdir=                     |
+|     16 | =d_reclen= | u16    | this record's length                               |
+|     18 | =d_type=   | u8     | =DT_DIR= 4, =DT_REG= 8, =DT_LNK= 10, … 0 = unknown |
+|     19 | =d_name=   | char[] | NUL-terminated                                     |
 
 =d_type= comes free with the name, which is what lets the recursive find skip an
 lstat per plain file. A file system may answer =DT_UNKNOWN=; then only lstat can tell.
@@ -141,12 +141,12 @@ A plain file has no stripe and reads as plain text.
 breadth-first, so near results come first; the same matching as the filter. It runs
 on the UI thread of PID 1, so it is *bounded* — it stops at whichever comes first:
 
-| cap | default | why |
-|-----+---------+-----|
-| results | 500 | a list longer than that is not an answer |
-| folders visited | 20 000 | a home folder; not the whole disk |
-| time | 3 s | the screen must come back |
-| interrupt | Esc / C-g | polled every 32 folders, from the first (=*fm-interrupt-fn*=, installed by [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) |
+| cap             | default   | why                                                                                         |
+|-----------------+-----------+---------------------------------------------------------------------------------------------|
+| results         | 500       | a list longer than that is not an answer                                                    |
+| folders visited | 20 000    | a home folder; not the whole disk                                                           |
+| time            | 3 s       | the screen must come back                                                                   |
+| interrupt       | Esc / C-g | polled every 32 folders, from the first (=*fm-interrupt-fn*=, installed by [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) |
 
 and it *never descends a symlink* (a link to an ancestor is an infinite tree), never a
 hidden folder unless dot files are shown, and never crosses onto another file system
@@ -199,19 +199,19 @@ inflated in Lisp, then only the tar headers are read (=--scene files-archive=):
 
 [[file:../media/screenshots/files-archive-2026-10-17.png]]
 
-| type | detected by | preview | open (Enter) | caps |
-|------+-------------+---------+--------------+------|
-| folder | lstat | its listing | the folder | 2 000 / 20 000 entries |
-| text | no NUL, valid UTF-8 (a cut multibyte tail forgiven) | first 200 lines, tabs expanded, Lisp-coloured for =.lisp= &c. | *the editor* (§7) | 64 KB preview; editable up to 2 MB, then a read-only head |
-| image | PNG =89 50 4E 47=, JPEG =FF D8 FF=, GIF8, RIFF…WEBP, =qoif=, BMP/netpbm (+ name), TGA/ICO/PSD/HDR (name + lol.image agrees) | the picture, scaled to fit | the same, full pane | 8 MB to preview, 48 MB to open; lol.image refuses > 40 Mpx |
-| symlink | lstat | the *target's* preview, titled =link name -> target= | the target, through the link | — |
-| broken link | stat fails | where it points, and its folder | same | — |
-| gzip | =1F 8B= | inflated: text, or a tar listing for =.tar.gz=; the original name from the header | same, longer | 16 MB compressed, 64 MB inflated (enforced while inflating; the trailer can lie) |
-| tar | =ustar= at byte 257 | member list (name, size, date), headers only | same | 5 000 members |
-| zip | =PK 03 04= / =PK 05 06= | member list from the *central directory* (the index at the end), data never read | same | 5 000 members; zip64 named, not parsed |
-| ELF | =7F 45 4C 46= | class, endianness, type, machine, entry; =PT_INTERP= → "dynamically linked, interpreter …" or "statically linked"; + hex | same | 4 KB of hex |
-| other binary | everything else | a =file(1)=-style name (PDF, SQLite, cpio — an initramfs is one —, a bzImage, PSF, wasm, xz, …) + a hex dump | same | 1 KB hex preview, 4 KB open |
-| FIFO, socket, device | lstat | information only | information only | *never opened*: reading a FIFO blocks forever |
+| type                 | detected by                                                                                                                 | preview                                                                                                                  | open (Enter)                 | caps                                                                             |
+|----------------------+-----------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+------------------------------+----------------------------------------------------------------------------------|
+| folder               | lstat                                                                                                                       | its listing                                                                                                              | the folder                   | 2 000 / 20 000 entries                                                           |
+| text                 | no NUL, valid UTF-8 (a cut multibyte tail forgiven)                                                                         | first 200 lines, tabs expanded, Lisp-coloured for =.lisp= &c.                                                            | *the editor* (§7)            | 64 KB preview; editable up to 2 MB, then a read-only head                        |
+| image                | PNG =89 50 4E 47=, JPEG =FF D8 FF=, GIF8, RIFF…WEBP, =qoif=, BMP/netpbm (+ name), TGA/ICO/PSD/HDR (name + lol.image agrees) | the picture, scaled to fit                                                                                               | the same, full pane          | 8 MB to preview, 48 MB to open; lol.image refuses > 40 Mpx                       |
+| symlink              | lstat                                                                                                                       | the *target's* preview, titled =link name -> target=                                                                     | the target, through the link | —                                                                                |
+| broken link          | stat fails                                                                                                                  | where it points, and its folder                                                                                          | same                         | —                                                                                |
+| gzip                 | =1F 8B=                                                                                                                     | inflated: text, or a tar listing for =.tar.gz=; the original name from the header                                        | same, longer                 | 16 MB compressed, 64 MB inflated (enforced while inflating; the trailer can lie) |
+| tar                  | =ustar= at byte 257                                                                                                         | member list (name, size, date), headers only                                                                             | same                         | 5 000 members                                                                    |
+| zip                  | =PK 03 04= / =PK 05 06=                                                                                                     | member list from the *central directory* (the index at the end), data never read                                         | same                         | 5 000 members; zip64 named, not parsed                                           |
+| ELF                  | =7F 45 4C 46=                                                                                                               | class, endianness, type, machine, entry; =PT_INTERP= → "dynamically linked, interpreter …" or "statically linked"; + hex | same                         | 4 KB of hex                                                                      |
+| other binary         | everything else                                                                                                             | a =file(1)=-style name (PDF, SQLite, cpio — an initramfs is one —, a bzImage, PSF, wasm, xz, …) + a hex dump             | same                         | 1 KB hex preview, 4 KB open                                                      |
+| FIFO, socket, device | lstat                                                                                                                       | information only                                                                                                         | information only             | *never opened*: reading a FIFO blocks forever                                    |
 
 Two decoders are optional modules written alongside this one — =lol.image= and
 =lol.inflate= ([[file:previews.org][previews.org]]). They are reached by *name at run time*
@@ -303,12 +303,12 @@ act on all marked entries; =U= clears them.
 Anything typed into the Spotter that *looks like a path* is not a fuzzy query
 (=path-query-p=):
 
-| typed | means |
-|-------+-------|
-| =/…= | absolute |
-| =~= or =~/…= | from =$HOME= |
+| typed                    | means                                                                                              |
+|--------------------------+----------------------------------------------------------------------------------------------------|
+| =/…=                     | absolute                                                                                           |
+| =~= or =~/…=             | from =$HOME=                                                                                       |
 | =./…=, =../…=, =.=, =..= | relative to the *focused file manager's folder* (or the folder of a focused file), else to =$HOME= |
-| =file://…= | the scheme stripped and =%XX= decoded as UTF-8 octets (=file://host/x= keeps only =/x=) |
+| =file://…=               | the scheme stripped and =%XX= decoded as UTF-8 octets (=file://host/x= keeps only =/x=)            |
 
 The rows are the entries of the folder that *complete the last component*, the way a
 shell's Tab lists them: a case-sensitive prefix match first, then case-insensitive,
@@ -347,29 +347,29 @@ into; arrows, Enter, Backspace, =q= and everything with Ctrl or Super keep their
 meaning in every list). =SuperL-?= shows the same keys in its /Files/ group
 (=*cheatsheet*= in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]), condensed — keep the two in step:
 
-| key | does |
-|-----+------|
-| ↑ ↓ PgUp PgDn | move; the selection is previewed on the right |
-| Enter | open: a folder below, a file in the editor / viewer |
-| =S-Enter=, → | open beside / focus the preview (as in every list) |
-| Backspace, ← | back up the trail |
-| =^= | parent folder (back, when the trail came down from it; else replaces the pane) |
-| =~= | home |
-| =/= | filter, live (Enter keeps, Esc drops) |
-| =f= | find by name below this folder (bounded; Esc stops it) |
-| =s= / =S= | next sort order / reverse |
-| =.= | show / hide dot files |
-| =+= / =n= | new folder / new empty file |
-| =r= | rename |
-| =c= / =m= | copy / move to … (a folder = into it) |
-| =d= or Delete | delete (asks; =yes= for a non-empty folder) |
-| =l= / =L= | make a symbolic / hard link to the entry |
-| =x= | toggle executable (=r--= → =r-x= for whoever may read) |
-| Space / =U= | mark (and move down) / clear marks |
-| =y= | copy the path to the clipboard |
-| =i= | information (lstat, as a table) |
-| =j= | jump to a symlink's target |
-| =g= | refresh |
+| key           | does                                                                           |
+|---------------+--------------------------------------------------------------------------------|
+| ↑ ↓ PgUp PgDn | move; the selection is previewed on the right                                  |
+| Enter         | open: a folder below, a file in the editor / viewer                            |
+| =S-Enter=, →  | open beside / focus the preview (as in every list)                             |
+| Backspace, ←  | back up the trail                                                              |
+| =^=           | parent folder (back, when the trail came down from it; else replaces the pane) |
+| =~=           | home                                                                           |
+| =/=           | filter, live (Enter keeps, Esc drops)                                          |
+| =f=           | find by name below this folder (bounded; Esc stops it)                         |
+| =s= / =S=     | next sort order / reverse                                                      |
+| =.=           | show / hide dot files                                                          |
+| =+= / =n=     | new folder / new empty file                                                    |
+| =r=           | rename                                                                         |
+| =c= / =m=     | copy / move to … (a folder = into it)                                          |
+| =d= or Delete | delete (asks; =yes= for a non-empty folder)                                    |
+| =l= / =L=     | make a symbolic / hard link to the entry                                       |
+| =x=           | toggle executable (=r--= → =r-x= for whoever may read)                         |
+| Space / =U=   | mark (and move down) / clear marks                                             |
+| =y=           | copy the path to the clipboard                                                 |
+| =i=           | information (lstat, as a table)                                                |
+| =j=           | jump to a symlink's target                                                     |
+| =g=           | refresh                                                                        |
 
 In a file you are editing: =C-x C-s= saves, =C-_= undoes, =C-g= closes (twice if
 modified), plus every editor key ([[file:clipboard.org][clipboard.org]]); a Lisp file adds =C-x C-e= and

@@ -48,11 +48,11 @@ Neither half is useful without the other. We will build the kernel half first
 
 * Why this is harder than everything so far
 
-| Past change            | Kernel? | Userland? | Notes                                   |
-|------------------------+---------+-----------+-----------------------------------------|
-| Draw the alien         | no      | yes       | /dev/fb0 already existed                 |
-| Bigger fbcon font      | yes     | no        | compile-in font + cmdline               |
-| *Networking*           | *yes*   | *yes*     | NET+INET+NIC driver AND sb-bsd-sockets  |
+| Past change       | Kernel? | Userland? | Notes                                  |
+|-------------------+---------+-----------+----------------------------------------|
+| Draw the alien    | no      | yes       | /dev/fb0 already existed               |
+| Bigger fbcon font | yes     | no        | compile-in font + cmdline              |
+| *Networking*      | *yes*   | *yes*     | NET+INET+NIC driver AND sb-bsd-sockets |
 
 Everything we relied on before boots *early* and needs no driver negotiation.
 A network link is different: a real driver must bind to a real (PCI) device,
@@ -67,16 +67,16 @@ returns 1). The keystone =CONFIG_PCI= was already on (tag #19 for USB/ACPI), and
 already present. The options we turned on, smallest-useful-set first
 (=CONFIG_IPV6= was left OFF at #21 — see §5 — and turned on in tag #26, §2f):
 
-| Option                     | Role                                                        |
-|----------------------------+-------------------------------------------------------------|
-| =CONFIG_NET=               | The socket / protocol core — THE master switch              |
-| =CONFIG_INET=              | IPv4 (TCP, UDP, ICMP). The thing we actually want           |
-| =CONFIG_UNIX=              | AF_UNIX local sockets (handy even before a NIC works)       |
-| =CONFIG_PACKET=            | AF_PACKET (raw sockets; some DHCP clients use it)           |
-| =CONFIG_NETDEVICES=        | The network-device layer (gate for any NIC driver)          |
-| =CONFIG_NET_CORE=          | Core netdev machinery                                        |
-| a NIC driver               | the actual hardware — see stage plan below                  |
-| (=CONFIG_IPV6=)            | optional; skip at first to stay minimal                     |
+| Option              | Role                                                  |
+|---------------------+-------------------------------------------------------|
+| =CONFIG_NET=        | The socket / protocol core — THE master switch        |
+| =CONFIG_INET=       | IPv4 (TCP, UDP, ICMP). The thing we actually want     |
+| =CONFIG_UNIX=       | AF_UNIX local sockets (handy even before a NIC works) |
+| =CONFIG_PACKET=     | AF_PACKET (raw sockets; some DHCP clients use it)     |
+| =CONFIG_NETDEVICES= | The network-device layer (gate for any NIC driver)    |
+| =CONFIG_NET_CORE=   | Core netdev machinery                                 |
+| a NIC driver        | the actual hardware — see stage plan below            |
+| (=CONFIG_IPV6=)     | optional; skip at first to stay minimal               |
 
 NIC driver — the staged target list (easiest → hardest):
 
@@ -195,12 +195,12 @@ router that unicasts, one veth cable, no root needed.
 The plan was agent.org's network track (§10, N1–N4). What it planned and what
 shipped:
 
-| Phase | Planned                  | Shipped                                                              |
-|-------+--------------------------+----------------------------------------------------------------------|
-| N1    | default route, ~40 lines | =SIOCADDRT= + the lease as an object + renewal ([[file:../initramfs/net.lisp][net.lisp]], [[file:../initramfs/dhcp.lisp][dhcp.lisp]]) |
+| Phase | Planned                  | Shipped                                                                     |
+|-------+--------------------------+-----------------------------------------------------------------------------|
+| N1    | default route, ~40 lines | =SIOCADDRT= + the lease as an object + renewal ([[file:../initramfs/net.lisp][net.lisp]], [[file:../initramfs/dhcp.lisp][dhcp.lisp]])        |
 | N2    | DNS client, ~150 lines   | a stub resolver with a cache, TCP fallback, overrides ([[file:../initramfs/dns.lisp][dns.lisp]], 423 lines) |
-| N3    | SNTP, ~60 lines          | drift report + stepping through =lol-rootd= ([[file:../initramfs/sntp.lisp][sntp.lisp]], 164 lines; §2d) |
-| N4    | plain-HTTP =GET=         | a full HTTP/1.1 client, and HTTPS (§2e)                              |
+| N3    | SNTP, ~60 lines          | drift report + stepping through =lol-rootd= ([[file:../initramfs/sntp.lisp][sntp.lisp]], 164 lines; §2d)     |
+| N4    | plain-HTTP =GET=         | a full HTTP/1.1 client, and HTTPS (§2e)                                     |
 
 *** The loopback, =lo= (fixed 2026-10-12)
 The kernel creates =lo= *down*, and until 2026-10-12 nothing here raised it. So

@@ -55,14 +55,14 @@ session scratchpad and were not kept. §4 gives them in full so they can be reru
 
 A Rails app in development wants:
 
-| Need | Where it usually lives on Debian |
-|------+----------------------------------|
-| Ruby and its gems | =~/.rbenv= or =~/.asdf= — *already under =/home=* |
-| C libraries that native gems link to (=libssl=, =libyaml=, =libpq=, =libxml2=) | =/usr/lib= |
-| A database server (Postgres) | =/usr/lib/postgresql=, data in =/var/lib/postgresql= |
-| node/yarn for assets | =/usr= or =~/.nvm= |
-| A shell, =git=, =make=, a C compiler for =bundle install= | =/usr= |
-| A browser to look at it | — ([[file:web-browser.org][web-browser.org]]) |
+| Need                                                                           | Where it usually lives on Debian                     |
+|--------------------------------------------------------------------------------+------------------------------------------------------|
+| Ruby and its gems                                                              | =~/.rbenv= or =~/.asdf= — *already under =/home=*    |
+| C libraries that native gems link to (=libssl=, =libyaml=, =libpq=, =libxml2=) | =/usr/lib=                                           |
+| A database server (Postgres)                                                   | =/usr/lib/postgresql=, data in =/var/lib/postgresql= |
+| node/yarn for assets                                                           | =/usr= or =~/.nvm=                                   |
+| A shell, =git=, =make=, a C compiler for =bundle install=                      | =/usr=                                               |
+| A browser to look at it                                                        | — ([[file:web-browser.org][web-browser.org]])                                  |
 
 /Verified on this laptop:/
 - =~/.rbenv/versions= holds 17 Rubies.
@@ -78,14 +78,14 @@ project, not to the machine.
 
 * 2. The options
 
-| Option | Verdict |
-|--------+---------|
-| Run the host's binaries straight out of =/mnt/host= | *Ruled out* (§2.1) |
-| *A container of the host's own distro* | *Recommended* (§3) |
+| Option                                                                          | Verdict                                                                                |
+|---------------------------------------------------------------------------------+----------------------------------------------------------------------------------------|
+| Run the host's binaries straight out of =/mnt/host=                             | *Ruled out* (§2.1)                                                                     |
+| *A container of the host's own distro*                                          | *Recommended* (§3)                                                                     |
 | A container of a separate, per-project rootfs (=debootstrap= into =~/distros/=) | The escape hatch when the project needs a different release, or system packages (§3.5) |
-| A VM: KVM plus the host's =qemu=, run from inside the container | When the project needs systemd or Docker (§2.2) |
-| A remote dev box over SSH | Needs SSH first (§2.3) |
-| Reboot into Debian | Works, but gives up on "everyday shell" |
+| A VM: KVM plus the host's =qemu=, run from inside the container                 | When the project needs systemd or Docker (§2.2)                                        |
+| A remote dev box over SSH                                                       | Needs SSH first (§2.3)                                                                 |
+| Reboot into Debian                                                              | Works, but gives up on "everyday shell"                                                |
 
 ** 2.1 Why not just run =/mnt/host/usr/bin/ruby=
 
@@ -164,9 +164,9 @@ A user namespace starts with an empty uid map. The creator writes one line to
 =/proc/PID/uid_map=, and an unprivileged creator can only map /its own/ uid. There
 are two choices:
 
-| Map | Inside you are | Consequence |
-|-----+----------------+-------------|
-| =0 1000 1= (=unshare -r=) | root | Tools that refuse root (=initdb=, Postgres) refuse |
+| Map                                  | Inside you are      | Consequence                                          |
+|--------------------------------------+---------------------+------------------------------------------------------|
+| =0 1000 1= (=unshare -r=)            | root                | Tools that refuse root (=initdb=, Postgres) refuse   |
 | =1000 1000 1= (=--map-current-user=) | =everton=, uid 1000 | *Chosen*: the same identity as when Debian is booted |
 
 The second needs one extra step:
@@ -260,11 +260,11 @@ The user namespace maps exactly one uid, so every host file owned by anyone else
 is seen inside as =nobody= (65534). Overlay checks permissions against that.
 /Verified/ on the host:
 
-| Inside | Owner seen | Write |
-|--------+------------+-------|
-| =/etc= (its upper exists, created by us) | 0 under =-r=, us under the identity map | yes |
-| =/etc/apt= | 65534 | /Permission denied/ |
-| =/var/lib/dpkg= | 65534 | so =apt-get install= fails on its lock file |
+| Inside                                   |                              Owner seen | Write                                       |
+|------------------------------------------+-----------------------------------------+---------------------------------------------|
+| =/etc= (its upper exists, created by us) | 0 under =-r=, us under the identity map | yes                                         |
+| =/etc/apt=                               |                                   65534 | /Permission denied/                         |
+| =/var/lib/dpkg=                          |                                   65534 | so =apt-get install= fails on its lock file |
 
 *So the container can run the host's distro but cannot administer it.* For
 development that is mostly fine. Three answers, cheapest first:
@@ -315,33 +315,33 @@ mkdir -p .old; pivot_root . .old; umount -l /.old; rmdir /.old
 
 Results:
 
-| Check | Result |
-|-------+--------|
-| Inside identity | uid 1000 (=everton=). The shell is PID 1 of the PID namespace |
-| =ruby -v= (rbenv shim from =/home=) | =ruby 3.2.2 (2023-03-30 …)= |
-| =ruby -ropenssl -ryaml= | loads: host =libssl= and =libyaml= through the =/usr= overlay |
-| =gem list rails= | =rails (7.0.4.3)= |
-| =psql --version= | =psql (PostgreSQL) 17.5 (Debian 17.5-1)= |
-| private Postgres (=initdb=, =pg_ctl=, =psql=) | starts, answers, stops |
-| =touch /etc/lol-probe= | lands in =~/.cache/lol-ct-probe/etc/upper=, absent from the real =/etc= |
-| =touch /etc/apt/x=, =apt-get install= | /Permission denied/ (§3.5) |
-| overlay with =lowerdir=/= | =EINVAL= (§3.3) |
+| Check                                         | Result                                                                  |
+|-----------------------------------------------+-------------------------------------------------------------------------|
+| Inside identity                               | uid 1000 (=everton=). The shell is PID 1 of the PID namespace           |
+| =ruby -v= (rbenv shim from =/home=)           | =ruby 3.2.2 (2023-03-30 …)=                                             |
+| =ruby -ropenssl -ryaml=                       | loads: host =libssl= and =libyaml= through the =/usr= overlay           |
+| =gem list rails=                              | =rails (7.0.4.3)=                                                       |
+| =psql --version=                              | =psql (PostgreSQL) 17.5 (Debian 17.5-1)=                                |
+| private Postgres (=initdb=, =pg_ctl=, =psql=) | starts, answers, stops                                                  |
+| =touch /etc/lol-probe=                        | lands in =~/.cache/lol-ct-probe/etc/upper=, absent from the real =/etc= |
+| =touch /etc/apt/x=, =apt-get install=         | /Permission denied/ (§3.5)                                              |
+| overlay with =lowerdir=/=                     | =EINVAL= (§3.3)                                                         |
 
 Not run on the host: a server inside the container reached from outside (§3.1).
 
 * 5. What the guest needs
 
-| Piece | State at tag #25 | Work |
-|-------+------------------+------|
-| =NAMESPACES=, =PID_NS=, =NET_NS=, =UTS_NS= | on | — |
-| =USER_NS= | *off* (=default n=) | kernel bump to #26 |
-| =OVERLAY_FS= | *off* | kernel bump to #26 (it selects =FS_STACK= and =EXPORTFS=) |
-| =UNIX98_PTYS= | on | — |
-| a =devpts= mount at =/dev/pts= | *missing*: preinit mounts =proc=, =sysfs=, =devtmpfs=, =tmpfs= only | one =mount()= in [[file:../initramfs/preinit.c::int main(void)][=main=]] |
-| =CGROUPS= / =MEMCG= | off | only to cap a container's memory. Later, if ever |
-| =lol-ct=, the namespace helper | — | ~150 lines of C (§5.1) |
-| *a terminal pane* | — | *the real work* (§5.2) |
-| looking at the app | — | =curl= now, a browser later ([[file:web-browser.org][web-browser.org]]) |
+| Piece                                      | State at tag #25                                                    | Work                                                      |
+|--------------------------------------------+---------------------------------------------------------------------+-----------------------------------------------------------|
+| =NAMESPACES=, =PID_NS=, =NET_NS=, =UTS_NS= | on                                                                  | —                                                         |
+| =USER_NS=                                  | *off* (=default n=)                                                 | kernel bump to #26                                        |
+| =OVERLAY_FS=                               | *off*                                                               | kernel bump to #26 (it selects =FS_STACK= and =EXPORTFS=) |
+| =UNIX98_PTYS=                              | on                                                                  | —                                                         |
+| a =devpts= mount at =/dev/pts=             | *missing*: preinit mounts =proc=, =sysfs=, =devtmpfs=, =tmpfs= only | one =mount()= in [[file:../initramfs/preinit.c::int main(void)][=main=]]                                   |
+| =CGROUPS= / =MEMCG=                        | off                                                                 | only to cap a container's memory. Later, if ever          |
+| =lol-ct=, the namespace helper             | —                                                                   | ~150 lines of C (§5.1)                                    |
+| *a terminal pane*                          | —                                                                   | *the real work* (§5.2)                                    |
+| looking at the app                         | —                                                                   | =curl= now, a browser later ([[file:web-browser.org][web-browser.org]])             |
 
 /At tag #26 (2026-10-12):/ =USER_NS= and =OVERLAY_FS= are on, preinit mounts
 =devpts= on =/dev/pts= and a tmpfs on =/dev/shm=, =lol-ct= is built (627 lines of
@@ -505,11 +505,11 @@ lol-ct [-n NAME] [-s STATEDIR] [-r HOSTROOT] [-C DIR] [-e VAR=VALUE]... [-N] [-v
 lol-ct --probe-root [-r HOSTROOT]
 #+end_example
 
-| Exit | Means |
-|------+-------|
-| the program's | it ran; 128+N if signal N killed it |
-| 125 | =lol-ct= could not build the container (the reason is on stderr) |
-| 127 | the program could not be executed |
+|          Exit | Means                                                            |
+|---------------+------------------------------------------------------------------|
+| the program's | it ran; 128+N if signal N killed it                              |
+|           125 | =lol-ct= could not build the container (the reason is on stderr) |
+|           127 | the program could not be executed                                |
 
 The process tree is three deep, and each level exists for a reason:
 
@@ -546,18 +546,18 @@ laptop.
 *=LOL_GUEST_HOSTROOT=1=*: the build host's real Debian, read-only over virtio-9p.
 19 of 19 checks pass:
 
-| Check | Result |
-|-------+--------|
-| identity inside | =uid=1000=, =hostname= =lol-default=, the command is PID 2 |
-| capabilities inside | =CapEff 0000000000000000= |
-| write =/etc=, then =/etc/apt= | the first works; the second is refused (§3.5, as on the host) |
-| =ruby -e 'require "openssl"; …'= (rbenv shim, from =/home=) | =3.1.0= |
-| =rails -v= | =Rails 8.1.2= |
-| private Postgres: =initdb=, =pg_ctl start=, =psql=, =pg_ctl stop= | answers =select 1 + 41= with 42, stops cleanly |
-| =git status= in this repository, under =/home= | works |
-| =curl https://example.com= from inside | =200=, using the host's =/etc/resolv.conf= (we write none yet) |
-| SIGTERM to a run of =sleep 300= (PID 2) | stops it (exit 143); no =lol-ct= is left in =/proc= |
-| *x*, typed over QMP, with a 3-second coloured loop | the pane holds 6 lines at 1.5 s and 8 at 5.5 s (it fills live), the red is =#E06C75=, the title says =exit 0= |
+| Check                                                             | Result                                                                                                        |
+|-------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------|
+| identity inside                                                   | =uid=1000=, =hostname= =lol-default=, the command is PID 2                                                    |
+| capabilities inside                                               | =CapEff 0000000000000000=                                                                                     |
+| write =/etc=, then =/etc/apt=                                     | the first works; the second is refused (§3.5, as on the host)                                                 |
+| =ruby -e 'require "openssl"; …'= (rbenv shim, from =/home=)       | =3.1.0=                                                                                                       |
+| =rails -v=                                                        | =Rails 8.1.2=                                                                                                 |
+| private Postgres: =initdb=, =pg_ctl start=, =psql=, =pg_ctl stop= | answers =select 1 + 41= with 42, stops cleanly                                                                |
+| =git status= in this repository, under =/home=                    | works                                                                                                         |
+| =curl https://example.com= from inside                            | =200=, using the host's =/etc/resolv.conf= (we write none yet)                                                |
+| SIGTERM to a run of =sleep 300= (PID 2)                           | stops it (exit 143); no =lol-ct= is left in =/proc=                                                           |
+| *x*, typed over QMP, with a 3-second coloured loop                | the pane holds 6 lines at 1.5 s and 8 at 5.5 s (it fills live), the red is =#E06C75=, the title says =exit 0= |
 
 Two things were *different from the laptop* in this mode, and the check records
 them instead of failing on them:

@@ -23,31 +23,31 @@ to the user, not to root.
 
 So the target picture is:
 
-| Path         | What it is                                   | Writable?           |
-|--------------+----------------------------------------------+---------------------|
-| =/=          | the initramfs (rootfs, in RAM)               | yes, but evaporates |
-| =/tmp=       | tmpfs, 64 MB                                 | yes, evaporates     |
-| =/home=      | the laptop's =/home=, bind-mounted           | yes — the real disk |
-| =/mnt/host=  | the laptop's whole =/= (fonts, pictures …)   | *read-only*         |
+| Path        | What it is                                 | Writable?           |
+|-------------+--------------------------------------------+---------------------|
+| =/=         | the initramfs (rootfs, in RAM)             | yes, but evaporates |
+| =/tmp=      | tmpfs, 64 MB                               | yes, evaporates     |
+| =/home=     | the laptop's =/home=, bind-mounted         | yes — the real disk |
+| =/mnt/host= | the laptop's whole =/= (fonts, pictures …) | *read-only*         |
 
 And the process tree:
 
-| PID | Program       | Runs as                         | Why                                          |
-|-----+---------------+---------------------------------+----------------------------------------------|
-|   1 | =/sbin/lisp=  | uid 1000 + 5 capabilities       | the whole environment                        |
-|  ~28| =lol-rootd=   | root (real uid 1000, see §6)    | chown hotplugged devices; remount ro at exit; set the clock, copy NM profiles on request |
-|  any| =lol-ct=      | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs |
+| PID | Program      | Runs as                           | Why                                                                                      |
+|-----+--------------+-----------------------------------+------------------------------------------------------------------------------------------|
+| 1   | =/sbin/lisp= | uid 1000 + 5 capabilities         | the whole environment                                                                    |
+| ~28 | =lol-rootd=  | root (real uid 1000, see §6)      | chown hotplugged devices; remount ro at exit; set the clock, copy NM profiles on request |
+| any | =lol-ct=     | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs                                    |
 
 * 2. The kernel half (tag #25)
 
 Four options, chosen by asking "what is between the NVMe and an =open(2)=?":
 
-| Option               | Why                                                                                         |
-|----------------------+---------------------------------------------------------------------------------------------|
-| =BLK_DEV_NVME=       | The laptop's only disk is NVMe (=nvme0n1=). Pulls in =NVME_CORE=. Needs =PCI= (on since #19). |
-| =EXT4_FS=            | The laptop's root partition is ext4. Pulls in =JBD2= (the journal), =FS_MBCACHE=, =CRC16=.  |
-| =EXT4_FS_POSIX_ACL=  | The host mounts with =acl=; without it the kernel would silently ignore ACLs on files.       |
-| =VIRTIO_BLK=         | QEMU's paravirtual disk, so the same image can be tested against a disk image (§8).          |
+| Option              | Why                                                                                           |
+|---------------------+-----------------------------------------------------------------------------------------------|
+| =BLK_DEV_NVME=      | The laptop's only disk is NVMe (=nvme0n1=). Pulls in =NVME_CORE=. Needs =PCI= (on since #19). |
+| =EXT4_FS=           | The laptop's root partition is ext4. Pulls in =JBD2= (the journal), =FS_MBCACHE=, =CRC16=.    |
+| =EXT4_FS_POSIX_ACL= | The host mounts with =acl=; without it the kernel would silently ignore ACLs on files.        |
+| =VIRTIO_BLK=        | QEMU's paravirtual disk, so the same image can be tested against a disk image (§8).           |
 
 =BLOCK=, =MSDOS_PARTITION= and =EFI_PARTITION= (GPT) were already on. A
 *partition table* is just a small index at the start of a disk saying "bytes X to
@@ -81,11 +81,11 @@ On Debian, =/etc/fstab= says =UUID=3d89…=, and udev + blkid resolve that to
 the filesystem's *superblock* — the header block that describes an ext2/3/4
 filesystem — which always starts 1024 bytes into the partition:
 
-| Offset in superblock | Size | Field                           |
-|----------------------+------+---------------------------------|
-| =0x38=               | 2    | magic =0xEF53= (little-endian)  |
-| =0x68=               | 16   | filesystem UUID                 |
-| =0x78=               | 16   | volume label                    |
+| Offset in superblock | Size | Field                          |
+|----------------------+------+--------------------------------|
+| =0x38=               |    2 | magic =0xEF53= (little-endian) |
+| =0x68=               |   16 | filesystem UUID                |
+| =0x78=               |   16 | volume label                   |
 
 So [[file:../initramfs/preinit.c::static struct ext_id read_ext_id][=read_ext_id=]] =pread=s 256 bytes at offset 1024 of each
 =/dev/<name>= listed in =/sys/class/block= (every disk and partition the kernel
@@ -163,13 +163,13 @@ Root's power in Linux is split into ~41 *capabilities* — each a named slice
 can hold some without being uid 0. We audited every privileged call in the
 userland (=grep= for =ioctl=, =reboot=, =bind=, =/dev/=):
 
-| Capability             | Used by                                                     |
-|------------------------+-------------------------------------------------------------|
-| =CAP_SYS_BOOT=         | =reboot(2)= — the power-off ([[file:../initramfs/process.lisp::defun power-off][process.lisp]])            |
-| =CAP_NET_ADMIN=        | =SIOCSIFADDR= / =SIOCSIFFLAGS= — eth0 up ([[file:../initramfs/net.lisp][net.lisp]])           |
-| =CAP_NET_RAW=          | =SO_BINDTODEVICE= on the DHCP socket ([[file:../initramfs/dhcp.lisp][dhcp.lisp]])           |
-| =CAP_NET_BIND_SERVICE= | binding UDP port 68 (< 1024) for DHCP                       |
-| =CAP_SYS_TTY_CONFIG=   | =KDSETMODE= (=KD_GRAPHICS=) on =/dev/tty0= ([[file:../poc/fb.lisp][fb.lisp]])         |
+| Capability             | Used by                                              |
+|------------------------+------------------------------------------------------|
+| =CAP_SYS_BOOT=         | =reboot(2)= — the power-off ([[file:../initramfs/process.lisp::defun power-off][process.lisp]])           |
+| =CAP_NET_ADMIN=        | =SIOCSIFADDR= / =SIOCSIFFLAGS= — eth0 up ([[file:../initramfs/net.lisp][net.lisp]])  |
+| =CAP_NET_RAW=          | =SO_BINDTODEVICE= on the DHCP socket ([[file:../initramfs/dhcp.lisp][dhcp.lisp]])     |
+| =CAP_NET_BIND_SERVICE= | binding UDP port 68 (< 1024) for DHCP                |
+| =CAP_SYS_TTY_CONFIG=   | =KDSETMODE= (=KD_GRAPHICS=) on =/dev/tty0= ([[file:../poc/fb.lisp][fb.lisp]]) |
 
 Not kept, deliberately: =CAP_DAC_OVERRIDE= (ignore file permissions),
 =CAP_DAC_READ_SEARCH=, =CAP_CHOWN=, =CAP_FOWNER=, =CAP_SYS_ADMIN= (mount and much

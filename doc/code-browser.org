@@ -71,12 +71,12 @@ browser.
 
 Tested against =./sbcl= with this project's exact load strategy:
 
-| query                              | plain =load= (what build.sh does) | =compile-file= + load |
-|------------------------------------+-----------------------------------+-----------------------|
-| =who-calls=                        | works                             | works                 |
-| =who-specializes-directly=         | works                             | works                 |
-| =find-definition-sources-by-name=  | works (host path)                 | works (host path)     |
-| =function-lambda-list=             | works                             | works                 |
+| query                             | plain =load= (what build.sh does) | =compile-file= + load |
+|-----------------------------------+-----------------------------------+-----------------------|
+| =who-calls=                       | works                             | works                 |
+| =who-specializes-directly=        | works                             | works                 |
+| =find-definition-sources-by-name= | works (host path)                 | works (host path)     |
+| =function-lambda-list=            | works                             | works                 |
 
 => *No build change needed for xref.* =sb-introspect.fasl= is present in
 =sbcl/obj/sbcl-home/contrib/=; it gets baked in with =(require :sb-introspect)=
@@ -375,19 +375,19 @@ worth building instead of cloning.
 
 ** What must survive from Smalltalk (non-negotiable)
 
-| Smalltalk / Pharo             | In our system                                                       |
-|-------------------------------+---------------------------------------------------------------------|
-| The image is live; accept compiles into the running system | =eval=/=compile= are *always* in an SBCL image. The frozen heap can't load fasls, but it can compile. This works. It is the whole point. |
-| Source lives in the image     | The definition registry (§2). Without it there is no browser.         |
-| Senders / Implementors / References | =sb-introspect:who-calls=, =who-references=, =who-binds=, =who-sets=, =who-macroexpands=, =who-specializes-directly=. Verified working (§0.2). Arguably *richer* than Smalltalk's. |
-| Do it / Print it / Inspect it | On any selection, anywhere in the browser. Non-negotiable.            |
-| The Inspector                 | A real object inspector: slots, sequence elements, hash entries, a symbol's four cells; drill-down with a back-stack; and *mutation* (=setf slot-value= from the pane). |
-| The Debugger as a browser     | SBCL's condition system + restarts is *stronger* than Smalltalk's. Live backtrace, frame locals (=sb-di=), pick a restart, redefine, retry. |
-| Versions (per-method history) | The =versions= slot. Free once source is in the image.                |
-| The change set / =.changes=   | An append-only log of every accepted definition (§5).                 |
-| Class comments                | Docstrings — native, and =(setf (documentation …))= works.            |
-| No dead ends: everything is browsable from everywhere | Every object printed anywhere is inspectable; every name is jumpable. |
-| The browser is written in the language it browses, and can browse itself | *Explicit milestone: browse the browser, edit it live, watch it change under you.* The fixed point is the demo. |
+| Smalltalk / Pharo                                                        | In our system                                                                                                                                                                      |
+|--------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| The image is live; accept compiles into the running system               | =eval=/=compile= are *always* in an SBCL image. The frozen heap can't load fasls, but it can compile. This works. It is the whole point.                                           |
+| Source lives in the image                                                | The definition registry (§2). Without it there is no browser.                                                                                                                      |
+| Senders / Implementors / References                                      | =sb-introspect:who-calls=, =who-references=, =who-binds=, =who-sets=, =who-macroexpands=, =who-specializes-directly=. Verified working (§0.2). Arguably *richer* than Smalltalk's. |
+| Do it / Print it / Inspect it                                            | On any selection, anywhere in the browser. Non-negotiable.                                                                                                                         |
+| The Inspector                                                            | A real object inspector: slots, sequence elements, hash entries, a symbol's four cells; drill-down with a back-stack; and *mutation* (=setf slot-value= from the pane).            |
+| The Debugger as a browser                                                | SBCL's condition system + restarts is *stronger* than Smalltalk's. Live backtrace, frame locals (=sb-di=), pick a restart, redefine, retry.                                        |
+| Versions (per-method history)                                            | The =versions= slot. Free once source is in the image.                                                                                                                             |
+| The change set / =.changes=                                              | An append-only log of every accepted definition (§5).                                                                                                                              |
+| Class comments                                                           | Docstrings — native, and =(setf (documentation …))= works.                                                                                                                         |
+| No dead ends: everything is browsable from everywhere                    | Every object printed anywhere is inspectable; every name is jumpable.                                                                                                              |
+| The browser is written in the language it browses, and can browse itself | *Explicit milestone: browse the browser, edit it live, watch it change under you.* The fixed point is the demo.                                                                    |
 
 ** What Lisp has that Smalltalk does not — make these first-class
 
@@ -895,12 +895,12 @@ with this project. They are now drawn from its own world, which is the joke §4�
 ("do not rename unprompted") finally being asked for. Each class takes the register
 that fits what it DOES:
 
-| class      | register                    | names                                      |
-|------------+-----------------------------+--------------------------------------------|
-| =ship=     | Lisp machines               | Lambda, CADR, Ivory, Dorado, Explorer      |
-| =station=  | the environments they docked with | Genera, Medley, Zetalisp             |
-| =missile=  | garbage-collector phases    | Scavenger, Sweep, Compact, Reclaim         |
-| =asteroid= | the numeric tower as debris | Bignum, Flonum, Cons, Ratio                |
+| class      | register                          | names                                 |
+|------------+-----------------------------------+---------------------------------------|
+| =ship=     | Lisp machines                     | Lambda, CADR, Ivory, Dorado, Explorer |
+| =station=  | the environments they docked with | Genera, Medley, Zetalisp              |
+| =missile=  | garbage-collector phases          | Scavenger, Sweep, Compact, Reclaim    |
+| =asteroid= | the numeric tower as debris       | Bignum, Flonum, Cons, Ratio           |
 
 Crewed, mobile, fragile, would rather dock than collide — that is =ship='s own
 docstring and it is also LMI's Lambda, MIT's CADR, Symbolics' Ivory, Xerox's Dorado and
@@ -1075,12 +1075,12 @@ menu — Smalltalk's *yellow-button menu*, which is where Do it / Print it /
 Inspect it / Senders / Implementors actually live. Keyboard accelerators mirror
 every menu item, Emacs-flavored to match the existing line editor:
 
-| =C-c C-c=         | *Accept* — compile the edited definition into the live image |
-| =C-x C-e=         | Do it (eval selection)                     |
-| =C-c i=           | Inspect it                                 |
-| =M-.= / =M-,=     | Senders / Implementors                     |
-| =C-/=             | Search (the Spotter)                       |
-| =Tab=             | next pane                                  |
+| =C-c C-c=     | *Accept* — compile the edited definition into the live image |
+| =C-x C-e=     | Do it (eval selection)                                       |
+| =C-c i=       | Inspect it                                                   |
+| =M-.= / =M-,= | Senders / Implementors                                       |
+| =C-/=         | Search (the Spotter)                                         |
+| =Tab=         | next pane                                                    |
 
 * 4½. The drill-down protocol — one =present=, everything browsable
 
@@ -1123,15 +1123,15 @@ The entire thing is *one generic function and one data rule*:
   =(present target)= in the next panel: a *drill*) or an *action* (invoke a
   restart, accept an edit: a *do*).
 
-| =present= method                    | the view it returns          | each item targets |
-|-------------------------------------+------------------------------+-------------------|
-| =(present (p package))=             | its definitions, as a list   | a definition      |
-| =(present (gf generic-function))=   | the dispatch matrix (§3)     | a =dispatch-query=  |
-| =(present (q dispatch-query))=      | the effective-method onion   | a method          |
-| =(present (m method))=              | its source, editable         | a called function |
-| =(present (r restart))=             | its report line              | /action:/ invoke it |
-| =(present (d directory))=           | its entries /(future)/       | a file / subdir   |
-| =(present (x t))=                   | a generic object inspector   | any slot value    |
+| =present= method                  | the view it returns        | each item targets   |
+|-----------------------------------+----------------------------+---------------------|
+| =(present (p package))=           | its definitions, as a list | a definition        |
+| =(present (gf generic-function))= | the dispatch matrix (§3)   | a =dispatch-query=  |
+| =(present (q dispatch-query))=    | the effective-method onion | a method            |
+| =(present (m method))=            | its source, editable       | a called function   |
+| =(present (r restart))=           | its report line            | /action:/ invoke it |
+| =(present (d directory))=         | its entries /(future)/     | a file / subdir     |
+| =(present (x t))=                 | a generic object inspector | any slot value      |
 
 Why this matters:
 
@@ -1280,14 +1280,14 @@ what a sprite stands for), then each morph from the deepest under the point out 
 the shell (or the window), each pane followed by what it *shows*. For a word in the
 Workspace:
 
-| layer           | object                 | handles ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]])                  |
-|-----------------+------------------------+-----------------------------------------|
-| =greet=          | the symbol =GREET=       | Source, Senders, Inspect, Copy           |
-| text view       | the =TEXT-BODY= morph      | Inspect, Code: tv-draw, Code: tv-row-keys, Class: text-body, Copy |
-| pane · workspace | a =PANE= (a morph)       | Inspect, Code: draw-pane-expanded, Code: draw-panel, Code: pane-click, Class: pane, Copy |
-| shows           | =SUBJ-WORKSPACE=          | Open its view, Inspect, Copy             |
-| trail · workspace | the =TRAIL-AREA= morph | Inspect, Code: layout-trail-area, Class: trail-area, Copy |
-| the tiled shell | the =SHELL-MORPH=         | Inspect, Code: layout-shell, Code: draw-morph, Class: shell-morph, Copy |
+| layer             | object                 | handles ([[file:../poc/shell.lisp::defun halo-entries][=halo-entries=]])                                                                 |
+|-------------------+------------------------+------------------------------------------------------------------------------------------|
+| =greet=           | the symbol =GREET=     | Source, Senders, Inspect, Copy                                                           |
+| text view         | the =TEXT-BODY= morph  | Inspect, Code: tv-draw, Code: tv-row-keys, Class: text-body, Copy                        |
+| pane · workspace  | a =PANE= (a morph)     | Inspect, Code: draw-pane-expanded, Code: draw-panel, Code: pane-click, Class: pane, Copy |
+| shows             | =SUBJ-WORKSPACE=       | Open its view, Inspect, Copy                                                             |
+| trail · workspace | the =TRAIL-AREA= morph | Inspect, Code: layout-trail-area, Class: trail-area, Copy                                |
+| the tiled shell   | the =SHELL-MORPH=      | Inspect, Code: layout-shell, Code: draw-morph, Class: shell-morph, Copy                  |
 
 (Until Morphic's §12 the outermost layer was "the screen", the =CANVAS= with Code:
 =draw-browser=; the shell morph is the outermost thing now, and in a window the walk
@@ -1430,11 +1430,11 @@ is rewritten.
 *Three nested levels, each uniform and keyboard-reachable* (there is no separate
 "area" level — see below):
 
-| level  | what it is                                                        | how you move            |
-|--------+------------------------------------------------------------------+-------------------------|
-| trail  | one investigation (a drill-down accordion, §4½) — or a pinned surface: Playground · Debugger · Processes | tabs · =SuperL-n=        |
-| drill  | a panel opened from the previous panel's selection               | =↵= · breadcrumb · =SuperL-←/→= |
-| item   | a presented thing with a =target= (drill) or =action= (do)       | click · =SuperL-click=  |
+| level | what it is                                                                                               | how you move                    |
+|-------+----------------------------------------------------------------------------------------------------------+---------------------------------|
+| trail | one investigation (a drill-down accordion, §4½) — or a pinned surface: Playground · Debugger · Processes | tabs · =SuperL-n=               |
+| drill | a panel opened from the previous panel's selection                                                       | =↵= · breadcrumb · =SuperL-←/→= |
+| item  | a presented thing with a =target= (drill) or =action= (do)                                               | click · =SuperL-click=          |
 
 *The Spotter — the "look for something else" primitive.* One keystroke summons a
 universal search *over subjects*: functions, classes, packages, files, restarts,
@@ -1544,22 +1544,22 @@ cheatsheet bar. The chord tokens are coloured and the prose dim, so it reads as 
 rather than as a sentence, and =SuperL-?= is one of the hints, pointing at the full
 list where the design puts it.
 
-| =SuperL= — spatial                | does                                  |
-|-----------------------------------+---------------------------------------|
-| =SuperL-1…9=                      | jump to trail /n/                      |
-| =SuperL-⇧-n=                      | move this trail to slot /n/ (swap with whatever is there) |
-| =SuperL-Tab= / =SuperL-⇧-Tab=     | cycle to next / previous trail         |
-| =SuperL-Space=                    | the Spotter                           |
-| =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])     |
+| =SuperL= — spatial                | does                                                                                                    |
+|-----------------------------------+---------------------------------------------------------------------------------------------------------|
+| =SuperL-1…9=                      | jump to trail /n/                                                                                       |
+| =SuperL-⇧-n=                      | move this trail to slot /n/ (swap with whatever is there)                                               |
+| =SuperL-Tab= / =SuperL-⇧-Tab=     | cycle to next / previous trail                                                                          |
+| =SuperL-Space=                    | the Spotter                                                                                             |
+| =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])                                                                     |
 | =SuperL-b=                        | a web page, Chrome headless ([[file:web-browser.org][web-browser.org]]); on a web pane =SuperL-←/→= are the page's back / forward |
-| =SuperL-↵=                        | a terminal: a shell in a new trail ([[file:terminal.org][terminal.org]]) |
-| =SuperL-⇧-↵= / =SuperL-click=     | open the selection in a NEW trail (was =SuperL-↵= until the terminal took it) |
-| =↵=                              | drill in place (same trail)            |
-| =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet) |
-| =↑= / =↓=                        | move the selection within a panel      |
-| =→=                              | focus the RIGHT-hand column (see below) |
-| a plain *click* in the other half | move focus there — the pointer's =SuperL-o= (see below) |
-| =SuperL-w= · =Esc=               | close the trail · dismiss the Spotter/overlay |
+| =SuperL-↵=                        | a terminal: a shell in a new trail ([[file:terminal.org][terminal.org]])                                                       |
+| =SuperL-⇧-↵= / =SuperL-click=     | open the selection in a NEW trail (was =SuperL-↵= until the terminal took it)                           |
+| =↵=                               | drill in place (same trail)                                                                             |
+| =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes yet)      |
+| =↑= / =↓=                         | move the selection within a panel                                                                       |
+| =→=                               | focus the RIGHT-hand column (see below)                                                                 |
+| a plain *click* in the other half | move focus there — the pointer's =SuperL-o= (see below)                                                 |
+| =SuperL-w= · =Esc=                | close the trail · dismiss the Spotter/overlay                                                           |
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
 =C-c C-c= Accept, =C-x C-e= Do it, =C-c C-p= Print it, =C-c C-i= Inspect it, =M-.=
@@ -1674,11 +1674,11 @@ therefore lives *only* on the SuperL layer — =SuperL-←= is "back", NOT plain
 Backspace. So while you edit, Backspace deletes and =SuperL-←= steps back; they
 never fight. The rule generalises:
 
-| pane                    | plain keys + Ctrl/Meta                          | SuperL          |
-|-------------------------+-------------------------------------------------+-----------------|
+| pane                    | plain keys + Ctrl/Meta                                    | SuperL   |
+|-------------------------+-----------------------------------------------------------+----------|
 | *source* (your code)    | edit (Backspace deletes · =↵= newline · =C-c C-c= Accept) | navigate |
-| *reference* (a builtin) | read-only (scroll only)                         | navigate        |
-| *list* (class/pkg/xref) | navigate (=↑↓= select · =↵= drill · Backspace back) | navigate    |
+| *reference* (a builtin) | read-only (scroll only)                                   | navigate |
+| *list* (class/pkg/xref) | navigate (=↑↓= select · =↵= drill · Backspace back)       | navigate |
 
 Only *your* code is editable — the "two kinds of subject" split (§2): a
 =:source= view (registry-backed) is an editable Accept buffer; a =:reference=
@@ -1894,16 +1894,16 @@ apart, and the concept half comes verbatim from the mock-ups
 *The semantic palette — one colour per Lisp concept*, so a package of 350
 definitions reads by colour rather than as a grey wall:
 
-| concept                        | colour     |                                    |
-|--------------------------------+------------+------------------------------------|
-| package, module                | =#FFCB6B=  | gold                               |
-| function, symbol               | =#7FDBCA=  | teal                               |
-| generic function, method       | =#A8FF78=  | green                              |
-| macro, compiler-macro          | =#C792EA=  | purple                             |
-| class, struct, type            | =#89DDFF=  | blue                               |
-| *subclass*                     | =#5E93AD=  | the same blue, dimmed — a class seen from ABOVE |
-| condition                      | =#FF6B6B=  | red                                |
-| restart, variable, constant    | =#FF9F43=  | amber                              |
+| concept                     | colour    |                                                 |
+|-----------------------------+-----------+-------------------------------------------------|
+| package, module             | =#FFCB6B= | gold                                            |
+| function, symbol            | =#7FDBCA= | teal                                            |
+| generic function, method    | =#A8FF78= | green                                           |
+| macro, compiler-macro       | =#C792EA= | purple                                          |
+| class, struct, type         | =#89DDFF= | blue                                            |
+| *subclass*                  | =#5E93AD= | the same blue, dimmed — a class seen from ABOVE |
+| condition                   | =#FF6B6B= | red                                             |
+| restart, variable, constant | =#FF9F43= | amber                                           |
 
 A kind with no entry falls back to plain text. =subclass= is the one addition to the
 mock-up's list: in a class view the supers are where you came from and the subs are

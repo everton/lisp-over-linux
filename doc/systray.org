@@ -23,22 +23,22 @@ The user's host runs StumpWM, and the tray copies its mode line so the two machi
 look alike. From =~/.stumpwmrc= (=*screen-mode-line-format*=), right-aligned after
 the window list, separated by =" | "=:
 
-| # | Field             | Host source                                                   | Here                                  |
-|---+-------------------+---------------------------------------------------------------+---------------------------------------|
-| 1 | battery           | =~/.local/bin/battery-modeline= (parses =acpi -b=)             | *done* — =battery-string=             |
-| 2 | Wi-Fi SSID        | =iwgetid -r=, else =Not connected!=                            | *done* (2026-10-12) — =network-tray-item= |
-| 3 | date and time     | =%d= with =*time-modeline-string*= = ="%F %T"=                 | *done* — =clock-string=               |
-| 4 | tray icons        | =%T= — the stumptray module's placeholder                      | the shell's icons (clipboard first)   |
+| # | Field         | Host source                                        | Here                                      |
+|---+---------------+----------------------------------------------------+-------------------------------------------|
+| 1 | battery       | =~/.local/bin/battery-modeline= (parses =acpi -b=) | *done* — =battery-string=                 |
+| 2 | Wi-Fi SSID    | =iwgetid -r=, else =Not connected!=                | *done* (2026-10-12) — =network-tray-item= |
+| 3 | date and time | =%d= with =*time-modeline-string*= = ="%F %T"=     | *done* — =clock-string=                   |
+| 4 | tray icons    | =%T= — the stumptray module's placeholder          | the shell's icons (clipboard first)       |
 
 So the clock reads =2026-10-02 09:01:52= — ISO date, 24-hour time, seconds — and
 the battery reads exactly what the host's script prints:
 
-| State                         | Text            | Tone        | Host colour |
-|-------------------------------+-----------------+-------------+-------------|
-| discharging, ≥ 50 %           | =BAT -72% 3:05= | =:ok=       | green       |
-| discharging, 20–49 %          | =BAT -45% 1:20= | =:warn=     | yellow      |
-| discharging, < 20 %           | =BAT -12% 0:18= | =:low=      | red         |
-| charging / full / not charging | =BAT +37% 3:13=, =BAT 100%= | =:charging= | green |
+| State                          | Text                        | Tone        | Host colour |
+|--------------------------------+-----------------------------+-------------+-------------|
+| discharging, ≥ 50 %            | =BAT -72% 3:05=             | =:ok=       | green       |
+| discharging, 20–49 %           | =BAT -45% 1:20=             | =:warn=     | yellow      |
+| discharging, < 20 %            | =BAT -12% 0:18=             | =:low=      | red         |
+| charging / full / not charging | =BAT +37% 3:13=, =BAT 100%= | =:charging= | green       |
 
 =+= is charging, =-= discharging, and =H:MM= is time to full or to empty. A status
 of =Unknown= is coloured as if discharging, as the host script does.
@@ -49,12 +49,12 @@ later). It reads only =*wifi-state*= — refreshed every 5 s by the =netd= threa
 from the supplicant's =STATUS= and =SIGNAL_POLL= — because the tray repaints every
 second and must never wait on a socket:
 
-| State                                   | Text              | Tone                          |
-|-----------------------------------------+-------------------+-------------------------------|
-| Wi-Fi associated                        | =Home 72%=        | =:ok= ≥ 55 %, =:warn= ≥ 30 %, else =:low= |
-| a radio, not associated                 | =Not connected!=  | =:low= (red)                  |
-| no radio, a wired lease (QEMU's eth0)   | =eth0 10.0.2.15=  | =:ok=                         |
-| no radio, no lease                      | (no item)         |                               |
+| State                                 | Text             | Tone                                      |
+|---------------------------------------+------------------+-------------------------------------------|
+| Wi-Fi associated                      | =Home 72%=       | =:ok= ≥ 55 %, =:warn= ≥ 30 %, else =:low= |
+| a radio, not associated               | =Not connected!= | =:low= (red)                              |
+| no radio, a wired lease (QEMU's eth0) | =eth0 10.0.2.15= | =:ok=                                     |
+| no radio, no lease                    | (no item)        |                                           |
 
 The percentage is NetworkManager's rough mapping, =2 × (dBm + 100)= clamped to
 0–100. Details: [[file:networking.org][networking.org]] §7.3.
@@ -188,14 +188,14 @@ single line) rather than the whole database.
 
 All in =CL-USER=, all safe to call every frame — none of them signals:
 
-| Function                     | Returns                                                                   |
-|------------------------------+---------------------------------------------------------------------------|
+| Function                      | Returns                                                                              |
+|-------------------------------+--------------------------------------------------------------------------------------|
 | =(battery-status &key fresh)= | =(:percent 87 :status :discharging :ac nil :minutes-left 192 :name "BAT0")= or =NIL= |
-| =(battery-string b)=         | ="BAT -87% 3:12"=                                                          |
-| =(battery-tone b)=           | =:ok= / =:warn= / =:low= / =:charging=                                     |
-| =(clock-string &optional ut)= | ="2026-10-02 09:01:52"= (no seconds when =*clock-seconds*= is =NIL=)      |
-| =(tray-items)=               | a list of plists left to right, each with =:kind= (=:battery=, =:clock=) and =:text= |
-| =(set-utc-offset "-0300")=   | sets =*utc-offset*= (accepts an integer of seconds too)                    |
+| =(battery-string b)=          | ="BAT -87% 3:12"=                                                                    |
+| =(battery-tone b)=            | =:ok= / =:warn= / =:low= / =:charging=                                               |
+| =(clock-string &optional ut)= | ="2026-10-02 09:01:52"= (no seconds when =*clock-seconds*= is =NIL=)                 |
+| =(tray-items)=                | a list of plists left to right, each with =:kind= (=:battery=, =:clock=) and =:text= |
+| =(set-utc-offset "-0300")=    | sets =*utc-offset*= (accepts an integer of seconds too)                              |
 
 =*power-supply-root*= (default ="/sys/class/power_supply/"=) is what the host test
 repoints at a scratch directory.

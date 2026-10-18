@@ -138,22 +138,22 @@ remote image*. We already have that transport ([[file:../initramfs/net.lisp][net
 Each row is expanded below. "Reachable here" is answered honestly in §5 — for the
 green ones it is /measured/, not estimated.
 
-| # | Power                                   | Where it came from      | Reachable in our image?          |
-|---+-----------------------------------------+-------------------------+----------------------------------|
-| 1 | Write a slot (places, not values)       | Interlisp-D, locatives  | *already shipped*                |
-| 2 | Undo the write                          | Interlisp Assistant     | possible; not designed yet       |
-| 3 | Eval arbitrary code in the object       | Smalltalk               | *SHIPPED* — §5.3                 |
-| 4 | Who points at this object?              | Smalltalk, Lisp Machine | subsumed by #5 — §5.2            |
-| 5 | Why is this still alive? (GC path)      | (modern SBCL)           | *SHIPPED* — §5.2                 |
-| 6 | Every instance of a class               | Smalltalk =allInstances=  | *SHIPPED* — §5.1                 |
-| 7 | The representation underneath           | Genera areas/storage    | possible (=room=, widetags)        |
-| 8 | Behaviour, not just state               | Genera flavor inspector | *already shipped*                |
-| 9 | Stack frames as objects (set a local)   | Genera, =sldb=            | still owed — §5.4                |
-|10 | Watchpoint on one cell                  | Genera =Monitor Variable= | hard; a shim is possible — §8    |
-|11 | Identity surgery (=become:=)              | Smalltalk, forwarding   | no — §8                          |
-|12 | Every printed object is a handle        | Dynamic Windows / CLIM  | *already shipped* (=present=)      |
-|13 | Inspect a remote image                  | SLIME, Genera           | transport exists, unwired        |
-|14 | A function/closure as a record          | Lisp Machine, Smalltalk | *SHIPPED* — §5.5                 |
+|  # | Power                                 | Where it came from        | Reachable in our image?       |
+|----+---------------------------------------+---------------------------+-------------------------------|
+|  1 | Write a slot (places, not values)     | Interlisp-D, locatives    | *already shipped*             |
+|  2 | Undo the write                        | Interlisp Assistant       | possible; not designed yet    |
+|  3 | Eval arbitrary code in the object     | Smalltalk                 | *SHIPPED* — §5.3              |
+|  4 | Who points at this object?            | Smalltalk, Lisp Machine   | subsumed by #5 — §5.2         |
+|  5 | Why is this still alive? (GC path)    | (modern SBCL)             | *SHIPPED* — §5.2              |
+|  6 | Every instance of a class             | Smalltalk =allInstances=  | *SHIPPED* — §5.1              |
+|  7 | The representation underneath         | Genera areas/storage      | possible (=room=, widetags)   |
+|  8 | Behaviour, not just state             | Genera flavor inspector   | *already shipped*             |
+|  9 | Stack frames as objects (set a local) | Genera, =sldb=            | still owed — §5.4             |
+| 10 | Watchpoint on one cell                | Genera =Monitor Variable= | hard; a shim is possible — §8 |
+| 11 | Identity surgery (=become:=)          | Smalltalk, forwarding     | no — §8                       |
+| 12 | Every printed object is a handle      | Dynamic Windows / CLIM    | *already shipped* (=present=) |
+| 13 | Inspect a remote image                | SLIME, Genera             | transport exists, unwired     |
+| 14 | A function/closure as a record        | Lisp Machine, Smalltalk   | *SHIPPED* — §5.5              |
 
 ** 3.1 Write, not read — the place rather than the value
 
@@ -298,13 +298,13 @@ map of the code rather than a memory of a plan. §6 has the cost and the correct
 First, the constraint that shapes all of it: *a saved SBCL image is a frozen heap*, so
 anything used here must already be in the core, not a contrib. Checked:
 
-| Entry point                      | Package status | Defined in                                        |
-|----------------------------------+----------------+---------------------------------------------------|
-| =sb-ext:search-roots=              | EXTERNAL       | [[file:../sbcl/src/code/traceroot.lisp::defun search-roots][=sbcl/src/code/traceroot.lisp=]]                    |
-| =sb-vm:map-allocated-objects=      | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun map-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
-| =sb-vm:list-allocated-objects=     | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun list-allocated-objects][=sbcl/src/code/room.lisp=]]                         |
-| =(setf sb-di:debug-var-value)=     | =fboundp= ⇒ T    | [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=sbcl/src/code/debug-int.lisp=]] — *unsafe on an indirect variable*, §5.4 |
-| =sb-ext:make-weak-pointer=         | EXTERNAL       | core                                              |
+| Entry point                    | Package status | Defined in                                                              |
+|--------------------------------+----------------+-------------------------------------------------------------------------|
+| =sb-ext:search-roots=          | EXTERNAL       | [[file:../sbcl/src/code/traceroot.lisp::defun search-roots][=sbcl/src/code/traceroot.lisp=]]                                          |
+| =sb-vm:map-allocated-objects=  | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun map-allocated-objects][=sbcl/src/code/room.lisp=]]                                               |
+| =sb-vm:list-allocated-objects= | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun list-allocated-objects][=sbcl/src/code/room.lisp=]]                                               |
+| =(setf sb-di:debug-var-value)= | =fboundp= ⇒ T  | [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=sbcl/src/code/debug-int.lisp=]] — *unsafe on an indirect variable*, §5.4 |
+| =sb-ext:make-weak-pointer=     | EXTERNAL       | core                                                                    |
 
 All in the plain core. None is a contrib, so none runs into the rule from
 [[file:processes.org][processes.org]] §6 about inline entry points that cannot be recompiled in the guest.
@@ -440,14 +440,14 @@ with no accessors required and no =slot-value= boilerplate.
 
 *Measured behaviour*, all four cases run:
 
-| Typed                     | Object            | Result                                  |
-|---------------------------+-------------------+-----------------------------------------|
-| =(list name hp)=            | a =standard-object= | =("Nostromo" 3)= — slots read by bare name|
-| =(incf hp 100)=             | a =standard-object= | =103=, and the slot really is 103         |
-| =(class-of self)=           | a =standard-object= | =#<STANDARD-CLASS SHIP>=                  |
-| =(+ x y)= / =(setf x 41)=     | a =structure-object=| =3= / the struct becomes =#S(POINT :X 41 …)= |
-| =(length self)=             | a =cons=            | =3= — no slots, so =self= alone            |
-| =(hash-table-count self)=   | a =hash-table=      | =0=                                       |
+| Typed                     | Object               | Result                                       |
+|---------------------------+----------------------+----------------------------------------------|
+| =(list name hp)=          | a =standard-object=  | =("Nostromo" 3)= — slots read by bare name   |
+| =(incf hp 100)=           | a =standard-object=  | =103=, and the slot really is 103            |
+| =(class-of self)=         | a =standard-object=  | =#<STANDARD-CLASS SHIP>=                     |
+| =(+ x y)= / =(setf x 41)= | a =structure-object= | =3= / the struct becomes =#S(POINT :X 41 …)= |
+| =(length self)=           | a =cons=             | =3= — no slots, so =self= alone              |
+| =(hash-table-count self)= | a =hash-table=       | =0=                                          |
 
 Two things that had to be checked rather than assumed, and both held: =with-slots=
 works on a =structure-object= under SBCL, and objects with no slots at all degrade
@@ -513,18 +513,18 @@ and sb-di writes into the context instead.
 *Measured against =./sbcl= 2.6.8,* one function per case, each signalling with =CERROR=
 so that =CONTINUE= could show whether the /frame/ — not just sb-di — saw the write:
 
-| Case                                  | What sb-di shows                         | After set + CONTINUE |
-|---------------------------------------+------------------------------------------+----------------------|
-| =(debug 0)=                             | =ARG-0=, validity =:UNKNOWN=                 | not settable         |
-| =(debug 1)= — *our image's default*     | the argument =X= only; a =LET= temp is absent | =x=: used, =(21 21)=     |
-| =(debug 2)= and =3=                       | every local, =:VALID=                       | all used             |
-| a =fixnum=-declared local (SC =ANY-REG=)  | valid; a /string/ is accepted              | =(+ n 1)= ⇒ 38663474160 |
-| a =double-float= local                  | valid; =2.5d0= ok, ="str"= refused by sb-di  | used                 |
-| closed over *and* set (a value cell)  | valid; written through the cell          | the closure sees it  |
-| closed over, never set                | valid; the frame's own copy              | the closure does /not/ |
-| closed over and used only by closures | =:INVALID= in the frame                    | not settable         |
-| an internal error's frame (escaped)   | valid; read from the signal context      | (not resumable)      |
-| *an indirect variable*                | valid                                    | *memory fault*       |
+| Case                                     | What sb-di shows                              | After set + CONTINUE    |
+|------------------------------------------+-----------------------------------------------+-------------------------|
+| =(debug 0)=                              | =ARG-0=, validity =:UNKNOWN=                  | not settable            |
+| =(debug 1)= — *our image's default*      | the argument =X= only; a =LET= temp is absent | =x=: used, =(21 21)=    |
+| =(debug 2)= and =3=                      | every local, =:VALID=                         | all used                |
+| a =fixnum=-declared local (SC =ANY-REG=) | valid; a /string/ is accepted                 | =(+ n 1)= ⇒ 38663474160 |
+| a =double-float= local                   | valid; =2.5d0= ok, ="str"= refused by sb-di   | used                    |
+| closed over *and* set (a value cell)     | valid; written through the cell               | the closure sees it     |
+| closed over, never set                   | valid; the frame's own copy                   | the closure does /not/  |
+| closed over and used only by closures    | =:INVALID= in the frame                       | not settable            |
+| an internal error's frame (escaped)      | valid; read from the signal context           | (not resumable)         |
+| *an indirect variable*                   | valid                                         | *memory fault*          |
 
 (The image's default policy was checked rather than assumed: =examples.lisp= says
 =(declaim (optimize (debug 3)))=, but SBCL's =LOAD= rebinds the policy per file, so that
@@ -604,8 +604,8 @@ Measured, on =(lambda (start step) (lambda (&optional (bump 1)) (incf start (* s
 
 | slot      | variable | boxed?     | settable |
 |-----------+----------+------------+----------|
-| capture 0 | =start=    | value-cell | *yes*    |
-| capture 1 | =step=     | inline     | no       |
+| capture 0 | =start=  | value-cell | *yes*    |
+| capture 1 | =step=   | inline     | no       |
 
 =start= is =INCF='d and =step= is only read, and the compiler's decision is visible in the
 inspector. Writing 900 into capture 0 and calling the closure returned 902: the state
@@ -626,11 +626,11 @@ know the names — =SB-DI:DO-DEBUG-FUN-VARS= yields them — and the first imple
 used them. It was wrong. The debug vars come back *sorted alphabetically*, not in
 capture order, and the function's own parameters are mixed in:
 
-| closure                    | capture order          | debug vars as iterated |
-|----------------------------+------------------------+------------------------|
-| =(rev zebra alpha)=          | =ZEBRA=, =ALPHA=           | =ALPHA=, =ZEBRA=           |
-| =(rev3 zulu yankee xray)=    | =ZULU=, =YANKEE=, =XRAY=     | =XRAY=, =YANKEE=, =ZULU=     |
-| =(revw zebra alpha)= (1 set) | =ZEBRA=, =ALPHA=           | =ALPHA=, =N=, =ZEBRA=        |
+| closure                      | capture order            | debug vars as iterated   |
+|------------------------------+--------------------------+--------------------------|
+| =(rev zebra alpha)=          | =ZEBRA=, =ALPHA=         | =ALPHA=, =ZEBRA=         |
+| =(rev3 zulu yankee xray)=    | =ZULU=, =YANKEE=, =XRAY= | =XRAY=, =YANKEE=, =ZULU= |
+| =(revw zebra alpha)= (1 set) | =ZEBRA=, =ALPHA=         | =ALPHA=, =N=, =ZEBRA=    |
 
 Ordering the debug vars by their storage offset instead recovers capture order for the
 first two — and breaks on the third, because a boxed capture lands in a different
@@ -703,20 +703,20 @@ in a frozen SBCL core on the HOST (built exactly as =build.sh= builds the image)
 inspector path survives — =function-places=, =present=, =retention-path=, =disassemble=,
 =all-instances=. Then in the guest:
 
-| compiled form                              | result              |
-|--------------------------------------------+---------------------|
-| =(lambda () 1)=                              | compiles, and runs  |
-| =(lambda (a) (lambda () a))=                 | compiles, and runs  |
-| =(lambda (x) (car x))=                       | compiles            |
-| =(lambda (x) (length x))=                    | compiles            |
-| =(lambda (x) (+ x 1))=                       | *memory fault*      |
-| =(lambda (x) (* x 2))=                       | *memory fault*      |
-| =(lambda (x) (- x 1))=                       | *memory fault*      |
-| =(lambda (x y) (< x y))=                     | *memory fault*      |
-| =(lambda (x) (1+ x))=                        | *memory fault*      |
-| =(lambda (x) (declare (fixnum x)) (* x 2))=  | compiles            |
-| =(lambda (x) (declare (double-float x)) …)=  | compiles            |
-| =(eval '(defun zz (x) (* x 2)))=             | *memory fault*      |
+| compiled form                               | result             |
+|---------------------------------------------+--------------------|
+| =(lambda () 1)=                             | compiles, and runs |
+| =(lambda (a) (lambda () a))=                | compiles, and runs |
+| =(lambda (x) (car x))=                      | compiles           |
+| =(lambda (x) (length x))=                   | compiles           |
+| =(lambda (x) (+ x 1))=                      | *memory fault*     |
+| =(lambda (x) (* x 2))=                      | *memory fault*     |
+| =(lambda (x) (- x 1))=                      | *memory fault*     |
+| =(lambda (x y) (< x y))=                    | *memory fault*     |
+| =(lambda (x) (1+ x))=                       | *memory fault*     |
+| =(lambda (x) (declare (fixnum x)) (* x 2))= | compiles           |
+| =(lambda (x) (declare (double-float x)) …)= | compiles           |
+| =(eval '(defun zz (x) (* x 2)))=            | *memory fault*     |
 
 The line is sharp and it is not "the compiler": it is *generic arithmetic*. Declare the
 types and the compiler emits inline machine ops and is fine. Leave them undeclared and
@@ -754,8 +754,8 @@ Workspace works — without invoking the compiler at all. The guest tests that e
 
   | accepted source            | result         |
   |----------------------------+----------------|
-  | =(defun zz-a () :ok)=        | accepted       |
-  | =(defun zz-b (x) (* x 2))=   | *memory fault* |
+  | =(defun zz-a () :ok)=      | accepted       |
+  | =(defun zz-b (x) (* x 2))= | *memory fault* |
 
   So the useful way to state the limit is *compile vs. accept*, not *compile vs. the
   Workspace*: =Do it= on a plain call is fine, because it never reaches the compiler;
@@ -790,13 +790,13 @@ largest known limitation of the running system.
 It was neither the kernel nor the image. It was *the CPU QEMU emulates*, meeting a bug
 in SBCL itself. Bisected in this order, every row measured:
 
-| where                                                        | =(* x 2)= compiles? | =(unsigned-byte 32)= prints as |
-|--------------------------------------------------------------+---------------------+-------------------------------|
-| the shipped =lisp-init=, run on the HOST (=unshare -rn=, menu =r=) | yes, =42=             | —                             |
-| the guest, QEMU default CPU (qemu64)                         | *memory fault*      | =(MOD 4294967296)=              |
-| the guest, *same* kernel and image, =-cpu max=                 | yes, =42=             | =(UNSIGNED-BYTE 32)=            |
-| plain =./sbcl= core on the host, POPCNT bit cleared by hand    | *memory fault*      | =(MOD 4294967296)=              |
-| host SBCL 2.6.6, POPCNT bit cleared by hand                    | —                   | =(UNSIGNED-BYTE 32)=            |
+| where                                                              | =(* x 2)= compiles? | =(unsigned-byte 32)= prints as |
+|--------------------------------------------------------------------+---------------------+--------------------------------|
+| the shipped =lisp-init=, run on the HOST (=unshare -rn=, menu =r=) | yes, =42=           | —                              |
+| the guest, QEMU default CPU (qemu64)                               | *memory fault*      | =(MOD 4294967296)=             |
+| the guest, *same* kernel and image, =-cpu max=                     | yes, =42=           | =(UNSIGNED-BYTE 32)=           |
+| plain =./sbcl= core on the host, POPCNT bit cleared by hand        | *memory fault*      | =(MOD 4294967296)=             |
+| host SBCL 2.6.6, POPCNT bit cleared by hand                        | —                   | =(UNSIGNED-BYTE 32)=           |
 
 Row 1 clears the image and everything =build.sh= does to it; row 3 clears the kernel,
 PID 1, the environment and the memory map — one QEMU flag fixes it. qemu64's
@@ -862,13 +862,13 @@ code is about 390 lines in three files — roughly twice the estimate, and the o
 entirely the function inspector (§5.5), which the estimate did not contain at all
 because nobody had asked the question yet.
 
-| Power                       | Where it landed                                     | Verdict          |
-|-----------------------------+-----------------------------------------------------+------------------|
-| §5.3 eval in context        | model =eval-in-context=, shell =eval-in-context-pane=    | as estimated     |
-| §5.1 all instances          | model =all-instances=, present =subj-instances=         | as estimated     |
-| §5.2 why is this alive      | model =retention-path=, present =subj-retention=        | as estimated     |
-| §5.5 functions/closures     | 6 model functions, a =present= method, =apply-function= | *not estimated*  |
-| §5.4 settable frame locals  | model =frame-local-places= / =set-frame-var= / =restart-frame=, fb-browser =dbg-set-local= | plumbing as estimated; *three traps not estimated*; restart-frame *cheaper* than claimed |
+| Power                      | Where it landed                                                                            | Verdict                                                                                  |
+|----------------------------+--------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------|
+| §5.3 eval in context       | model =eval-in-context=, shell =eval-in-context-pane=                                      | as estimated                                                                             |
+| §5.1 all instances         | model =all-instances=, present =subj-instances=                                            | as estimated                                                                             |
+| §5.2 why is this alive     | model =retention-path=, present =subj-retention=                                           | as estimated                                                                             |
+| §5.5 functions/closures    | 6 model functions, a =present= method, =apply-function=                                    | *not estimated*                                                                          |
+| §5.4 settable frame locals | model =frame-local-places= / =set-frame-var= / =restart-frame=, fb-browser =dbg-set-local= | plumbing as estimated; *three traps not estimated*; restart-frame *cheaper* than claimed |
 
 *Four things the estimate got wrong*, all of them found by running the code rather than
 by reading it, which is the entire argument for the "verify, don't assert" rule:

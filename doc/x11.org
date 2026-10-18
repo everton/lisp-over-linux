@@ -236,13 +236,13 @@ bytes that are never coming — the classic protocol hang.
 Every X event is *exactly 32 bytes*. That makes the read loop trivial: pull 32
 bytes, look at the opcode, decode the five kinds we care about, discard the rest.
 
-| code | event           | what we take                     |
-|------+-----------------+----------------------------------|
-|    0 | =Error=         | reported, not modelled (a POC)   |
-|    2 | =KeyPress=      | keycode + modifier state         |
-|    4 | =ButtonPress=   | button + x,y + state             |
-|    6 | =MotionNotify=  | x,y (the mouse cursor)           |
-|   12 | =Expose=        | we just repaint everything       |
+| code | event             | what we take                   |
+|------+-------------------+--------------------------------|
+|    0 | =Error=           | reported, not modelled (a POC) |
+|    2 | =KeyPress=        | keycode + modifier state       |
+|    4 | =ButtonPress=     | button + x,y + state           |
+|    6 | =MotionNotify=    | x,y (the mouse cursor)         |
+|   12 | =Expose=          | we just repaint everything     |
 |   22 | =ConfigureNotify= | the new window size            |
 
 The high bit of byte 0 marks a *synthetic* (client-sent) event, which is why the

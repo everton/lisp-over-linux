@@ -46,17 +46,17 @@ needs. WPE would have needed C code against an API nobody here has read yet
 
 ** 1.1 Chrome or WPE: the comparison that decided it
 
-| What matters | Chrome (built) | WPE WebKit (explored, §A) |
-|--------------+----------------+---------------------------|
-| Site compatibility | Chrome itself: Google Workspace, GitHub and most SaaS are *built against* it | WebKit, the Safari engine. Supported by the big sites, but some sniff the user agent and refuse or degrade |
-| The user's habits | the browser already in use; a profile can even be shared (§7.3) | a new browser |
-| How frames reach us | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3) | the new platform API's headless buffers; *not investigated* (§A6) |
-| How input reaches it | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4) | an embedder API in C |
-| Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=) | to be written against the API |
-| Code we wrote | 2,049 lines of Lisp (with an embedded page script), *no C* (=web-cdp.lisp= 480, =web.lisp= 1,569, at 2026-10-13) | a C shim plus Lisp; not estimated |
-| Memory, one simple page | 240–280 MB PSS on the host (§8.2), 436 MB in the guest | ~570 MB RSS for one heavy site (§A5; RSS, an upper bound) |
-| Disk | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image | ~270 MB of libraries (§A2) |
-| Licence | proprietary binary, used as installed | LGPL |
+| What matters                              | Chrome (built)                                                                                                   | WPE WebKit (explored, §A)                                                                                  |
+|-------------------------------------------+------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------|
+| Site compatibility                        | Chrome itself: Google Workspace, GitHub and most SaaS are *built against* it                                     | WebKit, the Safari engine. Supported by the big sites, but some sniff the user agent and refuse or degrade |
+| The user's habits                         | the browser already in use; a profile can even be shared (§7.3)                                                  | a new browser                                                                                              |
+| How frames reach us                       | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3)                                       | the new platform API's headless buffers; *not investigated* (§A6)                                          |
+| How input reaches it                      | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4)                                            | an embedder API in C                                                                                       |
+| Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=)                                                          | to be written against the API                                                                              |
+| Code we wrote                             | 2,049 lines of Lisp (with an embedded page script), *no C* (=web-cdp.lisp= 480, =web.lisp= 1,569, at 2026-10-13) | a C shim plus Lisp; not estimated                                                                          |
+| Memory, one simple page                   | 240–280 MB PSS on the host (§8.2), 436 MB in the guest                                                           | ~570 MB RSS for one heavy site (§A5; RSS, an upper bound)                                                  |
+| Disk                                      | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image                                               | ~270 MB of libraries (§A2)                                                                                 |
+| Licence                                   | proprietary binary, used as installed                                                                            | LGPL                                                                                                       |
 
 The licence row is the honest cost. Chrome is not free software. We do not ship
 it: the image *calls* the copy the user installed, from the host's own disk. That is
@@ -80,21 +80,21 @@ A web tab is an ordinary tab of the environment. Its label is the page's title, 
 a toolbar shows back =<=, forward =>=, reload (or stop while loading) and the
 address; clicking the address edits it. Below is the page.
 
-| Key | Does |
-|-----+------|
-| =C-l= | the address prompt (an address, or words to search for) |
-| =SuperL-Left= / =SuperL-Right= | back / forward in the page's history |
-| =C-r= | reload |
-| =Esc= while loading | stop (otherwise =Esc= goes to the page) |
-| =C-f= | find in the page as you type; Enter finds the next |
-| =C-c= / =C-x= / =C-v= | copy / cut / paste through *our* clipboard (§4.2) |
-| =C-Insert= / =S-Insert= | copy / paste, X style |
-| =C-+= / =C--= / =C-0= | zoom in, out, back to 100% |
-| =Shift-F10=, the Menu key, right click | the environment's menu for the page |
-| =SuperL-click= on a link | open it in a new tab (Ctrl-click opens it behind) |
-| a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4) |
-| a click on a colour input, Alt-Down on a date | the minibuffer asks for the value (§4.4) |
-| anything else | the page's |
+| Key                                              | Does                                                    |
+|--------------------------------------------------+---------------------------------------------------------|
+| =C-l=                                            | the address prompt (an address, or words to search for) |
+| =SuperL-Left= / =SuperL-Right=                   | back / forward in the page's history                    |
+| =C-r=                                            | reload                                                  |
+| =Esc= while loading                              | stop (otherwise =Esc= goes to the page)                 |
+| =C-f=                                            | find in the page as you type; Enter finds the next      |
+| =C-c= / =C-x= / =C-v=                            | copy / cut / paste through *our* clipboard (§4.2)       |
+| =C-Insert= / =S-Insert=                          | copy / paste, X style                                   |
+| =C-+= / =C--= / =C-0=                            | zoom in, out, back to 100%                              |
+| =Shift-F10=, the Menu key, right click           | the environment's menu for the page                     |
+| =SuperL-click= on a link                         | open it in a new tab (Ctrl-click opens it behind)       |
+| a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4)                          |
+| a click on a colour input, Alt-Down on a date    | the minibuffer asks for the value (§4.4)                |
+| anything else                                    | the page's                                              |
 
 Every =SuperL= key stays the environment's. Every other key belongs to the page,
 =Tab=, =Esc=, =C-g=, =C-c= included, because the page is what you are typing into.
@@ -310,12 +310,12 @@ same.
 
 The same probe looked at the other controls that use browser UI:
 
-| Control | Headless Chrome 148 | What we do |
-|---------+---------------------+------------|
-| =<select>= (single, size ≤ 1) | an invisible popup that takes the keys | our chooser (below) |
-| =<input type=color>= | an invisible colour chooser, opened on /click/; it took every following key | the minibuffer asks for =#rrggbb= |
-| =<input type=date>=, =time=, =datetime-local=, =month=, =week= | no picker at all: the calendar icon does nothing | the minibuffer asks for the value (=yyyy-mm-dd= …); typing digits into the field also works, and is visible, because the field itself is page |
-| =<input list=…>= with a =<datalist>= | no visible suggestions; once typing opened them, they swallowed the arrow keys (=Esc= closed them) | our chooser, on Down / Alt-Down / a click on the field's arrow |
+| Control                                                        | Headless Chrome 148                                                                                | What we do                                                                                                                                    |
+|----------------------------------------------------------------+----------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------|
+| =<select>= (single, size ≤ 1)                                  | an invisible popup that takes the keys                                                             | our chooser (below)                                                                                                                           |
+| =<input type=color>=                                           | an invisible colour chooser, opened on /click/; it took every following key                        | the minibuffer asks for =#rrggbb=                                                                                                             |
+| =<input type=date>=, =time=, =datetime-local=, =month=, =week= | no picker at all: the calendar icon does nothing                                                   | the minibuffer asks for the value (=yyyy-mm-dd= …); typing digits into the field also works, and is visible, because the field itself is page |
+| =<input list=…>= with a =<datalist>=                           | no visible suggestions; once typing opened them, they swallowed the arrow keys (=Esc= closed them) | our chooser, on Down / Alt-Down / a click on the field's arrow                                                                                |
 
 *How we draw them.* Three pieces, all in [[file:../initramfs/web.lisp::defparameter +web-picker-js+][=web.lisp='s "pickers" section]]:
 
@@ -417,12 +417,12 @@ reason: Chrome writes to a pipe whenever the page changes, and the loop has to w
 for that without polling on a timer. =*FB-SERVICES*= is the general mechanism. A
 service registers functions the loop calls by name:
 
-| Key | Called | Web pane's |
-|-----+--------+------------|
-| =:fd= | before each poll; an fd to watch | Chrome's reply pipe |
+| Key        | Called                                        | Web pane's                                                                             |
+|------------+-----------------------------------------------+----------------------------------------------------------------------------------------|
+| =:fd=      | before each poll; an fd to watch              | Chrome's reply pipe                                                                    |
 | =:timeout= | before each poll; ms until it must run anyway | 10 ms while a resize is being sent, 100 ms while waiting for a first frame, else never |
-| =:run= | every turn, after input | pump the pipe, sync the screencast, decode the newest frame |
-| =:motion= | on a bare pointer move | hover: =mouseMoved= into the page |
+| =:run=     | every turn, after input                       | pump the pipe, sync the screencast, decode the newest frame                            |
+| =:motion=  | on a bare pointer move                        | hover: =mouseMoved= into the page                                                      |
 
 When only the page's pixels changed, =:run= copies the new frame into the canvas
 and sends just the page rectangle to the screen. This is the same economy the
@@ -604,12 +604,12 @@ net REPL's =WEB-JS= waits for the browser's loop, which is inside the modal choo
 
 ** 8.2 Numbers
 
-| Measure | Host (the dev laptop) | Guest (tag #26, QEMU/KVM, 2 GB) |
-|---------+---------------------------+----------------------------------|
-| Chrome cold start to first page | 0.25 s | 5 s |
-| Decode of one 1256x701 frame (base64 + JPEG + convert) | 8 ms | 4–8 ms |
-| Input to the next frame (16 samples) | — | 20–72 ms, mostly 24–44 |
-| Chrome PSS, all processes, one simple page | 240–280 MB | 436 MB |
+| Measure                                                | Host (the dev laptop) | Guest (tag #26, QEMU/KVM, 2 GB) |
+|--------------------------------------------------------+-----------------------+---------------------------------|
+| Chrome cold start to first page                        | 0.25 s                | 5 s                             |
+| Decode of one 1256x701 frame (base64 + JPEG + convert) | 8 ms                  | 4–8 ms                          |
+| Input to the next frame (16 samples)                   | —                     | 20–72 ms, mostly 24–44          |
+| Chrome PSS, all processes, one simple page             | 240–280 MB            | 436 MB                          |
 
 "Input to next frame" is measured in =web.lisp= itself (=WEB-TAB-LATENCIES=): from
 the moment a key or a click is sent to the moment the next frame arrives. Add the
@@ -660,8 +660,8 @@ painting. Writing one is out of scope for this project, so the real question is
 Nyxt 3 renders through WebKitGTK. Measured on the host by following every shared
 library it pulls in (=ldd=, the dynamic linker's "who do you need" listing):
 
-| Library                  | Shared libs it pulls in | Their size | Its own size |
-|--------------------------+-------------------------+------------+--------------|
+| Library                  | Shared libs it pulls in | Their size | Its own size                     |
+|--------------------------+-------------------------+------------+----------------------------------|
 | =libwebkit2gtk-4.1.so.0= |                     166 | ~187 MB    | 96 MB, plus JavaScriptCore 33 MB |
 | =libWPEWebKit-2.0.so.1=  |                     143 | ~137 MB    | 130 MB (JavaScriptCore included) |
 
@@ -675,16 +675,16 @@ would be the /last/ step, not the first.
 
 ** A3. The options, and why WPE
 
-| Option                     | Engine / JavaScript                         | How it draws                       | Weight            | Verdict |
-|----------------------------+---------------------------------------------+------------------------------------+-------------------+---------|
-| Links2 =-g=                | own; HTML 4 + basic CSS; no JS              | its own framebuffer driver         | tiny, can be static | fast, but the modern web is out of reach |
-| w3m                        | text; no JS                                 | the terminal                       | tiny              | docs and Hacker News, little more |
-| NetSurf (framebuffer)      | own; HTML 4 / CSS 2.1, partial CSS 3; minimal JS | =libnsfb=, a Linux fb surface | a few MB          | the best of the small ones; SPAs break |
-| *WPE WebKit*               | *full WebKit + JavaScriptCore*              | DRM/KMS directly, or headless      | ~270 MB of libs   | *the real web, without a desktop* |
-| WebKitGTK / Nyxt 3         | full WebKit                                 | GTK → X or Wayland                 | §A2                | needs a whole desktop |
-| Electron / Nyxt 4          | Chromium                                    | its own stack                      | larger still      | no |
-| Remote (VNC into the host) | any                                         | a Lisp RFB client in the guest     | no native deps    | a thin client, not a browser |
-| Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era               | McCLIM                             | Lisp only         | a historical toy |
+| Option                     | Engine / JavaScript                              | How it draws                   | Weight              | Verdict                                  |
+|----------------------------+--------------------------------------------------+--------------------------------+---------------------+------------------------------------------|
+| Links2 =-g=                | own; HTML 4 + basic CSS; no JS                   | its own framebuffer driver     | tiny, can be static | fast, but the modern web is out of reach |
+| w3m                        | text; no JS                                      | the terminal                   | tiny                | docs and Hacker News, little more        |
+| NetSurf (framebuffer)      | own; HTML 4 / CSS 2.1, partial CSS 3; minimal JS | =libnsfb=, a Linux fb surface  | a few MB            | the best of the small ones; SPAs break   |
+| *WPE WebKit*               | *full WebKit + JavaScriptCore*                   | DRM/KMS directly, or headless  | ~270 MB of libs     | *the real web, without a desktop*        |
+| WebKitGTK / Nyxt 3         | full WebKit                                      | GTK → X or Wayland             | §A2                 | needs a whole desktop                    |
+| Electron / Nyxt 4          | Chromium                                         | its own stack                  | larger still        | no                                       |
+| Remote (VNC into the host) | any                                              | a Lisp RFB client in the guest | no native deps      | a thin client, not a browser             |
+| Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era                    | McCLIM                         | Lisp only           | a historical toy                         |
 
 Two terms the WPE row leans on:
 
@@ -744,15 +744,15 @@ MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
 
 *** A4.3 The switches the tests use
 
-| Variable / flag                         | Effect                                                             | Verified here |
-|-----------------------------------------+--------------------------------------------------------------------+---------------|
-| =LIBGL_ALWAYS_SOFTWARE=1=               | Mesa renders on the CPU (=llvmpipe=) instead of the GPU            | yes |
-| =WPE_DISPLAY=drm= / =wayland= / =headless= | picks WebKit's output; an unknown name errors with =Display of type X was not found= | yes |
-| =WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999= | serves Web Inspector to an ordinary browser                  | yes, but only together with the next line |
-| =WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1= | turns off the web process's sandbox                           | yes; for debugging only |
-| =MiniBrowser --size=WxH=, =--fullscreen=, =--private= | window size, fullscreen, no saved state             | listed in =--help= |
-| =WEBKIT_SHOW_FPS=1=                     | the library knows the name, but *printed nothing* in our runs      | ruled out, see T2 |
-| =WEBKIT_DRAW_FPS=1=                     | present in the library; supposedly draws an FPS overlay            | *not verified* |
+| Variable / flag                                       | Effect                                                                               | Verified here                             |
+|-------------------------------------------------------+--------------------------------------------------------------------------------------+-------------------------------------------|
+| =LIBGL_ALWAYS_SOFTWARE=1=                             | Mesa renders on the CPU (=llvmpipe=) instead of the GPU                              | yes                                       |
+| =WPE_DISPLAY=drm= / =wayland= / =headless=            | picks WebKit's output; an unknown name errors with =Display of type X was not found= | yes                                       |
+| =WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999=         | serves Web Inspector to an ordinary browser                                          | yes, but only together with the next line |
+| =WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1=          | turns off the web process's sandbox                                                  | yes; for debugging only                   |
+| =MiniBrowser --size=WxH=, =--fullscreen=, =--private= | window size, fullscreen, no saved state                                              | listed in =--help=                        |
+| =WEBKIT_SHOW_FPS=1=                                   | the library knows the name, but *printed nothing* in our runs                        | ruled out, see T2                         |
+| =WEBKIT_DRAW_FPS=1=                                   | present in the library; supposedly draws an FPS overlay                              | *not verified*                            |
 
 ** A5. The tests
 
@@ -854,10 +854,10 @@ drives the screen through DRM/KMS.
 
 [[https://browserbench.org/][browserbench.org]] hosts the three benchmarks every engine vendor quotes:
 
-| Benchmark       | URL                                       | What it measures |
-|-----------------+-------------------------------------------+------------------|
-| Speedometer 3.1 | https://browserbench.org/Speedometer3.1/  | responsiveness of real web-app code (DOM + JS): how fast the browser /feels/ |
-| JetStream 3.0   | https://browserbench.org/JetStream3.0/    | JavaScript and WebAssembly throughput; barely touches rendering |
+| Benchmark        | URL                                       | What it measures                                                                                            |
+|------------------+-------------------------------------------+-------------------------------------------------------------------------------------------------------------|
+| Speedometer 3.1  | https://browserbench.org/Speedometer3.1/  | responsiveness of real web-app code (DOM + JS): how fast the browser /feels/                                |
+| JetStream 3.0    | https://browserbench.org/JetStream3.0/    | JavaScript and WebAssembly throughput; barely touches rendering                                             |
 | MotionMark 1.3.2 | https://browserbench.org/MotionMark1.3.2/ | graphics: how much animation it sustains at a steady frame rate. *The number software rendering hurts most* |
 
 How to run each one:
@@ -877,12 +877,12 @@ How to run each one:
 
 Fill in this table:
 
-| Configuration                          | Speedometer 3.1 | JetStream 3.0 | MotionMark 1.3.2 |
-|----------------------------------------+-----------------+---------------+------------------|
-| Firefox (host, baseline)               |                 |               |                  |
-| MiniBrowser, GPU (T1 setup)            |                 |               |                  |
-| MiniBrowser, software (T2 setup)       |                 |               |                  |
-| MiniBrowser, DRM on a VT (T3), if it ran |               |               |                  |
+| Configuration                            | Speedometer 3.1 | JetStream 3.0 | MotionMark 1.3.2 |
+|------------------------------------------+-----------------+---------------+------------------|
+| Firefox (host, baseline)                 |                 |               |                  |
+| MiniBrowser, GPU (T1 setup)              |                 |               |                  |
+| MiniBrowser, software (T2 setup)         |                 |               |                  |
+| MiniBrowser, DRM on a VT (T3), if it ran |                 |               |                  |
 
 How to read it: Speedometer and JetStream should barely move between GPU and
 software, because they are mostly JavaScript, which runs on the CPU anyway. MotionMark
@@ -923,11 +923,11 @@ navigating via links within one run.
 *~570 MB RSS* and the network process ~100 MB. That is RSS, so it is an upper bound.
 Redo it as PSS.
 
-| State            | Web process (PSS) | Network process (PSS) | UI process (PSS) | Total |
-|------------------+-------------------+-----------------------+------------------+-------|
-| =about:blank=    |                   |                       |                  |       |
-| one heavy site   |                   |                       |                  |       |
-| after three sites |                  |                       |                  |       |
+| State             | Web process (PSS) | Network process (PSS) | UI process (PSS) | Total |
+|-------------------+-------------------+-----------------------+------------------+-------|
+| =about:blank=     |                   |                       |                  |       |
+| one heavy site    |                   |                       |                  |       |
+| after three sites |                   |                       |                  |       |
 
 This decides how much RAM the image needs; the browser, not Lisp, will dominate it.
 
@@ -979,16 +979,16 @@ job, so don't record them as bugs.
 
 This is not a plan yet, just the shopping list the tests feed into.
 
-| Need                       | Today (#24)                    | For WPE |
-|----------------------------+--------------------------------+---------|
-| storage                    | tmpfs only                     | a real filesystem: ~270 MB of libraries (§A2), plus a profile dir for cookies and cache |
-| shared libraries           | ld.so + libc + libm, copied from the host | the =ldd= closure of =libWPEWebKit-2.0.so.1=, copied the same way |
-| DNS + TLS                  | sockets + DHCP, no resolver    | =/etc/resolv.conf=, =nsswitch.conf=, a CA bundle, =glib-networking= |
-| fonts                      | our own bitmap fonts           | TTF fonts + fontconfig and its cache |
-| display                    | =efifb= only, =DRM= off        | /headless/ + our Lisp blitting (no kernel change), or =DRM= + a GPU driver (T3 decides) |
-| input                      | our own evdev reader           | headless: we forward events into WebKit; DRM: WebKit reads them itself via libinput |
-| child processes            | the supervisor spawns workers  | web, network (and GPU) processes; PID 1 must reap them |
-| sandbox                    | no =USER_NS=, no =SECCOMP=     | run without it, or enable both (bubblewrap) |
+| Need             | Today (#24)                               | For WPE                                                                                 |
+|------------------+-------------------------------------------+-----------------------------------------------------------------------------------------|
+| storage          | tmpfs only                                | a real filesystem: ~270 MB of libraries (§A2), plus a profile dir for cookies and cache |
+| shared libraries | ld.so + libc + libm, copied from the host | the =ldd= closure of =libWPEWebKit-2.0.so.1=, copied the same way                       |
+| DNS + TLS        | sockets + DHCP, no resolver               | =/etc/resolv.conf=, =nsswitch.conf=, a CA bundle, =glib-networking=                     |
+| fonts            | our own bitmap fonts                      | TTF fonts + fontconfig and its cache                                                    |
+| display          | =efifb= only, =DRM= off                   | /headless/ + our Lisp blitting (no kernel change), or =DRM= + a GPU driver (T3 decides) |
+| input            | our own evdev reader                      | headless: we forward events into WebKit; DRM: WebKit reads them itself via libinput     |
+| child processes  | the supervisor spawns workers             | web, network (and GPU) processes; PID 1 must reap them                                  |
+| sandbox          | no =USER_NS=, no =SECCOMP=                | run without it, or enable both (bubblewrap)                                             |
 
 The headless route is the one that keeps the system ours: Lisp stays the only
 process on =/dev/fb0= and treats a web page as one more thing it draws. How WebKit's

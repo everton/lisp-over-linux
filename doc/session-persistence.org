@@ -46,21 +46,21 @@ to rerun in a minute.
 
 ** 1.1 The inventory
 
-| What                          | Where it lives now                                          | Shape          | Survives today?                                    |
-|-------------------------------+-------------------------------------------------------------+----------------+----------------------------------------------------|
-| Accepted definitions (=C-c C-c=) | the running code + =*registry*= records ([[file:../initramfs/registry.lisp::defun accept-source][=accept-source=]]) | *source*       | no                                                 |
-| Their history ("Versions")    | =defn-versions=, newest first; =defn-born= for new ones     | *source*       | no                                                 |
-| The change set (menu =c=)     | /derived/: [[file:../initramfs/registry.lisp::defun changed-definitions][=changed-definitions=]] scans the registry      | *source*       | no — but nothing extra to save                     |
-| Forms run with Do it / Print it, the REPL, the net REPL | nowhere — =eval= and forget (=workspace-do-it=, =repl.lisp=) | source, unrecorded | no                                         |
-| Edited files (=C-x C-s=)      | the disk, via =write-file-atomically=                       | file           | *yes* — already persistent                         |
-| A file buffer you did *not* save | the pane's text view                                    | text           | no, and *no warning at power-off* (§4)             |
-| Workspace buffers (one or more) | each Workspace pane's text view (=pane-tv=)               | text           | no                                                 |
-| Tabs and trails               | =*trails*=, =*active*= ([[file:../poc/shell.lisp::defvar *trails*][shell.lisp]])                          | heap; mostly describable | no — and not even across leaving to the console (§1.3) |
-| Clipboard history, PRIMARY, killed rectangle | =*clipboard*= ([[file:../poc/clipboard.lisp::defvar *clipboard*][clipboard.lisp]])           | strings        | no                                                 |
-| Spotter recents               | =*spotter-recents*= ([[file:../initramfs/present.lisp::defvar *spotter-recents*][present.lisp]]), capped at 8              | plists holding subjects | no                                        |
-| File-manager settings         | =*file-sort*=, =*file-sort-reverse*=, =*show-hidden*=       | symbols        | no                                                 |
-| The stage (COLLIDE bodies)    | =*the-collide-stage*= ([[file:../initramfs/stage.lisp::defvar *the-collide-stage*][stage.lisp]])                         | *heap only*    | no                                                 |
-| Anything you made or inspected: instances, closures, a =setf= on a closure's capture | the heap                     | *heap only*    | no                                                 |
+| What                                                                                 | Where it lives now                                           | Shape                    | Survives today?                                        |
+|--------------------------------------------------------------------------------------+--------------------------------------------------------------+--------------------------+--------------------------------------------------------|
+| Accepted definitions (=C-c C-c=)                                                     | the running code + =*registry*= records ([[file:../initramfs/registry.lisp::defun accept-source][=accept-source=]])    | *source*                 | no                                                     |
+| Their history ("Versions")                                                           | =defn-versions=, newest first; =defn-born= for new ones      | *source*                 | no                                                     |
+| The change set (menu =c=)                                                            | /derived/: [[file:../initramfs/registry.lisp::defun changed-definitions][=changed-definitions=]] scans the registry          | *source*                 | no — but nothing extra to save                         |
+| Forms run with Do it / Print it, the REPL, the net REPL                              | nowhere — =eval= and forget (=workspace-do-it=, =repl.lisp=) | source, unrecorded       | no                                                     |
+| Edited files (=C-x C-s=)                                                             | the disk, via =write-file-atomically=                        | file                     | *yes* — already persistent                             |
+| A file buffer you did *not* save                                                     | the pane's text view                                         | text                     | no, and *no warning at power-off* (§4)                 |
+| Workspace buffers (one or more)                                                      | each Workspace pane's text view (=pane-tv=)                  | text                     | no                                                     |
+| Tabs and trails                                                                      | =*trails*=, =*active*= ([[file:../poc/shell.lisp::defvar *trails*][shell.lisp]])                          | heap; mostly describable | no — and not even across leaving to the console (§1.3) |
+| Clipboard history, PRIMARY, killed rectangle                                         | =*clipboard*= ([[file:../poc/clipboard.lisp::defvar *clipboard*][clipboard.lisp]])                               | strings                  | no                                                     |
+| Spotter recents                                                                      | =*spotter-recents*= ([[file:../initramfs/present.lisp::defvar *spotter-recents*][present.lisp]]), capped at 8              | plists holding subjects  | no                                                     |
+| File-manager settings                                                                | =*file-sort*=, =*file-sort-reverse*=, =*show-hidden*=        | symbols                  | no                                                     |
+| The stage (COLLIDE bodies)                                                           | =*the-collide-stage*= ([[file:../initramfs/stage.lisp::defvar *the-collide-stage*][stage.lisp]])                           | *heap only*              | no                                                     |
+| Anything you made or inspected: instances, closures, a =setf= on a closure's capture | the heap                                                     | *heap only*              | no                                                     |
 
 /Verified/ by reading every top-level =defvar= / =defparameter= in =poc/shell.lisp=,
 =initramfs/fb-browser.lisp=, =present.lisp=, =stage.lisp=, =file-views.lisp= and
@@ -173,15 +173,15 @@ quite right, and here is the finding.* The fixup =sb-posix:fork= calls in the ch
 /Verified/ in =./sbcl= (2.6.8, which has =:sb-thread= and no =:sb-core-compression=;
 the =finalizer= thread runs from startup):
 
-| Variant                                              | Result                                                                                 |
-|------------------------------------------------------+----------------------------------------------------------------------------------------|
-| bare =fork()= via =alien-funcall=, child saves       | the child *hangs*: =deinit= tries to stop a finalizer thread the child does not have  |
-| stop the finalizer first, then bare =fork()=         | the child fails =AVER (THREAD-P THREAD)=, and the parent is fine                      |
-| steps 1–3, finalizer restarted *only in the parent*  | the same =AVER= in the child                                                          |
-| steps 1–4 exactly as above                           | *works*: the child saved a 39 MB executable in 0.81 s, and the parent carried on      |
-| =sb-posix:fork= (the contrib), for comparison        | works                                                                                 |
-| steps 1–4 with an extra thread running (a stand-in for the net REPL) | refused: "Cannot fork with multiple threads running." |
-| steps 1–4 with ~68 MB of live heap                   | works: a 96 MB executable in 1.10 s                                                   |
+| Variant                                                              | Result                                                                               |
+|----------------------------------------------------------------------+--------------------------------------------------------------------------------------|
+| bare =fork()= via =alien-funcall=, child saves                       | the child *hangs*: =deinit= tries to stop a finalizer thread the child does not have |
+| stop the finalizer first, then bare =fork()=                         | the child fails =AVER (THREAD-P THREAD)=, and the parent is fine                     |
+| steps 1–3, finalizer restarted *only in the parent*                  | the same =AVER= in the child                                                         |
+| steps 1–4 exactly as above                                           | *works*: the child saved a 39 MB executable in 0.81 s, and the parent carried on     |
+| =sb-posix:fork= (the contrib), for comparison                        | works                                                                                |
+| steps 1–4 with an extra thread running (a stand-in for the net REPL) | refused: "Cannot fork with multiple threads running."                                |
+| steps 1–4 with ~68 MB of live heap                                   | works: a 96 MB executable in 1.10 s                                                  |
 
 So the hand-rolled recipe needs no contrib and loses no fixups. It does have to be
 copied *exactly*. Step 4 in the child looks pointless, but it is what lets =deinit='s
@@ -214,14 +214,14 @@ The dangerous cases are the ones that are *not* streams. A bare integer fd kept 
 a global survives the save as a number, and after a resume that number may name some
 unrelated file. Here is the full list:
 
-| Global                                   | Holds                                       | After a resume                                              | Needs                                     |
-|------------------------------------------+---------------------------------------------+-------------------------------------------------------------+-------------------------------------------|
-| =lol.fb::*fb*=                           | =(FD XRES YRES STRIDE)= for =/dev/fb0=      | *already handled*: an =*init-hooks*= entry clears it ([[file:../poc/fb.lisp::init-hooks][fb.lisp]]) | nothing                    |
-| =*input-devices*=, =*input-watch-fd*=    | evdev fds (every device) + an inotify fd    | stale, but =run-browser-fb= reopens them all on entry ([[file:input.org][input.org]] §4¾) | clear in a save-hook, for hygiene         |
-| =*net-repl-server*= / =-client= / =-thread= | sockets and a thread object              | stale, and a later =stop-net-repl= could =close= a reused fd | save-hook: =nil= them (the thread is already stopped) |
-| =*stbi-state*=                           | =T= once =libstbi.so= has loaded            | =T=, but the library is gone, so JPEG previews quietly report "not loaded" | save-hook: reset to =NIL=, so it reloads on demand |
-| =*battery-cache*=                        | the last sysfs read                         | stale for 5 s at most                                        | nothing                                   |
-| =run-program= process objects (workers)  | pids of children                            | pids that no longer exist                                    | only matters if a worker was running mid-save |
+| Global                                      | Holds                                    | After a resume                                                             | Needs                                                 |
+|---------------------------------------------+------------------------------------------+----------------------------------------------------------------------------+-------------------------------------------------------|
+| =lol.fb::*fb*=                              | =(FD XRES YRES STRIDE)= for =/dev/fb0=   | *already handled*: an =*init-hooks*= entry clears it ([[file:../poc/fb.lisp::init-hooks][fb.lisp]])             | nothing                                               |
+| =*input-devices*=, =*input-watch-fd*=       | evdev fds (every device) + an inotify fd | stale, but =run-browser-fb= reopens them all on entry ([[file:input.org][input.org]] §4¾)      | clear in a save-hook, for hygiene                     |
+| =*net-repl-server*= / =-client= / =-thread= | sockets and a thread object              | stale, and a later =stop-net-repl= could =close= a reused fd               | save-hook: =nil= them (the thread is already stopped) |
+| =*stbi-state*=                              | =T= once =libstbi.so= has loaded         | =T=, but the library is gone, so JPEG previews quietly report "not loaded" | save-hook: reset to =NIL=, so it reloads on demand    |
+| =*battery-cache*=                           | the last sysfs read                      | stale for 5 s at most                                                      | nothing                                               |
+| =run-program= process objects (workers)     | pids of children                         | pids that no longer exist                                                  | only matters if a worker was running mid-save         |
 
 /Verified/ for =libstbi.so=: it is loaded with =:dont-save t=
 ([[file:../poc/image.lisp::defun stbi-available-p][=stbi-available-p=]]), and in a resumed test image
@@ -452,42 +452,42 @@ This pile is small, and it is data, not code. One printed plist,
 
 ** 2d. Hybrids
 
-| Combination                          | Keeps                                  | Survives a rebuild?                   | Crash-safe?                        | Cost      |
-|--------------------------------------+----------------------------------------+---------------------------------------+------------------------------------+-----------|
-| journal only                         | definitions                            | yes (replay / pending set)            | yes, per Accept                    | low       |
-| journal + desk                       | definitions, tabs, buffers, clipboard  | yes                                   | definitions yes, desk at last save | low–medium |
-| journal + desk + fold-back           | the above, and changes land in git     | best: they become the build           | as above                           | medium    |
-| image only                           | everything                             | *no* (discarded on stamp mismatch)    | only at the last save              | high      |
-| image + journal (Smalltalk's own pair) | everything; the journal covers the gap since the last image, and carries edits across rebuilds | partly | yes | highest |
+| Combination                            | Keeps                                                                                          | Survives a rebuild?                | Crash-safe?                        | Cost       |
+|----------------------------------------+------------------------------------------------------------------------------------------------+------------------------------------+------------------------------------+------------|
+| journal only                           | definitions                                                                                    | yes (replay / pending set)         | yes, per Accept                    | low        |
+| journal + desk                         | definitions, tabs, buffers, clipboard                                                          | yes                                | definitions yes, desk at last save | low–medium |
+| journal + desk + fold-back             | the above, and changes land in git                                                             | best: they become the build        | as above                           | medium     |
+| image only                             | everything                                                                                     | *no* (discarded on stamp mismatch) | only at the last save              | high       |
+| image + journal (Smalltalk's own pair) | everything; the journal covers the gap since the last image, and carries edits across rebuilds | partly                             | yes                                | highest    |
 
 * 3. Where things live, and when there is no disk
 
 Since 2026-10-17 everything the environment keeps about you is under one folder,
 =~/.lol/= (§7.8), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]. The persistence files:
 
-| Path                                   | What                                  | Written                        |
-|----------------------------------------+---------------------------------------+--------------------------------|
-| =~/.lol/journal/changes.lisp=          | the journal                           | on every Accept, =fsync=       |
-| =~/.lol/journal/changes-damaged.lisp=  | a torn tail cut off at boot           | at boot, when the reader stops |
-| =~/.lol/journal/changes-unfolded.lisp= | what file-out could not place         | on File out                    |
-| =~/.lol/journal/changes-discarded-N.lisp= | a discarded journal, moved aside   | on the journal view's =D=      |
-| =~/.lol/journal/replay-off=            | you: "do not replay" (=touch= it from Debian) | never by the image     |
-| =~/.lol/desk/desk.lisp=, =desk-autosave.lisp= | tabs, Workspaces, clipboard, recents | Save and quit; autosave   |
-| =~/.lol/image=, =image.prev=, =image.build=, =booting= | the optional image (§2a, /not built/) | on Save image only |
+| Path                                                   | What                                          | Written                        |
+|--------------------------------------------------------+-----------------------------------------------+--------------------------------|
+| =~/.lol/journal/changes.lisp=                          | the journal                                   | on every Accept, =fsync=       |
+| =~/.lol/journal/changes-damaged.lisp=                  | a torn tail cut off at boot                   | at boot, when the reader stops |
+| =~/.lol/journal/changes-unfolded.lisp=                 | what file-out could not place                 | on File out                    |
+| =~/.lol/journal/changes-discarded-N.lisp=              | a discarded journal, moved aside              | on the journal view's =D=      |
+| =~/.lol/journal/replay-off=                            | you: "do not replay" (=touch= it from Debian) | never by the image             |
+| =~/.lol/desk/desk.lisp=, =desk-autosave.lisp=          | tabs, Workspaces, clipboard, recents          | Save and quit; autosave        |
+| =~/.lol/image=, =image.prev=, =image.build=, =booting= | the optional image (§2a, /not built/)         | on Save image only             |
 
 and, beside them, the rest of the tree:
 
-| Path                  | What                                               | Module                            | Was (before 2026-10-17)               |
-|-----------------------+----------------------------------------------------+-----------------------------------+---------------------------------------|
-| =~/.lol/settings=     | preferences: font size, tap-to-click, =:desk-clipboard= | [[file:../initramfs/settings.lisp][settings.lisp]] | =~/.config/lol/settings=              |
-| =~/.lol/hosts=        | =/etc/hosts=-style name overrides                  | [[file:../initramfs/dns.lisp][dns.lisp]]                          | =~/.config/lol/hosts=                 |
-| =~/.lol/wifi/=        | saved networks; folder 0700, files 0600            | [[file:../initramfs/wifi.lisp][wifi.lisp]]                         | =~/.config/lol/wifi/=                 |
-| =~/.lol/agent/=       | =anthropic-api-key= (0600), =settings.lisp=, =conversations/= | [[file:../initramfs/agent.lisp][agent.lisp]], [[file:../initramfs/agent-store.lisp][agent-store.lisp]] | =~/.config/lol/anthropic-api-key=, =~/.config/lol/agent.lisp= (conversations were already here) |
-| =~/.lol/journal/=     | the table above                                    | [[file:../initramfs/journal.lisp][journal.lisp]], [[file:../initramfs/file-out.lisp][file-out.lisp]] | =~/.local/share/lol/=                 |
-| =~/.lol/desk/=        | the table above                                    | [[file:../initramfs/desk.lisp][desk.lisp]]                         | =~/.local/state/lol/=                 |
-| =~/.lol/web/chrome/=  | the web pane's own Chrome profile                  | [[file:../initramfs/web.lisp][web.lisp]]                          | =~/.config/lol/chrome/=               |
-| =~/.lol/ct/<name>/=   | a container's overlay uppers                       | [[file:../initramfs/containers.lisp][containers.lisp]], =lol-ct.c=   | unchanged                             |
-| =~/.lol/log/=         | session, kernel, stderr, network logs              | [[file:../initramfs/session-log.lisp][session-log.lisp]]                  | unchanged                             |
+| Path                 | What                                                          | Module                       | Was (before 2026-10-17)                                                                         |
+|----------------------+---------------------------------------------------------------+------------------------------+-------------------------------------------------------------------------------------------------|
+| =~/.lol/settings=    | preferences: font size, tap-to-click, =:desk-clipboard=       | [[file:../initramfs/settings.lisp][settings.lisp]]                | =~/.config/lol/settings=                                                                        |
+| =~/.lol/hosts=       | =/etc/hosts=-style name overrides                             | [[file:../initramfs/dns.lisp][dns.lisp]]                     | =~/.config/lol/hosts=                                                                           |
+| =~/.lol/wifi/=       | saved networks; folder 0700, files 0600                       | [[file:../initramfs/wifi.lisp][wifi.lisp]]                    | =~/.config/lol/wifi/=                                                                           |
+| =~/.lol/agent/=      | =anthropic-api-key= (0600), =settings.lisp=, =conversations/= | [[file:../initramfs/agent.lisp][agent.lisp]], [[file:../initramfs/agent-store.lisp][agent-store.lisp]] | =~/.config/lol/anthropic-api-key=, =~/.config/lol/agent.lisp= (conversations were already here) |
+| =~/.lol/journal/=    | the table above                                               | [[file:../initramfs/journal.lisp][journal.lisp]], [[file:../initramfs/file-out.lisp][file-out.lisp]]  | =~/.local/share/lol/=                                                                           |
+| =~/.lol/desk/=       | the table above                                               | [[file:../initramfs/desk.lisp][desk.lisp]]                    | =~/.local/state/lol/=                                                                           |
+| =~/.lol/web/chrome/= | the web pane's own Chrome profile                             | [[file:../initramfs/web.lisp][web.lisp]]                     | =~/.config/lol/chrome/=                                                                         |
+| =~/.lol/ct/<name>/=  | a container's overlay uppers                                  | [[file:../initramfs/containers.lisp][containers.lisp]], =lol-ct.c=  | unchanged                                                                                       |
+| =~/.lol/log/=        | session, kernel, stderr, network logs                         | [[file:../initramfs/session-log.lisp][session-log.lisp]]             | unchanged                                                                                       |
 
 *Moving from the old layout.* A laptop that ran an older image has files at the
 "Was" places. [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] runs in =supervisor-main= right after
@@ -587,13 +587,13 @@ first boot's writes. Proposal:
 
 * 6. Options and recommendation
 
-| Option | What                                              | Keeps                                    | Effort (estimate)   | Risk                                        |
-|--------+---------------------------------------------------+------------------------------------------+---------------------+---------------------------------------------|
-| A      | journal + replay                                  | definitions                              | ~1 session          | low; structs need care                      |
-| B      | A + desk                                          | + tabs, Workspaces, clipboard, recents   | ~2 sessions         | low                                         |
-| C      | B + file-out to source                            | + edits land in git                      | ~3 sessions         | low–medium (verbatim matching)              |
-| D      | image snapshots only                              | everything, until the next rebuild       | ~2–3 sessions       | high: preinit + PID 1 + boot safety         |
-| E      | C + D                                             | everything                               | ~5 sessions         | as D, but optional on top of a safe base    |
+| Option | What                   | Keeps                                  | Effort (estimate) | Risk                                     |
+|--------+------------------------+----------------------------------------+-------------------+------------------------------------------|
+| A      | journal + replay       | definitions                            | ~1 session        | low; structs need care                   |
+| B      | A + desk               | + tabs, Workspaces, clipboard, recents | ~2 sessions       | low                                      |
+| C      | B + file-out to source | + edits land in git                    | ~3 sessions       | low–medium (verbatim matching)           |
+| D      | image snapshots only   | everything, until the next rebuild     | ~2–3 sessions     | high: preinit + PID 1 + boot safety      |
+| E      | C + D                  | everything                             | ~5 sessions       | as D, but optional on top of a safe base |
 
 *Recommendation: C, built in the order below, with D held as a separate experiment
 that only happens if the opaque pile turns out to matter in practice.* The reasons:
@@ -609,14 +609,14 @@ that only happens if the opaque pile turns out to matter in practice.* The reaso
 
 ** Phases
 
-| Phase | Work                                                                                              | Effort (estimate) | Test                                     |
-|-------+---------------------------------------------------------------------------------------------------+-------------------+------------------------------------------|
-| 0     | The prerequisites: =defn-package= + bind =*package*= in =accept-source= (§1.2; *done*); a build stamp in =build.sh= (=/etc/lol-build= + a heap variable); a =persistence-available-p= check (disk present, =/home= rw) | ~½ session | =check-compile.lisp= gains a =lol.*= Accept |
-| 1     | The journal (append + =fsync= on Accept), replay at boot with a per-entry guard, the replay-report subject, the struct rule, the stale-build "pending" set, =lol.replay=off= | ~1 session | =check-persist.lisp= boots 1–3, crash case |
-| 2     | The desk: subject references with a whitelisted reader, Workspace text, clipboard, recents, settings; =open-environment= restores; autosave | ~1 session | =check-persist.lisp= desk assertions |
-| 3     | The leave menu: save / don't save / console, an unsaved-files prompt first, the diskless wording, the supervisor's =s= | ~½ session | =check-clipboard.lisp='s leave-menu steps, extended |
-| 4     | File out to source: verbatim replace, =changes-unfolded.lisp=, retiring journal entries after a rebuild | ~1 session | a fixture module on =test-disk.img= |
-| 5 /(optional, NOT built)/ | Image snapshots: hand-rolled fork (§2a recipe), save-hooks for the globals table, a =verify= role, atomic promote, preinit's marker + stamp check + =lol.image=shipped= | ~2–3 sessions | its own check, including the broken-image fallback |
+|                     Phase | Work                                                                                                                                                                                                                   | Effort (estimate) | Test                                                |
+|---------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------+-----------------------------------------------------|
+|                         0 | The prerequisites: =defn-package= + bind =*package*= in =accept-source= (§1.2; *done*); a build stamp in =build.sh= (=/etc/lol-build= + a heap variable); a =persistence-available-p= check (disk present, =/home= rw) | ~½ session        | =check-compile.lisp= gains a =lol.*= Accept         |
+|                         1 | The journal (append + =fsync= on Accept), replay at boot with a per-entry guard, the replay-report subject, the struct rule, the stale-build "pending" set, =lol.replay=off=                                           | ~1 session        | =check-persist.lisp= boots 1–3, crash case          |
+|                         2 | The desk: subject references with a whitelisted reader, Workspace text, clipboard, recents, settings; =open-environment= restores; autosave                                                                            | ~1 session        | =check-persist.lisp= desk assertions                |
+|                         3 | The leave menu: save / don't save / console, an unsaved-files prompt first, the diskless wording, the supervisor's =s=                                                                                                 | ~½ session        | =check-clipboard.lisp='s leave-menu steps, extended |
+|                         4 | File out to source: verbatim replace, =changes-unfolded.lisp=, retiring journal entries after a rebuild                                                                                                                | ~1 session        | a fixture module on =test-disk.img=                 |
+| 5 /(optional, NOT built)/ | Image snapshots: hand-rolled fork (§2a recipe), save-hooks for the globals table, a =verify= role, atomic promote, preinit's marker + stamp check + =lol.image=shipped=                                                | ~2–3 sessions     | its own check, including the broken-image fallback  |
 
 /Status 2026-10-16:/ Phases 0–4 are built (Phase 0's =/etc/lol-build= was not needed:
 only the image path compares stamps before the Lisp runs, so the heap variable
@@ -687,21 +687,21 @@ is ever built (it is left untouched here because this is a plan).
 
 ** 8.1 The pieces
 
-| File / place | What it does |
-|--------------+--------------|
-| [[file:../initramfs/registry.lisp::defvar *accept-hooks*][=*accept-hooks*=]] (registry.lisp) | run after every /successful/ Accept with the name, kind, label, package and exact text; a hook's string becomes =*accept-note*=, which the status line appends ("Accepted: foo - NOT journalled: …") |
-| [[file:../initramfs/journal.lisp::defun journal-accept][=journal-accept=]] | appends one record (§2b's shape) to =~/.lol/journal/changes.lisp=: =O_APPEND=, =fsync=, created 0600 |
-| [[file:../initramfs/journal.lisp::defun boot-replay-journal][=boot-replay-journal=]] | called by =supervisor-main= after the network (so the net REPL is up) and before =run-browser-fb=; prints one line, logs every skipped entry to =session.log= ([[file:diagnostics.org][diagnostics.org]]) |
-| [[file:../initramfs/journal.lisp::defun classify-record][=classify-record=]] + [[file:../initramfs/journal.lisp::defun run-record][=run-record=]] | each record: /retired/ (text already the image's), /needs-rebuild/ (a =defstruct=), /pending/ (another build), else Accepted again inside =handler-case= + =with-timeout= (30 s) with warnings muffled; /failed/ on anything that signals |
-| [[file:../initramfs/journal.lisp::defun quarantine-tail][=quarantine-tail=]] | a record that will not read stops the reader; the tail is appended to =changes-damaged.lisp= and the journal rewritten as its readable prefix |
-| [[file:../initramfs/journal.lisp::defun replay-disabled-p][=replay-disabled-p=]] | =lol.replay=off= on the kernel command line, or a file =~/.lol/journal/replay-off=: the journal is read, nothing in it runs, the desk is not restored |
-| =subj-journal= (Spotter "journal") | this boot's report by status, then this session's Accepts; =a= Accept / =d= drop a pending or failed entry, =F= file out, =D= discard. It opens by itself next to the desk when replay left something for you |
-| [[file:../initramfs/file-out.lisp::defun file-out-changes][=file-out-changes=]] | §2b's fold-back: verbatim, exactly once, atomic; else =changes-unfolded.lisp= |
-| [[file:../initramfs/desk.lisp::defun desk-data][=desk-data=]] / [[file:../initramfs/desk.lisp::defun restore-desk][=restore-desk=]] | §2c: references out ([[file:../initramfs/desk.lisp::defgeneric desk-ref][=desk-ref=]]), a whitelist back ([[file:../initramfs/desk.lisp::defun desk-subject][=desk-subject=]]), trails cut at the first opaque pane, Workspace text + point, recents, the file manager's sort/hidden settings |
-| [[file:../poc/shell.lisp::defun open-environment][=open-environment=]] | keeps existing trails (fixes §1.3: the console round trip no longer wipes the tabs), else restores the desk once per boot, else the Workspace; =run-browser-fb= clears the trails when the environment /dies/, so the next =b= starts fresh |
-| [[file:../poc/shell.lisp::defun leave-menu][=leave-menu=]] | "Supervisor console" (1) · "Save and shut down" (2) · "Shut down without saving" (3); diskless: "Shut down (no disk - nothing is kept)" (2). Before a shut-down, [[file:../poc/shell.lisp::defun unsaved-files-resolved-p][=unsaved-files-resolved-p=]] asks about modified file panes: save all / discard / cancel |
-| [[file:../initramfs/desk.lisp::defun console-shutdown][=console-shutdown=]] | the supervisor menu's =s=, the same question in text |
-| =*build-stamp*= | baked by =build.sh=: =<rev>[+dirty] <UTC time>= |
+| File / place                       | What it does                                                                                                                                                                                                                                            |
+|------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [[file:../initramfs/registry.lisp::defvar *accept-hooks*][=*accept-hooks*=]] (registry.lisp)   | run after every /successful/ Accept with the name, kind, label, package and exact text; a hook's string becomes =*accept-note*=, which the status line appends ("Accepted: foo - NOT journalled: …")                                                    |
+| [[file:../initramfs/journal.lisp::defun journal-accept][=journal-accept=]]                   | appends one record (§2b's shape) to =~/.lol/journal/changes.lisp=: =O_APPEND=, =fsync=, created 0600                                                                                                                                                    |
+| [[file:../initramfs/journal.lisp::defun boot-replay-journal][=boot-replay-journal=]]              | called by =supervisor-main= after the network (so the net REPL is up) and before =run-browser-fb=; prints one line, logs every skipped entry to =session.log= ([[file:diagnostics.org][diagnostics.org]])                                                                         |
+| [[file:../initramfs/journal.lisp::defun classify-record][=classify-record=]] + [[file:../initramfs/journal.lisp::defun run-record][=run-record=]]   | each record: /retired/ (text already the image's), /needs-rebuild/ (a =defstruct=), /pending/ (another build), else Accepted again inside =handler-case= + =with-timeout= (30 s) with warnings muffled; /failed/ on anything that signals               |
+| [[file:../initramfs/journal.lisp::defun quarantine-tail][=quarantine-tail=]]                  | a record that will not read stops the reader; the tail is appended to =changes-damaged.lisp= and the journal rewritten as its readable prefix                                                                                                           |
+| [[file:../initramfs/journal.lisp::defun replay-disabled-p][=replay-disabled-p=]]                | =lol.replay=off= on the kernel command line, or a file =~/.lol/journal/replay-off=: the journal is read, nothing in it runs, the desk is not restored                                                                                                   |
+| =subj-journal= (Spotter "journal") | this boot's report by status, then this session's Accepts; =a= Accept / =d= drop a pending or failed entry, =F= file out, =D= discard. It opens by itself next to the desk when replay left something for you                                           |
+| [[file:../initramfs/file-out.lisp::defun file-out-changes][=file-out-changes=]]                 | §2b's fold-back: verbatim, exactly once, atomic; else =changes-unfolded.lisp=                                                                                                                                                                           |
+| [[file:../initramfs/desk.lisp::defun desk-data][=desk-data=]] / [[file:../initramfs/desk.lisp::defun restore-desk][=restore-desk=]]       | §2c: references out ([[file:../initramfs/desk.lisp::defgeneric desk-ref][=desk-ref=]]), a whitelist back ([[file:../initramfs/desk.lisp::defun desk-subject][=desk-subject=]]), trails cut at the first opaque pane, Workspace text + point, recents, the file manager's sort/hidden settings                                                                      |
+| [[file:../poc/shell.lisp::defun open-environment][=open-environment=]]                 | keeps existing trails (fixes §1.3: the console round trip no longer wipes the tabs), else restores the desk once per boot, else the Workspace; =run-browser-fb= clears the trails when the environment /dies/, so the next =b= starts fresh             |
+| [[file:../poc/shell.lisp::defun leave-menu][=leave-menu=]]                       | "Supervisor console" (1) · "Save and shut down" (2) · "Shut down without saving" (3); diskless: "Shut down (no disk - nothing is kept)" (2). Before a shut-down, [[file:../poc/shell.lisp::defun unsaved-files-resolved-p][=unsaved-files-resolved-p=]] asks about modified file panes: save all / discard / cancel |
+| [[file:../initramfs/desk.lisp::defun console-shutdown][=console-shutdown=]]                 | the supervisor menu's =s=, the same question in text                                                                                                                                                                                                    |
+| =*build-stamp*=                    | baked by =build.sh=: =<rev>[+dirty] <UTC time>=                                                                                                                                                                                                         |
 
 ** 8.2 Where the build differs from the plan, and why
 

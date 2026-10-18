@@ -50,12 +50,12 @@ survives a power-button reset and is readable from Debian. A diskless boot (=HOM
 is =/=) uses =/tmp/lol-log/=: gone at power-off, but readable over the net REPL,
 which is what the QEMU test does.
 
-| file          | written by                                         | holds |
-|---------------+----------------------------------------------------+-------|
-| =session.log= | [[file:../initramfs/session-log.lisp::defun session-log][=session-log=]], from every thread                | the boot, entering/leaving the environment, every agent turn and tool call (with its input, clipped) and how it ended, retries, errors caught and uncaught, debugger entries, the *pulse*, *STALL* reports, the shutdown |
-| =stderr.log=  | file descriptor 2 — the C runtime, child processes | =lose()='s last words and backtrace, heap-exhaustion reports, Chrome's and =wpa_supplicant='s complaints |
-| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                    | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b) — unchanged in content |
-| =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])         | the kernel's own log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also said in =session.log= as =kernel: …= |
+| file          | written by                                         | holds                                                                                                                                                                                                                    |
+|---------------+----------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =session.log= | [[file:../initramfs/session-log.lisp::defun session-log][=session-log=]], from every thread                   | the boot, entering/leaving the environment, every agent turn and tool call (with its input, clipped) and how it ended, retries, errors caught and uncaught, debugger entries, the *pulse*, *STALL* reports, the shutdown |
+| =stderr.log=  | file descriptor 2 — the C runtime, child processes | =lose()='s last words and backtrace, heap-exhaustion reports, Chrome's and =wpa_supplicant='s complaints                                                                                                                 |
+| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                      | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b) — unchanged in content                                                                                                                                                           |
+| =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])                    | the kernel's own log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also said in =session.log= as =kernel: …=                                                                                     |
 
 *Every line is =fsync='d.* A line still in the page cache is lost to a hard reset,
 and a hard reset is exactly when it is wanted. At a few lines a second that costs

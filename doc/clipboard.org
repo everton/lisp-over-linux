@@ -56,19 +56,19 @@ Parcellite's options are a good catalogue of what a clipboard history can do. Th
 names below are the keys in its config file (=~/.config/parcellite/parcelliterc=),
 read off the host this was written on.
 
-| Parcellite option                 | what it does                                   | here                                       |
-|-----------------------------------+------------------------------------------------+--------------------------------------------|
-| =history_limit= (host value: 25)  | keep at most N entries                         | *yes* — =board-limit=, default 50          |
-| =ignore_whiteonly=                | "ignore any clipboard additions that contain only whitespace" | *yes, always on* (see below) |
-| re-copying an entry               | moves it to the top instead of listing it twice | *yes* — de-duplication                     |
-| =data_size=                       | a cap on entry size                            | *yes* — =board-max-length=, 1 000 000 chars |
-| =single_line= + =item_length= (50) | show each entry as one ellipsised row          | *yes* — [[file:../poc/clipboard.lisp::defun clip-label][=clip-label=]]                 |
-| =type_search= / =case_search=     | type to filter the menu                        | *yes* — [[file:../poc/clipboard.lisp::defun clip-filter][=clip-filter=]], case-insensitive |
-| =history_key= (host: =Ctrl-Alt-H=) | a key that pops the history up                 | *yes* — =SuperL-h= (§7)                     |
-| =use_copy= / =use_primary= / =synchronize= | track CLIPBOARD, PRIMARY, or keep both equal | *partly* — §3: a mouse selection sets both |
-| =trim_wspace_begend= / =trim_newline= | rewrite the text on the way in              | *no* — a copy should paste back exactly    |
-| =save_history= / =persistent_history= | survive a restart                           | *no* — §8, the rootfs is tmpfs              |
-| =hyperlinks_only=, actions (=actions_key=) | URL filtering, run a command on an entry | *no* — no browser, no shell to run it in   |
+| Parcellite option                          | what it does                                                  | here                                        |
+|--------------------------------------------+---------------------------------------------------------------+---------------------------------------------|
+| =history_limit= (host value: 25)           | keep at most N entries                                        | *yes* — =board-limit=, default 50           |
+| =ignore_whiteonly=                         | "ignore any clipboard additions that contain only whitespace" | *yes, always on* (see below)                |
+| re-copying an entry                        | moves it to the top instead of listing it twice               | *yes* — de-duplication                      |
+| =data_size=                                | a cap on entry size                                           | *yes* — =board-max-length=, 1 000 000 chars |
+| =single_line= + =item_length= (50)         | show each entry as one ellipsised row                         | *yes* — [[file:../poc/clipboard.lisp::defun clip-label][=clip-label=]]                        |
+| =type_search= / =case_search=              | type to filter the menu                                       | *yes* — [[file:../poc/clipboard.lisp::defun clip-filter][=clip-filter=]], case-insensitive     |
+| =history_key= (host: =Ctrl-Alt-H=)         | a key that pops the history up                                | *yes* — =SuperL-h= (§7)                     |
+| =use_copy= / =use_primary= / =synchronize= | track CLIPBOARD, PRIMARY, or keep both equal                  | *partly* — §3: a mouse selection sets both  |
+| =trim_wspace_begend= / =trim_newline=      | rewrite the text on the way in                                | *no* — a copy should paste back exactly     |
+| =save_history= / =persistent_history=      | survive a restart                                             | *no* — §8, the rootfs is tmpfs              |
+| =hyperlinks_only=, actions (=actions_key=) | URL filtering, run a command on an entry                      | *no* — no browser, no shell to run it in    |
 
 *Blank refusal* is the rule that gave this file its first test. A copy that is
 all whitespace is almost always a mis-click — a double-click in a margin, a drag
@@ -182,15 +182,15 @@ Every command has to decide what a short line means. We follow
 =lisp/rect.el= of Emacs 30.2 (default behaviour, no prefix argument), checked
 line by line, and the host test pins each case on exactly this buffer:
 
-| Emacs key   | command                  | ours                         | on a ragged line                                           |
-|-------------+--------------------------+------------------------------+------------------------------------------------------------|
-| =C-x r M-w= | =copy-rectangle-as-kill= | [[file:../poc/clipboard.lisp::defun rect-extract][=rect-extract=]] | padded with spaces — a rectangle is always a true block   |
-| =C-x r k=   | =kill-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-kill][=rect-kill=]]    | delete + extract                                          |
-| =C-x r d=   | =delete-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-delete][=rect-delete=]]  | a line ending before the block is left alone              |
+| Emacs key   | command                  | ours           | on a ragged line                                             |
+|-------------+--------------------------+----------------+--------------------------------------------------------------|
+| =C-x r M-w= | =copy-rectangle-as-kill= | [[file:../poc/clipboard.lisp::defun rect-extract][=rect-extract=]] | padded with spaces — a rectangle is always a true block      |
+| =C-x r k=   | =kill-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-kill][=rect-kill=]]    | delete + extract                                             |
+| =C-x r d=   | =delete-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-delete][=rect-delete=]]  | a line ending before the block is left alone                 |
 | =C-x r y=   | =yank-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-yank][=rect-yank=]]    | short lines padded out to the column; lines added at the end |
-| =C-x r o=   | =open-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-open][=rect-open=]]    | blanks only where there is text to push right             |
-| =C-x r c=   | =clear-rectangle=        | [[file:../poc/clipboard.lisp::defun rect-clear][=rect-clear=]]   | a line ending inside the block is cut, not space-filled   |
-| =C-x r t=   | =string-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-string][=rect-string=]]  | short lines padded to the left edge, then the string      |
+| =C-x r o=   | =open-rectangle=         | [[file:../poc/clipboard.lisp::defun rect-open][=rect-open=]]    | blanks only where there is text to push right                |
+| =C-x r c=   | =clear-rectangle=        | [[file:../poc/clipboard.lisp::defun rect-clear][=rect-clear=]]   | a line ending inside the block is cut, not space-filled      |
+| =C-x r t=   | =string-rectangle=       | [[file:../poc/clipboard.lisp::defun rect-string][=rect-string=]]  | short lines padded to the left edge, then the string         |
 
 Two properties hold for all of them. Each *returns a new lines vector and never
 mutates its input* — so undo can be "keep the old vector", the same choice
@@ -219,26 +219,26 @@ Bindings verified against =key-binding= in Emacs 30.2 (=emacs --batch=); the she
 side is [[file:../poc/shell.lisp::defun clipboard-key][=clipboard-key=]] (one place, tested before the editor's own keys) and
 the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-key=]].
 
-| key                     | Emacs / CUA name                  | core call                                     | shell function                   |
-|-------------------------+-----------------------------------+-----------------------------------------------+----------------------------------|
-| =M-w=, =Ctrl-Insert=    | =kill-ring-save= / CUA copy       | =region-text= → =clip-copy=                   | =editor-copy=                    |
-| =C-w=, =Shift-Delete=   | =kill-region= / CUA cut           | =region-text= + =region-delete= → =clip-copy= | =editor-cut=                     |
-| =C-y=, =Shift-Insert=   | =yank= / CUA paste                | =clip-yank= → =insert-text=                   | =editor-paste=                   |
-| =M-y=                   | =yank-pop=                        | =clip-yank-pop=, replace the last yank's span | =editor-yank-pop=                |
-| =C-k=                   | =kill-line=                       | =kill-line-span= → =clip-copy :append=        | =editor-kill-line=               |
-| =M-d=                   | =kill-word=                       | the =move-word= span → =clip-copy :append :after= | =editor-kill-word=           |
-| =M-Backspace=           | =backward-kill-word=              | … =:append :before=                           | =editor-kill-word=               |
-| =C-x h=                 | =mark-whole-buffer=               | —                                             | =editor-select-all=              |
-| =C-x SPC=               | =rectangle-mark-mode=             | — (drawn as a block by =tv-draw=)             | in =edit-pane-key=               |
-| =C-x r M-w= / =k= / =y= | copy / kill / yank rectangle      | =rect-extract= / =rect-kill= / =rect-yank=    | =editor-rectangle=               |
-| =C-x r d= / =o= / =c=   | delete / open / clear rectangle   | =rect-delete= / =rect-open= / =rect-clear=    | =editor-rectangle=               |
-| =C-x r t=               | =string-rectangle=                | =rect-string=, after a one-line prompt        | =editor-rectangle=               |
-| drag, then release      | X PRIMARY                         | =clip-select=, *on release*                   | =browser-drag-end=               |
-| double / triple click   | X: select the word / the line     | =clip-select=, at once                        | =text-press=                     |
-| middle click in text    | =mouse-yank-primary=              | =primary= → =insert-text= at the click        | =pane-middle-click=              |
-| drag a row onto text    | (a drop, not a selection)          | a readable reference, =insert-text= where it lands | =drop-reference-at= (§5½) |
-| =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)      | — (=tv-undo=, §6½)                            | =editor-undo=                    |
-| =SuperL-h=, tray icon   | the manager (§7)                  | =clip-filter= / =clip-promote= / =clip-delete= | =open-clipboard-manager=        |
+| key                     | Emacs / CUA name                | core call                                          | shell function            |
+|-------------------------+---------------------------------+----------------------------------------------------+---------------------------|
+| =M-w=, =Ctrl-Insert=    | =kill-ring-save= / CUA copy     | =region-text= → =clip-copy=                        | =editor-copy=             |
+| =C-w=, =Shift-Delete=   | =kill-region= / CUA cut         | =region-text= + =region-delete= → =clip-copy=      | =editor-cut=              |
+| =C-y=, =Shift-Insert=   | =yank= / CUA paste              | =clip-yank= → =insert-text=                        | =editor-paste=            |
+| =M-y=                   | =yank-pop=                      | =clip-yank-pop=, replace the last yank's span      | =editor-yank-pop=         |
+| =C-k=                   | =kill-line=                     | =kill-line-span= → =clip-copy :append=             | =editor-kill-line=        |
+| =M-d=                   | =kill-word=                     | the =move-word= span → =clip-copy :append :after=  | =editor-kill-word=        |
+| =M-Backspace=           | =backward-kill-word=            | … =:append :before=                                | =editor-kill-word=        |
+| =C-x h=                 | =mark-whole-buffer=             | —                                                  | =editor-select-all=       |
+| =C-x SPC=               | =rectangle-mark-mode=           | — (drawn as a block by =tv-draw=)                  | in =edit-pane-key=        |
+| =C-x r M-w= / =k= / =y= | copy / kill / yank rectangle    | =rect-extract= / =rect-kill= / =rect-yank=         | =editor-rectangle=        |
+| =C-x r d= / =o= / =c=   | delete / open / clear rectangle | =rect-delete= / =rect-open= / =rect-clear=         | =editor-rectangle=        |
+| =C-x r t=               | =string-rectangle=              | =rect-string=, after a one-line prompt             | =editor-rectangle=        |
+| drag, then release      | X PRIMARY                       | =clip-select=, *on release*                        | =browser-drag-end=        |
+| double / triple click   | X: select the word / the line   | =clip-select=, at once                             | =text-press=              |
+| middle click in text    | =mouse-yank-primary=            | =primary= → =insert-text= at the click             | =pane-middle-click=       |
+| drag a row onto text    | (a drop, not a selection)       | a readable reference, =insert-text= where it lands | =drop-reference-at= (§5½) |
+| =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)    | — (=tv-undo=, §6½)                                 | =editor-undo=             |
+| =SuperL-h=, tray icon   | the manager (§7)                | =clip-filter= / =clip-promote= / =clip-delete=     | =open-clipboard-manager=  |
 
 Where each key comes from, since the console delivers them unevenly:
 
@@ -299,13 +299,13 @@ lines vector in =textview.lisp= and =clipboard.lisp= writes into a fresh copy.)
 *The protocol is Emacs's, exactly*, because it is what makes undo unable to lose
 anything:
 
-| step | what happens |
-|------+--------------|
-| an edit | the state it replaced is pushed on the buffer's undo list |
-| =C-_= | restore the next older state — and push the one it leaves, since an undo is a change too |
-| =C-_= again | keep walking back (the run's own steps are not revisited) |
-| any other command | the run ends; motion counts, as in Emacs |
-| =C-_= after that | walks back over the /undos/ first — Emacs's redo; there is no redo stack to fall off |
+| step              | what happens                                                                             |
+|-------------------+------------------------------------------------------------------------------------------|
+| an edit           | the state it replaced is pushed on the buffer's undo list                                |
+| =C-_=             | restore the next older state — and push the one it leaves, since an undo is a change too |
+| =C-_= again       | keep walking back (the run's own steps are not revisited)                                |
+| any other command | the run ends; motion counts, as in Emacs                                                 |
+| =C-_= after that  | walks back over the /undos/ first — Emacs's redo; there is no redo stack to fall off     |
 
 Typing amalgamates: up to 20 consecutive self-inserted characters are one record
 (Emacs's =amalgamating-undo-limit=), so =C-_= takes back a word or so rather than a
@@ -345,14 +345,14 @@ already has for "pick one from many": a *modal card like the Spotter*
  └───────────────────────────────────────────────────────────────┘
 #+end_example
 
-| key           | does                                                                  |
-|---------------+-----------------------------------------------------------------------|
-| =SuperL-h=    | open the card (so does the clipboard icon in the systray)             |
-| typing        | filter (=clip-filter=, case-insensitive substring); =Backspace= edits it |
-| =↑= / =↓=, =C-p= / =C-n= | move the selection                                         |
-| =↵=           | =clip-promote= the entry, close, and paste it at the caret             |
-| =Delete=      | =clip-delete= the entry (the list stays open)                          |
-| =Esc= / =C-g= | close without changing anything                                       |
+| key                      | does                                                                     |
+|--------------------------+--------------------------------------------------------------------------|
+| =SuperL-h=               | open the card (so does the clipboard icon in the systray)                |
+| typing                   | filter (=clip-filter=, case-insensitive substring); =Backspace= edits it |
+| =↑= / =↓=, =C-p= / =C-n= | move the selection                                                       |
+| =↵=                      | =clip-promote= the entry, close, and paste it at the caret               |
+| =Delete=                 | =clip-delete= the entry (the list stays open)                            |
+| =Esc= / =C-g=            | close without changing anything                                          |
 
 Rows come from =clip-filter=, which returns =(index . string)= pairs, so a
 filtered list still promotes and deletes by the real history index. Each row's

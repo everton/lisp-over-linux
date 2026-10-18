@@ -56,15 +56,15 @@ grep -cE '^CONFIG_MAC80211_HWSIM=y' .config  # expect 0 (fake radios on every bo
 
 * 1. Boot — how the kernel becomes the EFI application
 
-| Option                     | State | Role                                                              |
-|----------------------------+-------+------------------------------------------------------------------|
-| =CONFIG_EFI=               | y     | UEFI runtime support                                             |
-| =CONFIG_EFI_STUB=          | y     | The bzImage *is* the =.EFI= app — UEFI launches it, no GRUB      |
-| =CONFIG_BLK_DEV_INITRD=    | y     | Accept an =initrd== from the firmware                           |
-| =CONFIG_INITRAMFS_SOURCE=  | ""    | *Empty on purpose*: initramfs is a SEPARATE file, not baked in  |
-| =CONFIG_BINFMT_ELF=        | y     | Load ELF binaries — THE line that makes userspace possible      |
-| =CONFIG_BINFMT_SCRIPT=     | y     | =#!= shebang scripts (delegates to an ELF interpreter)          |
-| =CONFIG_CMDLINE=           | str   | Baked-in kernel cmdline (see below) — EFISTUB fallback boot has no args |
+| Option                    | State | Role                                                                    |
+|---------------------------+-------+-------------------------------------------------------------------------|
+| =CONFIG_EFI=              | y     | UEFI runtime support                                                    |
+| =CONFIG_EFI_STUB=         | y     | The bzImage *is* the =.EFI= app — UEFI launches it, no GRUB             |
+| =CONFIG_BLK_DEV_INITRD=   | y     | Accept an =initrd== from the firmware                                   |
+| =CONFIG_INITRAMFS_SOURCE= | ""    | *Empty on purpose*: initramfs is a SEPARATE file, not baked in          |
+| =CONFIG_BINFMT_ELF=       | y     | Load ELF binaries — THE line that makes userspace possible              |
+| =CONFIG_BINFMT_SCRIPT=    | y     | =#!= shebang scripts (delegates to an ELF interpreter)                  |
+| =CONFIG_CMDLINE=          | str   | Baked-in kernel cmdline (see below) — EFISTUB fallback boot has no args |
 
 Baked cmdline (=CONFIG_CMDLINE_BOOL=y=, no override):
 ="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio"=.
@@ -84,22 +84,22 @@ from x86 in 5.1); =BINFMT_MISC= is off.
 
 * 2. Display — why the laptop screen is not blank
 
-| Option                       | State | Role                                                       |
-|------------------------------+-------+------------------------------------------------------------|
-| =CONFIG_FB=                  | y     | Framebuffer core                                          |
-| =CONFIG_FB_CORE=             | y     | The fbdev core proper (auto-selected by =FB=)             |
+| Option                       | State | Role                                                                |
+|------------------------------+-------+---------------------------------------------------------------------|
+| =CONFIG_FB=                  | y     | Framebuffer core                                                    |
+| =CONFIG_FB_CORE=             | y     | The fbdev core proper (auto-selected by =FB=)                       |
 | =CONFIG_FB_DEVICE=           | y     | Creates the =/dev/fb0= *character device* — what our Lisp writes to |
-| =CONFIG_FB_EFI=              | y     | Use the framebuffer UEFI hands us (efifb)                 |
-| =CONFIG_SYSFB=               | y     | Registers the firmware framebuffer efifb then claims      |
-| =CONFIG_FRAMEBUFFER_CONSOLE= | y     | Draw the text console onto that framebuffer (fbcon)       |
-| =CONFIG_VT=                  | y     | Virtual terminal layer                                    |
-| =CONFIG_VT_CONSOLE=          | y     | Console on the VT                                         |
-| =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                     |
-| =CONFIG_UNIX98_PTYS=         | y     | Modern PTYs (=/dev/ptmx= + =/dev/pts/=); legacy pool is OFF |
-| =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                  |
-| =CONFIG_FONT_8x16=           | y     | *The font in use* — 160x50 on the 1280x800 panel          |
-| =CONFIG_FONT_8x8=            | y     | Second built-in font (defconfig default, unused)          |
-| =CONFIG_FONT_TER16x32=       | *n*   | Terminus 16x32 — enabled in #20, *reverted* (see below)   |
+| =CONFIG_FB_EFI=              | y     | Use the framebuffer UEFI hands us (efifb)                           |
+| =CONFIG_SYSFB=               | y     | Registers the firmware framebuffer efifb then claims                |
+| =CONFIG_FRAMEBUFFER_CONSOLE= | y     | Draw the text console onto that framebuffer (fbcon)                 |
+| =CONFIG_VT=                  | y     | Virtual terminal layer                                              |
+| =CONFIG_VT_CONSOLE=          | y     | Console on the VT                                                   |
+| =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                               |
+| =CONFIG_UNIX98_PTYS=         | y     | Modern PTYs (=/dev/ptmx= + =/dev/pts/=); legacy pool is OFF         |
+| =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                             |
+| =CONFIG_FONT_8x16=           | y     | *The font in use* — 160x50 on the 1280x800 panel                    |
+| =CONFIG_FONT_8x8=            | y     | Second built-in font (defconfig default, unused)                    |
+| =CONFIG_FONT_TER16x32=       | *n*   | Terminus 16x32 — enabled in #20, *reverted* (see below)             |
 
 =CONFIG_FB_DEVICE= is the one that is easy to overlook: =FB= gives the kernel a
 framebuffer, but =FB_DEVICE= is what exposes it to *userland* as =/dev/fb0=.
@@ -125,22 +125,22 @@ the original "it booted but showed nothing" bug.
 
 * 3. Input — why you can type (the PCI saga)
 
-| Option                                   | State | Role                                             |
-|------------------------------------------+-------+--------------------------------------------------|
-| =CONFIG_PCI=                             | y     | *Keystone* — without it: no USB AND no ACPI S5   |
-| =CONFIG_PCI_MSI=                         | y     | Message-signalled interrupts                     |
-| =CONFIG_PCIEPORTBUS=                     | y     | PCIe port bus driver                             |
-| =CONFIG_USB_SUPPORT= / =CONFIG_USB=      | y     | USB core                                         |
-| =CONFIG_USB_XHCI_HCD= / =_PCI=           | y     | USB 3.x host controller (modern laptop ports)    |
-| =CONFIG_USB_EHCI_HCD= / =_PCI=           | y     | USB 2.0 host controller                          |
-| =CONFIG_USB_OHCI_HCD= / =_PCI=           | y     | USB 1.x host controller                          |
-| =CONFIG_USB_HID= / =CONFIG_HID=          | y     | Interpret a USB keyboard as keystrokes           |
-| =CONFIG_I2C= + =I2C_HID= + =_ACPI=       | y     | Internal I2C-HID keyboard bus (laptops)          |
-| =CONFIG_I2C_DESIGNWARE_CORE/_PLATFORM=   | y     | The common laptop I2C controller                 |
-| =CONFIG_SERIO= + =INPUT_KEYBOARD= + =KEYBOARD_ATKBD= | y | Legacy PS/2 keyboard (QEMU + old machines) |
-| =CONFIG_INPUT_EVDEV=                     | y     | =/dev/input/event*= layer — the mouse, the wheel, modifier state ([[file:input.org][input.org]]) |
-| =CONFIG_INPUT_MOUSEDEV=                  | *n*   | deliberately OFF — why there is no =/dev/input/mouseN= to look for |
-| =CONFIG_MOUSE_PS2=                       | y     | PS/2 mouse + laptop touchpad (QEMU's pointer)    |
+| Option                                               | State | Role                                                                         |
+|------------------------------------------------------+-------+------------------------------------------------------------------------------|
+| =CONFIG_PCI=                                         | y     | *Keystone* — without it: no USB AND no ACPI S5                               |
+| =CONFIG_PCI_MSI=                                     | y     | Message-signalled interrupts                                                 |
+| =CONFIG_PCIEPORTBUS=                                 | y     | PCIe port bus driver                                                         |
+| =CONFIG_USB_SUPPORT= / =CONFIG_USB=                  | y     | USB core                                                                     |
+| =CONFIG_USB_XHCI_HCD= / =_PCI=                       | y     | USB 3.x host controller (modern laptop ports)                                |
+| =CONFIG_USB_EHCI_HCD= / =_PCI=                       | y     | USB 2.0 host controller                                                      |
+| =CONFIG_USB_OHCI_HCD= / =_PCI=                       | y     | USB 1.x host controller                                                      |
+| =CONFIG_USB_HID= / =CONFIG_HID=                      | y     | Interpret a USB keyboard as keystrokes                                       |
+| =CONFIG_I2C= + =I2C_HID= + =_ACPI=                   | y     | Internal I2C-HID keyboard bus (laptops)                                      |
+| =CONFIG_I2C_DESIGNWARE_CORE/_PLATFORM=               | y     | The common laptop I2C controller                                             |
+| =CONFIG_SERIO= + =INPUT_KEYBOARD= + =KEYBOARD_ATKBD= | y     | Legacy PS/2 keyboard (QEMU + old machines)                                   |
+| =CONFIG_INPUT_EVDEV=                                 | y     | =/dev/input/event*= layer — the mouse, the wheel, modifier state ([[file:input.org][input.org]]) |
+| =CONFIG_INPUT_MOUSEDEV=                              | *n*   | deliberately OFF — why there is no =/dev/input/mouseN= to look for           |
+| =CONFIG_MOUSE_PS2=                                   | y     | PS/2 mouse + laptop touchpad (QEMU's pointer)                                |
 
 Root-cause story: =CONFIG_PCI= was OFF in early builds. Everything used *early*
 in boot (EFI framebuffer, RAM rootfs, PS/2 keyboard in QEMU) is non-PCI, so the
@@ -160,14 +160,14 @@ nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the bro
 
 * 4. Platform & power
 
-| Option        | State | Role                                                          |
-|---------------+-------+---------------------------------------------------------------|
-| =CONFIG_ACPI= | y     | Power-off (=reboot(RB_POWER_OFF)= -> =_S5=); depends on PCI    |
-| =CONFIG_ACPI_BATTERY= | y | The battery in =/sys/class/power_supply/BAT0/= (the systray) |
-| =CONFIG_ACPI_AC=      | y | The adapter's =online= file (=/sys/class/power_supply/AC/=)  |
-| =CONFIG_POWER_SUPPLY= | y | The sysfs class both register into; =select=-ed by both      |
-| =CONFIG_RTC_MC146818_LIB= | y | Reading the CMOS clock at boot; =select=-ed by =config X86= |
-| =CONFIG_RTC_CLASS=    | n | Not needed: x86 reads the CMOS clock itself (no =/dev/rtc=)  |
+| Option                    | State | Role                                                         |
+|---------------------------+-------+--------------------------------------------------------------|
+| =CONFIG_ACPI=             | y     | Power-off (=reboot(RB_POWER_OFF)= -> =_S5=); depends on PCI  |
+| =CONFIG_ACPI_BATTERY=     | y     | The battery in =/sys/class/power_supply/BAT0/= (the systray) |
+| =CONFIG_ACPI_AC=          | y     | The adapter's =online= file (=/sys/class/power_supply/AC/=)  |
+| =CONFIG_POWER_SUPPLY=     | y     | The sysfs class both register into; =select=-ed by both      |
+| =CONFIG_RTC_MC146818_LIB= | y     | Reading the CMOS clock at boot; =select=-ed by =config X86=  |
+| =CONFIG_RTC_CLASS=        | n     | Not needed: x86 reads the CMOS clock itself (no =/dev/rtc=)  |
 
 The path from our Lisp to the machine actually stopping: [[file:../initramfs/process.lisp::defun power-off][=power-off=]] FFI-calls
 =reboot(2)=, which lands in [[file:../linux/kernel/reboot.c][=kernel/reboot.c=]]; for =RB_POWER_OFF= that ends in
@@ -185,28 +185,28 @@ the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 �
 
 * 5. Filesystems & userland glue
 
-| Option              | State | Role                                                       |
-|---------------------+-------+------------------------------------------------------------|
-| =CONFIG_DEVTMPFS=   | y     | Auto-populated =/dev= (=/dev/console=, =/dev/null= …)       |
-| =CONFIG_TMPFS=      | y     | The size-capped =/tmp= that [[file:../initramfs/preinit.c][=preinit.c=]] mounts                  |
-| =CONFIG_FUTEX=      | y     | Fast userspace mutexes (threads in SBCL/glibc)             |
-| =CONFIG_MULTIUSER=  | y     | uid/gid model glibc assumes                                |
-| =CONFIG_PRINTK=     | y     | Kernel log messages                                       |
-| =CONFIG_BLK_DEV_NVME= | y | #25: the laptop's disk is NVMe (selects =NVME_CORE=; needs =PCI=) — [[file:storage.org][storage.org]] §2 |
-| =CONFIG_EXT4_FS=      | y | #25: the laptop's root (holding =/home=) is ext4 (selects =JBD2=, =FS_MBCACHE=, =CRC16=) |
-| =CONFIG_EXT4_FS_POSIX_ACL= | y | #25: the host mounts with =acl=; honour ACLs rather than silently ignore them |
-| =CONFIG_VIRTIO_BLK=   | y | #25: QEMU's paravirtual disk — the test stand-in (=make-test-disk.sh=) |
-| =CONFIG_MSDOS_PARTITION= / =EFI_PARTITION= | y | partition tables (GPT on the laptop) → =nvme0n1p2= |
+| Option                                     | State | Role                                                                                     |
+|--------------------------------------------+-------+------------------------------------------------------------------------------------------|
+| =CONFIG_DEVTMPFS=                          | y     | Auto-populated =/dev= (=/dev/console=, =/dev/null= …)                                    |
+| =CONFIG_TMPFS=                             | y     | The size-capped =/tmp= that [[file:../initramfs/preinit.c][=preinit.c=]] mounts                                           |
+| =CONFIG_FUTEX=                             | y     | Fast userspace mutexes (threads in SBCL/glibc)                                           |
+| =CONFIG_MULTIUSER=                         | y     | uid/gid model glibc assumes                                                              |
+| =CONFIG_PRINTK=                            | y     | Kernel log messages                                                                      |
+| =CONFIG_BLK_DEV_NVME=                      | y     | #25: the laptop's disk is NVMe (selects =NVME_CORE=; needs =PCI=) — [[file:storage.org][storage.org]] §2       |
+| =CONFIG_EXT4_FS=                           | y     | #25: the laptop's root (holding =/home=) is ext4 (selects =JBD2=, =FS_MBCACHE=, =CRC16=) |
+| =CONFIG_EXT4_FS_POSIX_ACL=                 | y     | #25: the host mounts with =acl=; honour ACLs rather than silently ignore them            |
+| =CONFIG_VIRTIO_BLK=                        | y     | #25: QEMU's paravirtual disk — the test stand-in (=make-test-disk.sh=)                   |
+| =CONFIG_MSDOS_PARTITION= / =EFI_PARTITION= | y     | partition tables (GPT on the laptop) → =nvme0n1p2=                                       |
 
 * 6. Debug / serial (for QEMU testing, not the laptop)
 
-| Option                  | State | Role                                                      |
-|-------------------------+-------+-----------------------------------------------------------|
-| =CONFIG_SERIAL_8250=    | y     | =console=ttyS0= so =build.sh --run= can scrape markers     |
-| =CONFIG_MAGIC_SYSRQ= (default enable =0x1=, all functions) | y | #28: Alt-SysRq works even when the Lisp is dead or stuck — it is the kernel's own keyboard handler, under =KD_GRAPHICS= too. =w= / =t= dump blocked / all tasks to the kernel log, =s u b= sync, remount read-only, reboot; =c= panics on purpose, which (with pstore) keeps the log ([[file:diagnostics.org][diagnostics.org]] §6) |
-| =CONFIG_SOFTLOCKUP_DETECTOR= + =HARDLOCKUP_DETECTOR= (perf NMI) | y | #28: a CPU stuck in the kernel (with or without interrupts) is reported in the kernel log, which =session-log.lisp= copies to =kernel.log=. Report only: =BOOTPARAM_SOFTLOCKUP_PANIC=0= |
-| =CONFIG_DETECT_HUNG_TASK= | y | #28: a task in uninterruptible sleep over 120 s (a stuck disk or driver) is reported, report only (=BOOTPARAM_HUNG_TASK_PANIC=0=) |
-| =CONFIG_PSTORE= + =EFI_VARS_PSTORE= (needs =MISC_FILESYSTEMS=) | y | #28: on a panic the kernel writes its last log into EFI variables; the next boot of *Debian* shows it in =/sys/fs/pstore= and =systemd-pstore= (enabled on the host) moves it to =/var/lib/systemd/pstore= — and frees the variables. =PSTORE_COMPRESS= (zlib) keeps the records small |
+| Option                                                          | State | Role                                                                                                                                                                                                                                                                                                      |
+|-----------------------------------------------------------------+-------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =CONFIG_SERIAL_8250=                                            | y     | =console=ttyS0= so =build.sh --run= can scrape markers                                                                                                                                                                                                                                                    |
+| =CONFIG_MAGIC_SYSRQ= (default enable =0x1=, all functions)      | y     | #28: Alt-SysRq works even when the Lisp is dead or stuck — it is the kernel's own keyboard handler, under =KD_GRAPHICS= too. =w= / =t= dump blocked / all tasks to the kernel log, =s u b= sync, remount read-only, reboot; =c= panics on purpose, which (with pstore) keeps the log ([[file:diagnostics.org][diagnostics.org]] §6) |
+| =CONFIG_SOFTLOCKUP_DETECTOR= + =HARDLOCKUP_DETECTOR= (perf NMI) | y     | #28: a CPU stuck in the kernel (with or without interrupts) is reported in the kernel log, which =session-log.lisp= copies to =kernel.log=. Report only: =BOOTPARAM_SOFTLOCKUP_PANIC=0=                                                                                                                   |
+| =CONFIG_DETECT_HUNG_TASK=                                       | y     | #28: a task in uninterruptible sleep over 120 s (a stuck disk or driver) is reported, report only (=BOOTPARAM_HUNG_TASK_PANIC=0=)                                                                                                                                                                         |
+| =CONFIG_PSTORE= + =EFI_VARS_PSTORE= (needs =MISC_FILESYSTEMS=)  | y     | #28: on a panic the kernel writes its last log into EFI variables; the next boot of *Debian* shows it in =/sys/fs/pstore= and =systemd-pstore= (enabled on the host) moves it to =/var/lib/systemd/pstore= — and frees the variables. =PSTORE_COMPRESS= (zlib) keeps the records small                    |
 
 * 7. Networking (IPv4 + QEMU virtio-net) — NEW in tag #21
 
@@ -215,17 +215,17 @@ plumbing a NIC needs — =CONFIG_PCI= + =CONFIG_PCI_MSI= — was already on from
 Everything here is built-in (=y=), never a module: we ship no modules and have no
 =modprobe=.
 
-| Option               | State | Role                                                          |
-|----------------------+-------+---------------------------------------------------------------|
-| =CONFIG_NET=         | y     | The socket / protocol core — the master switch                |
-| =CONFIG_INET=        | y     | IPv4 (TCP, UDP, ICMP) — the thing we actually want            |
-| =CONFIG_UNIX=        | y     | AF_UNIX local sockets (useful even before a NIC has an IP)     |
-| =CONFIG_PACKET=      | y     | AF_PACKET raw sockets (some DHCP clients use it)              |
-| =CONFIG_NETDEVICES=  | y     | The network-device layer (gate for any NIC driver)            |
-| =CONFIG_NET_CORE=    | y     | Core netdev machinery (auto-selected)                         |
-| =CONFIG_VIRTIO=      | y     | Virtio core                                                   |
-| =CONFIG_VIRTIO_PCI=  | y     | Virtio-over-PCI transport                                     |
-| =CONFIG_VIRTIO_NET=  | y     | The QEMU paravirtual NIC driver — binds =[1af4:1000]= as eth0 |
+| Option              | State | Role                                                          |
+|---------------------+-------+---------------------------------------------------------------|
+| =CONFIG_NET=        | y     | The socket / protocol core — the master switch                |
+| =CONFIG_INET=       | y     | IPv4 (TCP, UDP, ICMP) — the thing we actually want            |
+| =CONFIG_UNIX=       | y     | AF_UNIX local sockets (useful even before a NIC has an IP)    |
+| =CONFIG_PACKET=     | y     | AF_PACKET raw sockets (some DHCP clients use it)              |
+| =CONFIG_NETDEVICES= | y     | The network-device layer (gate for any NIC driver)            |
+| =CONFIG_NET_CORE=   | y     | Core netdev machinery (auto-selected)                         |
+| =CONFIG_VIRTIO=     | y     | Virtio core                                                   |
+| =CONFIG_VIRTIO_PCI= | y     | Virtio-over-PCI transport                                     |
+| =CONFIG_VIRTIO_NET= | y     | The QEMU paravirtual NIC driver — binds =[1af4:1000]= as eth0 |
 
 Where each of these lives in the tree: the socket layer every =sb-bsd-sockets=
 call enters through is [[file:../linux/net/socket.c][=net/socket.c=]]; IPv4 registers itself in
@@ -256,22 +256,22 @@ rather than a demo: containers, Wi-Fi, a terminal, a web engine and the tests
 that prove them. Every row was chosen on purpose; =make olddefconfig= pulled in
 the helpers listed in the change log.
 
-| Option | State | Role |
-|--------+-------+------|
-| =CONFIG_USER_NS= | y | user namespaces: the unprivileged containers of [[file:containers.org][containers.org]] (=lol-ct=) and Chrome's own sandbox. Defined in =init/Kconfig= (=default n=) |
-| =CONFIG_OVERLAY_FS= | y | per-directory overlays over the host root inside a container; also the QEMU test =/home= (below). Selects =FS_STACK= |
-| =CONFIG_SYSVIPC= / =CONFIG_POSIX_MQUEUE= | y | System V shared memory and message queues: PostgreSQL in a container needs SysV shm |
-| =CONFIG_INOTIFY_USER= | y | file-change notification: hotplugged =/dev/input/eventN= nodes ([[file:input.org][input.org]] §4¾), and the file watchers dev servers use |
-| =CONFIG_SECCOMP= + =SECCOMP_FILTER= | y | syscall filters: what Chrome's sandbox is built on ([[file:web-browser.org][web-browser.org]]) |
-| =CONFIG_IPV6= | y | IPv6 (SLAAC autoconfigures on link-up); many networks and sites expect it. Was deliberately off until #26 |
-| =CONFIG_CFG80211= + =CONFIG_MAC80211= | y | the 802.11 configuration plane (nl80211) and soft-MAC — [[file:networking.org][networking.org]] §7 |
-| =CONFIG_IWLWIFI= + =CONFIG_IWLMVM= | y | the laptop's Intel AX201 (CNVi) driver and its op-mode; needs its firmware in the initramfs |
-| =CONFIG_RFKILL= | y | radio kill switches; =/dev/rfkill= to unblock Wi-Fi |
-| =CONFIG_FW_CFG_SYSFS= | y | QEMU's firmware-config blobs under =/sys/firmware/qemu_fw_cfg=: how a test boot passes switches (=opt/lol/netrepl=, =opt/lol/disk=) to an EFISTUB kernel whose cmdline is built in. Real hardware has no fw_cfg, so these switches cannot exist there |
-| =CONFIG_DMI_SYSFS= | y | raw SMBIOS tables in sysfs; a second channel for machine identity, cheap |
-| =CONFIG_NET_9P= + =NET_9P_VIRTIO= + =9P_FS= | y | QEMU only in practice: the build host's real =/= shared read-only over virtio-9p, so tests can run its programs (=LOL_GUEST_HOSTROOT=1=, preinit's =mount_storage_9p=) |
-| =CONFIG_USB_RTL8152= | y | #27: the user's USB Ethernet dongle (=0bda:8153=, RTL8153), a wired fallback for a laptop with no port; =network-up= leases on any interface. Its =rtl_nic/rtl8153*.fw= files are optional patches (=unable to load firmware patch= is a warning), so none are shipped. Selects =MII= and =PHYLIB=; it does not need =USB_USBNET= (that is for the CDC rows below) |
-| =CONFIG_USB_NET_CDCETHER= + =USB_NET_CDC_NCM= | y | #27: the standard USB Ethernet classes (ECM, NCM) most other dongles and phone tethering speak |
+| Option                                        | State | Role                                                                                                                                                                                                                                                                                                                                                               |
+|-----------------------------------------------+-------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =CONFIG_USER_NS=                              | y     | user namespaces: the unprivileged containers of [[file:containers.org][containers.org]] (=lol-ct=) and Chrome's own sandbox. Defined in =init/Kconfig= (=default n=)                                                                                                                                                                                                                        |
+| =CONFIG_OVERLAY_FS=                           | y     | per-directory overlays over the host root inside a container; also the QEMU test =/home= (below). Selects =FS_STACK=                                                                                                                                                                                                                                               |
+| =CONFIG_SYSVIPC= / =CONFIG_POSIX_MQUEUE=      | y     | System V shared memory and message queues: PostgreSQL in a container needs SysV shm                                                                                                                                                                                                                                                                                |
+| =CONFIG_INOTIFY_USER=                         | y     | file-change notification: hotplugged =/dev/input/eventN= nodes ([[file:input.org][input.org]] §4¾), and the file watchers dev servers use                                                                                                                                                                                                                                              |
+| =CONFIG_SECCOMP= + =SECCOMP_FILTER=           | y     | syscall filters: what Chrome's sandbox is built on ([[file:web-browser.org][web-browser.org]])                                                                                                                                                                                                                                                                                               |
+| =CONFIG_IPV6=                                 | y     | IPv6 (SLAAC autoconfigures on link-up); many networks and sites expect it. Was deliberately off until #26                                                                                                                                                                                                                                                          |
+| =CONFIG_CFG80211= + =CONFIG_MAC80211=         | y     | the 802.11 configuration plane (nl80211) and soft-MAC — [[file:networking.org][networking.org]] §7                                                                                                                                                                                                                                                                                          |
+| =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=            | y     | the laptop's Intel AX201 (CNVi) driver and its op-mode; needs its firmware in the initramfs                                                                                                                                                                                                                                                                        |
+| =CONFIG_RFKILL=                               | y     | radio kill switches; =/dev/rfkill= to unblock Wi-Fi                                                                                                                                                                                                                                                                                                                |
+| =CONFIG_FW_CFG_SYSFS=                         | y     | QEMU's firmware-config blobs under =/sys/firmware/qemu_fw_cfg=: how a test boot passes switches (=opt/lol/netrepl=, =opt/lol/disk=) to an EFISTUB kernel whose cmdline is built in. Real hardware has no fw_cfg, so these switches cannot exist there                                                                                                              |
+| =CONFIG_DMI_SYSFS=                            | y     | raw SMBIOS tables in sysfs; a second channel for machine identity, cheap                                                                                                                                                                                                                                                                                           |
+| =CONFIG_NET_9P= + =NET_9P_VIRTIO= + =9P_FS=   | y     | QEMU only in practice: the build host's real =/= shared read-only over virtio-9p, so tests can run its programs (=LOL_GUEST_HOSTROOT=1=, preinit's =mount_storage_9p=)                                                                                                                                                                                             |
+| =CONFIG_USB_RTL8152=                          | y     | #27: the user's USB Ethernet dongle (=0bda:8153=, RTL8153), a wired fallback for a laptop with no port; =network-up= leases on any interface. Its =rtl_nic/rtl8153*.fw= files are optional patches (=unable to load firmware patch= is a warning), so none are shipped. Selects =MII= and =PHYLIB=; it does not need =USB_USBNET= (that is for the CDC rows below) |
+| =CONFIG_USB_NET_CDCETHER= + =USB_NET_CDC_NCM= | y     | #27: the standard USB Ethernet classes (ECM, NCM) most other dongles and phone tethering speak                                                                                                                                                                                                                                                                     |
 
 /Tried and dropped:/ =CONFIG_MAC80211_HWSIM= would have let QEMU emulate Wi-Fi
 radios, but built in (we have no modules) it creates two fake radios on *every*
@@ -373,7 +373,7 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   its own dead series. The jump itself was the cleanest yet — =make olddefconfig=
   dropped *three* symbols and added *five*, and every one of the eight is an
   architecture/vendor flag the build selects for itself, not something we chose:
-  | dropped | =ARCH_SUPPORTS_AUTOFDO_CLANG=, =ARCH_SUPPORTS_PROPELLER_CLANG=, =GENERIC_TIME_VSYSCALL= |
+  | dropped | =ARCH_SUPPORTS_AUTOFDO_CLANG=, =ARCH_SUPPORTS_PROPELLER_CLANG=, =GENERIC_TIME_VSYSCALL=                                |
   | added   | =ARCH_MEMORY_ORDER_TSO=, =FUTEX_ROBUST_UNLOCK=, =HAVE_FUTEX_ROBUST_UNLOCK=, =GENERIC_BITREVERSE=, =NET_VENDOR_ALIBABA= |
   Nothing we rely on moved. Audited by name before building, because a silent drop
   is exactly how this kind of bump goes wrong: =PCI=, =FB_EFI=,

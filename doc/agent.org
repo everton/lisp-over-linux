@@ -48,15 +48,15 @@ nothing (no =SECCOMP=, no LSM) will block Bun's JIT mappings.
 
 What it would still cost:
 
-| Gap                          | Why it bites                                                  |
-|------------------------------+---------------------------------------------------------------|
-| =# CONFIG_RTC_CLASS not set= | guest clock starts at epoch 0 → *every TLS handshake fails*   |
-| no default route             | =dhcp.lisp= leaves off-subnet routing to a later stage (§2c)   |
-| no DNS                       | glibc =getaddrinfo= dlopens =libnss_{files,dns}.so.2=          |
-| RAM-only rootfs              | 290 MB into a tmpfs, on =-m 2048=, plus Bun's own RSS          |
-| terminal                     | full-screen Ink TUI wants raw mode + a real terminal          |
-| no shell, no =git=           | its Bash tool spawns =/bin/bash=; we have neither             |
-| =# CONFIG_INOTIFY_USER=      | file watching fails                                           |
+| Gap                          | Why it bites                                                 |
+|------------------------------+--------------------------------------------------------------|
+| =# CONFIG_RTC_CLASS not set= | guest clock starts at epoch 0 → *every TLS handshake fails*  |
+| no default route             | =dhcp.lisp= leaves off-subnet routing to a later stage (§2c) |
+| no DNS                       | glibc =getaddrinfo= dlopens =libnss_{files,dns}.so.2=        |
+| RAM-only rootfs              | 290 MB into a tmpfs, on =-m 2048=, plus Bun's own RSS        |
+| terminal                     | full-screen Ink TUI wants raw mode + a real terminal         |
+| no shell, no =git=           | its Bash tool spawns =/bin/bash=; we have neither            |
+| =# CONFIG_INOTIFY_USER=      | file watching fails                                          |
 
 The last row of that table is the real objection, and it is not technical. To
 make the CLI *useful* we would import a POSIX userland — a shell, coreutils,
@@ -169,20 +169,20 @@ This is exactly the difference the browser plan already made between an
 
 Every row here is an implemented function, today:
 
-| Tool (as the model sees it) | Lisp behind it                              | From          |
-|-----------------------------+---------------------------------------------+---------------|
-| =lisp-apropos=              | =spotter-candidates= + =spotter-filter=     | present.lisp  |
-| =lisp-source=               | =source-of= / =definitions-of=              | registry.lisp |
-| =lisp-senders=              | =senders= / =referrers= / =macro-users=     | registry.lisp |
-| =lisp-specializers=         | =specializers-of= / =methods-on-class=      | registry.lisp |
-| =lisp-describe-class=       | =class-info= (supers, subs, slots, CPL)     | model.lisp    |
-| =lisp-describe-gf=          | =gf-info= / =methods-of= / =dispatch-matrix=| model.lisp    |
-| =lisp-applicable=           | =applicable-methods= / =effective-method-onion= | model.lisp |
-| =lisp-map=                  | =categorize=                                | model.lisp    |
-| =lisp-inspect=              | =inspect-fields=                            | model.lisp    |
-| =lisp-backtrace=            | =backtrace-frames= / =frame-locals=         | model.lisp    |
-| =lisp-eval=                 | =eval= in a chosen package (gated, §7.2)    | —             |
-| =lisp-accept=               | =accept-source= — *compile into the image*  | registry.lisp |
+| Tool (as the model sees it) | Lisp behind it                                  | From          |
+|-----------------------------+-------------------------------------------------+---------------|
+| =lisp-apropos=              | =spotter-candidates= + =spotter-filter=         | present.lisp  |
+| =lisp-source=               | =source-of= / =definitions-of=                  | registry.lisp |
+| =lisp-senders=              | =senders= / =referrers= / =macro-users=         | registry.lisp |
+| =lisp-specializers=         | =specializers-of= / =methods-on-class=          | registry.lisp |
+| =lisp-describe-class=       | =class-info= (supers, subs, slots, CPL)         | model.lisp    |
+| =lisp-describe-gf=          | =gf-info= / =methods-of= / =dispatch-matrix=    | model.lisp    |
+| =lisp-applicable=           | =applicable-methods= / =effective-method-onion= | model.lisp    |
+| =lisp-map=                  | =categorize=                                    | model.lisp    |
+| =lisp-inspect=              | =inspect-fields=                                | model.lisp    |
+| =lisp-backtrace=            | =backtrace-frames= / =frame-locals=             | model.lisp    |
+| =lisp-eval=                 | =eval= in a chosen package (gated, §7.2)        | —             |
+| =lisp-accept=               | =accept-source= — *compile into the image*      | registry.lisp |
 
 So the implementation of the tool layer is a table of JSON schemas and a
 dispatcher — a couple of hundred lines — not a new subsystem. The capability is
@@ -226,22 +226,22 @@ big /protocol/ on the list: after TLS, this machine can talk to anything.
 
 * 3. The layers, and what each one costs
 
-| Layer               | Status                | Rough size | Notes                                       |
-|---------------------+-----------------------+------------+---------------------------------------------|
-| TCP sockets         | *DONE*                | —          | =sb-bsd-sockets=, baked in by =build.sh=    |
-| HTTP/1.1 client     | *DONE* (network track)| —          | =http.lisp=; the agent calls it (§14.1)       |
-| JSON reader/printer | *DONE*                | 341 lines  | §5 — [[file:../initramfs/json.lisp][json.lisp]]                    |
-| SSE framing         | *DONE*                | ~90 lines  | in [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]                    |
-| Messages protocol   | *DONE*                | in agent.lisp | streaming, retries, cancel, usage (§14)  |
-| Tool surface        | *DONE*                | in agent.lisp | 9 read tools + 4 gated writes (§14)      |
-| Conversation model  | *DONE*                | in agent.lisp | CLOS objects (§6); =present= in agent-ui |
-| REPL doorway        | *DONE*                | —          | §8.2 — =?prose=, bare =?=, =(ask …)=          |
-| "Ask it" verb       | *DONE*                | —          | §8.1 — =C-c C-a= (and =C-c ?=, §14)          |
-| Conversation surface| *DONE*                | 720 lines (agent-ui) | §8.3 — a Workspace pane, streamed  |
-| Approval            | *DONE*                | ~60 lines  | §8.4 — a condition; the chooser card (§14)   |
-| Modes + indicators  | *partly*              | —          | §8.9 — both dials; tray + tab dot; no glyph/prompt |
-| Debugger doorway    | *DONE* (read-only)    | ~100 lines | §8.8 — the ASK restart + a viewer (§14)      |
-| TLS 1.3 client      | *Phase 3 sub-project* | ~1500 lines| §9 — the only genuinely hard part           |
+| Layer                | Status                 | Rough size           | Notes                                              |
+|----------------------+------------------------+----------------------+----------------------------------------------------|
+| TCP sockets          | *DONE*                 | —                    | =sb-bsd-sockets=, baked in by =build.sh=           |
+| HTTP/1.1 client      | *DONE* (network track) | —                    | =http.lisp=; the agent calls it (§14.1)            |
+| JSON reader/printer  | *DONE*                 | 341 lines            | §5 — [[file:../initramfs/json.lisp][json.lisp]]                                     |
+| SSE framing          | *DONE*                 | ~90 lines            | in [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]                                 |
+| Messages protocol    | *DONE*                 | in agent.lisp        | streaming, retries, cancel, usage (§14)            |
+| Tool surface         | *DONE*                 | in agent.lisp        | 9 read tools + 4 gated writes (§14)                |
+| Conversation model   | *DONE*                 | in agent.lisp        | CLOS objects (§6); =present= in agent-ui           |
+| REPL doorway         | *DONE*                 | —                    | §8.2 — =?prose=, bare =?=, =(ask …)=               |
+| "Ask it" verb        | *DONE*                 | —                    | §8.1 — =C-c C-a= (and =C-c ?=, §14)                |
+| Conversation surface | *DONE*                 | 720 lines (agent-ui) | §8.3 — a Workspace pane, streamed                  |
+| Approval             | *DONE*                 | ~60 lines            | §8.4 — a condition; the chooser card (§14)         |
+| Modes + indicators   | *partly*               | —                    | §8.9 — both dials; tray + tab dot; no glyph/prompt |
+| Debugger doorway     | *DONE* (read-only)     | ~100 lines           | §8.8 — the ASK restart + a viewer (§14)            |
+| TLS 1.3 client       | *Phase 3 sub-project*  | ~1500 lines          | §9 — the only genuinely hard part                  |
 
 Everything above the TLS row is the agent track (A0–A2, §12) and needs *no
 kernel change at all*. The network track (§10) needs none either.
@@ -296,15 +296,15 @@ that way.
 The mapping is where a JSON library either fits its host language or fights it.
 Proposed:
 
-| JSON       | Lisp                                   | Why                                        |
-|------------+----------------------------------------+--------------------------------------------|
-| object     | a =json-object= *instance* (ordered alist inside) | so =present= can dispatch on it     |
-| array      | =simple-vector=                        | distinguishable from a list at a glance    |
-| string     | =string=                               |                                            |
-| number     | =integer= / =double-float=             |                                            |
-| =true=     | =t=                                    |                                            |
-| =false=    | =:false=                               | never =nil= — =nil= is ambiguous three ways |
-| =null=     | =:null=                                | ditto                                      |
+| JSON    | Lisp                                              | Why                                         |
+|---------+---------------------------------------------------+---------------------------------------------|
+| object  | a =json-object= *instance* (ordered alist inside) | so =present= can dispatch on it             |
+| array   | =simple-vector=                                   | distinguishable from a list at a glance     |
+| string  | =string=                                          |                                             |
+| number  | =integer= / =double-float=                        |                                             |
+| =true=  | =t=                                               |                                             |
+| =false= | =:false=                                          | never =nil= — =nil= is ambiguous three ways |
+| =null=  | =:null=                                           | ditto                                       |
 
 The one decision worth defending is making objects a *class* instead of a hash
 table or a plist. It costs a little ergonomics at the call site (an accessor
@@ -370,11 +370,11 @@ Two tools can change the world: =lisp-eval= and =lisp-accept=. The policy slot
 on the conversation is the control — the *authority* dial of the two in §8.9,
 and independent of the *initiative* one:
 
-| Policy       | Behaviour                                                       |
-|--------------+-----------------------------------------------------------------|
-| =:read-only= | write tools are not offered at all (in a conversation begun so) |
+| Policy       | Behaviour                                                        |
+|--------------+------------------------------------------------------------------|
+| =:read-only= | write tools are not offered at all (in a conversation begun so)  |
 | =:ask=       | each call becomes a pending object you approve or deny (default) |
-| =:allow=     | run it                                                          |
+| =:allow=     | run it                                                           |
 
 The approval UI should not be new. The debugger already renders a *restart
 rail* — a list of named choices, keyboard- and click-selectable, one of which
@@ -433,11 +433,11 @@ application. It is to add a verb:
 Semantics follow the others exactly — they all act on the selection, or on the
 thing the pane is presenting when there is no selection:
 
-| Selection            | What gets asked                                              |
-|----------------------+--------------------------------------------------------------|
-| a form               | that form is the subject ("what does this do / why is it wrong") |
-| prose                | that text is the question, the pane's subject is the context |
-| nothing              | the pane's subject is both                                   |
+| Selection | What gets asked                                                  |
+|-----------+------------------------------------------------------------------|
+| a form    | that form is the subject ("what does this do / why is it wrong") |
+| prose     | that text is the question, the pane's subject is the context     |
+| nothing   | the pane's subject is both                                       |
 
 That last row is the important one, and it is the thing a terminal agent can
 never have. *You are always already somewhere.* Standing in =draw-alien= and
@@ -519,11 +519,11 @@ popup. The *native* move is to signal a condition:
 Everything then falls out of machinery that already exists and is already
 debugged:
 
-| Where you are      | What you see                                                    |
-|--------------------+-----------------------------------------------------------------|
+| Where you are      | What you see                                                               |
+|--------------------+----------------------------------------------------------------------------|
 | the graphical env  | the *restart rail* — the same rows, digits, =Enter=, =C-g= as the debugger |
-| the REPL           | the ordinary debugger, printing the same restarts               |
-| a script or a test | =handler-bind= chooses =allow= — policy with no extra API        |
+| the REPL           | the ordinary debugger, printing the same restarts                          |
+| a script or a test | =handler-bind= chooses =allow= — policy with no extra API                  |
 
 =dbg-invoke-with-value= already exists for restarts that need an argument, so
 /Edit the form first/ and /Deny with a reason/ need no new interaction either.
@@ -637,10 +637,10 @@ on/off switch is the classic mistake — an agent can be proactive but powerless
 - *Initiative* — =:off= · =:reacting= · =:interacting=
 - *Authority* — =:read-only= · =:ask= · =:allow=  (the §7.2 policy dial)
 
-|                  | =:read-only=                         | =:ask=                                  | =:allow=                     |
-|------------------+--------------------------------------+-----------------------------------------+------------------------------|
-| =:reacting=      | an oracle — the safest useful default | the normal working mode                 | "just do it"                 |
-| =:interacting=   | an observer that may offer opinions   | *pairing* — it notices, proposes, you accept | delegated autonomy      |
+|                | =:read-only=                          | =:ask=                                       | =:allow=           |
+|----------------+---------------------------------------+----------------------------------------------+--------------------|
+| =:reacting=    | an oracle — the safest useful default | the normal working mode                      | "just do it"       |
+| =:interacting= | an observer that may offer opinions   | *pairing* — it notices, proposes, you accept | delegated autonomy |
 
 =:off= is a real state, not a degenerate one: no sockets, no tokens, the verb
 inert. It is the honest state on a machine with no broker reachable, and the one
@@ -672,11 +672,11 @@ change things around here.
 Constrained by the visual grammar that exists, not invented alongside it. All
 three draw their colours from the semantic palette — no ad-hoc values.
 
-| Scope    | Indicator                                                                 |
-|----------+---------------------------------------------------------------------------|
-| global   | *the alien* — greyed when =:off=, calm when =:reacting=, awake when =:interacting= |
+| Scope    | Indicator                                                                                                     |
+|----------+---------------------------------------------------------------------------------------------------------------|
+| global   | *the alien* — greyed when =:off=, calm when =:reacting=, awake when =:interacting=                            |
 | per tab  | a small dot beside the tab's kind stripe: hollow =:reacting=, filled =:interacting=, pulsing = working (§8.7) |
-| the REPL | the prompt — the environment's status line since forever, and where every Lisp already shows =*package*= |
+| the REPL | the prompt — the environment's status line since forever, and where every Lisp already shows =*package*=      |
 
 Drawn: [[file:../media/agent-indicator-design.html][media/agent-indicator-design.html]]
 (open locally) — the strip at true =draw-tabs= metrics, the glyph, the prompt, and
@@ -720,15 +720,15 @@ This is a second, independent reason the indicator has to be permanent.
 
 ** 8.10 What we are deliberately not building
 
-| Not this                                   | Because                                              |
-|--------------------------------------------+------------------------------------------------------|
-| a chat tab with an input box at the bottom | a fifth idiom (§8.0); the Workspace already is one   |
-| a modal approval dialog                    | the restart rail already does this, better (§8.4)    |
-| a mode that captures input                 | §8.9 — ambient state yes, modal capture no           |
-| a persistent sidebar / assistant panel     | the *indicators* of §8.9 are the whole chrome budget |
+| Not this                                   | Because                                                 |
+|--------------------------------------------+---------------------------------------------------------|
+| a chat tab with an input box at the bottom | a fifth idiom (§8.0); the Workspace already is one      |
+| a modal approval dialog                    | the restart rail already does this, better (§8.4)       |
+| a mode that captures input                 | §8.9 — ambient state yes, modal capture no              |
+| a persistent sidebar / assistant panel     | the *indicators* of §8.9 are the whole chrome budget    |
 | suggestions while =:reacting=              | in that mode, pull never push — and the mode is visible |
-| a preferences screen                       | modes are variables and a subject (§8.9)             |
-| a second completion mechanism              | =Tab= completion belongs to the editor, not the oracle |
+| a preferences screen                       | modes are variables and a subject (§8.9)                |
+| a second completion mechanism              | =Tab= completion belongs to the editor, not the oracle  |
 
 The middle rows are the refinement worth keeping straight: the agent staying
 quiet is no longer a global promise, it is *what =:reacting= means* — and
@@ -747,13 +747,13 @@ We are one client talking to one endpoint. That removes most of the standard:
 no server side, no session resumption, no 0-RTT, no renegotiation, no TLS 1.2
 fallback, one cipher suite, one key-exchange group.
 
-| Piece                        | Choice                          | Why                                             |
-|------------------------------+---------------------------------+-------------------------------------------------|
-| Version                      | TLS 1.3 only                    | one handshake, and it is the simpler one        |
-| AEAD                         | =TLS_CHACHA20_POLY1305_SHA256=  | pure integer math; AES-GCM wants carryless mult |
-| Key exchange                 | X25519                          | one curve, well-specified, RFC test vectors     |
-| Hash / KDF                   | SHA-256, HMAC, HKDF             | ~150 lines together                             |
-| Cert signature verification  | RSA PKCS#1 v1.5 *and* ECDSA P-256 | we do not get to choose the server's cert      |
+| Piece                       | Choice                            | Why                                             |
+|-----------------------------+-----------------------------------+-------------------------------------------------|
+| Version                     | TLS 1.3 only                      | one handshake, and it is the simpler one        |
+| AEAD                        | =TLS_CHACHA20_POLY1305_SHA256=    | pure integer math; AES-GCM wants carryless mult |
+| Key exchange                | X25519                            | one curve, well-specified, RFC test vectors     |
+| Hash / KDF                  | SHA-256, HMAC, HKDF               | ~150 lines together                             |
+| Cert signature verification | RSA PKCS#1 v1.5 *and* ECDSA P-256 | we do not get to choose the server's cert       |
 
 Primitive by primitive: SHA-256 (~100), HMAC+HKDF (~60), ChaCha20 (~80),
 Poly1305 (~80), X25519 (~150), record layer + handshake state machine
@@ -803,12 +803,12 @@ groundwork for the agent: it is what =networking.org= has had marked "(later)"
 since the DHCP client landed, and every piece is independently testable with no
 agent code in the image.
 
-| Piece            | Why                              | Cost            | Idiom it follows          |
-|------------------+----------------------------------+-----------------+---------------------------|
-| default route    | reaching anything off-subnet     | ~40 lines FFI   | the =SIOCSIF*= calls in =net.lisp= |
-| DNS client       | names instead of IP literals     | ~150 lines      | =dhcp.lisp= (build/send/parse) |
-| SNTP client      | a real clock → cert validity     | ~60 lines       | =dhcp.lisp=, UDP again    |
-| plain-HTTP =GET= | proves the whole outbound path   | reuses =http.lisp= | —                      |
+| Piece            | Why                            | Cost               | Idiom it follows                   |
+|------------------+--------------------------------+--------------------+------------------------------------|
+| default route    | reaching anything off-subnet   | ~40 lines FFI      | the =SIOCSIF*= calls in =net.lisp= |
+| DNS client       | names instead of IP literals   | ~150 lines         | =dhcp.lisp= (build/send/parse)     |
+| SNTP client      | a real clock → cert validity   | ~60 lines          | =dhcp.lisp=, UDP again             |
+| plain-HTTP =GET= | proves the whole outbound path | reuses =http.lisp= | —                                  |
 
 Three things worth noticing:
 
@@ -854,28 +854,28 @@ image that exercises them.
 
 *Network track* (§10 — closes =networking.org= §2c; no agent code involved):
 
-| Phase | Ships                                                        | Kernel work |
-|-------+--------------------------------------------------------------+-------------|
-| N1    | off-subnet default route via the leased gateway — *DONE*     | none        |
-| N2    | DNS client in Lisp; names resolve — *DONE*                   | none        |
-| N3    | SNTP client; the guest knows what time it is — *DONE*        | none        |
-| N4    | plain-HTTP =GET= end to end — *DONE*, and HTTPS via the host's libssl (§10) | none |
+| Phase | Ships                                                                       | Kernel work |
+|-------+-----------------------------------------------------------------------------+-------------|
+| N1    | off-subnet default route via the leased gateway — *DONE*                    | none        |
+| N2    | DNS client in Lisp; names resolve — *DONE*                                  | none        |
+| N3    | SNTP client; the guest knows what time it is — *DONE*                       | none        |
+| N4    | plain-HTTP =GET= end to end — *DONE*, and HTTPS via the host's libssl (§10) | none        |
 
 *Agent track* (§4–§8 — pure Lisp, testable against a broker on loopback;
 §8.2 first, since it works over the network REPL with no pixels involved):
 
-| Phase | Ships                                                                  | Kernel work |
-|-------+------------------------------------------------------------------------+-------------|
-| A0    | =json.lisp=, =http.lisp=, SSE, Messages protocol, =(ask "…")= in the REPL — *DONE* | none |
-| A1    | tool surface + gating; conversation objects + =present=; browser tab; Spotter "ask" — *DONE* | none |
-| A2    | the debugger doorway (§8.8): ASK restart, propose → accept → retry — *DONE*, read-only | none |
+| Phase | Ships                                                                                        | Kernel work |
+|-------+----------------------------------------------------------------------------------------------+-------------|
+| A0    | =json.lisp=, =http.lisp=, SSE, Messages protocol, =(ask "…")= in the REPL — *DONE*           | none        |
+| A1    | tool surface + gating; conversation objects + =present=; browser tab; Spotter "ask" — *DONE* | none        |
+| A2    | the debugger doorway (§8.8): ASK restart, propose → accept → retry — *DONE*, read-only       | none        |
 
 *They meet:*
 
-| Phase | Ships                                                              | Kernel work |
-|-------+--------------------------------------------------------------------+-------------|
-| 3     | TLS 1.3 client (§9) — the broker is deleted                        | =RTC_CLASS= optional (N3 covers it) |
-| 4     | transcript persistence — *DONE* (2026-10-16): =~/.lol/agent/=, §14.10 | none        |
+| Phase | Ships                                                                 | Kernel work                         |
+|-------+-----------------------------------------------------------------------+-------------------------------------|
+|     3 | TLS 1.3 client (§9) — the broker is deleted                           | =RTC_CLASS= optional (N3 covers it) |
+|     4 | transcript persistence — *DONE* (2026-10-16): =~/.lol/agent/=, §14.10 | none                                |
 
 The tracks are independent, so they can run in either order or interleave. N4 is
 the /the machine can reach the outside world on its own/ milestone; A0 is the
@@ -906,14 +906,14 @@ is the /this could not have been the CLI/ one.
 The agent track, A0 to A2, in four files loaded after the shell — six since §14.10 (=LISP_SOURCES=, see
 [[file:sbcl-init.org][sbcl-init.org]]):
 
-| File | Lines | What it is |
-|------+-------+------------|
-| [[file:../initramfs/json.lisp][json.lisp]] | 341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
-| [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]] | 109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?) |
-| [[file:../initramfs/agent.lisp][agent.lisp]] | 1932 | settings, the conversation object, the tools, the gate, the streamed Messages client, the preflight and the failure descriptions (§14.8), the turn loop, the system prompt, the REPL doorway |
-| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]] | 1193 | =present= on conversations / tool calls / the agent, Ask it, the error block and asking again (§14.8), the frame tick, the approval chooser, the indicators, the debugger doorway |
-| [[file:../initramfs/agent-tools.lisp][agent-tools.lisp]] | 475 | the rest of §2.2's tools — =lisp-inspect=, =lisp-applicable=, =lisp-backtrace= — plus §8.5's =browse= and a gated =web-fetch= (§14.10) |
-| [[file:../initramfs/agent-store.lisp][agent-store.lisp]] | 441 | a conversation saved to =~/.lol/agent/conversations/= after every turn and reopened from the Spotter (§14.10) |
+| File             | Lines | What it is                                                                                                                                                                                                                                    |
+|------------------+-------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| [[file:../initramfs/json.lisp][json.lisp]]        |   341 | package =LOL.JSON=: §5's mapping exactly — objects a =json-object= class (an ordered alist inside), arrays =simple-vector=, =:false= / =:null=; the writer *refuses* =nil=; key order kept; surrogate pairs glued, a lone half read as U+FFFD |
+| [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]  |   109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the one URL test the client needs (is this =https://api.anthropic.com=?)                                                                          |
+| [[file:../initramfs/agent.lisp][agent.lisp]]       |  1932 | settings, the conversation object, the tools, the gate, the streamed Messages client, the preflight and the failure descriptions (§14.8), the turn loop, the system prompt, the REPL doorway                                                  |
+| [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]]    |  1193 | =present= on conversations / tool calls / the agent, Ask it, the error block and asking again (§14.8), the frame tick, the approval chooser, the indicators, the debugger doorway                                                             |
+| [[file:../initramfs/agent-tools.lisp][agent-tools.lisp]] |   475 | the rest of §2.2's tools — =lisp-inspect=, =lisp-applicable=, =lisp-backtrace= — plus §8.5's =browse= and a gated =web-fetch= (§14.10)                                                                                                        |
+| [[file:../initramfs/agent-store.lisp][agent-store.lisp]] |   441 | a conversation saved to =~/.lol/agent/conversations/= after every turn and reopened from the Spotter (§14.10)                                                                                                                                 |
 
 Tests: [[file:../poc/json-test.lisp][poc/json-test.lisp]] (49 checks) and [[file:../poc/agent-test.lisp][poc/agent-test.lisp]] (127 checks since
 §14.10, 79 after §14.8; the whole client against the mock on loopback, with =HOME=
@@ -1002,20 +1002,20 @@ didactic sub-project it always was.
 
 ** 14.3 The tool surface
 
-| Tool | Behind it | Opens (C-c C-o) |
-|------+-----------+-----------------|
-| =lisp-apropos= | =spotter-candidates= + =spotter-filter= | — |
-| =lisp-source= | =definitions-of=, else =show-reference= (SBCL's source from disk) | the definition |
-| =lisp-senders= | =senders= / =referrers= / =binders= / =setters= / =macro-users= | the senders view |
-| =lisp-describe-class= | =class-info= + =methods-on-class= | the class |
-| =lisp-describe-gf= | =gf-info= | the generic |
-| =lisp-describe= | CL =describe= | the symbol |
-| =lisp-modules= | =categorize :file= | the module index / a module |
-| =file-read= / =file-list= | =files.lisp=; *under =$HOME= only*, symlinks resolved first | the file / folder |
-| =lisp-eval= (write) | =eval=, read with =*read-eval*= off | the value |
-| =lisp-accept= (write) | =accept-source= — the very function =C-c C-c= calls | the definition |
-| =file-write= (write) | =write-file-atomically= (temp file + rename) | the file |
-| =container-run= (write) | =run-in-container= — offered only when it is =fboundp= | — |
+| Tool                      | Behind it                                                         | Opens (C-c C-o)             |
+|---------------------------+-------------------------------------------------------------------+-----------------------------|
+| =lisp-apropos=            | =spotter-candidates= + =spotter-filter=                           | —                           |
+| =lisp-source=             | =definitions-of=, else =show-reference= (SBCL's source from disk) | the definition              |
+| =lisp-senders=            | =senders= / =referrers= / =binders= / =setters= / =macro-users=   | the senders view            |
+| =lisp-describe-class=     | =class-info= + =methods-on-class=                                 | the class                   |
+| =lisp-describe-gf=        | =gf-info=                                                         | the generic                 |
+| =lisp-describe=           | CL =describe=                                                     | the symbol                  |
+| =lisp-modules=            | =categorize :file=                                                | the module index / a module |
+| =file-read= / =file-list= | =files.lisp=; *under =$HOME= only*, symlinks resolved first       | the file / folder           |
+| =lisp-eval= (write)       | =eval=, read with =*read-eval*= off                               | the value                   |
+| =lisp-accept= (write)     | =accept-source= — the very function =C-c C-c= calls               | the definition              |
+| =file-write= (write)      | =write-file-atomically= (temp file + rename)                      | the file                    |
+| =container-run= (write)   | =run-in-container= — offered only when it is =fboundp=            | —                           |
 
 Not built from §2.2 at first: =lisp-specializers=, =lisp-applicable=, =lisp-inspect=,
 =lisp-backtrace= (the debugger doorway seeds the backtrace instead), and §8.5's
@@ -1350,13 +1350,13 @@ Each is a =define-agent-tool= like the first ones, so each goes through the same
 conversations begun after the image has them, because a conversation's tools are
 frozen at its first request (§14.8½).
 
-| Tool | Behind it | Opens (C-c C-o) |
-|------+-----------+-----------------|
-| =lisp-inspect= | =inspect-places= on a symbol's value / function / class, or on an earlier call's value (=call=: N); =path= drills by field label or position | the object |
-| =lisp-applicable= | =effective-method-onion=: :around, :before, the primary chain, :after, for one class per required argument | the onion view |
-| =lisp-backtrace= | a *snapshot* of the debugger's stack: condition, restarts, frames; =frame=: N gives its locals and source | the frame's definition |
-| =browse= | =present= on a subject (definition, senders, class, generic, onion, module, file, folder, value, an earlier call), shown beside the conversation | the subject |
-| =web-fetch= (gated) | =http-request= GET; HTML reduced to its words by =html-text= | — |
+| Tool                | Behind it                                                                                                                                        | Opens (C-c C-o)        |
+|---------------------+--------------------------------------------------------------------------------------------------------------------------------------------------+------------------------|
+| =lisp-inspect=      | =inspect-places= on a symbol's value / function / class, or on an earlier call's value (=call=: N); =path= drills by field label or position     | the object             |
+| =lisp-applicable=   | =effective-method-onion=: :around, :before, the primary chain, :after, for one class per required argument                                       | the onion view         |
+| =lisp-backtrace=    | a *snapshot* of the debugger's stack: condition, restarts, frames; =frame=: N gives its locals and source                                        | the frame's definition |
+| =browse=            | =present= on a subject (definition, senders, class, generic, onion, module, file, folder, value, an earlier call), shown beside the conversation | the subject            |
+| =web-fetch= (gated) | =http-request= GET; HTML reduced to its words by =html-text=                                                                                     | —                      |
 
 Three decisions worth keeping:
 
@@ -1484,15 +1484,15 @@ ending on C-g) is not asserted by a guest check yet.
 
 Against this machine and this tree, 2026-08-06:
 
-| Fact                                   | Value                                                          |
-|----------------------------------------+----------------------------------------------------------------|
-| =claude= binary                        | 290,728,968 bytes, ELF x86-64, dynamically linked               |
-| its shared libraries                   | =librt libc libpthread libdl libm= + =ld-linux-x86-64.so.2=     |
-| already in our cpio                    | =ld-linux-x86-64.so.2=, =libc.so.6=, =libm.so.6=                |
-| =initramfs.cpio= today                 | 44 MB (=lisp-init= is 40 MB)                                    |
-| QEMU memory                            | =-m 2048=                                                       |
-| SBCL                                   | 2.6.8, =:sb-thread= present                                     |
-| kernel: on                             | =NET INET VIRTIO_NET PACKET UNIX EPOLL EVENTFD TIMERFD SIGNALFD FUTEX AIO MEMBARRIER POSIX_TIMERS TMPFS UNIX98_PTYS IO_URING BINFMT_ELF= |
-| kernel: off                            | =RTC_CLASS INOTIFY_USER HIGH_RES_TIMERS SMP (NR_CPUS=1) SECCOMP MODULES VIRTIO_BLK EXT4_FS NET_9P= |
-| SLIRP addresses                        | guest =10.0.2.15=, host/gw =10.0.2.2=, DNS =10.0.2.3=           |
-| routing state                          | on-subnet only — =dhcp.lisp= defers the default route to §2c    |
+| Fact                   | Value                                                                                                                                    |
+|------------------------+------------------------------------------------------------------------------------------------------------------------------------------|
+| =claude= binary        | 290,728,968 bytes, ELF x86-64, dynamically linked                                                                                        |
+| its shared libraries   | =librt libc libpthread libdl libm= + =ld-linux-x86-64.so.2=                                                                              |
+| already in our cpio    | =ld-linux-x86-64.so.2=, =libc.so.6=, =libm.so.6=                                                                                         |
+| =initramfs.cpio= today | 44 MB (=lisp-init= is 40 MB)                                                                                                             |
+| QEMU memory            | =-m 2048=                                                                                                                                |
+| SBCL                   | 2.6.8, =:sb-thread= present                                                                                                              |
+| kernel: on             | =NET INET VIRTIO_NET PACKET UNIX EPOLL EVENTFD TIMERFD SIGNALFD FUTEX AIO MEMBARRIER POSIX_TIMERS TMPFS UNIX98_PTYS IO_URING BINFMT_ELF= |
+| kernel: off            | =RTC_CLASS INOTIFY_USER HIGH_RES_TIMERS SMP (NR_CPUS=1) SECCOMP MODULES VIRTIO_BLK EXT4_FS NET_9P=                                       |
+| SLIRP addresses        | guest =10.0.2.15=, host/gw =10.0.2.2=, DNS =10.0.2.3=                                                                                    |
+| routing state          | on-subnet only — =dhcp.lisp= defers the default route to §2c                                                                             |

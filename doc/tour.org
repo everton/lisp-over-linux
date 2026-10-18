@@ -40,20 +40,20 @@ What writing the guide turned up (each is recorded where it belongs):
 
 * The guide's pages
 
-| Page                                            | What it answers                                                   |
-|-------------------------------------------------+-------------------------------------------------------------------|
-| [[file:guide/index.html][index.html]]           | The big picture: firmware → kernel → preinit → the image → the environment |
-| [[file:guide/build.html][build.html]]           | =build.sh=, =LISP_SOURCES= order, =load-recording=, the frozen heap, the cpio |
-| [[file:guide/modules.html][modules.html]]       | Every module by layer, with derived "uses / used by" edges (interactive) |
-| [[file:guide/present.html][present.html]]       | subject → view → pane → trail; every =present= method; a keypress end to end |
-| [[file:guide/pixels.html][pixels.html]]         | canvas → widgets/textview → fb / X11 / PPM; evdev → poll → shell |
-| [[file:guide/live.html][live.html]]             | Accept, the Workspace verbs, the change set, the debugger, the inspector |
-| [[file:guide/system.html][system.html]]         | =/mnt/host= and =/home=, the five capabilities, =lol-rootd=, DHCP, the net REPL, workers |
-| [[file:guide/verify.html][verify.html]]         | Host tests, =render-frame=, =check-links=, =regen=, the guest harness |
-| [[file:guide/paths.html][paths.html]]           | Six reading paths: =M-.=, =C-x C-e=, =C-c C-c=, a preview, the Spotter, the halo |
-| [[file:guide/glossary.html][glossary.html]]     | Terms, each linked to where the code uses it |
-| [[file:guide/exercises.html][exercises.html]]   | Things to try, with what you should see |
-| [[file:guide/in-progress.html][in-progress.html]] | Subsystems being built, and how to add their sections |
+| Page             | What it answers                                                                          |
+|------------------+------------------------------------------------------------------------------------------|
+| [[file:guide/index.html][index.html]]       | The big picture: firmware → kernel → preinit → the image → the environment               |
+| [[file:guide/build.html][build.html]]       | =build.sh=, =LISP_SOURCES= order, =load-recording=, the frozen heap, the cpio            |
+| [[file:guide/modules.html][modules.html]]     | Every module by layer, with derived "uses / used by" edges (interactive)                 |
+| [[file:guide/present.html][present.html]]     | subject → view → pane → trail; every =present= method; a keypress end to end             |
+| [[file:guide/pixels.html][pixels.html]]      | canvas → widgets/textview → fb / X11 / PPM; evdev → poll → shell                         |
+| [[file:guide/live.html][live.html]]        | Accept, the Workspace verbs, the change set, the debugger, the inspector                 |
+| [[file:guide/system.html][system.html]]      | =/mnt/host= and =/home=, the five capabilities, =lol-rootd=, DHCP, the net REPL, workers |
+| [[file:guide/verify.html][verify.html]]      | Host tests, =render-frame=, =check-links=, =regen=, the guest harness                    |
+| [[file:guide/paths.html][paths.html]]       | Six reading paths: =M-.=, =C-x C-e=, =C-c C-c=, a preview, the Spotter, the halo         |
+| [[file:guide/glossary.html][glossary.html]]    | Terms, each linked to where the code uses it                                             |
+| [[file:guide/exercises.html][exercises.html]]   | Things to try, with what you should see                                                  |
+| [[file:guide/in-progress.html][in-progress.html]] | Subsystems being built, and how to add their sections                                    |
 
 * The in-image tour's stops
 

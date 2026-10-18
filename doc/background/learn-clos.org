@@ -155,12 +155,12 @@ a tie — =missile='s CPL or =ship='s?
 CLOS does not only pick *one* method. By default it builds an **effective
 method** out of all applicable ones, using their *qualifiers*:
 
-| qualifier  | when it runs                                              |
-|------------+-----------------------------------------------------------|
-| =:around=  | outermost; wraps everything, may decline to call inward    |
-| =:before=  | before the primary, most specific first                    |
-| /(none)/   | the *primary* method — the actual result                   |
-| =:after=   | after the primary, most specific **last**                  |
+| qualifier | when it runs                                            |
+|-----------+---------------------------------------------------------|
+| =:around= | outermost; wraps everything, may decline to call inward |
+| =:before= | before the primary, most specific first                 |
+| /(none)/  | the *primary* method — the actual result                |
+| =:after=  | after the primary, most specific **last**               |
 
 The order is an onion:
 
@@ -245,14 +245,14 @@ accessors and touches =sb-mop= not at all.
 
 The class questions, and the accessors that answer them:
 
-| question                      | MOP accessor                        |
-|-------------------------------+-------------------------------------|
-| what does it inherit from?    | =class-direct-superclasses=         |
-| what inherits from it?        | =class-direct-subclasses=           |
-| the full linearization?       | =class-precedence-list=             |
-| what slots does it define?    | =class-direct-slots=                |
-| …including inherited ones?    | =class-slots=                       |
-| a slot's name / type / readers| =slot-definition-name= / =-type= / =-readers= |
+| question                       | MOP accessor                                  |
+|--------------------------------+-----------------------------------------------|
+| what does it inherit from?     | =class-direct-superclasses=                   |
+| what inherits from it?         | =class-direct-subclasses=                     |
+| the full linearization?        | =class-precedence-list=                       |
+| what slots does it define?     | =class-direct-slots=                          |
+| …including inherited ones?     | =class-slots=                                 |
+| a slot's name / type / readers | =slot-definition-name= / =-type= / =-readers= |
 
 One trap, and it is a real one: a class must be **finalized** before
 =class-precedence-list= or =class-slots= will answer. A class that has never been
@@ -275,14 +275,14 @@ instantiated?
 
 The same trick, one level up:
 
-| question                          | MOP accessor                     |
-|-----------------------------------+----------------------------------|
-| what methods does it have?        | =generic-function-methods=       |
-| what does this method specialize on? | =method-specializers=         |
-| is it =:before= / =:after= / =:around=? | =method-qualifiers=       |
-| its argument list?                | =generic-function-lambda-list=   |
-| which methods mention this class?  | =specializer-direct-methods=    |
-| which apply to this class tuple?  | =compute-applicable-methods-using-classes= |
+| question                                | MOP accessor                               |
+|-----------------------------------------+--------------------------------------------|
+| what methods does it have?              | =generic-function-methods=                 |
+| what does this method specialize on?    | =method-specializers=                      |
+| is it =:before= / =:after= / =:around=? | =method-qualifiers=                        |
+| its argument list?                      | =generic-function-lambda-list=             |
+| which methods mention this class?       | =specializer-direct-methods=               |
+| which apply to this class tuple?        | =compute-applicable-methods-using-classes= |
 
 That last one is the star. It answers "given arguments of *these classes*, which
 methods apply, most specific first?" — *without calling anything*. It is how our

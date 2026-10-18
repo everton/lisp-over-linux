@@ -122,13 +122,13 @@ large spec.
 
 * 3. Where LoL differs
 
-| STEPS | LoL |
-|-------+-----|
-| Density from *metalanguages*: OMeta for parsers, Nile for graphics, one DSL per domain | Plain Lisp and CLOS. Macros could do OMeta's job, but we have not used them that way |
-| Rewrote its foundations (COLA compiles itself) | Trusts SBCL and Linux. The one exception, [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]], is a patch, not a rewrite |
-| Measured by the line count | Measured by readability: the =.org= docs come with the code (see the prose subtotal in =loc.sh=) |
-| A research demo that was never released as a buildable system | =build.sh= produces a bootable image from the repo |
-| The reader of the system is a human | [[file:agent.org][agent.org]] plans a second reader: an LLM using the same introspection layer as its tools |
+| STEPS                                                                                  | LoL                                                                                              |
+|----------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------|
+| Density from *metalanguages*: OMeta for parsers, Nile for graphics, one DSL per domain | Plain Lisp and CLOS. Macros could do OMeta's job, but we have not used them that way             |
+| Rewrote its foundations (COLA compiles itself)                                         | Trusts SBCL and Linux. The one exception, [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]], is a patch, not a rewrite           |
+| Measured by the line count                                                             | Measured by readability: the =.org= docs come with the code (see the prose subtotal in =loc.sh=) |
+| A research demo that was never released as a buildable system                          | =build.sh= produces a bootable image from the repo                                               |
+| The reader of the system is a human                                                    | [[file:agent.org][agent.org]] plans a second reader: an LLM using the same introspection layer as its tools          |
 
 * 4. The measurement: ours vs conformance
 
@@ -138,13 +138,13 @@ implements someone else's spec, and the spec sets its minimum size. =loc.sh=
 counts both. Its second table classifies every tracked code file by origin, and
 the rule list is at the top of the script:
 
-| origin | what goes there |
-|--------+-----------------|
-| ours | the system we designed: supervisor, toolkit, browser, model, file manager, … |
+| origin      | what goes there                                                                                                                                                   |
+|-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ours        | the system we designed: supervisor, toolkit, browser, model, file manager, …                                                                                      |
 | conformance | protocol and format implementations: DEFLATE, the image decoders, X11, DHCP, BDF, ANSI SGR, PNG writing, QMP, the stb_image shim, and the SBCL machine-code patch |
-| tests | =check-*.lisp=, =*-test.lisp=, the guest harness |
-| tooling | shell scripts, =host-client/=, the headless frame renderer |
-| vendored | =poc/vendor/= (=stb_image.h=), which we did not write |
+| tests       | =check-*.lisp=, =*-test.lisp=, the guest harness                                                                                                                  |
+| tooling     | shell scripts, =host-client/=, the headless frame renderer                                                                                                        |
+| vendored    | =poc/vendor/= (=stb_image.h=), which we did not write                                                                                                             |
 
 Snapshot taken *2026-10-12*:
 

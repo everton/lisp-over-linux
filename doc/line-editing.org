@@ -85,13 +85,13 @@ an ordinal within it — that is what the kernel's =_IOR= / =_IOW= / =_IOWR= mac
 build. Every device family then defines its own set, which is why these constants
 look unrelated and why you must get each one exactly right:
 
-| constant                 | value      | what it does                    | where we use it |
-|--------------------------+------------+---------------------------------+-----------------|
-| =TCSETS= (via =tcsetattr=)| =0x5402=  | set terminal attributes         | raw mode, here  |
-| =SIOCSIFADDR=            | =0x8916=   | set an interface's address      | [[file:../initramfs/net.lisp::defconstant +siocsifaddr+][net.lisp]]        |
-| =SIOCSIFFLAGS=           | =0x8914=   | bring an interface up/down      | [[file:../initramfs/net.lisp::defconstant +siocsifflags+][net.lisp]]        |
-| =KDSETMODE=              | =0x4B3A=   | console text ↔ graphics mode    | [[file:../poc/fb.lisp::defconstant +kdsetmode+][fb.lisp]]         |
-| =FBIOGET_VSCREENINFO=    | =0x4600=   | read framebuffer pixel format   | [[file:framebuffer.org][framebuffer.org]] §5 |
+| constant                   | value    | what it does                  | where we use it    |
+|----------------------------+----------+-------------------------------+--------------------|
+| =TCSETS= (via =tcsetattr=) | =0x5402= | set terminal attributes       | raw mode, here     |
+| =SIOCSIFADDR=              | =0x8916= | set an interface's address    | [[file:../initramfs/net.lisp::defconstant +siocsifaddr+][net.lisp]]           |
+| =SIOCSIFFLAGS=             | =0x8914= | bring an interface up/down    | [[file:../initramfs/net.lisp::defconstant +siocsifflags+][net.lisp]]           |
+| =KDSETMODE=                | =0x4B3A= | console text ↔ graphics mode  | [[file:../poc/fb.lisp::defconstant +kdsetmode+][fb.lisp]]            |
+| =FBIOGET_VSCREENINFO=      | =0x4600= | read framebuffer pixel format | [[file:framebuffer.org][framebuffer.org]] §5 |
 
 The important consequence for us: an ioctl is *the same three-argument FFI call
 every time*. Bind it once with =sb-alien= and every one of those knobs is
@@ -228,19 +228,19 @@ Lisp plus two FFI declarations, and =build.sh= bakes every module into the image
 
 ** Key bindings
 
-| Key                | Action                                   |
-|--------------------+------------------------------------------|
-| Left / Right       | move cursor by one                       |
-| Home / End, C-a/C-e| jump to start / end of line              |
-| C-b / C-f          | move cursor (same as arrows)             |
-| Backspace, C-d     | delete before / under the cursor         |
-| Delete             | delete under the cursor                  |
-| C-k / C-u          | kill to end / to start of line           |
-| C-w                | kill the previous word                   |
-| C-l                | clear screen and redraw                  |
-| Up / Down, C-p/C-n | history previous / next                  |
-| Tab                | complete the symbol at point (or list candidates) |
-| C-d on empty line  | EOF — leave the REPL (same as =:quit=)   |
+| Key                 | Action                                            |
+|---------------------+---------------------------------------------------|
+| Left / Right        | move cursor by one                                |
+| Home / End, C-a/C-e | jump to start / end of line                       |
+| C-b / C-f           | move cursor (same as arrows)                      |
+| Backspace, C-d      | delete before / under the cursor                  |
+| Delete              | delete under the cursor                           |
+| C-k / C-u           | kill to end / to start of line                    |
+| C-w                 | kill the previous word                            |
+| C-l                 | clear screen and redraw                           |
+| Up / Down, C-p/C-n  | history previous / next                           |
+| Tab                 | complete the symbol at point (or list candidates) |
+| C-d on empty line   | EOF — leave the REPL (same as =:quit=)            |
 
 ** Tab completion (symbols)
 

@@ -13,14 +13,14 @@ so the kernel's text console cannot be that terminal any more. This doc is the
 whole terminal, from the kernel's side to the pixels, for a reader who has used
 terminals all their life without needing to know what one is.
 
-| file | layer |
-|------+-------|
-| [[file:../poc/terminal.lisp][poc/terminal.lisp]] | =lol.terminal=, the *VT engine*: UTF-8 bytes in, a grid of cells out; and the reverse, keys / mouse / paste encoded as bytes. Pure data, no FFI. |
-| [[file:../initramfs/pty.lisp][initramfs/pty.lisp]] | *pseudo-terminals*: open =/dev/ptmx=, run a program on the slave as a session leader (=posix_spawn=), read, write, resize, reap. |
-| [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run. |
-| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 95 checks, incl. recordings of less, vi and bash. |
-| [[file:../poc/pty-test.lisp][poc/pty-test.lisp]] | host test of the ptys: 13 checks on real programs (bash, htop). |
-| [[file:../check-terminal.lisp][check-terminal.lisp]] | the guest check over QMP: 18 checks. |
+| file                   | layer                                                                                                                                            |
+|------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------|
+| [[file:../poc/terminal.lisp][poc/terminal.lisp]]      | =lol.terminal=, the *VT engine*: UTF-8 bytes in, a grid of cells out; and the reverse, keys / mouse / paste encoded as bytes. Pure data, no FFI. |
+| [[file:../initramfs/pty.lisp][initramfs/pty.lisp]]     | *pseudo-terminals*: open =/dev/ptmx=, run a program on the slave as a session leader (=posix_spawn=), read, write, resize, reap.                 |
+| [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run.                                              |
+| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 95 checks, incl. recordings of less, vi and bash.                                                                       |
+| [[file:../poc/pty-test.lisp][poc/pty-test.lisp]]      | host test of the ptys: 13 checks on real programs (bash, htop).                                                                                  |
+| [[file:../check-terminal.lisp][check-terminal.lisp]]    | the guest check over QMP: 18 checks.                                                                                                             |
 
 * 1. What a terminal is
 
@@ -136,16 +136,16 @@ capabilities up in *terminfo*. We set =TERM=xterm-256color= — the entry every
 host has — and implement the part of xterm that entry *promises*. Checked with
 =infocmp -x xterm-256color= on the build host, the promises that shaped the code:
 
-| capability | sequence | what it obliged us to do |
-|------------+----------+--------------------------|
-| =bce= | — | erasing paints the *current* background, not the default |
-| =smcup= / =rmcup= | =ESC[?1049h ESC[22;0;0t= | the alternate screen (§6), and to *ignore* the title-stack =CSI t= |
-| =smkx= / =rmkx= | =ESC[?1h ESC== | application cursor keys: arrows send =ESC O A= (§7) |
-| =kcuu1=, =kf5=, =kDC5=… | =ESC O A=, =ESC[15~=, =ESC[3;5~= | the key encoding (§7) |
-| =kmous=, =XM= | =ESC[<=, =ESC[?1006;1000h= | SGR mouse reports (§8) |
-| =BE= / =PS= / =PE= | =ESC[?2004h=, =ESC[200~= | bracketed paste (§8) |
-| =acsc=, =smacs= | =ESC(0= | DEC line-drawing characters (§6) |
-| =setaf= / =setab= | =ESC[38;5;Nm= | 256 colours |
+| capability              | sequence                         | what it obliged us to do                                           |
+|-------------------------+----------------------------------+--------------------------------------------------------------------|
+| =bce=                   | —                                | erasing paints the *current* background, not the default           |
+| =smcup= / =rmcup=       | =ESC[?1049h ESC[22;0;0t=         | the alternate screen (§6), and to *ignore* the title-stack =CSI t= |
+| =smkx= / =rmkx=         | =ESC[?1h ESC==                   | application cursor keys: arrows send =ESC O A= (§7)                |
+| =kcuu1=, =kf5=, =kDC5=… | =ESC O A=, =ESC[15~=, =ESC[3;5~= | the key encoding (§7)                                              |
+| =kmous=, =XM=           | =ESC[<=, =ESC[?1006;1000h=       | SGR mouse reports (§8)                                             |
+| =BE= / =PS= / =PE=      | =ESC[?2004h=, =ESC[200~=         | bracketed paste (§8)                                               |
+| =acsc=, =smacs=         | =ESC(0=                          | DEC line-drawing characters (§6)                                   |
+| =setaf= / =setab=       | =ESC[38;5;Nm=                    | 256 colours                                                        |
 
 Anything outside the subset is still *parsed* — so it can never leak onto the
 screen as garbage — and then ignored.
@@ -241,15 +241,15 @@ The rules that are easy to get wrong, each with its test in [[file:../poc/termin
 Some sequences are *questions*, and a program that asks may block until we answer
 (=term-take-output= hands the answers to the pane, which writes them back):
 
-| asks | answer |
-|------+--------|
-| =ESC[6n= where is the cursor? | =ESC[row;colR= (readline and vim use it) |
-| =ESC[5n= are you OK? | =ESC[0n= |
-| =ESC[c= what are you? (DA1) | =ESC[?62;22c= — a VT220 with colour |
-| =ESC[>c= which version? (DA2) | =ESC[>1;10;0c= — modest on purpose, so nobody assumes a recent xterm's features |
-| =ESC[?2004$p= is mode 2004 set? (DECRQM) | =ESC[?2004;1$y=; 0 for modes we do not know |
-| =ESC]11;?= your background colour? | the pane's own, so vim picks =background=dark= |
-| =ESC[18t= your size? | =ESC[8;rows;colst= |
+| asks                                     | answer                                                                          |
+|------------------------------------------+---------------------------------------------------------------------------------|
+| =ESC[6n= where is the cursor?            | =ESC[row;colR= (readline and vim use it)                                        |
+| =ESC[5n= are you OK?                     | =ESC[0n=                                                                        |
+| =ESC[c= what are you? (DA1)              | =ESC[?62;22c= — a VT220 with colour                                             |
+| =ESC[>c= which version? (DA2)            | =ESC[>1;10;0c= — modest on purpose, so nobody assumes a recent xterm's features |
+| =ESC[?2004$p= is mode 2004 set? (DECRQM) | =ESC[?2004;1$y=; 0 for modes we do not know                                     |
+| =ESC]11;?= your background colour?       | the pane's own, so vim picks =background=dark=                                  |
+| =ESC[18t= your size?                     | =ESC[8;rows;colst=                                                              |
 
 * 8. Keys become bytes
 
@@ -258,16 +258,16 @@ The browser hands every pane a key the same way: a character or a keyword
 Ctrl 4, Meta 8, Super 64). =encode-key= turns that back into what xterm would have
 sent — the bytes the terminfo entry above promised the program:
 
-| key | sends | note |
-|-----+-------+------|
-| a letter with Ctrl | its code AND #x1F | the keyboard's oldest arithmetic: =C-a= is 1, =C-[= is ESC |
-| a key with Meta | ESC, then the key | =M-x= is =ESC x= |
-| =↑= | =ESC[A=, or =ESC O A= in application mode | =DECCKM=, which =smkx= switches on |
-| =C-↑=, =S-End= | =ESC[1;5A=, =ESC[1;2F= | xterm's modifier parameter: 1 + Shift 1 + Alt 2 + Ctrl 4 |
-| Backspace | DEL (127) | =kbs=^?=; Ctrl-Backspace sends BS (8) |
-| =S-Tab= | =ESC[Z= | =kcbt= |
-| F1-F4 / F5-F12 | =ESC O P=… / =ESC[15~=… | |
-| Return | CR | the line discipline turns it into LF for the program (=ICRNL=) |
+| key                | sends                                     | note                                                           |
+|--------------------+-------------------------------------------+----------------------------------------------------------------|
+| a letter with Ctrl | its code AND #x1F                         | the keyboard's oldest arithmetic: =C-a= is 1, =C-[= is ESC     |
+| a key with Meta    | ESC, then the key                         | =M-x= is =ESC x=                                               |
+| =↑=                | =ESC[A=, or =ESC O A= in application mode | =DECCKM=, which =smkx= switches on                             |
+| =C-↑=, =S-End=     | =ESC[1;5A=, =ESC[1;2F=                    | xterm's modifier parameter: 1 + Shift 1 + Alt 2 + Ctrl 4       |
+| Backspace          | DEL (127)                                 | =kbs=^?=; Ctrl-Backspace sends BS (8)                          |
+| =S-Tab=            | =ESC[Z=                                   | =kcbt=                                                         |
+| F1-F4 / F5-F12     | =ESC O P=… / =ESC[15~=…                   |                                                                |
+| Return             | CR                                        | the line discipline turns it into LF for the program (=ICRNL=) |
 
 *Who gets which keys.* A terminal pane takes /every/ key except the =SuperL= layer,
 which stays the environment's on every pane: tabs, the Spotter, closing, leaving.
@@ -412,12 +412,12 @@ syscall per terminal):
 
 * 12. Testing
 
-| what | how | result |
-|------+-----+--------|
-| the engine | =sbcl --script poc/terminal-test.lisp= | 95/95 |
-| ptys on real programs | =sbcl --script poc/pty-test.lisp= | 13/13 (bash, htop) |
-| a frame, headless | =sbcl --script poc/render-frame.lisp terminal:htop= | htop drawn in the pane |
-| the guest | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 18/18 |
+| what                  | how                                                      | result                 |
+|-----------------------+----------------------------------------------------------+------------------------|
+| the engine            | =sbcl --script poc/terminal-test.lisp=                   | 95/95                  |
+| ptys on real programs | =sbcl --script poc/pty-test.lisp=                        | 13/13 (bash, htop)     |
+| a frame, headless     | =sbcl --script poc/render-frame.lisp terminal:htop=      | htop drawn in the pane |
+| the guest             | =LOL_GUEST_HOSTROOT=1 sbcl --script check-terminal.lisp= | 18/18                  |
 
 *Testing against real programs.* The recordings in =poc/terminal-data/= were made on
 the build host with =script(1)= at 80x24 and =TERM=xterm-256color=, the input fed on

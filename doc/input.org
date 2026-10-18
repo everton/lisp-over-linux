@@ -35,11 +35,11 @@ and third door onto the hardware, underneath the terminal: the raw input devices
 
 *Three kinds of fd, three jobs*, and they are deliberately not interchangeable:
 
-| fd                          | carries                                   | why not one of the others |
-|-----------------------------+-------------------------------------------+---------------------------|
-| =0= (the console tty)       | typed *text*, escape sequences            | the only one that has been through the keymap — evdev gives key /codes/, not letters |
-| every pointer's =eventN=    | motion, buttons, the wheel                | the tty has no notion of a pointer |
-| every keyboard's own =eventN= | *only* Ctrl / Shift / Super / Alt held state | the tty cannot report a bare modifier |
+| fd                            | carries                                      | why not one of the others                                                            |
+|-------------------------------+----------------------------------------------+--------------------------------------------------------------------------------------|
+| =0= (the console tty)         | typed *text*, escape sequences               | the only one that has been through the keymap — evdev gives key /codes/, not letters |
+| every pointer's =eventN=      | motion, buttons, the wheel                   | the tty has no notion of a pointer                                                   |
+| every keyboard's own =eventN= | *only* Ctrl / Shift / Super / Alt held state | the tty cannot report a bare modifier                                                |
 
 "Every": a laptop with an external mouse and keyboard has two of each kind, and
 all of them are open at once — §4¾ is how, and why it used to be one of each.
@@ -69,13 +69,13 @@ interface, distinguished only by *which kinds of event they are capable of*.
 Reading the device gives back a whole number of =struct input_event= records
 ([[file:../linux/include/uapi/linux/input.h::struct input_event][=include/uapi/linux/input.h=]]). On 64-bit x86 one record is *24 bytes*:
 
-| offset | size | field   | meaning                              |
-|--------+------+---------+--------------------------------------|
+| offset | size | field     | meaning                                            |
+|--------+------+-----------+----------------------------------------------------|
 |      0 |    8 | =tv_sec=  | timestamp, seconds — read by the tap gesture (§4½) |
-|      8 |    8 | =tv_usec= | timestamp, microseconds — likewise   |
-|     16 |    2 | =type=    | *what kind* of event (a key? motion?) |
-|     18 |    2 | =code=    | *which* one (which key, which axis)   |
-|     20 |    4 | =value=   | signed 32-bit: how much / pressed?   |
+|      8 |    8 | =tv_usec= | timestamp, microseconds — likewise                 |
+|     16 |    2 | =type=    | *what kind* of event (a key? motion?)              |
+|     18 |    2 | =code=    | *which* one (which key, which axis)                |
+|     20 |    4 | =value=   | signed 32-bit: how much / pressed?                 |
 
 The 16-byte =struct timeval= at the front is why the record is 24 and not 8, and
 it is the single most common source of "my offsets are wrong" — on a 32-bit
@@ -124,16 +124,16 @@ into one cursor move and one redraw.
 Of the ~30 event types, the browser needs four. Constants from
 [[file:../linux/include/uapi/linux/input-event-codes.h::#define REL_WHEEL][=input-event-codes.h=]]:
 
-| =type=          | =code=              | =value=            | what we do                        |
-|-----------------+---------------------+--------------------+-----------------------------------|
-| =2= =EV_REL=    | =0= =REL_X=         | delta, signed      | =(incf *cursor-x* val)=, clamped  |
-| =2= =EV_REL=    | =1= =REL_Y=         | delta, signed      | =(incf *cursor-y* val)=, clamped  |
-| =2= =EV_REL=    | =8= =REL_WHEEL=     | notches, ±1        | sum into =wheel= (see §6)         |
-| =3= =EV_ABS=    | =0= / =1= =ABS_X/Y= | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½) |
-| =1= =EV_KEY=    | =#x110= =BTN_LEFT=  | =1= press / =0= release | on press: a =:down= event, to the morph under the pointer (a pane's =pane-click=) |
-| =1= =EV_KEY=    | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up | a contact changed: forget the last pad position, and open or close a *tap* (§4½) |
-| =1= =EV_KEY=    | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta | =1= down =2= repeat =0= up | set =*ctrl-down*= / =*shift-down*= / =*super-down*= |
-| =0= =EV_SYN=    | =0= =SYN_REPORT=    | —                  | end of packet: apply the gathered position |
+| =type=       | =code=                                                | =value=                               | what we do                                                                        |
+|--------------+-------------------------------------------------------+---------------------------------------+-----------------------------------------------------------------------------------|
+| =2= =EV_REL= | =0= =REL_X=                                           | delta, signed                         | =(incf *cursor-x* val)=, clamped                                                  |
+| =2= =EV_REL= | =1= =REL_Y=                                           | delta, signed                         | =(incf *cursor-y* val)=, clamped                                                  |
+| =2= =EV_REL= | =8= =REL_WHEEL=                                       | notches, ±1                           | sum into =wheel= (see §6)                                                         |
+| =3= =EV_ABS= | =0= / =1= =ABS_X/Y=                                   | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½)                                     |
+| =1= =EV_KEY= | =#x110= =BTN_LEFT=                                    | =1= press / =0= release               | on press: a =:down= event, to the morph under the pointer (a pane's =pane-click=) |
+| =1= =EV_KEY= | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up                     | a contact changed: forget the last pad position, and open or close a *tap* (§4½)  |
+| =1= =EV_KEY= | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta     | =1= down =2= repeat =0= up            | set =*ctrl-down*= / =*shift-down*= / =*super-down*=                               |
+| =0= =EV_SYN= | =0= =SYN_REPORT=                                      | —                                     | end of packet: apply the gathered position                                        |
 
 Relative *and* absolute are both handled because the three ways we run differ:
 QEMU's default PS/2 mouse is relative; =-device usb-tablet= is absolute and maps
@@ -204,7 +204,7 @@ we spent a while ignoring it:
 | bit | property               | what the positions mean                           |
 |-----+------------------------+---------------------------------------------------|
 |   0 | =INPUT_PROP_POINTER=   | a surface *under* your hand — a touchpad          |
-|   1 | =INPUT_PROP_DIRECT=    | the surface *is* the screen — touchscreen, tablet  |
+|   1 | =INPUT_PROP_DIRECT=    | the surface *is* the screen — touchscreen, tablet |
 |   2 | =INPUT_PROP_BUTTONPAD= | the whole pad is the button (a clickpad)          |
 
 =usb-tablet= prints =PROP=0=. A PS/2 Synaptics pad prints =PROP=9=, the I2C one
@@ -419,12 +419,12 @@ The right button opens a context menu and the middle one a halo or X's paste
 has exactly one physical button, so *which button a press means* is read off the
 pad at the moment it goes down ([[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]):
 
-| on the pad                              | means      | why                                                  |
-|-----------------------------------------+------------+------------------------------------------------------|
-| one finger, bottom-right corner, press  | right      | the software-button zone every buttonless laptop uses |
-| two fingers down, press                 | middle     | what was asked for; libinput's "clickfinger" pattern  |
-| three fingers down, press               | right      | a second route to the menu that needs no aiming       |
-| one finger anywhere else, press         | left       | the ordinary click (and the only one that drags)      |
+| on the pad                             | means  | why                                                   |
+|----------------------------------------+--------+-------------------------------------------------------|
+| one finger, bottom-right corner, press | right  | the software-button zone every buttonless laptop uses |
+| two fingers down, press                | middle | what was asked for; libinput's "clickfinger" pattern  |
+| three fingers down, press              | right  | a second route to the menu that needs no aiming       |
+| one finger anywhere else, press        | left   | the ordinary click (and the only one that drags)      |
 
 The finger count is known by then: =synaptics_process_packet= reports
 =BTN_TOOL_*= before =synaptics_report_buttons=, so =*pad-fingers*= is current when
@@ -510,15 +510,15 @@ What the laptop actually exposes, read on the build host — which /is/ the lapt
 with the external mouse and keyboard attached (=cat /proc/bus/input/devices=,
 abridged; host Debian kernel, so the touchpad's node differs under ours — see §8):
 
-| node    | name                                    | =EV=     | what the old rules made of it |
-|---------+-----------------------------------------+----------+-------------------------------|
-| event0  | AT Translated Set 2 keyboard            | =120013= | *the* keyboard — first with =EV_REP= |
-| event16 | PS/2 Synaptics TouchPad                 | (pad)    | rule 3 — never reached while a mouse exists |
-| event17 | PixArt Microsoft USB Optical Mouse      | =17=     | rule 2, a mouse                |
-| event18 | SINO WEALTH Gaming KB                   | =120013= | a keyboard — never opened (event0 came first) |
-| event20 | SINO WEALTH Gaming KB Consumer Control  | =1f=     | rule 2, /also/ a "mouse": =EV_REL=, no X axis |
-| event21 | SINO WEALTH Gaming KB Keyboard          | =100013= | a keyboard — never opened     |
-| event22 | SINO WEALTH Gaming KB Mouse             | =17=     | rule 2, a mouse                |
+| node    | name                                   | =EV=     | what the old rules made of it                 |
+|---------+----------------------------------------+----------+-----------------------------------------------|
+| event0  | AT Translated Set 2 keyboard           | =120013= | *the* keyboard — first with =EV_REP=          |
+| event16 | PS/2 Synaptics TouchPad                | (pad)    | rule 3 — never reached while a mouse exists   |
+| event17 | PixArt Microsoft USB Optical Mouse     | =17=     | rule 2, a mouse                               |
+| event18 | SINO WEALTH Gaming KB                  | =120013= | a keyboard — never opened (event0 came first) |
+| event20 | SINO WEALTH Gaming KB Consumer Control | =1f=     | rule 2, /also/ a "mouse": =EV_REL=, no X axis |
+| event21 | SINO WEALTH Gaming KB Keyboard         | =100013= | a keyboard — never opened                     |
+| event22 | SINO WEALTH Gaming KB Mouse            | =17=     | rule 2, a mouse                               |
 
 Two things in that table go beyond the report. The keyboard's /Consumer Control/
 node counted as a mouse under the old "any =EV_REL=" rule, so on a boot where USB
@@ -577,11 +577,11 @@ The watch fd sits in the poll set, and any event on it means "rescan" —
 =/proc/bus/input/devices= is the source of truth, and reading it is cheap. Three
 events matter:
 
-| inotify      | means                                         |
-|--------------+-----------------------------------------------|
-| =IN_CREATE=  | devtmpfs made a node — a device arrived        |
-| =IN_ATTRIB=  | its owner changed — see below                  |
-| =IN_DELETE=  | a node went                                    |
+| inotify     | means                                   |
+|-------------+-----------------------------------------|
+| =IN_CREATE= | devtmpfs made a node — a device arrived |
+| =IN_ATTRIB= | its owner changed — see below           |
+| =IN_DELETE= | a node went                             |
 
 =IN_ATTRIB= is there because of who we are. With the laptop's disk found, PID 1
 runs as the *user* ([[file:storage.org][storage.org]]), and devtmpfs creates every input node as
@@ -793,14 +793,14 @@ On the dev host there is no evdev in play at all. The X server owns the devices
 and hands us protocol events instead ([[file:x11.org][x11.org]]), and X has its own answer to the
 wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
 
-| gesture     | guest (evdev)                    | host (X11)                  |
-|-------------+----------------------------------+-----------------------------|
-| move        | =EV_REL= =REL_X/Y= deltas        | =MotionNotify= x,y          |
-| left click  | =EV_KEY= =BTN_LEFT= value 1      | =ButtonPress= detail =1=    |
-| drag        | =REL_X/Y= while =BTN_LEFT= is 1  | =MotionNotify= with =Button1Mask= (=#x100=) in =state= |
-| wheel up    | =EV_REL= =REL_WHEEL= value =+1=  | =ButtonPress= detail =4=    |
-| wheel down  | =EV_REL= =REL_WHEEL= value =-1=  | =ButtonPress= detail =5=    |
-| Ctrl held   | =EV_KEY= =KEY_LEFTCTRL= value 1  | the event's =state= bitmask |
+| gesture    | guest (evdev)                   | host (X11)                                             |
+|------------+---------------------------------+--------------------------------------------------------|
+| move       | =EV_REL= =REL_X/Y= deltas       | =MotionNotify= x,y                                     |
+| left click | =EV_KEY= =BTN_LEFT= value 1     | =ButtonPress= detail =1=                               |
+| drag       | =REL_X/Y= while =BTN_LEFT= is 1 | =MotionNotify= with =Button1Mask= (=#x100=) in =state= |
+| wheel up   | =EV_REL= =REL_WHEEL= value =+1= | =ButtonPress= detail =4=                               |
+| wheel down | =EV_REL= =REL_WHEEL= value =-1= | =ButtonPress= detail =5=                               |
+| Ctrl held  | =EV_KEY= =KEY_LEFTCTRL= value 1 | the event's =state= bitmask                            |
 
 [[file:../poc/x11.lisp][=x11.lisp=]] already decodes all of these — =:button-press= carries the button in
 =event-detail=. The Ctrl row is the neat part: X *gives* you the modifier state on
@@ -813,17 +813,17 @@ asymmetry is exactly why the guest has one.
 
 * 8. What makes it work (kernel side)
 
-| Option                            | State | Why                                                    |
-|-----------------------------------+-------+--------------------------------------------------------|
-| =CONFIG_INPUT_EVDEV=              | y     | creates =/dev/input/event*= — the whole mechanism above |
-| =CONFIG_INPUT_MOUSEDEV=           | *n*   | deliberately off; why there is no =mouseN= to look for  |
-| =CONFIG_MOUSE_PS2=                | y     | the PS/2 mouse + laptop touchpad driver                |
-| =CONFIG_SERIO= + =KEYBOARD_ATKBD= | y     | the PS/2 keyboard QEMU gives us                        |
-| =CONFIG_USB_HID= / =CONFIG_HID=   | y     | a USB mouse or keyboard                                |
-| =CONFIG_I2C_HID= + =_ACPI=        | y     | internal laptop touchpads/keyboards on the I2C-HID bus |
+| Option                            | State | Why                                                        |
+|-----------------------------------+-------+------------------------------------------------------------|
+| =CONFIG_INPUT_EVDEV=              | y     | creates =/dev/input/event*= — the whole mechanism above    |
+| =CONFIG_INPUT_MOUSEDEV=           | *n*   | deliberately off; why there is no =mouseN= to look for     |
+| =CONFIG_MOUSE_PS2=                | y     | the PS/2 mouse + laptop touchpad driver                    |
+| =CONFIG_SERIO= + =KEYBOARD_ATKBD= | y     | the PS/2 keyboard QEMU gives us                            |
+| =CONFIG_USB_HID= / =CONFIG_HID=   | y     | a USB mouse or keyboard                                    |
+| =CONFIG_I2C_HID= + =_ACPI=        | y     | internal laptop touchpads/keyboards on the I2C-HID bus     |
 | =CONFIG_MOUSE_PS2_SYNAPTICS=      | y     | the laptop touchpad the way we actually get it — see below |
-| =CONFIG_I2C_DESIGNWARE_PLATFORM=  | *n*   | not built, which is *why* we get it that way            |
-| =CONFIG_RMI4_CORE=                | *n*   | not built either, so there is no SMBus hand-off         |
+| =CONFIG_I2C_DESIGNWARE_PLATFORM=  | *n*   | not built, which is *why* we get it that way               |
+| =CONFIG_RMI4_CORE=                | *n*   | not built either, so there is no SMBus hand-off            |
 
 *Why the laptop's touchpad arrives over PS/2.* =CONFIG_I2C_HID=y= is there and
 looks sufficient, but I2C-HID needs an I2C *bus*, and on an Intel laptop that
@@ -845,23 +845,23 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 
 * 9. Where the code lives
 
-| what                                     | where                                                     |
-|------------------------------------------+-----------------------------------------------------------|
-| open a node non-blocking                 | [[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]                                     |
-| list every device / classify one         | [[file:../initramfs/fb-browser.lisp::defun scan-input-devices][=scan-input-devices=]], [[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]] |
+| what                                     | where                                                             |
+|------------------------------------------+-------------------------------------------------------------------|
+| open a node non-blocking                 | [[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]                                                      |
+| list every device / classify one         | [[file:../initramfs/fb-browser.lisp::defun scan-input-devices][=scan-input-devices=]], [[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]]                         |
 | open them all; hotplug; per-device state | [[file:../initramfs/fb-browser.lisp::defun rescan-input-devices][=rescan-input-devices=]], [[file:../initramfs/fb-browser.lisp::defmacro with-device-state][=with-device-state=]], [[file:../initramfs/fb-browser.lisp::defun sync-input-globals][=sync-input-globals=]] |
-| what the environment sees (the view)     | =subj-input-devices=, =show-input-view= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] |
-| ask an axis its real range (EVIOCGABS)   | [[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]                               |
-| decode motion / buttons / wheel          | [[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]                                     |
-| turn finger positions into cursor motion | [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]]                                     |
-| the record's timestamp, for the tap      | [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]]                                  |
-| track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                            |
-| wait on the tty + every device + hotplug | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]], [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]]                    |
-| which button a pad press means           | [[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]                               |
-| press-and-drag selection                 | [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], =*button-down*= in =read-mouse=     |
-| notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                     |
-| the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                       |
-| the cursor bitmap we draw ourselves      | =*cursor-bits*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]                  |
+| what the environment sees (the view)     | =subj-input-devices=, =show-input-view= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]      |
+| ask an axis its real range (EVIOCGABS)   | [[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]                                                 |
+| decode motion / buttons / wheel          | [[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]                                                      |
+| turn finger positions into cursor motion | [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]]                                                      |
+| the record's timestamp, for the tap      | [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]]                                                   |
+| track Ctrl / Shift / Super held          | [[file:../initramfs/fb-browser.lisp::defun read-keyboard-evdev][=read-keyboard-evdev=]]                                             |
+| wait on the tty + every device + hotplug | [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]], [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]]                                     |
+| which button a pad press means           | [[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]                                                |
+| press-and-drag selection                 | [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], =*button-down*= in =read-mouse=                   |
+| notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                                      |
+| the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                                    |
+| the cursor bitmap we draw ourselves      | =*cursor-bits*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]                              |
 
 The cursor deserves the last word: there isn't one. No hardware sprite, no
 overlay plane — =*cursor-x*= and =*cursor-y*= are two integers, and we paint a

@@ -211,10 +211,10 @@ DIMM. Two consequences we actually feel:
 
 *Two doors onto the same memory*, then — and the unit differs between them:
 
-| door             | you index by | using       |
-|------------------+--------------+-------------|
-| file I/O (§5)    | *bytes*      | =stride=    |
-| =mmap= (§5, §9.4)| *words*      | =stride/4=  |
+| door              | you index by | using      |
+|-------------------+--------------+------------|
+| file I/O (§5)     | *bytes*      | =stride=   |
+| =mmap= (§5, §9.4) | *words*      | =stride/4= |
 
 Same memory, two granularities. That is why this document insists on writing
 =bpp/8= rather than leaving the unit implicit — the =/8= is the only thing
@@ -222,13 +222,13 @@ keeping the two readings apart.
 
 * 6. Limits: efifb vs DRM/KMS
 
-| capability            | efifb (what we have)        | DRM/KMS (real GPU driver)   |
-|-----------------------+-----------------------------+-----------------------------|
-| programs the GPU      | no — inherits firmware mode | yes — full modesetting      |
-| change resolution     | no (locked to firmware)     | yes                         |
-| 2D/3D acceleration    | none — CPU writes pixels    | hardware-accelerated        |
-| size / complexity     | tiny, universal             | large, vendor-specific      |
-| right for minimal?    | YES                         | overkill                    |
+| capability         | efifb (what we have)        | DRM/KMS (real GPU driver) |
+|--------------------+-----------------------------+---------------------------|
+| programs the GPU   | no — inherits firmware mode | yes — full modesetting    |
+| change resolution  | no (locked to firmware)     | yes                       |
+| 2D/3D acceleration | none — CPU writes pixels    | hardware-accelerated      |
+| size / complexity  | tiny, universal             | large, vendor-specific    |
+| right for minimal? | YES                         | overkill                  |
 
 efifb is the lowest-common-denominator that always works. Acceleration, a
 window system, or changing resolution would mean the real DRM/KMS driver for the
@@ -548,11 +548,11 @@ risk of the GC and a device mapping meeting.
 *Measured* at tag #24, 1280×800, module index, averaged over 50 frames in the booted
 guest (numbers from =check-pointer.lisp= and a one-off baseline run of the old code):
 
-| per frame                        | before, KVM | after, KVM | before, TCG | after, TCG |
-|----------------------------------+-------------+------------+-------------+------------|
-| =draw-browser= alone             | 2.2 ms      | (same)     | 18.8 ms     | (same)     |
-| =present-fb= alone               | 4.0 ms      | 0.2–0.6 ms | 47.7 ms     | ~2 ms (*)  |
-| full frame (draw + present)      | 6.5 ms      | 2.9–3.3 ms | 67.0 ms     | 21.0 ms    |
+| per frame                   | before, KVM | after, KVM | before, TCG | after, TCG |
+|-----------------------------+-------------+------------+-------------+------------|
+| =draw-browser= alone        | 2.2 ms      | (same)     | 18.8 ms     | (same)     |
+| =present-fb= alone          | 4.0 ms      | 0.2–0.6 ms | 47.7 ms     | ~2 ms (*)  |
+| full frame (draw + present) | 6.5 ms      | 2.9–3.3 ms | 67.0 ms     | 21.0 ms    |
 
 (*) By subtraction: the full frame minus =draw-browser=, which did not change. The KVM
 "after" was later measured directly with the supervisor's =f)= action (=bench.lisp=, below):
@@ -579,12 +579,12 @@ number is worth having — the present there is a write into real video memory.
 1920×1200, which is 2.25× the pixels of the QEMU reference, so the last column scales
 the laptop's number down to 1280×800:
 
-| per frame               | laptop, 1920×1200 | QEMU + KVM, 1280×800 | laptop ÷ 2.25 |
-|-------------------------+-------------------+----------------------+---------------|
-| =draw-browser=          | 3.92 ms           | 2.2 ms               | 1.74 ms       |
-| =present-fb=            | 1.12 ms           | 0.4 ms               | 0.50 ms       |
-| full frame              | 5.04 ms           | 2.9 ms               | 2.24 ms       |
-| pointer move            | 0.006 ms          | 0.012 ms             | (fixed size)  |
+| per frame      | laptop, 1920×1200 | QEMU + KVM, 1280×800 | laptop ÷ 2.25 |
+|----------------+-------------------+----------------------+---------------|
+| =draw-browser= | 3.92 ms           | 2.2 ms               | 1.74 ms       |
+| =present-fb=   | 1.12 ms           | 0.4 ms               | 0.50 ms       |
+| full frame     | 5.04 ms           | 2.9 ms               | 2.24 ms       |
+| pointer move   | 0.006 ms          | 0.012 ms             | (fixed size)  |
 
 What it settles:
 - *Rendering is not the laptop's bottleneck.* A whole frame at full resolution is
@@ -655,10 +655,10 @@ page's pane — through [[file:../poc/morphic.lisp::defun paint-into][=paint-int
 draws into: the screen for a tiled pane, a window's backing store for a pane in a
 window, where the rows or the frame are then only copied out.
 
-| per pointer move | before (a full frame) | after      |
-|------------------+-----------------------+------------|
-| KVM              | 6.5 ms                | 12 µs      |
-| TCG              | 67 ms                 | 0.13 ms    |
+| per pointer move | before (a full frame) | after   |
+|------------------+-----------------------+---------|
+| KVM              | 6.5 ms                | 12 µs   |
+| TCG              | 67 ms                 | 0.13 ms |
 
 =check-pointer.lisp= in the repo root guards the contract in the booted guest: it
 counts the world's repairs across real QMP pointer motion (zero — it counted
