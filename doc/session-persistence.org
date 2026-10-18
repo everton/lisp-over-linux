@@ -7,7 +7,8 @@ sources and the leave menu's save / don't-save entries now exist — [[file:../i
 [[file:../initramfs/desk.lisp][desk.lisp]], [[file:../initramfs/file-out.lisp][file-out.lisp]]; *§8 is the status* (what was built, how it
 differs from this plan, how it was tested). *Image snapshots (§2a, Phase 5) are NOT
 built* and remain a plan. Every open question in §7 was *decided by default
-2026-10-16, pending the user's review* — the decision is written under each one.
+2026-10-16* and reviewed by the user 2026-10-17: every default kept except §7.8, the
+paths, which become one =~/.lol/= tree — the decision is written under each one.
 §§0–6 are the design as written on 2026-10-03 against tag #25, kept as the record
 of why; where the build went another way, §8.2 says so.
 
@@ -593,41 +594,41 @@ is ever built (it is left untouched here because this is a plan).
 1. *What does "save" mean to you?* Keeping /your edits/ (source: survives rebuilds,
    lands in git), or keeping /the running world/ (image: everything, but discarded
    on every rebuild)? The recommendation assumes the first.
-   /Decided by default 2026-10-16, pending the user's review:/ your edits — source. Journal + desk + file-out are built; image snapshots
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ your edits — source. Journal + desk + file-out are built; image snapshots
    are not.
 2. *Replay at boot: automatic or asked?* Proposed: automatic for the same build,
    "pending — review" for an older build. Or always ask?
-   /Decided by default 2026-10-16, pending the user's review:/ as proposed. A record whose =:build= is this image's stamp replays by
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ as proposed. A record whose =:build= is this image's stamp replays by
    itself; any other build's waits in the journal view as /pending/ (=a= Accept,
    =d= drop). A record whose text is already the image's source is /retired/ and
    removed from the journal, whatever its build.
 3. *Should file-out write into =~/lisp-over-linux= directly* (you =git diff= from
    Debian), or only produce a patch file next to it for you to apply?
-   /Decided by default 2026-10-16, pending the user's review:/ directly into the checkout, but only by the verbatim rule (the build's text
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ directly into the checkout, but only by the verbatim rule (the build's text
    occurs exactly once), through =write-file-atomically=; git is the undo. Anything
    that does not match goes to =changes-unfolded.lisp=, never into the file.
 4. *Where does a definition born this session go* when filed out: the end of the file
    its first-referenced symbol lives in, a per-session =new-definitions.lisp=, or
    always "unfolded" for you to place?
-   /Decided by default 2026-10-16, pending the user's review:/ always unfolded — the conservative choice: placing a new definition is a
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ always unfolded — the conservative choice: placing a new definition is a
    judgement the code should not make for you.
 5. *Journal Do it / REPL evaluations too* (Epicea does), or only Accepts?
-   /Decided by default 2026-10-16, pending the user's review:/ only Accepts that define something (a named definition the registry
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ only Accepts that define something (a named definition the registry
    tracks). An Accepted form that defines nothing — =(+ 1 2)= — is not kept either.
 6. *Persist the clipboard history?* It is the place a pasted password would live.
    Options: keep it, keep only the last N entries, or never.
-   /Decided by default 2026-10-16, pending the user's review:/ never, unless you ask: the setting =:desk-clipboard N= (in
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ never, unless you ask: the setting =:desk-clipboard N= (in
    =~/.config/lol/settings=, [[file:../initramfs/settings.lisp][settings.lisp]]) keeps the newest N (at most 50).
 7. *Workspace text*: always restored, or only Workspaces you named or explicitly kept?
-   /Decided by default 2026-10-16, pending the user's review:/ always restored, with its point (§2c's design).
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ always restored, with its point (§2c's design).
 8. *Paths*: XDG (=~/.local/share/lol= + =~/.local/state/lol=) or one =~/.lol/=?
-   /Decided by default 2026-10-16, pending the user's review:/ XDG, as §3's table. (The project also has =~/.lol/= — the container
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ XDG, as §3's table. (The project also has =~/.lol/= — the container
    state and the logs — and =~/.config/lol/=; one tree would be a later, mechanical
    move.)
 9. *Image snapshots at all?* They mean preinit exec'ing a user-writable file with
    five capabilities (§2a, Security), plus a boot-marker scheme in C. Worth it, or
    is the opaque pile acceptable to lose?
-   /Decided by default 2026-10-16, pending the user's review:/ not now: the opaque pile is lost at power-off. Nothing in this build
+   /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ not now: the opaque pile is lost at power-off. Nothing in this build
    touches =preinit.c= or execs anything from =/home=.
 10. /Answered:/ the Accept-package bug (§1.2) was fixed as a standalone change on
     2026-10-03.
@@ -635,7 +636,7 @@ is ever built (it is left untouched here because this is a plan).
 11. *"Shut down without saving"*: should it also truncate the journal, or (as
     proposed) leave Accepts in place, so that forgetting them is a separate,
     explicit action?
-    /Decided by default 2026-10-16, pending the user's review:/ leave them, as proposed. Forgetting is the journal view's =D= ("Discard the
+    /Decided by default 2026-10-16; kept by the user on review 2026-10-17:/ leave them, as proposed. Forgetting is the journal view's =D= ("Discard the
     journal"), which /moves/ the file aside to =changes-discarded-<time>.lisp= rather
     than deleting it.
 

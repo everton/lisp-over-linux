@@ -598,7 +598,7 @@ slot-value)=, which would have changed the number and nothing on screen; so
 damages: [[file:../poc/morph.lisp::defun set-morph-bounds][=set-morph-bounds=]], a move then a resize. =owner= and =children= — the tree,
 which only =add-morph= / =remove-morph= may change — say "not settable".
 
-*Decided by default, pending the user's review:* the morph handles come /before/
+*Decided by default; kept by the user on review (2026-10-17):* the morph handles come /before/
 Inspect and Code (Squeak's halo puts its move and resize handles first too, from the
 literature); the shell morph gets no affordances — moving the tiled shell means
 nothing.
@@ -640,8 +640,8 @@ not the step; so:
   restart invoked from the debugger unwinds straight through that wait; the
   overlay goes on the way out (=unwind-protect=).
 
-*What does stop behind a waiting overlay* — decided by default, pending the user's
-review: stepping (step 5) and the agent's tick. The computation that waits may be
+*What does stop behind a waiting overlay* — decided by default, kept by the user on
+review (2026-10-17): stepping (step 5) and the agent's tick. The computation that waits may be
 the very one a step would run again (a stage whose contact raised the debugger would
 raise it again every 33 ms; the old loop froze the stage for the same reason), and
 the agent's tick runs tool calls on this thread. Input, the services, repair and the
@@ -866,7 +866,7 @@ below, what it costs and what is owed. §§12.1–12.7 are the design as written
 the code, at the user's request: "make each pane its own morph, we should end up with
 a single abstraction, not having two ways of doing it." Where a choice was genuinely
 open it is taken the way most consistent with §9 and marked /decided by default,
-pending the user's review/.
+pending the user's review/ (all kept on review, 2026-10-17).
 
 ** 12.1 The two ways, as they stand
 
@@ -959,7 +959,7 @@ What stays global is what there is one of. The /hand's/ drag state — =*drag-tv
 =*web-press*= — describes the one press in progress, and the press and its drag go to the
 same morph (the hand's capture), so its coordinates are that morph's.
 
-*Decided by default, pending the user's review — =*editing-side*= becomes per pane.* It
+*Decided by default, kept by the user on review (2026-10-17) — =*editing-side*= becomes per pane.* It
 says "the keyboard is in the right-hand column", and it was one special for the whole
 screen, which is why every window had to keep its own copy. As a slot of the pane it
 says it /about that pane/: switching tabs no longer carries a side focus from one tab to
@@ -1214,7 +1214,7 @@ in =runs.lisp= (a pty's width): the accessor silently replaced it, and the first
 died with "invalid number of arguments" — renamed =pane-split-plan=. Neither is a
 finding about the design; both are recorded because the symptoms pointed elsewhere.
 
-*** Decided by default, pending the user's review
+*** Decided by default — all kept by the user on review (2026-10-17)
 
 1. *=editing-side= is per pane* (§12.2): switching tabs no longer carries a side focus
    from one tab to the next.
@@ -1525,7 +1525,7 @@ is meant to be a whole fresh paint. =environment-changed= itself was never coars
   render-frame shows it as the one pixel difference against main besides code-derived
   text: the =beside · …= header of a pinned side now ends at the pane's edge.
 
-** 13.8 Decided by default, pending the user's review
+** 13.8 Decided by default — all kept by the user on review (2026-10-17)
 
 1. *A press on a list row acts on its release* (it acted on the press), so that a press
    that moves can pick the row up. A tap acts at once.

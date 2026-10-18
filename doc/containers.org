@@ -4,9 +4,10 @@
 *BUILT (2026-10-12, kernel tag #26), and verified in the guest.* [[file:../initramfs/lol-ct.c][=lol-ct=]] is the
 namespace helper, [[file:../initramfs/containers.lisp][=containers.lisp=]] its Lisp side and public API, and
 [[file:../initramfs/runs.lisp][=runs.lisp=]] streams a command's output into a live pane. §7 says how to use it,
-§8 what the guest showed, §9 what changed against the plan below. Not yet booted
-on the laptop itself: the guest tests run the build host's Debian over 9p, and an
-ext4 stand-in disk for the layout.
+§8 what the guest showed, §9 what changed against the plan below. *In use on the
+laptop* (the user, 2026-10-17): booted there, a terminal opened (=SuperL-Return=, the
+default container) and Rails run inside it. The guest tests still run the build
+host's Debian over 9p, and an ext4 stand-in disk for the layout.
 
 The plan (§§0–6) was written the same morning against tag #25, and a host-side
 prototype (§4) was run on the build host (Debian, kernel 7.1.13). It is kept as
@@ -594,8 +595,9 @@ Also learned on the way:
   gives the program the pty's /output/ side and =/dev/null= as stdin.
 
 Not verified yet: a server inside the container reached from the Lisp side
-(§3.1 still /Estimate/; =curl= outbound is verified), and anything on the
-laptop's real disk.
+(§3.1 still /Estimate/; =curl= outbound is verified). On the laptop's real disk the
+user has run Rails in the default container's terminal (2026-10-17); no check of ours
+covers that disk, by design (never the real disk under QEMU).
 
 * 9. What changed against the plan
 
