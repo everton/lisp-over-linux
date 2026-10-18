@@ -540,7 +540,9 @@ saved =NIL= read back as =:NIL= (true), so every boot after a volume key would h
 started *muted* (=settings.lisp=, which also kept =(:tap-to-click t)= from ever
 working; =poc/settings-test.lisp=), and the steps drifted through the codec's raw
 levels (55 % + 5 gave 59 %) — =mixer.lisp= now remembers the level it set
-(=*volume-intent*=). Picture and sound in the headset are still to be seen.
+(=*volume-intent*=). *Picture and sound confirmed on the laptop (2026-10-18):* the user
+played a 1920×1200 screencast of their own with =(play "~/screencasts/…" :window t)=,
+through the headset.
 
 *** 1. Is there sound at all?
 
@@ -578,15 +580,21 @@ the first laptop try that warning went to the console and froze the environment 
 #+begin_src lisp
 (defun play (file &key window)
   "Play FILE (in your home) with the host's mplayer, in a new tab that takes its keys:
-   full screen, or with :WINDOW T a 640x400 window against the right edge."
-  (open-terminal
-   (container-command-line
-    (append (list "mplayer" "-really-quiet" "-nolirc" "-ao" "alsa:device=plughw=0.0")
-            (if window
-                (list "-vo" "fbdev" "-geometry" "100%:50%" "-vf" "scale=640:400")
-                (list "-vo" "fbdev2" "-vf" (format nil "scale=~d:~d" *fb-xres* *fb-yres*)))
-            (list (namestring (merge-pathnames file (user-homedir-pathname))))))
-   :title "mplayer"))
+   full screen, or with :WINDOW T a window 640 wide against the right edge."
+  ;; PROBE-FILE resolves "~/..." (SBCL reads it as :HOME) and a name relative to your
+  ;; home to the real absolute path; NAMESTRING would keep the "~" and mplayer, with no
+  ;; shell in between, would not find it. -really-quiet says NOTHING about a missing
+  ;; file and exits 0, so the check is ours.
+  (let* ((found (probe-file (merge-pathnames file (user-homedir-pathname))))
+         (path (if found (sb-ext:native-namestring found) (error "no such file: ~a" file))))
+    (open-terminal
+     (container-command-line
+      (append (list "mplayer" "-really-quiet" "-nolirc" "-ao" "alsa:device=plughw=0.0")
+              (if window
+                  (list "-vo" "fbdev" "-geometry" "100%:50%" "-vf" "scale=640:-3")   ; -3: keep the aspect
+                  (list "-vo" "fbdev2" "-vf" (format nil "scale=~d:~d" *fb-xres* *fb-yres*)))
+              (list path)))
+     :title "mplayer")))
 #+end_src
 
 Then, each with =C-x C-e= after it:
@@ -595,6 +603,10 @@ Then, each with =C-x C-e= after it:
 (play "lol-test.mp4" :window t)   ; a window, flush right, centred vertically
 (play "lol-test.mp4")             ; the whole screen
 #+end_src
+
+The file can be a name in your home (=lol-test.mp4=), a =~/= path
+(=(play "~/screencasts/screencast_00000.mp4" :window t)=; how it resolves was checked on the laptop
+2026-10-18) or an absolute one; a file that is not there is an error in the status line.
 
 What it does: =container-command-line= ([[file:../initramfs/containers.lisp][containers.lisp]]) wraps the argv to run
 in the default container, where the host's =mplayer= is; =open-terminal= runs that
