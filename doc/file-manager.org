@@ -373,7 +373,9 @@ meaning in every list). =SuperL-?= shows the same keys in its /Files/ group
 
 In a file you are editing: =C-x C-s= saves, =C-_= undoes, =C-g= closes (twice if
 modified), plus every editor key ([[file:clipboard.org][clipboard.org]]); a Lisp file adds =C-x C-e= and
-=C-c C-c=. In the minibuffer: §5. Every folder and file command is also in the
+=C-c C-c=. A video you opened (=.mp4=, =.mkv=, =.webm=, …) plays with =p= — full screen, the
+screen lent to the host's MPlayer — or =w= in a window ([[file:screencast.org][screencast.org]] §8, §13). In the
+minibuffer: §5. Every folder and file command is also in the
 right-button menu and the halo, from =commands-for= — the menu, the keys and the status
 line all read the same declarations.
 

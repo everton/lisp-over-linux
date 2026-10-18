@@ -447,10 +447,19 @@
       (fm-run op)
       t)))
 
+(defun video-file-p (path)
+  "Does PATH name a video the host's MPlayer can play (by its extension)?"
+  (member (string-downcase (or (pathname-type path) "")) '("mp4" "m4v" "mkv" "webm" "mov" "avi" "ogv")
+          :test #'string=))
+
 (defmethod subject-key ((s subj-file) pane key state)
   (declare (ignore state pane))
-  ;; a non-text file (an image, an archive, a hex dump): ^ goes to its folder
-  (when (eql key #\^) (open-folder-selecting (subj-file-path s)) t))
+  (cond
+    ;; a non-text file (an image, an archive, a hex dump): ^ goes to its folder
+    ((eql key #\^) (open-folder-selecting (subj-file-path s)) t)
+    ;; a video: p plays it full screen, w in a window (initramfs/player.lisp)
+    ((and (member key '(#\p #\w)) (video-file-p (subj-file-path s)) (fboundp 'play-video))
+     (funcall 'play-video (subj-file-path s) :window (eql key #\w)) t)))
 
 (defmethod subject-hints ((s subj-dir) pane)
   (declare (ignore pane))
@@ -507,4 +516,5 @@
   (declare (ignore pane))
   ;; a file shown as a LIST or an IMAGE (an archive, a picture, a broken link) — the
   ;; text ones are file panes and get the editor's hints instead
-  '(("^" . "its folder") ("bs" . "back") ("i" . "info via the menu")))
+  (append (when (video-file-p (subj-file-path s)) '(("p" . "play") ("w" . "play in a window")))
+          '(("^" . "its folder") ("bs" . "back") ("i" . "info via the menu"))))

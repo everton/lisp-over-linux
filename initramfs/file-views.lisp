@@ -288,6 +288,7 @@
       ((octets-at-p octets 0 "ID3") (values :binary "MP3 audio"))
       ((and (octets-at-p octets 0 "RIFF") (octets-at-p octets 8 "WAVE")) (values :binary "WAVE audio"))
       ((octets-at-p octets 4 "ftyp") (values :binary "MP4/QuickTime media"))
+      ((octets-at-p octets 0 '(#x1A #x45 #xDF #xA3)) (values :binary "Matroska / WebM media"))
       ((octets->text octets :truncated t)
        (values :text (cond ((octets-at-p octets 0 "#!")
                             (let ((nl (position 10 octets)))

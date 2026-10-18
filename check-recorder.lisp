@@ -166,6 +166,13 @@
   (check "no player left" (string= "NIL" (probe "*player*")))
   (check "the screen is the environment again, every point"
          (= 48 (row "grid points equal, back" (screen-matches-canvas "back"))))
+  ;; a video opened from the file manager plays with p (poc/file-manager.lisp)
+  (probe "(progn (new-trail (subj-file (normalize-path \"/tmp/bars.mp4\"))) t)") (sleep 1)
+  (qmp-key "p") (sleep 3)
+  (check "p on a video opened in the file manager plays it (the screen lent)"
+         (string= "T" (row "*screen-lent* after p" (probe "*screen-lent*"))))
+  (qmp-key "q") (sleep 3)
+  (check "and q gives it back" (string= "NIL" (probe "*screen-lent*")))
   (format t "~&~%== H. the same, from a damage log (step 5) ==~%")
   ;; back to the Workspace, the recorder in :LOG mode by its own key (m in its pane)
   (probe "(progn (open-recorder) t)") (sleep 1)

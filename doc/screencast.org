@@ -9,7 +9,7 @@ no drift over 3 minutes). The recorder (=recorder.lisp=, =SuperL-r= / =SuperL-S-
 tray, the recorder pane and the recordings) and the full-screen player
 (=player.lisp=, the screen lent to the host's MPlayer) pass =check-recorder.lisp= in
 QEMU, and so does the damage log (step 5: =damage-log.lisp=, recorded as rects and
-encoded after the stop) — 37 checks; a recording made on the laptop is owed. §13 is what shipped, what
+encoded after the stop) — 39 checks; a recording made on the laptop is owed. §13 is what shipped, what
 changed against this design, and what was measured. Written first for the user to
 review, the way [[file:morphic.org][morphic.org]] was; the user then said to go on alone (2026-10-18), so
 §12's defaults stand as decided. Every claim about /our/ code, the kernel tree, the
@@ -730,7 +730,7 @@ dropped-frame counts); tearing; colours; the volume keys; and whether the
 3. *Progress and result view*, the recordings list, the silent-take warning. *BUILT
    2026-10-18* (§13).
 4. *The player* (§8): the screen hand-off, the key table, MPlayer's slave protocol, the
-   result view's *Play*. *BUILT 2026-10-18* (§13); the file manager's =.mp4= hook not yet.
+   result view's *Play*. *BUILT 2026-10-18* (§13), the file manager's =p= / =w= on a video too.
 5. *The damage log* (§5.2) as the second mode. *BUILT 2026-10-18* (§13.5).
 6. Later, each optional: an on-screen *key display* (the environment is keyboard-first;
    a viewer cannot see =C-c C-c= being pressed — drawn into the recorded frame only),
@@ -775,7 +775,7 @@ Steps 0–4 are the user's request; 5 is the documented option; 6 is not owed.
 
 Steps 1–5 of §10, in [[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:../initramfs/player.lisp][player.lisp]] and
 [[file:../initramfs/damage-log.lisp][damage-log.lisp]], with the two hooks they need in [[file:../initramfs/fb-browser.lisp::Every write of ours to /dev/fb0][fb-browser.lisp]]. Proved in
-QEMU by =check-recorder.lisp= (37 checks) and on the host by =poc/damage-log-test.lisp=;
+QEMU by =check-recorder.lisp= (39 checks) and on the host by =poc/damage-log-test.lisp=;
 a take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is owed.
 
 ** 13.1 What shipped
@@ -837,8 +837,9 @@ a take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is
   counts the time) and do the rest on a thread (=rec-in-background=).
 - *The meter's level is not yet proved.* QEMU's capture is silence, which proves the
   silent-take warning but not that the bar moves with a voice: that is the laptop's.
-- *The file manager does not yet open videos with the player*, as §8.1 planned; the
-  recordings do (=p=, =w=).
+- *The file manager opens videos with the player* as §8.1 planned, since the same day: a
+  video file opened (Enter) takes =p= (full screen) and =w= (a window), and says so in
+  its hints; the sniffer now names Matroska / WebM too.
 - *The tray's indicator is visible in the video*, as §12 decided.
 
 ** 13.3 Measured

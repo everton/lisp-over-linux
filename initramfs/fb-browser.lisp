@@ -2459,6 +2459,7 @@
      ("j  g"               "follow a link / refresh")
      ("Esc (during f)"     "stop a running find")
      ("C-x C-s"            "save a file you are editing")
+     ("p  w (a video)"     "play full screen / in a window")
      ("Spotter ~/ or /"    "type a path; Tab completes"))
     ("Terminal"
      ("any key"            "to the program (not Super)")
