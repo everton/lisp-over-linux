@@ -941,3 +941,34 @@ the sound and the player all worked. Its loudest moment was *0 dB*, full scale: 
 mic touched its ceiling somewhere and may have clipped — if speech sounds harsh,
 lower =Capture Volume= or the headset mic's boost. Not yet tried there: a logged
 take, a long one, the clap test for sync.
+
+** 13.7 The noise in the first take (2026-10-18): the wrong mic, at the top of its gain
+
+The user heard noise in the first laptop take, unsure whether from the recording or
+the playback. The file answered: =astats= over its sound gave a noise floor of
+*-35 dB* (the quietest 100 ms at -41.7 dB RMS), speech around -15 dB RMS and peaks of
+*+2.5 dB* — clipped. So it was the *capture*, not the playback. The mixer, read live
+on the laptop, said why:
+
+- =Capture Source= was *"Internal Mic"* — the laptop's own, far from the mouth and near
+  the fan and the keys — while the user records with a wired headset. The jack's sense
+  (=Headphone Mic Jack=) read 0, so nothing had switched to "Headset Mic".
+- =Capture Volume= was at *63 of 63*. Its TLV (the dB scale the driver publishes, read
+  with =SNDRV_CTL_IOCTL_TLV_READ=) is -17.25 dB in 0.75 dB steps: the top is *+30 dB*.
+  =restore-audio= put it there — it raised every volume it found at its minimum to the
+  maximum, the capture volume included. Debian's PipeWire keeps it at step 52, +21.75 dB;
+  8 dB less would have taken the take's peaks to about -6 dB.
+
+Fixed in [[file:../initramfs/mixer.lisp][mixer.lisp]]: the capture volume is no longer raised to the top; it is
+set in dB from its TLV (=set-capture-db=) to the saved =:capture-db=, else
+=*default-capture-db*= = +21.75 dB; =choose-mic= selects "Headset Mic" when a mic jack
+senses a plug, else "Internal Mic", at boot and when a recording starts. The recorder
+says which mic it recorded — in the status line when the take starts (a warning when
+it is the built-in one), on the pane (=M= picks the next input by hand, for a headset
+whose jack is not sensed; =+= / =-= move the gain 3 dB and remember it), and in the
+result (=:mic=, =:gain=).
+
+Lowering the gain removes the clipping; it cannot remove hiss that comes from the
+mic itself, which scales with the voice. The headset mic, close to the mouth, is the
+cure for that. /Still to see on the laptop:/ whether the jack senses the user's headset
+(=(headset-plugged-p)=), and the noise floor of a take through it.

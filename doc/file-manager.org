@@ -199,6 +199,18 @@ inflated in Lisp, then only the tar headers are read (=--scene files-archive=):
 
 [[file:../media/screenshots/files-archive-2026-10-17.png]]
 
+A *video* (=.mp4=, =.mkv=, =.webm=, =.mov=, =.avi=, =.m4v=, =.ogv=, by its name) previews as a
+frame from a tenth of the way in, with its size, codecs and length in the title — what
+the host's =ffprobe= says, the frame cut by the host's =ffmpeg= as a PPM and decoded by
+=lol.image= ([[file:../initramfs/player.lisp::defun video-view][video-view]], 2026-10-18). Those run in a container and cost a few hundred
+ms (=ffmpeg= alone took 0.11 s for a 1920×1200 frame on the laptop, before the
+container's start), too much for every move of the selection. So the preview answers at
+once from a cache keyed by path and modification time, and otherwise says /making a
+preview…/ while one thread works on the newest request — scrolling past ten videos makes
+one preview, not ten. When it is ready the =:video-previews= service forgets the stale
+preview and the next repair draws the frame. Opened (Enter), a video shows the same
+frame; =p= plays it full screen, =w= in a window ([[file:screencast.org][screencast.org]] §8).
+
 | type                 | detected by                                                                                                                 | preview                                                                                                                  | open (Enter)                 | caps                                                                             |
 |----------------------+-----------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+------------------------------+----------------------------------------------------------------------------------|
 | folder               | lstat                                                                                                                       | its listing                                                                                                              | the folder                   | 2 000 / 20 000 entries                                                           |
@@ -366,7 +378,8 @@ meaning in every list). =SuperL-?= shows the same keys in its /Files/ group
 | =l= / =L=     | make a symbolic / hard link to the entry                                       |
 | =x=           | toggle executable (=r--= → =r-x= for whoever may read)                         |
 | Space / =U=   | mark (and move down) / clear marks                                             |
-| =y=           | copy the path to the clipboard                                                 |
+| =y=           | copy the path to the clipboard, as it is (paste it into a Lisp string)         |
+| =Y=           | copy it quoted for a shell, only when it needs it: ='/home/me/my notes'=       |
 | =i=           | information (lstat, as a table)                                                |
 | =j=           | jump to a symlink's target                                                     |
 | =g=           | refresh                                                                        |
