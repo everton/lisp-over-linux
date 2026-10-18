@@ -300,6 +300,14 @@
                            (t "UTF-8 text"))))
       (t (values :binary "data")))))
 
+(defun org-file-p (name)
+  "Is NAME an Org file? Then it is coloured and folded as Org (poc/org-mode.lisp)."
+  (string-equal (file-extension name) "org"))
+
+(defun text-syntax (name)
+  "How a text file named NAME is coloured: :lisp, :org, or :plain."
+  (cond ((lisp-file-p name) :lisp) ((org-file-p name) :org) (t :plain)))
+
 (defun lisp-file-p (name)
   "Does NAME look like Lisp source, so it gets the Lisp colouring?"
   (member (file-extension name) '("lisp" "lsp" "cl" "asd" "el" "scm" "ss" "rkt" "clj" "fnl")
@@ -673,10 +681,10 @@
             (case kind
               (:empty
                (make-view :title (file-title "file" path e "empty") :kind (if preview :reference :file)
-                          :subject s :syntax (if (lisp-file-p (path-name path)) :lisp :plain)
+                          :subject s :syntax (text-syntax (path-name path))
                           :text "" :data (list :path path :mtime (fentry-mtime e))))
               (:text
-               (let ((syntax (if (lisp-file-p (path-name path)) :lisp :plain)))
+               (let ((syntax (text-syntax (path-name path))))
                  (cond
                    (preview
                     (make-view :title (file-title "file" path e label) :kind :reference :subject s

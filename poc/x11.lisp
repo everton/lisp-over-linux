@@ -227,6 +227,7 @@
         ((or (<= #x20 k #x7e) (<= #xa0 k #xff)) (code-char k))
         (t (case k
              (#xff08 :backspace) (#xff09 :tab)  (#xff0d :return)
+             (#xfe20 :tab)       ; ISO_Left_Tab: what X sends for Shift-Tab (Org's S-TAB)
              (#xff1b :escape)    (#xffff :delete)
              (#xff50 :home)      (#xff57 :end)
              (#xff51 :left)      (#xff52 :up)

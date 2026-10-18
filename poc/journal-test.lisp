@@ -43,10 +43,10 @@
     (dolist (m '("initramfs/lol-home.lisp" "poc/deflate.lisp" "initramfs/session-log.lisp" "initramfs/model.lisp" "initramfs/present.lisp"
                  "initramfs/tour.lisp" "initramfs/examples.lisp" "initramfs/stage.lisp"
                  "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
-                 "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp"
+                 "initramfs/ansi.lisp" "initramfs/line-editor.lisp" "poc/clipboard.lisp" "poc/org.lisp"
                  "initramfs/sysinfo.lisp" "poc/inflate.lisp" "poc/image.lisp" "initramfs/files.lisp"
                  "initramfs/settings.lisp" "initramfs/file-views.lisp" "poc/terminal.lisp"
-                 "initramfs/pty.lisp" "poc/shell.lisp" "poc/file-manager.lisp" "initramfs/runs.lisp"
+                 "initramfs/pty.lisp" "poc/shell.lisp" "poc/file-manager.lisp" "poc/org-mode.lisp" "initramfs/runs.lisp"
                  "initramfs/containers.lisp" "initramfs/process.lisp"))
       (funcall 'load-recording (merge-pathnames m *root*)))
     ;; the poll loop's service registry lives in fb-browser.lisp, which wants /dev/fb0;
@@ -264,6 +264,15 @@
           (nth-value 1 (find-symbol "ZZ-NEVER-INTERNED" :cl-user)))
     '(nil nil))
 (ok "a vanished folder is refused" (desk-subject (list :dir (concatenate 'string *dir* "gone"))) nil)
+;; an Org outline and one heading of it (poc/org-mode.lisp): saved by the chain of
+;; titles, rebuilt through the whitelist; a vanished file is refused like a folder
+(let ((org (concatenate 'string *dir* "outline.org")))
+  (with-open-file (o org :direction :output :if-exists :supersede) (format o "* A~%** B~%"))
+  (ok "an outline tab round-trips" (desk-ref (desk-subject (desk-ref (subj-org org)))) (list :org org))
+  (ok "a heading tab round-trips by its titles"
+      (desk-ref (desk-subject (desk-ref (subj-org org '("A" "B"))))) (list :org org '("A" "B")))
+  (ok "a heading of a vanished file is refused" (desk-subject (list :org (concatenate 'string *dir* "gone.org") '("A"))) nil)
+  (ok "titles that are not strings are refused" (desk-subject (list :org org '(1 2))) nil))
 
 ;;; ---- done -----------------------------------------------------------------------------------
 

@@ -52,6 +52,41 @@ only place it exists. The main loop then =logior=s the evdev modifier bits into
 the state word before dispatching the tty's key — see [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]'s
 =run-browser-fb=.
 
+** Alt with the arrows, Return and Tab: what the console sends (2026-10-18)
+
+Org's keys ([[file:org.org][org.org]] §6.2) need Meta on four keys the console treats
+specially, and each turned out differently. All three findings come from
+[[file:../check-org.lisp][check-org.lisp]], which presses them over QMP in the guest.
+
+- *Alt-Up / Alt-Down already arrive with their Alt.* In kernel 7.2 =k_cur= (the
+  handler for cursor keys, [[file:../linux/drivers/tty/vt/keyboard.c::static void k_cur][drivers/tty/vt/keyboard.c]]) encodes the held
+  modifiers the way xterm does: Alt-Up is =ESC [ 1 ; 3 A=, Shift-Alt-Up =ESC [ 1 ; 4 A=.
+  =fb-read-csi= already decoded that parameter into the state bits.
+- *Alt-Left / Alt-Right switched the VT* (=alt_map[105]= / =[106]= are
+  =K_DECRCONSOLE= / =K_INCRCONSOLE=; [[file:web-browser.org][web-browser.org]] §2 found it first).
+  [[file:../initramfs/fb-browser.lisp::defun unbind-console-alt-arrows][=unbind-console-alt-arrows=]] now binds them, in every keymap table with the
+  Alt bit, to the plain cursor keys =K_LEFT= / =K_RIGHT=, which is what alt_map
+  already holds for Up and Down. Then they arrive as =ESC [ 1 ; 3 D= / =C= like the
+  rest. =Ctrl-Alt-F1…= still switch VTs.
+- *Shift-Alt-arrows needed nothing.* The default keymap has no Shift+Alt table, and
+  7.2's =keyboard.c= falls back to the plain map for a cursor key when the modifier's
+  table is missing. =k_cur= then adds the modifiers.
+- *Alt-Return and Alt-Tab* come as =ESC CR= and =ESC TAB= (alt_map's Meta entries
+  =0xf80d= / =0xf809=); =fb-read-key= used to drop the first and now returns
+  =:return= / =:tab= with the Meta bit. *Shift-Tab* is a plain Tab byte; its Shift is
+  the evdev's, folded in as for every key.
+
+Two things were *ruled out* on the way, and are recorded so nobody tries them again:
+
+- *Reading Alt-arrows from the evdev as well* (as Shift-PageUp is). Alt-Shift-Right
+  then demoted a heading *twice*, once for the evdev's event and once for the tty's
+  =ESC [ 1 ; 4 C=, because that combination reached both.
+- *K_HOLE instead of K_LEFT* for Alt-Left. The fallback above compares the table
+  entry with =K_HOLE=, but entries are stored as =U(val)= = =val ^ 0xf000=
+  (=vt_kdskbent=, =kbd_kern.h=). A hole set by =KDSKBENT= reads =0xf200= there and
+  never matches, so Alt-Left sent nothing at all. =KDGKBENT= hands entries back
+  without the =0xf0= (=0x0210=, not the =0xf210= that =defkeymap.c_shipped= prints).
+
 * 2. What evdev is
 
 =CONFIG_INPUT_EVDEV=y= builds [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], a *generic* handler that

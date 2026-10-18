@@ -159,6 +159,15 @@ and holding down Super:
   sbcl --script poc/render-frame.lisp workspace --spotter "~/"  # a PATH: completions
 #+end_src
 
+*Org files* ([[file:../doc/org.org][doc/org.org]]). =org:PATH= opens a file's outline; an =.org= opened with
+=file:PATH= is the Org editor, so its keys replay too:
+
+#+begin_src sh
+  sbcl --script poc/render-frame.lisp org:doc/org.org -k "down down"         # outline + a section's preview
+  sbcl --script poc/render-frame.lisp file:doc/org.org -k "S-tab"            # OVERVIEW: every top heading folded
+  sbcl --script poc/render-frame.lisp file:doc/org.org -k "S-tab C-c C-n C-c C-n tab"  # one heading's CHILDREN
+#+end_src
+
 *The file manager.* =dir:PATH= opens it on a folder and =file:PATH= drills a file
 (an editor for text); PATH may be absolute, =~/…= or relative. With =-k=, its letters
 replay like any key, so the minibuffer prompts render too

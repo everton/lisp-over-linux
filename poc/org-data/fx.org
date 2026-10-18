@@ -1,0 +1,17 @@
+#+TITLE: fx
+preamble
+* A
+a body
+** A1
+a1 body
+
+** A2
+a2 body
+#+begin_src lisp
+* not-a-heading?
+#+end_src
+* B :tag:
+b body
+
+
+* C

@@ -69,6 +69,7 @@
     "initramfs/ansi.lisp"         ; needed by line-editor
     "initramfs/line-editor.lisp"  ; token-start / longest-common-prefix, used by the shell
     "poc/clipboard.lisp"          ; lol.clipboard — the shell's copy / paste / rectangles
+    "poc/org.lisp"                ; lol.org — Org's outline, folding and structure edits
     "initramfs/sysinfo.lisp"      ; the systray's battery + clock
     "poc/inflate.lisp"            ; lol.inflate — gzip previews
     "poc/image.lisp"              ; lol.image — image previews
@@ -78,6 +79,7 @@
     "initramfs/file-views.lisp"   ; folders and files as subjects
     "poc/shell.lisp"              ; the shell: panes, tabs, the status line, input
     "poc/file-manager.lisp"       ; the file manager's keys and prompts
+    "poc/org-mode.lisp"           ; Org files: colour, the outline, links, keys
     "initramfs/runs.lisp"         ; run panes: a command's output, streamed (needs shell)
     "initramfs/containers.lisp"   ; containers as subjects (no lol-ct on the host: says so)
     "initramfs/json.lisp"         ; lol.json — the agent's wire format
@@ -142,6 +144,7 @@ exactly as open-environment does in the guest):
                            pty of this host, given ~1.5 s to draw  e.g. terminal:htop
   dir:PATH                 the file manager on a folder   e.g. dir:~/lisp-over-linux
   file:PATH                a file, drilled (an editor for text)    e.g. file:README.org
+  org:PATH                 an Org file's outline (doc/org.org)     e.g. org:doc/org.org
                            (PATH: absolute, ~/..., or relative to the current
                            directory; a FILE opens beside its folder's listing so
                            the frame shows the file manager's split as well)
@@ -272,12 +275,12 @@ OPTIONS
       ;; dir:PATH / file:PATH — the file manager (doc/file-manager.org). The path is
       ;; resolved like a prompt's: ~ is $HOME, a relative path is relative to where
       ;; the harness was started.
-      ((and (member head '("dir" "file") :test #'string=) rest)
+      ((and (member head '("dir" "file" "org") :test #'string=) rest)
        (let ((path (fm-resolve rest (string-right-trim "/" (sb-ext:native-namestring
                                                                *default-pathname-defaults*)))))
-         (if (string= head "dir")
-             (subj-dir path)
-             (subj-file path))))
+         (cond ((string= head "dir") (subj-dir path))
+               ((string= head "org") (subj-org path))     ; poc/org-mode.lisp
+               (t (subj-file path)))))
       ((string= head "changes")   (subj-change-set))
       ((string= head "agent")     (subj-agent))
       ((string= head "conversation") (demo-conversation))

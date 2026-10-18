@@ -89,6 +89,7 @@ LISP_SOURCES=(
                                      #   *completer* / token-start / longest-common-prefix) — before
                                      #   shell.lisp, which reuses them for Tab completion in the editor
   "$POC_DIR/clipboard.lisp"          # lol.clipboard: history + PRIMARY + rectangles (doc/clipboard.org)
+  "$POC_DIR/org.lisp"                # lol.org: Org's outline, folding, structure edits, pure (doc/org.org)
   "$INITRAMFS_DIR/sysinfo.lisp"      # systray data: battery (sysfs power_supply) + clock (doc/systray.org)
   "$POC_DIR/inflate.lisp"            # lol.inflate: DEFLATE / zlib / gzip in pure Lisp (gzip previews)
   "$POC_DIR/image.lisp"              # lol.image: PNG/GIF/BMP/... -> canvas pixels (image previews; uses inflate)
@@ -101,6 +102,7 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/pty.lisp"          # pseudo-terminals via posix_spawn: a program on a pty, as a session leader
   "$POC_DIR/shell.lisp"              # the drill-down accordion shell (uses present + canvas + textview + line-editor)
   "$POC_DIR/file-manager.lisp"       # the file manager's keys, prompts and operations (uses shell + file-views)
+  "$POC_DIR/org-mode.lisp"           # Org files: colour, the outline subject, links, keys (uses org + shell)
   "$INITRAMFS_DIR/runs.lisp"         # run a program, stream its output into a live pane (uses shell + ansi)
   "$INITRAMFS_DIR/containers.lisp"   # the host's Debian as a container: lol-ct's Lisp side (doc/containers.org)
   "$INITRAMFS_DIR/json.lisp"         # lol.json: JSON in/out, objects as a class (doc/agent.org S5)

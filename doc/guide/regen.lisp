@@ -385,7 +385,7 @@
      "initramfs/net.lisp" "initramfs/dhcp.lisp" "initramfs/dns.lisp" "initramfs/sntp.lisp"
      "initramfs/tls.lisp" "initramfs/http.lisp" "initramfs/wifi.lisp" "initramfs/mixer.lisp")
     ("data" "pure formats and algorithms: bytes in, values out, no I/O of their own"
-     "poc/inflate.lisp" "poc/deflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "initramfs/ansi.lisp")
+     "poc/inflate.lisp" "poc/deflate.lisp" "poc/image.lisp" "poc/clipboard.lisp" "poc/org.lisp" "initramfs/ansi.lisp")
     ("model" "the image describing itself: captured source, CLOS via the MOP, SBCL's own source"
      "initramfs/registry.lisp" "initramfs/model.lisp" "initramfs/sbcl-source.lisp"
      "initramfs/sandbox.lisp")
@@ -397,7 +397,7 @@
      "poc/ttf.lisp" "poc/canvas.lisp" "poc/textview.lisp" "poc/widgets.lisp" "poc/morph.lisp"
      "initramfs/line-editor.lisp")
     ("shell" "the one stateful layer: trails, panes, keys, menus, halo, Spotter — and the desk it runs in"
-     "poc/shell.lisp" "poc/file-manager.lisp" "poc/morphic.lisp" "poc/overlays.lisp")
+     "poc/shell.lisp" "poc/file-manager.lisp" "poc/org-mode.lisp" "poc/morphic.lisp" "poc/overlays.lisp")
     ("persistence" "what a session keeps on /home, all under ~/.lol: where (and the move from the old layout), the change journal and its replay, file-out, the desk"
      "initramfs/lol-home.lisp" "initramfs/journal.lisp" "initramfs/file-out.lisp" "initramfs/desk.lisp")
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"

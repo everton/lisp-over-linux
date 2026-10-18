@@ -108,7 +108,10 @@ and =alt_map[106]= (=KEY_LEFT=, =KEY_RIGHT=) are =0xf210= and =0xf211=, which ar
 =K_DECRCONSOLE= and =K_INCRCONSOLE= in =include/uapi/linux/keyboard.h=. The kernel
 acts on them before any program sees a byte. So the guest had switched to another
 VT, and the later keys went there. =SuperL-Left/Right= are back and forward instead;
-=M-Left/Right= still work wherever they arrive (the host).
+=M-Left/Right= still work wherever they arrive. Since 2026-10-18 that includes the
+guest: the environment rebinds Alt-Left/Right to the plain cursor keys for Org's
+promote / demote, so they arrive as =ESC [ 1 ; 3 D= / =C= and no longer switch VTs
+([[file:input.org][input.org]] §1, "Alt with the arrows").
 
 * 3. How it works
 

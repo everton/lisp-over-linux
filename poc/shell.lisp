@@ -235,6 +235,11 @@
   (print-unreadable-object (p stream :type t)
     (princ (if (pane-view p) (short-title (view-title (pane-view p))) "-") stream)))
 
+(defvar *pane-opened-hooks* '()
+  "Functions of one PANE, called on every pane OPEN-PANE builds: a file type that sets
+   its view up the moment it opens — an Org file folds as its #+STARTUP says
+   (poc/org-mode.lisp), which loads after this file.")
+
 (defun open-pane (subject &key preview)
   "Build a PANE for SUBJECT: present it, and for text views wrap the body in a
    textview (reusing its lexer + layout). A :SOURCE view (your code) is EDITABLE —
@@ -260,6 +265,7 @@
       ;; it modified?" is one EQ test (FILE-PANE-DIRTY-P), not a string compare
       (when (and (eq (view-kind v) :file) (pane-tv pane) (listp (view-data v)))
         (setf (getf (view-data v) :saved-lines) (lol.textview:tv-lines (pane-tv pane))))
+      (dolist (hook *pane-opened-hooks*) (ignore-errors (funcall hook pane)))
       pane)))
 
 (defun editable-pane-p (pane)
@@ -2545,6 +2551,9 @@
         (tv (pane-tv p))
         (previous (shiftf *last-edit* nil)))     ; consumed: see *LAST-EDIT*
     (cond
+      ;; an Org file's own keys come first: TAB folds on a headline, C-c C-n moves
+      ;; by heading, M-RET … (poc/org-mode.lisp, which loads after this file)
+      ((and tv (fboundp 'org-key) (funcall 'org-key p key state)) nil)
       ;; C-x r <key>: the rectangle commands — a THREE-key chord, hence its own prefix
       ((eq *pending-prefix* :c-x-r)
        (setf *pending-prefix* nil)
@@ -3553,7 +3562,7 @@
                 (x0 (lol.textview::x-of-col tv (getf target :start)))
                 (x1 (lol.textview::x-of-col tv (getf target :end)))
                 (y (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv)
-                      (* (- (getf target :line) (lol.textview::tv-scroll tv)) lh))))
+                      (* (- (lol.textview::line-row tv (getf target :line)) (lol.textview::tv-scroll tv)) lh))))
            (list (halo-layer (clip-text tok 20)
                              (if sym (format nil "the symbol ~s" sym) (format nil "the word ~s" tok))
                              (or sym tok) (list (- x0 2) (- y 1) (+ (- x1 x0) 4) (+ lh 1))
@@ -3907,7 +3916,7 @@
         (if tv
             (values (lol.textview::x-of-col tv (lol.textview:tv-point-col tv))
                     (+ (lol.textview::tv-y tv) (lol.textview::tv-pad tv) 4
-                       (* (- (lol.textview:tv-point-line tv) (lol.textview::tv-scroll tv))
+                       (* (- (lol.textview::line-row tv (lol.textview:tv-point-line tv)) (lol.textview::tv-scroll tv))
                           (lol.textview:tv-line-height tv))))
             (let ((hit (find (pane-sel p) (pane-rows p) :key #'cdr)))
               (values 40 (if hit (+ (car hit) 4) (pane-body-top p)))))

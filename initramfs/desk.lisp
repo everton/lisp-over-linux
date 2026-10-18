@@ -95,6 +95,11 @@
   (let ((r (symbol-ref (subj-condition-name s)))) (and r (list :condition r))))
 (defmethod desk-ref ((s subj-dir)) (list :dir (subj-dir-path s)))
 (defmethod desk-ref ((s subj-file)) (list :file (subj-file-path s)))
+;; an Org outline, or one heading of it by its chain of titles (poc/org-mode.lisp):
+;; the titles, not a line number, so the tab finds its heading after edits above it
+(defmethod desk-ref ((s subj-org))
+  (and (stringp (subj-org-path s)) (every #'stringp (subj-org-heading s))
+       (list* :org (subj-org-path s) (and (subj-org-heading s) (list (subj-org-heading s))))))
 (defmethod desk-ref ((s subj-file-info)) (list :file-info (subj-file-info-path s)))
 (defmethod desk-ref ((s subj-container))
   (and (stringp (subj-container-name s)) (list :container (subj-container-name s))))
@@ -125,6 +130,8 @@
         (:condition (let ((s (sym (second ref)))) (and s (subj-condition s))))
         (:dir (let ((p (path-ok (second ref)))) (and p (eq (followed-type p) :directory) (subj-dir p))))
         (:file (let ((p (path-ok (second ref)))) (and p (subj-file p))))
+        (:org (let ((p (path-ok (second ref))) (titles (third ref)))
+                (and p (listp titles) (every #'stringp titles) (subj-org p titles))))
         (:file-info (let ((p (path-ok (second ref)))) (and p (subj-file-info p))))
         (:container (and (stringp (second ref)) (subj-container (second ref))))
         (:package (and (stringp (second ref)) (find-package (second ref))))

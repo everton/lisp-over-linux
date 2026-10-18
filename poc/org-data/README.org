@@ -1,0 +1,19 @@
+#+TITLE: Emacs's answers for poc/org-test.lisp
+#+STARTUP: showall
+
+The folding, motion and structure-edit expectations in [[file:../org-test.lisp][org-test.lisp]] and
+[[file:../org-mode-test.lisp][org-mode-test.lisp]] are what *Emacs* does. These probes produced them, run on the
+host's Emacs 30.2 with its Org 9.7.11 (2026-10-18), from this folder:
+
+#+begin_src sh
+  emacs -Q --batch -l fold-probe.el     # TAB / S-TAB: the 1-based lines left hidden
+  emacs -Q --batch -l edit-probe.el     # M-up/down, promote/demote, M-RET, C-c C-t
+  emacs -Q --batch -l motion-probe.el   # C-c C-n / C-p / C-f / C-b / C-u
+#+end_src
+
+=fx.org= is the folding fixture (with a =* = line inside a src block, which Org
+counts as a headline) and =fx2.org= the editing one. A line is "hidden" when
+=invisible-p= is true at its first character, which is how the text view hides
+lines too (doc/org.org §5). The tests turn Emacs's 1-based lines into 0-based ones.
+Rerun these after an Emacs or Org upgrade, and update the tests if the answers
+change.

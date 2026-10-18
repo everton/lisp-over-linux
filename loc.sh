@@ -56,10 +56,13 @@ CATS=(
 # the desk and the trail windows are designs.
 # agent-tools.lisp is "ours" although it carries html-text: a skimmer for the
 # model, not an HTML parser; agent-store.lisp (the conversation file) is ours too.
+# poc/org.lisp is "conformance": its floor is Org's syntax and Org 9.7's folding and
+# structure commands, which it reproduces; poc/org-mode.lisp — what an Org file is in
+# the environment (the outline subject, links, the keys' wiring) — is "ours".
 ORIGINS=(
   "vendored|poc/vendor/*"
   "tests|check-*.lisp *-test.lisp host-client/guest-harness.lisp host-client/http-test-server.lisp host-client/mock-anthropic.lisp"
-  "conformance|poc/ttf.lisp initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp poc/terminal.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp"
+  "conformance|poc/ttf.lisp initramfs/json.lisp initramfs/agent-wire.lisp poc/inflate.lisp poc/image.lisp poc/x11.lisp poc/bdf2font.lisp poc/stbi-shim.c initramfs/dhcp.lisp initramfs/dns.lisp initramfs/sntp.lisp initramfs/http.lisp initramfs/tls.lisp initramfs/ansi.lisp poc/terminal.lisp initramfs/logcount-fix.lisp initramfs/web-cdp.lisp host-client/png.lisp host-client/qmp.lisp poc/org.lisp"
   "tooling|*.sh host-client/* poc/render-frame.lisp doc/guide/*.lisp"
   "ours|*"
 )

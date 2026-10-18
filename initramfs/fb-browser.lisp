@@ -184,6 +184,11 @@
                ((and b1 (<= 33 b1 126)) (values (code-char b1) 8))
                ;; ESC DEL = M-Backspace (Alt-Backspace on the console): kill a word back
                ((eql b1 127) (values :backspace 8))
+               ;; ESC CR / ESC TAB = M-RET / M-TAB: the console's alt_map sends Enter and
+               ;; Tab with the Meta prefix (defkeymap: alt_map[28] = 0xf80d, [15] =
+               ;; 0xf809). Org's M-RET is a new heading (poc/org-mode.lisp).
+               ((member b1 '(13 10)) (values :return 8))
+               ((eql b1 9) (values :tab 8))
                (t (values :ignore 0))))
            (values :escape 0)))
       ((member c '(13 10)) (values :return 0))
@@ -539,6 +544,35 @@
   (loop for table below 256
         count (and (eql (console-kbent table 70 nil fd) +k-hold+)
                    (console-kbent table 70 +k-hole+ fd))))
+
+(defparameter +console-switch-entries+ '(#x0210 #x0211)
+  "K_DECRCONSOLE / K_INCRCONSOLE (K(KT_SPEC,16/17), linux/keyboard.h) as KDGKBENT
+   reports them. defkeymap.c_shipped writes 0xf210 / 0xf211: the 0xf0 there is its
+   U() marker, which the kernel strips — read back in the guest on 2026-10-18 they are
+   0x0210 / 0x0211, the same form as +K-HOLD+.")
+
+(defun unbind-console-alt-arrows (&optional (fd 0))
+  "Take VT switching off Alt-Left / Alt-Right, so they reach the environment as
+   M-<left> / M-<right> (Org's promote and demote, doc/org.org §6.2; a terminal's
+   Alt-arrows). defkeymap binds alt_map[105] / [106] (KEY_LEFT / KEY_RIGHT) to the
+   previous / next console; this binds every such entry, in every table with the Alt
+   bit (8), to the cursor key itself — K_LEFT / K_RIGHT, K(KT_CUR,1/2), which is what
+   alt_map already holds for Up and Down. Kernel 7.2's k_cur (keyboard.c) encodes the
+   held modifiers xterm's way, so Alt-Left then arrives as ESC [ 1 ; 3 D, like
+   Alt-Up's ESC [ 1 ; 3 A, and FB-READ-CSI turns the 3 into the Meta bit. Alt-Shift-
+   arrows needed nothing: there is no Shift+Alt table, and for a cursor key without
+   one keyboard.c falls back to the plain map, so they arrive as ESC [ 1 ; 4 x.
+   Two things ruled out on the way (check-org.lisp, 2026-10-18): reading Alt-arrows
+   from the evdev as well made Alt-Shift-Right demote TWICE, once per path; and
+   K_HOLE instead of K_LEFT does NOT trigger that fallback — keyboard.c compares the
+   stored entry with K_HOLE, but entries are stored as U(val) = val ^ 0xf000, so a
+   hole set by KDSKBENT reads 0xf200 there and never matches; Alt-Left then sent
+   nothing at all. Ctrl-Alt-F1... still switch VTs. Returns how many entries changed."
+  (loop for table below 256
+        when (logbitp 3 table)
+          sum (loop for (code key) in '((105 #x0601) (106 #x0602))   ; K_LEFT, K_RIGHT
+                    count (and (member (console-kbent table code nil fd) +console-switch-entries+)
+                               (console-kbent table code key fd)))))
 
 (defun read-keyboard-evdev (fd)
   "Drain a keyboard's evdev queue, tracking Ctrl / Shift / Super / Alt held state
@@ -1377,6 +1411,7 @@
               ;; scrollback (a terminal pane's history)
               ((eq ev :shift-page-up) (emit :key :key :page-up :state 1 :data '(:evdev t)))
               ((eq ev :shift-page-down) (emit :key :key :page-down :state 1 :data '(:evdev t)))
+
               ;; the volume keys act at once, whatever has the focus (mixer.lisp);
               ;; the status line says the new level, the tray follows
               ((member ev '(:volume-up :volume-down :mute :mic-mute))
@@ -1586,6 +1621,7 @@
         (setf *chooser* 'run-chooser)             ; ... and shows its menus and halos
         (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
         (ignore-errors (unbind-console-hold))     ; Scroll Lock must not stop the console
+        (ignore-errors (unbind-console-alt-arrows)) ; Alt-Left/Right are keys, not VT switching
         ;; the touchpad: does a tap click? Off unless the settings say so.
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
         (setf *fm-interrupt-fn* 'fb-stop-requested-p) ; ... and lets Esc stop a long find
@@ -2343,6 +2379,18 @@
      ("  C-w / C-y"        "add the next word / the clipboard")
      ("  RET / any key"    "stop at the match (the key acts)")
      ("C-x C-x"            "back to where the search began"))
+    ("Org files  (doc/org.org)"
+     ("TAB on a headline"  "fold: folded / children / all")
+     ("S-TAB"              "overview / contents / show all")
+     ("C-c C-n / C-c C-p"  "next / previous heading")
+     ("C-c C-f / C-c C-b"  "next / previous same level")
+     ("C-c C-u"            "up to the parent heading")
+     ("C-c C-j"            "go to a heading by name")
+     ("M-RET"              "new heading (or list item)")
+     ("M-Up / M-Down"      "move the subtree")
+     ("M-Left / M-Right"   "promote / demote (M-S-: subtree)")
+     ("C-c C-t"            "TODO -> DONE -> none")
+     ("C-c C-o / C-c C-l"  "follow / insert a link"))
     ("Clipboard  (Emacs + PC)"
      ("C-w / S-Delete"     "cut the region")
      ("M-w / C-Insert"     "copy the region")

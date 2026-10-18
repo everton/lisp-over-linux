@@ -91,15 +91,15 @@ layer. It keeps the open trails, routes keys and draws. The full design is in
 throws the deepest pane away and shows the one beneath, which was never discarded.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:238</span></a> calls <code>present</code>, or
+  <li><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:243</span></a> calls <code>present</code>, or
     <code>present-preview</code> for the right-hand preview column. It gives <code>:source</code>,
     <code>:reference</code>, <code>:workspace</code> and <code>:file</code> views a textview, focused (editable) for
     everything except <code>:reference</code>.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:342</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:347</span></a>,
-    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:353</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
-    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:409</span></a> (the first tabs).</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:348</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:353</span></a>,
+    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:359</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
+    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:415</span></a> (the first tabs).</li>
   <li>The <strong>nav split</strong>: when a list pane's selected item has a subject, the right half shows
-    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1486</span></a>).
+    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1492</span></a>).
     This is how the tour previews each stop's source.</li>
 </ul>
 
@@ -120,7 +120,7 @@ shell draws it.</p>
   <tr><td><code>function</code></td><td>a closure's captures as fields; source, senders and disassembly as doors</td><td><a class="ref" data-ref="initramfs/present.lisp#present@function" href="../../initramfs/present.lisp"><code>(present function)</code><span class="loc">initramfs/present.lisp:925</span></a></td></tr>
   <tr><td><code>subj-instances</code> / <code>-retention</code> / <code>-disassembly</code></td><td>inspector powers (<a href="../inspector-history.org">inspector-history.org</a>)</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-instances" href="../../initramfs/present.lisp"><code>(present subj-instances)</code><span class="loc">initramfs/present.lisp:993</span></a></td></tr>
   <tr><td><code>t</code> / <code>subj-object</code></td><td>the inspector, so nothing is a dead end</td><td><a class="ref" data-ref="initramfs/present.lisp#present@t" href="../../initramfs/present.lisp"><code>(present t)</code><span class="loc">initramfs/present.lisp:1074</span></a></td></tr>
-  <tr><td><code>subj-dir</code> / <code>subj-file</code> / <code>subj-find</code> / <code>subj-file-info</code></td><td>the file manager</td><td><a class="ref" data-ref="initramfs/file-views.lisp#present@subj-file" href="../../initramfs/file-views.lisp"><code>(present subj-file)</code><span class="loc">initramfs/file-views.lisp:733</span></a></td></tr>
+  <tr><td><code>subj-dir</code> / <code>subj-file</code> / <code>subj-find</code> / <code>subj-file-info</code></td><td>the file manager</td><td><a class="ref" data-ref="initramfs/file-views.lisp#present@subj-file" href="../../initramfs/file-views.lisp"><code>(present subj-file)</code><span class="loc">initramfs/file-views.lisp:741</span></a></td></tr>
   <tr><td><code>subj-worker</code></td><td>a view computed in a <em>second process</em></td><td><a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:189</span></a></td></tr>
   <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a></td></tr>
   <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:135</span></a></td></tr>
@@ -135,12 +135,12 @@ page walks through it.</p>
 
 <h2>Commands: content declares, the shell disposes</h2>
 <p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:346</span></a> returns data. It never opens anything itself.
-The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3334</span></a>), builds menu
-entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3376</span></a>) and runs the chosen one through
-<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3313</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:3795</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:3809</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3784</span></a>. That function calls whatever <code>*chooser*</code> the
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3343</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3385</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3322</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:3804</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:3818</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:3793</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser</code> (an overlay, <code>poc/overlays.lisp</code>) on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>
@@ -206,24 +206,24 @@ redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcapti
     Turns raw bytes into a key and a state mask: control bytes become a letter with the Ctrl bit, <code>ESC [</code>
     sequences become arrows, <code>ESC x</code> becomes Meta-x. The mask uses X11's bit layout so both backends share
     <code>browser-key</code>: Shift bit 0, Ctrl 2, Meta 3, Super 6 (<a class="ref" data-ref="poc/canvas.lisp#shift-p" href="../../poc/canvas.lisp"><code>shift-p</code><span class="loc">poc/canvas.lisp:55</span></a>).</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#read-keyboards" href="../../initramfs/fb-browser.lisp"><code>read-keyboards</code><span class="loc">initramfs/fb-browser.lisp:1139</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#read-keyboards" href="../../initramfs/fb-browser.lisp"><code>read-keyboards</code><span class="loc">initramfs/fb-browser.lisp:1173</span></a></span>
     Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
     <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
     This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2629</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2638</span></a></span>
     One <code>cond</code>, in priority order: minibuffer, <kbd>M-.</kbd>/<kbd>M-,</kbd>, Esc as Meta, <kbd>C-g</kbd>,
     the Super layer, the side pane, the stage, editable panes, read-only text, the subject's own keys, and last the
     list keys, where <kbd>Enter</kbd> calls <code>trail-push</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:238</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:243</span></a></span>
     Presents the subject. A :source view's text goes into a new <code>lol.textview</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#layout-trail-area" href="../../poc/morphic.lisp"><code>layout-trail-area</code><span class="loc">poc/morphic.lisp:274</span></a></span>
     The trail's panes are morphs, the children of a trail area: before the repair the desk lays them out — every
     ancestor a breadcrumb bar, the last one expanded — and the pane that moved or appeared is damaged by moving.</li>
   <li><span class="where"><a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a></span>
-    In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1474</span></a>)
-    and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1645</span></a>) — its panel; its list is a
+    In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1480</span></a>)
+    and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1651</span></a>) — its panel; its list is a
     morph of its own, a list body, which records where it drew its rows: what its clicks and the halo read back.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1215</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1249</span></a></span>
     <code>lol.fb:present-fb</code> of what the world repaired, then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
 </ol>
 
