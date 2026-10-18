@@ -402,7 +402,7 @@
      "initramfs/lol-home.lisp" "initramfs/journal.lisp" "initramfs/file-out.lisp" "initramfs/desk.lisp")
     ("framebuffer runtime" "PID 1's loops: the poll loop on /dev/fb0 + evdev, the REPL, the supervisor and its session log"
      "initramfs/fb-browser.lisp" "initramfs/repl.lisp" "initramfs/supervisor.lisp"
-     "initramfs/session-log.lisp" "initramfs/player.lisp" "initramfs/recorder.lisp")
+     "initramfs/session-log.lisp" "initramfs/player.lisp" "initramfs/damage-log.lisp" "initramfs/recorder.lisp")
     ("agent" "the LLM client living in the image: the wire, the conversation, its tools over the model, its panes, its store"
      "initramfs/json.lisp" "initramfs/agent-wire.lisp" "initramfs/agent.lisp" "initramfs/agent-ui.lisp"
      "initramfs/agent-tools.lisp" "initramfs/agent-store.lisp")

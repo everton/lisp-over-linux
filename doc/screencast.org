@@ -1,14 +1,15 @@
 #+TITLE: Screencasts — recording the environment, with sound, from inside it
 #+STARTUP: showall
 
-*STATUS (2026-10-18): steps 0–4 BUILT; step 5 (the damage log) next.* Kernel tag #29
+*STATUS (2026-10-18): steps 0–5 BUILT.* Kernel tag #29
 (sound), =/dev/snd= for the user, =mixer.lisp= and the volume keys are built and in use
 on the laptop (the user played their own screencast through the headset, 2026-10-18).
 A/V sync was proved on the host before any recorder code (§5.1: a constant 27–32 ms,
 no drift over 3 minutes). The recorder (=recorder.lisp=, =SuperL-r= / =SuperL-S-r=, the
 tray, the recorder pane and the recordings) and the full-screen player
 (=player.lisp=, the screen lent to the host's MPlayer) pass =check-recorder.lisp= in
-QEMU (24 checks); a recording made on the laptop is owed. §13 is what shipped, what
+QEMU, and so does the damage log (step 5: =damage-log.lisp=, recorded as rects and
+encoded after the stop) — 37 checks; a recording made on the laptop is owed. §13 is what shipped, what
 changed against this design, and what was measured. Written first for the user to
 review, the way [[file:morphic.org][morphic.org]] was; the user then said to go on alone (2026-10-18), so
 §12's defaults stand as decided. Every claim about /our/ code, the kernel tree, the
@@ -730,7 +731,7 @@ dropped-frame counts); tearing; colours; the volume keys; and whether the
    2026-10-18* (§13).
 4. *The player* (§8): the screen hand-off, the key table, MPlayer's slave protocol, the
    result view's *Play*. *BUILT 2026-10-18* (§13); the file manager's =.mp4= hook not yet.
-5. *The damage log* (§5.2) as the second mode.
+5. *The damage log* (§5.2) as the second mode. *BUILT 2026-10-18* (§13.5).
 6. Later, each optional: an on-screen *key display* (the environment is keyboard-first;
    a viewer cannot see =C-c C-c= being pressed — drawn into the recorded frame only),
    *system audio* (=SND_ALOOP= + mixing the loopback with the mic, so a web page's
@@ -772,9 +773,10 @@ Steps 0–4 are the user's request; 5 is the documented option; 6 is not owed.
 
 * 13. What was built (2026-10-18)
 
-Steps 1–4 of §10, in [[file:../initramfs/recorder.lisp][recorder.lisp]] and [[file:../initramfs/player.lisp][player.lisp]], with the two hooks they
-need in [[file:../initramfs/fb-browser.lisp::Every write of ours to /dev/fb0][fb-browser.lisp]]. Proved in QEMU by =check-recorder.lisp= (25 checks); a
-take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is owed.
+Steps 1–5 of §10, in [[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:../initramfs/player.lisp][player.lisp]] and
+[[file:../initramfs/damage-log.lisp][damage-log.lisp]], with the two hooks they need in [[file:../initramfs/fb-browser.lisp::Every write of ours to /dev/fb0][fb-browser.lisp]]. Proved in
+QEMU by =check-recorder.lisp= (37 checks) and on the host by =poc/damage-log-test.lisp=;
+a take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is owed.
 
 ** 13.1 What shipped
 
@@ -863,3 +865,46 @@ take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is o
   so the 1 GB rule refuses there (as it should). The check lowers =*rec-min-free*=.
 - *=sb-unix= has no =unix-chmod=, =unix-rmdir= or =o_nonblock=*: =files.lisp='s
   =%chmod= / =%rmdir=, and =O_NONBLOCK= = =#o4000= from =asm-generic/fcntl.h=.
+
+** 13.5 Step 5: the damage log
+
+The recorder pane's =m= switches the next recording between =live= and =log=
+(=*rec-mode*=); the tray then says =REC LOG=. In a logged take nothing is encoded
+while you talk:
+
+- *The picture*: =*frame-tap*= now passes the repair's rects (=present-repair=) or
+  "the whole frame" (=present-frame=); in log mode the tap cuts those rects out of
+  the canvas (a copy, cheap) and hands them to a log-writer thread, which compresses
+  them with =lol.deflate= and appends them to =seg-NNN.dmg=. The format is its own
+  file, [[file:../initramfs/damage-log.lisp][damage-log.lisp]] (magic, the screen's size, then records of rects or of the
+  pointer, each stamped in µs since the log began), so the host test can prove the
+  round trip. The sampler's slots, in log mode, only note the pointer when it moved.
+- *The sound*: an audio-only ffmpeg — the mic into =seg-NNN.flac= (lossless) and
+  the meter's FIFO — with =-loglevel info=, its stderr kept as =seg-NNN.alog=.
+- *Alignment*: in a live take one ffmpeg holds both streams; here they are two
+  processes, so the sound's place must be measured. ffmpeg prints each input's
+  start when it opens it, and for a live device that is the *wall clock* of the
+  first sample (checked on the host: =start: 1792339442.244653=, 38 ms after the
+  spawn). The log keeps its own wall-clock start; the difference becomes
+  =-itsoffset= at encoding (=alog-start=, =rec-encode-log=). Tried first and *ruled
+  out*: =-copyts= into Matroska, hoping the file would keep the epoch timestamps —
+  ffmpeg wrote a file it could not read back ("Duplicate element", "End of file").
+- *After stop*: a thread replays each log at 30 fps (=dmg-replay=: every record up
+  to frame k's time, the pointer drawn on a copy) into ffmpeg with its FLAC, then the
+  segments are joined exactly as a live take's; =SAVING n%= counts the frames
+  replayed over the take's total. The logs and sound files are deleted once encoded.
+
+*Measured.* =lol.deflate= compresses a 1280×800 frame of UI-like content (4 MB) to
+29 KB in 0.06 s on the host, so the log thread keeps up with full repaints. In QEMU,
+a logged take of 7.97 s by the host's clock came out 8.17 s, 245 frames, 2 segments,
+H.264 + AAC, the colours as on screen (red 30 vs 32, blue 40 vs 42), 0 stale frames
+(the replay never runs out of buffers), each segment's sound offset read from ffmpeg
+and between 0 and 1 s. =poc/damage-log-test.lisp= (16 checks): a scripted screen
+logged and replayed at 10 fps equals the screen at every frame's time, pixel for
+pixel and with the pointer; a log cut short replays without an error; a file that is
+not a log is refused. It also found a bug before any guest did: the replay's default
+pointer drawer took one argument where it is called with three.
+
+/To prove on the laptop:/ that a logged take's sound sits on its picture as closely
+as a live one's (a clap on camera — or a key pressed with the mic near it — is the
+test), and the log's size on a long take of real work.

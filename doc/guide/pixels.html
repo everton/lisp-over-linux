@@ -94,8 +94,8 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
   <li><a class="ref" data-ref="poc/x11.lisp#present" href="../../poc/x11.lisp"><code>present</code><span class="loc">poc/x11.lisp:243</span></a> is the host twin: the X11 wire protocol over a Unix socket,
     written in Lisp. It is deliberately <em>not</em> in the image.</li>
-  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1235</span></a> composites
-    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1281</span></a> repairs only the old and new
+  <li>The pointer is not part of the frame. <a class="ref" data-ref="initramfs/fb-browser.lisp#put-cursor" href="../../initramfs/fb-browser.lisp"><code>put-cursor</code><span class="loc">initramfs/fb-browser.lisp:1236</span></a> composites
+    it on top, and <a class="ref" data-ref="initramfs/fb-browser.lisp#move-cursor" href="../../initramfs/fb-browser.lisp"><code>move-cursor</code><span class="loc">initramfs/fb-browser.lisp:1282</span></a> repairs only the old and new
     rectangles, so moving the mouse never redraws the browser (<code>check-pointer.lisp</code> asserts this).</li>
 </ul>
 

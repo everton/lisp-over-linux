@@ -46,7 +46,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     On the console, Alt-. (or Esc then .) arrives as the bytes <code>ESC .</code>. An ESC followed within 20 ms by a printable
     byte becomes that character with the Meta bit (8) set. A lone ESC becomes <code>:escape</code>, which the shell keeps as a
     "sticky" Meta for the next key.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1617</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1618</span></a></span>
     The loop ORs in the held modifiers from evdev and calls <code>browser-key</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2638</span></a></span>
     The first real branch: Meta and <code>.</code> in a pane with a textview. It comes before the editing branch, or the
