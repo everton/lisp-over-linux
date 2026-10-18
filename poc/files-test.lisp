@@ -210,6 +210,11 @@
             #'string<)
       '("src/" "src/d/" "src/d/f" "src/d/lnk")))
 (ok "gzip preview inflates" (view-kind (present (subj-file (p "g.gz")))) :reference)
+;; a gzip bomb whose trailer LIES: 100 MB of zeros (~100 KB compressed) claiming to
+;; inflate to 16 bytes. The preview must stop at its 64 MB cap, not trust the claim
+(sh (format nil "cd '~a' && head -c 100M /dev/zero | gzip -c > bomb.gz && printf '\\020\\000\\000\\000' | dd of=bomb.gz bs=1 seek=$(( $(stat -c %s bomb.gz) - 4 )) conv=notrunc 2>/dev/null" *dir*))
+(ok "a gzip bomb with a lying trailer stops at the cap"
+    (and (search "output exceeds" (view-text (present (subj-file (p "bomb.gz"))))) t) t)
 (ok "a text file opens in the editor" (view-kind (present (subj-file (p "a" "new.txt")))) :file)
 (ok "... and previews read-only" (view-kind (present-preview (subj-file (p "a" "new.txt")))) :reference)
 

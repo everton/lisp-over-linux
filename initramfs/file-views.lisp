@@ -625,7 +625,11 @@
                                            (human-size +gzip-cap+))))
         ((and isize (> isize (* 64 1024 1024))) (info "it inflates past 64 MB"))
         (t
-         (let ((out (handler-case (funcall gunzip (funcall octets-reader size))
+         ;; the trailer's size is only a CLAIM (mod 2^32, and one member's of many): a
+         ;; few KB can inflate to gigabytes, so the cap is enforced while inflating —
+         ;; INFLATE stops at :MAX-OUTPUT instead of growing until the heap is gone
+         (let ((out (handler-case (funcall gunzip (funcall octets-reader size)
+                                           :max-output (* 64 1024 1024))
                       (error (c) (return-from gzip-view (info (format nil "inflate failed: ~a" c)))))))
            (multiple-value-bind (kind label) (sniff (subseq out 0 (min (length out) 65536)) (or orig ""))
              (case kind

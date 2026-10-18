@@ -129,6 +129,13 @@ b.gz= is a valid gzip file and decompresses to the concatenation. =decompress=
 sniffs which of the three it was given. Corrupt input signals =inflate-error= —
 the test flips and truncates a gzip 200 ways and checks nothing else ever escapes.
 
+=:max-output= stops inflating at a size instead of trusting one. The file manager's
+=.gz= preview passes 64 MB (since 2026-10-17). Its check of the gzip trailer was not
+enough: the trailer's size is mod 2^32, covers only the last member, and is whatever
+the file says. =poc/files-test.lisp= builds 100 MB of zeros, about 100 KB
+compressed, with a trailer claiming 16 bytes, and the preview stops at the cap. The
+PNG decoder has always passed the size its header implies.
+
 * 3. PNG
 
 A PNG is an 8-byte signature and a list of /chunks/: length, a 4-letter type,

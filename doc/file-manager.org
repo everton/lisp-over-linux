@@ -206,7 +206,7 @@ inflated in Lisp, then only the tar headers are read (=--scene files-archive=):
 | image | PNG =89 50 4E 47=, JPEG =FF D8 FF=, GIF8, RIFF…WEBP, =qoif=, BMP/netpbm (+ name), TGA/ICO/PSD/HDR (name + lol.image agrees) | the picture, scaled to fit | the same, full pane | 8 MB to preview, 48 MB to open; lol.image refuses > 40 Mpx |
 | symlink | lstat | the *target's* preview, titled =link name -> target= | the target, through the link | — |
 | broken link | stat fails | where it points, and its folder | same | — |
-| gzip | =1F 8B= | inflated: text, or a tar listing for =.tar.gz=; the original name from the header | same, longer | 16 MB compressed, 64 MB inflated (its trailer says) |
+| gzip | =1F 8B= | inflated: text, or a tar listing for =.tar.gz=; the original name from the header | same, longer | 16 MB compressed, 64 MB inflated (enforced while inflating; the trailer can lie) |
 | tar | =ustar= at byte 257 | member list (name, size, date), headers only | same | 5 000 members |
 | zip | =PK 03 04= / =PK 05 06= | member list from the *central directory* (the index at the end), data never read | same | 5 000 members; zip64 named, not parsed |
 | ELF | =7F 45 4C 46= | class, endianness, type, machine, entry; =PT_INTERP= → "dynamically linked, interpreter …" or "statically linked"; + hex | same | 4 KB of hex |
