@@ -123,10 +123,10 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1492</span></a></span>
     Each list pane caches its own preview pane and rebuilds it only when the selection moves:
     <code>(open-pane subject :preview t)</code>, which calls <code>present-preview</code>, not <code>present</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#file-view" href="../../initramfs/file-views.lisp"><code>file-view</code><span class="loc">initramfs/file-views.lisp:664</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#file-view" href="../../initramfs/file-views.lisp"><code>file-view</code><span class="loc">initramfs/file-views.lisp:665</span></a></span>
     <code>lstat</code>s the path, follows a link, reads a capped prefix (<a class="ref" data-ref="initramfs/files.lisp#read-prefix" href="../../initramfs/files.lisp"><code>read-prefix</code><span class="loc">initramfs/files.lisp:600</span></a>)
     and identifies the bytes by magic number (<a class="ref" data-ref="initramfs/file-views.lisp#sniff" href="../../initramfs/file-views.lisp"><code>sniff</code><span class="loc">initramfs/file-views.lisp:238</span></a>), not by extension.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#image-view" href="../../initramfs/file-views.lisp"><code>image-view</code><span class="loc">initramfs/file-views.lisp:582</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/file-views.lisp#image-view" href="../../initramfs/file-views.lisp"><code>image-view</code><span class="loc">initramfs/file-views.lisp:583</span></a></span>
     Finds the decoder <em>by name</em>: <code>(optional-fn "LOL.IMAGE" "DECODE-IMAGE")</code>. Without it, the preview still
     says the format and size. Previews have a smaller size cap than opening the file.</li>
   <li><span class="where"><a class="ref" data-ref="poc/image.lisp#decode-image" href="../../poc/image.lisp"><code>decode-image</code><span class="loc">poc/image.lisp:1405</span></a></span>
