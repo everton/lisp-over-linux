@@ -620,13 +620,15 @@ decode and a rectangle blit for what the eye sees.
 
 * 9. Limits, and what is next
 
-- *No video or audio.* The image has no sound driver. Video frames come through the
-  screencast like any other pixels, at whatever rate it manages, with no
-  synchronisation and no sound.
-- *Non-ASCII typing.* The console delivers UTF-8 as separate bytes and the shell
-  reads one byte as one character, so =ç= or =ã= typed on the console arrives as two
-  wrong characters. This is a shell-wide limitation, not one of the web pane's; paste
-  (=C-v=) carries any text correctly.
+- *A page's sound is untried.* Since tag #29 the image has sound ([[file:screencast.org][screencast.org]]), and
+  the container sees =/dev/snd=, but whether headless Chrome plays a page's audio there
+  has not been tested — its ALSA would look for the =default= device, which the host's
+  configuration points at PipeWire (screencast.org §2). A page's video comes through
+  the screencast like any other pixels, unsynchronised; a video file plays properly with
+  the host's MPlayer (=play-video=, §8 there).
+- /Fixed 2026-10-19: non-ASCII typing./ The console sends UTF-8, and =fb-read-key= used
+  to make each byte a character (=ç= arrived as two wrong ones); it decodes UTF-8 now,
+  and pt-BR is typed with Right Alt or Caps Lock ([[file:input.org][input.org]] §1, "Two layouts").
 - *Pickers* are ours for =<select>=, colour, date/time and =<datalist>= (§4.4), but
   not inside a cross-site iframe, where our page script never runs.
 - *No file upload dialog.* =<input type=file>= opens nothing yet. The next step is
