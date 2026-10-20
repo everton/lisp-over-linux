@@ -11,8 +11,9 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#30* (SMP: every CPU, and with it Intel P-state frequency scaling — §10; built on
-#29 = SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
+Current tag: *#31* (kexec: the running kernel boots the next image itself, without the
+firmware or GRUB — §11; built on #30 = SMP: every CPU, and with it Intel P-state
+frequency scaling — §10; built on #29 = SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
 the KERNEL is stuck: Magic SysRq, the lockup and hung-task
 detectors, pstore on EFI variables — §6; built on #27 = USB Ethernet dongles, the RTL8153
 and the generic CDC classes, §8; built on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
@@ -21,7 +22,7 @@ NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased t
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
 16x32 fbcon font — *since reverted*, see the Display table and
 [[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
-1,180 =CONFIG_= lines are set at #30; most are auto-selected defaults. The tables below
+1,184 =CONFIG_= lines are set at #31; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
 * How to regenerate / audit this file
@@ -49,7 +50,8 @@ DETECT_HUNG_TASK|PSTORE|EFI_VARS_PSTORE|MISC_FILESYSTEMS|\
 SOUND|SND|SND_PCM|SND_HDA_INTEL|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_ALC269|\
 SND_HDA_GENERIC|SND_SOC|SND_HDA_CODEC_HDMI|SND_USB_AUDIO|\
 SMP|NR_CPUS|SCHED_SMT|SCHED_MC|SCHED_MC_PRIO|HOTPLUG_CPU|TREE_RCU|TINY_RCU|\
-CPU_FREQ|X86_INTEL_PSTATE)=' .config | sort
+CPU_FREQ|X86_INTEL_PSTATE|\
+KEXEC|KEXEC_CORE|KEXEC_FILE|KEXEC_SIG|CRASH_DUMP|EFI_RUNTIME_MAP)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -66,6 +68,10 @@ grep -cE '^CONFIG_SND_SOC=y' .config        # expect 0 (no SOF / AVS, §9)
 # SMP is ON since tag #30 (§10):
 grep -cE '^CONFIG_SMP=y' .config            # expect 1
 grep -E '^CONFIG_NR_CPUS=' .config          # expect CONFIG_NR_CPUS=16
+
+# kexec is ON since tag #31 (§11) — the file-based call only, no crash kernel:
+grep -cE '^CONFIG_KEXEC_FILE=y' .config      # expect 1
+grep -cE '^CONFIG_CRASH_DUMP=y' .config      # expect 0
 #+end_src
 
 * 1. Boot — how the kernel becomes the EFI application
@@ -373,6 +379,41 @@ CPUs by =sched_getcpu=, and 4 threads allocating through a forced full GC.
 hardware threads — and =cpu0/cpufreq/scaling_driver= = =intel_pstate=, so the CPU's
 frequency is now managed by the kernel; under #29 there was no cpufreq driver at all.
 
+* 11. Restarting — kexec, NEW in tag #31
+
+Until #30, a new build of the image reached the laptop through the firmware: power
+cycle, POST, GRUB, its first entry (=/etc/grub.d/06_lisp=, [[file:micro-distro.org][micro-distro.org]]).
+*kexec* lets the RUNNING kernel do it instead. A process with =CAP_SYS_BOOT= hands it
+a kernel and an initramfs (=kexec_file_load(2)=, system call 320 on x86-64: two file
+descriptors and a command line). The kernel parses the bzImage itself, copies both
+into memory and waits. At =reboot(LINUX_REBOOT_CMD_KEXEC)= it shuts its devices down
+the way a reboot would and jumps into the loaded kernel, which boots as if a
+bootloader had started it. No firmware runs, so the screen is not reset and the
+seconds of POST are skipped. PID 1 already holds =CAP_SYS_BOOT= (it is how it powers
+off, [[file:storage.org][storage.org]]); =kexec_load_permitted= in [[file:../linux/kernel/kexec_core.c][=kernel/kexec_core.c=]] asks for nothing
+more. The userland side is [[file:sbcl-init.org][sbcl-init.org]], "Updating from inside".
+
+| Option                    | State | Role |
+|---------------------------+-------+------|
+| =CONFIG_KEXEC_FILE=       | y     | =kexec_file_load(2)=: the kernel reads the image from a file descriptor and parses it (=arch/x86/kernel/kexec-bzimage64.c=), so no =kexec-tools= is needed in the image |
+| =CONFIG_KEXEC_CORE=       | y     | =select=-ed by =KEXEC_FILE=: loading segments, =machine_kexec=, the purgatory (=ARCH_SUPPORTS_KEXEC_PURGATORY=: a small trampoline that runs between the two kernels) |
+| =CONFIG_EFI_RUNTIME_MAP=  | y     | =select=-ed by =config EFI= when =KEXEC_CORE= is on (=arch/x86/Kconfig=): the next kernel needs the EFI runtime services' memory map to call them after the jump; =kexec-bzimage64.c= passes it as setup data |
+| =CONFIG_KEXEC=            | n     | the OLDER call, =kexec_load(2)=, which takes segments prepared in user space by =kexec-tools=; we have no such tool and want none |
+| =CONFIG_KEXEC_SIG=        | n     | verify the next kernel's signature. Without Secure Boot it would only refuse our own unsigned builds |
+| =CONFIG_CRASH_DUMP=       | n     | its default follows =ARCH_DEFAULT_CRASH_DUMP= (y on x86), so it is set off by hand: a crash kernel needs =crashkernel== memory reserved at every boot and a tool to read =/proc/vmcore=. Our crash story is the session log and =kernel.panic=10= ([[file:diagnostics.org][diagnostics.org]]) |
+
+The command line: our bzImage carries =CONFIG_CMDLINE= (=console=… initrd=…=), and
+with =CMDLINE_BOOL= and no =CMDLINE_OVERRIDE= the kernel /prepends/ it to whatever it
+is given (=arch/x86/kernel/setup.c=, =builtin_cmdline=). So the userland passes on
+only what is not the built-in line: =/proc/cmdline= minus =console==, =initrd== and
+GRUB's =BOOT_IMAGE== ([[file:../initramfs/process.lisp::defun kexec-cmdline][=kexec-cmdline=]]).
+
+/Not verified yet/: whether every device comes back after a kexec on the laptop. The
+EFI framebuffer should, since the old kernel's =screen_info= is handed over
+(=kexec-bzimage64.c=, "Copying screen_info will do?"), and so should NVMe, the AX201
+and HD-Audio, whose drivers all have shutdown paths. The =:restart-via :firmware= setting
+(=~/.lol/settings=) is there in case one does not; see the change log's #31 entry.
+
 * Deliberately OFF (and what it would take to turn on)
 
 ** Sound through the DSP, HDMI audio, USB and Bluetooth audio — OFF (tag #29)
@@ -572,3 +613,16 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   =./make-test-disk.sh=. /Booted on the laptop 2026-10-20/: =nproc= says 8 and
   =/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver= says =intel_pstate=; the
   environment, the terminal and the tools in use as before.
+- =#31= *kexec* (2026-10-20): =KEXEC_FILE= on (with it =KEXEC_CORE=,
+  =EFI_RUNTIME_MAP=, =ARCH_SELECTS_KEXEC_FILE=), =CRASH_DUMP= off by hand (§11); 4 more
+  =CONFIG_= lines set than at #30 (1,184), plus the =KEXEC_SIG= / =CRASH_DUMP= "is not
+  set" lines. Built *inside the environment*, in
+  the terminal's container (=make -j8 bzImage=, 19.5 s wall, incremental on #30) — the
+  first kernel built there. =bootx64.efi= is 4,428,800 bytes at #31 (4,412,416 at
+  #30). Userland in the same tag: "Install the new build and restart" (=SuperL-q=,
+  the supervisor's =u=), lol-rootd's install request, =restart-machine= with its
+  firmware fallback ([[file:sbcl-init.org][sbcl-init.org]], "Updating from inside"). Host-tested by
+  =poc/update-test.lisp= (30 checks: lol-rootd's real C under =unshare -rm=; there,
+  on #30, =kexec_file_load= answered ENOSYS). [[file:../check-update.lisp][=check-update.lisp=]], which kexecs a
+  guest, is written but /not run yet/: the guest checks need KVM, so Debian. Not yet
+  booted on the laptop.
