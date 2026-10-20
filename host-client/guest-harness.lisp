@@ -99,7 +99,8 @@
    NAME (plus our pid) names the scratch directory, which holds the QMP socket, so
    two runs cannot collide there; LOL_PORT keeps their net-REPL forwards apart.
    LOL_QEMU_CPU=max (or any QEMU -cpu model) swaps the default qemu64 CPU — the
-   switch that cornered the LOGCOUNT bug (doc/inspector-history.org §5.6)."
+   switch that cornered the LOGCOUNT bug (doc/inspector-history.org §5.6). LOL_QEMU_SMP
+   sets the CPU count (default 4: the kernel is SMP since tag #30)."
   (setf *work* (format nil "/tmp/lol-~a-~d/" name (sb-posix:getpid)))
   (ensure-directories-exist *work*)
   (sb-ext:run-program "cp" (list *ovmf-vars* (path "vars.fd")) :search t :wait t)
@@ -112,6 +113,10 @@
                 "-m" (let ((m (sb-posix:getenv "LOL_QEMU_MEM"))) (if (and m (plusp (length m))) m "2048"))
                (append
                 (let ((cpu (sb-posix:getenv "LOL_QEMU_CPU"))) (and cpu (list "-cpu" cpu)))
+                ;; LOL_QEMU_SMP: how many CPUs the guest has, 4 by default — since tag #30 the
+                ;; kernel is SMP (the laptop has 8 threads), and a race that one CPU hides
+                ;; is what a check must find. LOL_QEMU_SMP=1 gives the old single CPU.
+                (list "-smp" (let ((n (sb-posix:getenv "LOL_QEMU_SMP"))) (if (and n (plusp (length n))) n "4")))
                 ;; LOL_GUEST_DISK=test-disk.img attaches the stand-in for the laptop's
                 ;; disk (make-test-disk.sh, doc/storage.org). snapshot=on: the guest's
                 ;; writes go to a throwaway overlay, so a test can mkdir and delete

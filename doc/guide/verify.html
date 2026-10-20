@@ -86,8 +86,8 @@ happened. Assertions are on values the image computed about itself, never on pix
 </figure>
 <ul>
   <li>Harness: <a class="ref" data-ref="host-client/guest-harness.lisp#boot-guest" href="../../host-client/guest-harness.lisp"><code>boot-guest</code><span class="loc">host-client/guest-harness.lisp:97</span></a>,
-    <a class="ref" data-ref="host-client/guest-harness.lisp#probe" href="../../host-client/guest-harness.lisp"><code>probe</code><span class="loc">host-client/guest-harness.lisp:328</span></a>,
-    <a class="ref" data-ref="host-client/guest-harness.lisp#qmp-hold" href="../../host-client/guest-harness.lisp"><code>qmp-hold</code><span class="loc">host-client/guest-harness.lisp:228</span></a>. Its header records two hard-won traps:
+    <a class="ref" data-ref="host-client/guest-harness.lisp#probe" href="../../host-client/guest-harness.lisp"><code>probe</code><span class="loc">host-client/guest-harness.lisp:333</span></a>,
+    <a class="ref" data-ref="host-client/guest-harness.lisp#qmp-hold" href="../../host-client/guest-harness.lisp"><code>qmp-hold</code><span class="loc">host-client/guest-harness.lisp:233</span></a>. Its header records two hard-won traps:
     hold the modifier (a QMP chord releases it before the tty byte is read) and make answers self-identifying.</li>
   <li>Environment: <code>LOL_PORT</code> (host port of the forward, default 4005), <code>LOL_QEMU_CPU</code> (default
     qemu64, which has no POPCNT; that is how the LOGCOUNT bug was caught), <code>LOL_GUEST_DISK=test-disk.img</code> (attached
