@@ -377,8 +377,15 @@ no cost — and =present-preview= never starts a program. Its view kind is
   shell does not run each pasted line as it arrives. Newlines become CR (what
   Return sends), and any ESC inside is dropped, or a crafted clipboard could close
   the bracket early.
-- *An ended program* keeps its last screen with its fate underneath ("exited with
-  code 0", "killed by signal 9"); =Return= or =q= closes the pane, =r= runs it again.
+- *An ended program*: a clean exit (code 0 — a shell left with =exit= or =C-d=)
+  takes its pane with it, as an xterm's window goes — a tab closes, a window goes
+  (=desk-sync= drops a window whose trail is gone), a drilled pane pops back to the
+  one before it (=terminal-dismiss=); the last tab stays, since the shell always keeps
+  one. Anything else ("exited with code 3", "killed by signal 9") keeps its last
+  screen with its fate underneath, because that is what you will want to read;
+  =Return= or =q= closes the pane, =r= runs it again. =*terminal-close-on-exit*=
+  chooses: =:success= (the default), =t= (always close), =nil= (always keep; the
+  behaviour until 2026-10-20, when an ended shell in a window left it standing).
 
 * 11. The loop: output is input too
 

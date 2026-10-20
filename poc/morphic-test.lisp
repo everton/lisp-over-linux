@@ -755,6 +755,30 @@
     (check "the screen is right" (screen-right-p))
     (keys "s-w")))
 (repair)
+;; a terminal in a window whose program ends: a clean exit takes the window with it,
+;; a failed one keeps it, saying so (doc/terminal.org §10, *TERMINAL-CLOSE-ON-EXIT*)
+(when (probe-file "/bin/sh")
+  (flet ((serve-until-ended (seconds)
+           ;; the guest's :terminals service, turned by the clock: every master "ready"
+           (let ((deadline (+ (get-internal-real-time) (* seconds internal-time-units-per-second))))
+             (loop while (and *terminals* (< (get-internal-real-time) deadline))
+                   do (terminal-service (terminal-fds)) (sleep 0.05)))
+           (desk-sync *world*)))
+    (dolist (case '((0 nil) (3 t)))
+      (destructuring-bind (code stays) case
+        (let ((tabs (length *trails*)))
+          (new-trail (parse-subject (format nil "terminal:sleep 0.3; exit ~d" code)))
+          (desk-sync *world*) (repair)
+          (keys "s-g esc")
+          (let ((w (trail-window-of (nth *active* *trails*))))
+            (serve-until-ended 3)
+            (check (format nil "a terminal in a window exiting ~d: the window ~:[goes~;stays~]"
+                           code stays)
+                   (and w (eq stays (and (member w (desk-windows)) t))
+                        (= (length *trails*) (if stays (1+ tabs) tabs))))
+            (check "the screen is right" (screen-right-p))
+            (when stays (keys "s-w"))))))))
+(repair)
 
 (format t "~&== drag and drop: the hand carries a subject (doc/morphic.org §13) ==~%")
 (defvar zz-drop-target 1 "An inspector field to drop on: this symbol's value cell.")

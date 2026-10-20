@@ -15,7 +15,9 @@
 ;;;;   - `less' takes the alternate screen and `q' gives it back;
 ;;;;   - a smaller pane reaches the program: `stty size' after a crumb is added above;
 ;;;;   - so does a bigger font (SuperL-=, doc/fonts.org): fewer columns, `stty size';
-;;;;   - `exit' ends the program and the pane says how.
+;;;;   - `exit' ends the program and its pane closes by itself (back to the crumb
+;;;;     above it); `exit 3' in a new tab keeps the pane, saying how it ended, until
+;;;;     Return closes the tab.
 ;;;;
 ;;;; LOL_SHOTS=DIR keeps screendumps of the shell and of less.
 ;;;; All original code, under this project's MIT licence.
@@ -146,11 +148,22 @@
                (row "stty says" (screen-has (format nil "~d ~d" rows1 cols1)))))
       (qmp-hold "meta_l" "0") (sleep 1.5))
     (format t "~&~%== exit ==~%")
-    (qmp-type "exit") (qmp-key "ret") (sleep 2)
-    (check "exit ends the program, and the pane says so"
-           (search "exited" (row "message" (probe "(term-session-message (pane-session (current-pane)))"))))
-    (qmp-key "ret") (sleep 1.5)
-    (check "Return on an ended terminal closes it"
-           (string= "NIL" (row "still a terminal?" (probe "(terminal-pane-p (current-pane))"))))))
+    (let ((tabs (probe-int "(length *trails*)")))
+      (qmp-type "exit") (qmp-key "ret") (sleep 2)
+      (check "a clean exit closes the pane by itself"
+             (string= "NIL" (row "still a terminal?" (probe "(terminal-pane-p (current-pane))"))))
+      (check "... popping its trail back to the crumb above, the tab kept"
+             (eql tabs (row "tabs" (probe-int "(length *trails*)")))))
+    (format t "~&~%== exit 3: the pane stays, saying so ==~%")
+    (let ((tabs (probe-int "(length *trails*)")))
+      (qmp-hold "meta_l" "ret") (sleep 3)
+      (wait-until "(and (terminal-pane-p (current-pane)) (session-live-p (pane-session (current-pane))) t)")
+      (qmp-type "exit 3") (qmp-key "ret") (sleep 2)
+      (check "a failed exit keeps the pane, and it says how it ended"
+             (search "code 3" (row "message" (probe "(term-session-message (pane-session (current-pane)))"))))
+      (qmp-key "ret") (sleep 1.5)
+      (check "Return on an ended terminal closes its tab"
+             (and (string= "NIL" (row "still a terminal?" (probe "(terminal-pane-p (current-pane))")))
+                  (eql tabs (row "tabs" (probe-int "(length *trails*)"))))))))
 
 (run-guest-checks "terminal" #'checks)

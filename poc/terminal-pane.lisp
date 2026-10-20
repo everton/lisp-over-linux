@@ -331,6 +331,39 @@
       (unless (eq result :title) (setf result :copied)))
     result))
 
+;;; A shell you leave with `exit' has nothing more to say: its pane (a tab, a window,
+;;; or the end of a trail) goes with it, as an xterm's window does. A program that
+;;; failed or was killed keeps its last screen with its fate underneath, since that
+;;; is usually what you want to read; Return/q closes it then, r runs it again.
+(defparameter *terminal-close-on-exit* :success
+  "When an ended terminal's pane closes by itself: :SUCCESS (exit code 0), T (always),
+   NIL (never — every ended program waits for Return/q).")
+
+(defun terminal-closes-on-exit-p (subject)
+  (let ((proc (term-session-proc (subj-terminal-session subject))))
+    (case *terminal-close-on-exit*
+      ((nil) nil)
+      (:success (and (eq (pty-proc-status proc) :exited) (eql (pty-proc-code proc) 0)))
+      (t t))))
+
+(defun terminal-dismiss (subject)
+  "Take SUBJECT's pane off the desk: a drilled pane pops its trail back to the pane
+   before it; a trail's root pane closes the trail, and a window holding it goes too
+   (DESK-SYNC drops a window whose trail is gone). Never the last trail — the shell
+   always keeps one, so there the ended pane stays, saying how it ended. T if it went."
+  (let ((gone nil))
+    (loop for i from (1- (length *trails*)) downto 0
+          for trail = (nth i *trails*)
+          for k = (position subject trail :key #'pane-subject)
+          when k
+            do (cond ((plusp k) (setf (nth i *trails*) (subseq trail 0 k) gone t))
+                     ((cdr *trails*)
+                      (setf *trails* (append (subseq *trails* 0 i) (subseq *trails* (1+ i)))
+                            gone t)
+                      (when (> *active* i) (decf *active*)))))
+    (setf *active* (max 0 (min *active* (1- (length *trails*)))))
+    gone))
+
 (defun terminal-service (ready-fds)
   "Service every terminal whose master is in READY-FDS. Returns :FULL when the frame
    must be redrawn (a program ended, a title changed — the tab shows it), :ROWS when
@@ -343,6 +376,8 @@
           (case (service-one s)
             ((:ended :title)
              (setf need :full)
+             (when (and (not (session-live-p ss)) (terminal-closes-on-exit-p s))
+               (terminal-dismiss s))
              ;; the pane header and the tab show the program's title
              (dolist (trail *trails*)
                (dolist (p trail)
