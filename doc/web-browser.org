@@ -490,6 +490,8 @@ history's file, ranking and 0600 mode, the panel by keys, by click and by
 Shift-Delete, the =/mnt/host= mapping, and after every step the incrementally
 repaired screen equal to a fresh paint; =LOL_SHOTS=DIR= keeps two screenshots).
 =check-web.lisp= drives it in the guest with real keys (§8.1; written, not yet run).
+/Tried on the laptop 2026-10-20: loaded as a live patch into the running image
+(built from =2060c7d=), the panel came up and worked./
 
 * 5. The event loop: services
 
