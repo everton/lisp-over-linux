@@ -87,6 +87,54 @@ Two things were *ruled out* on the way, and are recorded so nobody tries them ag
   never matches, so Alt-Left sent nothing at all. =KDGKBENT= hands entries back
   without the =0xf0= (=0x0210=, not the =0xf210= that =defkeymap.c_shipped= prints).
 
+** Two layouts: pt-BR under Right Alt, Caps Lock to switch (2026-10-19)
+
+The user writes Portuguese, and on the laptop's Debian X has two layouts for it
+(=/etc/default/keyboard=: =XKBLAYOUT="us,br"=, =XKBOPTIONS="…,grp:switch,grp:caps_toggle,grp_led:caps"=):
+Right Alt *held* types the second layout, Caps Lock *switches* to it and back (it is
+no longer a caps lock), and the Caps light says which is on. The environment does the
+same, in [[file:../initramfs/keyboard-layout.lisp][keyboard-layout.lisp]], and only when the host's file lists =br=.
+
+The text we read comes from the console, translated by the *kernel's keymap*: one
+table per combination of modifiers, keycode → keysym, which =KDSKBENT= changes one
+entry at a time (=console-kbent=, the same call that took Hold off Scroll Lock). The
+kernel already had what was needed:
+
+- *Right Alt is the console's AltGr* (keycode 100, =K_ALTGR=), a modifier with tables
+  of its own: 2 (AltGr) and 3 (AltGr+Shift). Filled with pt-BR, Right Alt held types
+  pt-BR — X's =grp:switch=.
+- *Dead keys* (=KT_DEAD=: ´ ` ~ ^ ¨) and a composition table that already holds
+  Portuguese: defkeymap's =accent_table= has =' a= → á, =~ a= → ã, =^ a= → â, =, c= →
+  ç and the rest of Latin-1.
+- *Unicode mode*: =vt.c='s =default_utf8= is true, so =ç= arrives as UTF-8, two bytes.
+  =fb-read-key= used to make each byte a character ("ç" came out "Ã§"); it decodes
+  UTF-8 now.
+
+What pt-BR is, key by key, comes from the host's own XKB file
+(=/usr/share/X11/xkb/symbols/br=, its default "abnt2"): "latin" plus ten keys, which
+on the laptop's US keyboard are =`= → ='= / ="=, =6= → 6 / dead ¨, =[= → dead ´ / dead
+`, =]= → =[= / ={=, =\= → =]= / =}=, =;= → =ç= / =Ç=, ='= → dead ~ / dead ^, =/= → =;= / =:=,
+plus the two keys only ISO/ABNT2 keyboards have. Only levels 1 and 2: with
+=grp:switch= Right Alt is a group switch, so =br='s third and fourth levels are out of
+reach in X too.
+
+A keysym value for =KDSKBENT=: a dead key is =K(KT_DEAD, n)= (=#x400= + n); an ASCII
+letter =K(KT_LETTER, c)=; a character past ASCII is Unicode, stored by the kernel XORed
+with =#xF000= (keyboard.c's =U()=) — so =ç= (U+00E7) is passed as =#xF0E7=.
+
+*Caps Lock is done in Lisp*, not by the kernel's =AltGr_Lock=: no ioctl READS a lock's
+state, and the light and the tray must tell the truth. Its keymap entries become
+VoidSymbol, its press is seen on the keyboard's evdev (=:layout-toggle=), and
+=toggle-layout= swaps the plain tables to pt-BR and the AltGr tables to US — Right Alt
+held while pt-BR is on gives US back, as in X. The light is set with =KDSETLED= (caps =
+4); the tray says =BR= while pt-BR is the plain layout. Neither changes while Right
+Alt is merely held, as in X.
+
+Tested by [[file:../check-keyboard.lisp][check-keyboard.lisp]] (17 checks, =LOL_GUEST_HOSTROOT=1=, so the guest reads
+the laptop's own =/etc/default/keyboard=): Right Alt + =;= → ç, the three dead keys
+(ã é ô), Caps Lock on (=;= → ç, ='= a → ã, =BR=, the light =4=, Right Alt giving =;=
+back) and off, and =ç= reaching a program in a terminal (=echo= prints it back).
+
 * 2. What evdev is
 
 =CONFIG_INPUT_EVDEV=y= builds [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], a *generic* handler that
