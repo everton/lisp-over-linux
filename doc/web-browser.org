@@ -18,13 +18,14 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (64 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (66 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
 cannot see them (§4.4).
 Since 2026-10-20 a page can have the microphone, the camera (tag #32) and the screen,
-for a video call (§4.8).
+for a video call (§4.8), and pages are no longer told they are automated, which had
+Google refusing sign-in and asking for captchas (§4.5).
 
 A shorter, illustrated walk through this pane and the terminal, written for reading
 in the web pane itself (it is its own page, offline), is
@@ -415,6 +416,40 @@ as a desktop Chrome on Linux sends it:
 - the platform: Linux, x86, 64-bit, not mobile.
 
 Every new tab gets the string and its hints together.
+
+That was still not enough. /Reported 2026-10-20: Google search kept asking for a
+captcha ("Our systems have detected unusual traffic from your computer network"),
+and sign-in still said "Esse navegador ou app pode não ser seguro" (this browser or
+app may not be secure)./ A page that reports what it sees settled it. Measured
+against Chrome 148 inside the environment:
+
+| What the page reads                        | Chrome, no pipe | Ours, before  | Ours, now          |
+|--------------------------------------------+-----------------+---------------+--------------------|
+| =navigator.webdriver= (page and iframes)   | =false=         | *=true=*      | =false=            |
+| =screen.width= x =screen.height=           | 800 x 600       | *800 x 600*   | the world's size   |
+| =outerWidth= x =outerHeight=               |                 | *1024 x 700*  | the world's size   |
+| =innerWidth= x =innerHeight=               |                 | 1256 x 701    | 1256 x 701         |
+| UA string, client hints, in a Worker too   |                 | Chrome, full  | Chrome, full       |
+
+- =navigator.webdriver= is the W3C flag that a browser sets when it is being driven
+  by automation, and =--remote-debugging-pipe= sets it, though nothing but your keys
+  drives this browser. Google's sign-in refuses a browser that sets it, and its
+  search answers one with captchas. The switch
+  =--disable-blink-features=AutomationControlled= in [[file:../initramfs/web.lisp::defun web-chrome-argv][=web-chrome-argv=]] clears it.
+- Headless reports an 800 x 600 screen whatever the window, and the window
+  (=--window-size=) was smaller than the page inside it. No real browser looks like
+  that. =Emulation.setDeviceMetricsOverride= now also sends =screenWidth= and
+  =screenHeight=, the world's size from [[file:../initramfs/web.lisp::defun web-screen-size][=web-screen-size=]] (divided by the zoom, as
+  Chrome's own zoom does), and Chrome's window is started at that size too.
+
+Already right, so not touched: the UA string and its hints (and a Worker sees them
+too: the override reaches it), =window.chrome=, five plugins, the languages.
+Left as it is: WebGL is absent (measured: no context), because there is no GPU
+(=--disable-gpu=). A site that insists on WebGL will still see that. Google also remembers a
+network that sent "unusual traffic" for a while, so one more captcha may be
+asked before it trusts the browser again.
+
+=web-test= checks the first two rows.
 
 ** 4.6 The address prompt knows paths and your history
 

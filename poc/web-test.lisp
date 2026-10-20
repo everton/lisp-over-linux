@@ -358,6 +358,13 @@ function pixel(x, y){
                 (pump-until (lambda () (search "LoL test index" (trail-title (current-trail))))))
          (check "the viewport is the pane (innerWidth = page rect width)"
                 (pump-until (lambda () (= (js "innerWidth") (third (web-tab-page-rect (tab)))))))
+         ;; what Google's sign-in and search read as a robot (doc/web-browser.org §4.5)
+         (check "the page is not told it is automated (navigator.webdriver false)"
+                (eq (js "navigator.webdriver") :false))
+         (check "the screen and the window hold the page (none smaller, as headless says)"
+                (eq (js "screen.width >= outerWidth && outerWidth >= innerWidth
+                         && screen.height >= outerHeight && outerHeight >= innerHeight
+                         && screen.width > 800") t))
          (frame) (write-ppm (format nil "~a/web-index.ppm" *out*))
          ;; a click on a link, through the shell
          (multiple-value-bind (x y) (element-center "go")

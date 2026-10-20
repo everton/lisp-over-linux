@@ -523,10 +523,17 @@
          ;; saved passwords and cookie keys in the profile itself: there is no GNOME
          ;; keyring or KWallet in the image to hold them (doc/web-browser.org §7.3)
          "--password-store=basic"
-         ;; the size the first frame is laid out at; the pane resizes it at once
+         ;; the window. Pages are laid out at the pane's size (WEB-SYNC-SCREENCAST),
+         ;; so this is only what outerWidth/outerHeight say: the screen's size, since
+         ;; a window smaller than the page inside it is a headless tell (§4.5)
          (format nil "--window-size=~d,~d" (max 200 w) (max 200 h))
          ;; nothing to talk to: no D-Bus, no GPU. These only quieten the log.
-         "--disable-gpu" "--disable-features=MediaRouter,DialMediaRouteProvider")
+         "--disable-gpu" "--disable-features=MediaRouter,DialMediaRouteProvider"
+         ;; the DevTools pipe marks every page as automated: navigator.webdriver is
+         ;; true (measured, Chrome 148; false without the pipe). Google's sign-in
+         ;; refuses such a browser ("may not be secure") and its search answers it
+         ;; with captchas. We are a person's browser, driven by their keys (§4.5).
+         "--disable-blink-features=AutomationControlled")
    ;; a page's sound and the microphone: ALSA, on the card itself (*WEB-AUDIO-DEVICE*)
    (let ((dev (web-audio-device)))
      (when dev
@@ -536,8 +543,11 @@
    *web-extra-args*
    (list "about:blank")))
 
-(defun web-start-chrome (&optional (w 1024) (h 700))
-  "Launch Chrome (asynchronously: the handshake finishes in WEB-SERVICE)."
+(defun web-start-chrome (&optional w h)
+  "Launch Chrome (asynchronously: the handshake finishes in WEB-SERVICE), its window
+   W x H, by default the screen's (WEB-SCREEN-SIZE)."
+  (multiple-value-bind (sw sh) (web-screen-size 1024 700)
+    (setf w (or w sw) h (or h sh)))
   (let ((prefix (web-launch-prefix)))
     (unless prefix
       (setf *web-chrome-state* :failed
@@ -995,6 +1005,13 @@
     (ignore-errors (cdp-send *web-chrome* "Target.activateTarget"
                              (jobj "targetId" (web-tab-target tab))))))
 
+(defun web-screen-size (w h)
+  "The screen a page should see, in device pixels: the world's size (the canvas the
+   environment draws), never smaller than the W x H pane."
+  (let ((b (and (boundp '*world*) (symbol-value '*world*)
+                (lol.morph:morph-bounds (symbol-value '*world*)))))
+    (values (max w (or (third b) 0)) (max h (or (fourth b) 0)))))
+
 (defun web-sync-screencast (tab visible)
   "Keep TAB streaming exactly while it is VISIBLE, at the size its pane last drew.
    Hidden tabs cost nothing: no frames are encoded, sent or decoded for them."
@@ -1012,9 +1029,14 @@
        (when (and (> w 50) (> h 50))
          ;; THE VIEWPORT: lay the page out as if the window were the pane, in CSS
          ;; pixels (device pixels / zoom), and rasterise at Z device pixels each.
-         (web-send tab "Emulation.setDeviceMetricsOverride"
-                   (jobj "width" (floor w z) "height" (floor h z)
-                         "deviceScaleFactor" z "mobile" :false))
+         ;; The SCREEN too: headless says 800 x 600 whatever the window, a screen
+         ;; smaller than the window a page sits in — a headless tell (§4.5). Ours is
+         ;; the world's, which holds the pane.
+         (multiple-value-bind (sw sh) (web-screen-size w h)
+           (web-send tab "Emulation.setDeviceMetricsOverride"
+                     (jobj "width" (floor w z) "height" (floor h z)
+                           "deviceScaleFactor" z "mobile" :false
+                           "screenWidth" (floor sw z) "screenHeight" (floor sh z))))
          ;; THE STREAM, restarted at the new size: maxWidth/maxHeight cap the frame
          (when (web-tab-screencasting tab) (web-send tab "Page.stopScreencast"))
          (unless (web-tab-screencasting tab) (web-activate tab))
