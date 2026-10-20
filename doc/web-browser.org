@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (41 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (46 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -90,7 +90,7 @@ address; clicking the address edits it. Below is the page.
 | =C-f=                                            | find in the page as you type; Enter finds the next      |
 | =C-c= / =C-x= / =C-v=                            | copy / cut / paste through *our* clipboard (§4.2)       |
 | =C-Insert= / =S-Insert=                          | copy / paste, X style                                   |
-| =C-+= / =C--= / =C-0=                            | zoom in, out, back to 100%                              |
+| =C-+= / =C--= / =C-0=                            | zoom in, out, back to 100% (§4.7)                       |
 | =Shift-F10=, the Menu key, right click           | the environment's menu for the page                     |
 | =SuperL-click= on a link                         | open it in a new tab (Ctrl-click opens it behind)       |
 | a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4)                          |
@@ -193,7 +193,8 @@ page out as if the window were exactly the pane, and the screencast is restarted
 that size. When the pane changes size (another font, a different screen), the next
 draw records the new size and the next turn resends both. Zoom is the
 =deviceScaleFactor= of the same call, so =C-+= re-lays-out and re-rasterises the
-text larger. It does not enlarge a picture.
+text larger. It does not enlarge a picture. The screencast does not follow that
+factor, though, which needs a step of its own (§4.7).
 
 Only the tab on screen streams. When you switch to another tab, =Page.stopScreencast=
 stops the one you left.
@@ -492,6 +493,54 @@ repaired screen equal to a fresh paint; =LOL_SHOTS=DIR= keeps two screenshots).
 =check-web.lisp= drives it in the guest with real keys (§8.1; written, not yet run).
 /Tried on the laptop 2026-10-20: loaded as a live patch into the running image
 (built from =2060c7d=), the panel came up and worked./
+
+** 4.7 Page zoom fills the pane: upscale, then sharpen
+
+/Reported 2026-10-20: "when I zoom, the web browser reduces the visible area of the
+page and leaves a lot of white space around it."/ The environment's own scale
+(=SuperL-==) was never the cause: a bigger font only shortens the page by the toolbar's
+growth, and the frame follows. The page zoom was. Measured against the host's
+Chrome 148, with a 1256 x 677 pane:
+
+| Page zoom | Chrome's CSS viewport | Screencast frame | Screenshot   |
+|-----------+-----------------------+------------------+--------------|
+| 100%      | 1256 x 677            | 1256 x 677       |              |
+| 125%      | 1004 x 541            | *1004 x 541*     |              |
+| 150%      | 837 x 451             | *837 x 451*      | 1256 x 677   |
+
+=C-+= zooms the way Chrome's own =Ctrl-+= does (§3.3): the page is laid out in fewer
+CSS pixels and drawn at 1.5 device pixels each, so =window.innerWidth= shrinks and a
+narrow layout can kick in. But a /screencast/ frame comes at CSS-pixel size, because
+Chrome ignores the scale factor there, and the frame was blitted 1:1. So the page
+filled two thirds of the pane, and the rest was the blit's white. Clicks were
+off too: input was mapped through the zoom, the picture was not. A /screenshot/
+(=Page.captureScreenshot=) does come at device size, but took 46–55 ms per frame on
+the dev laptop. Too slow to take for every frame while you scroll.
+
+So each zoomed frame is scaled up at once, and replaced once the page is still
+([[file:../initramfs/web.lisp::defun web-sharpen][=web-sharpen=]]):
+
+1. *Upscale.* [[file:../initramfs/web.lisp::defun web-upscale][=web-upscale=]] stretches a CSS-sized frame to the pane, bilinear: each
+   output pixel is a weighted mix of the four source pixels around where it falls,
+   in 16.16 fixed point. 13 ms for 837 x 451 -> 1256 x 677 on the host. The pane is
+   full at once, slightly soft.
+2. *Sharpen.* When no frame has come for 150 ms, one screenshot replaces it, crisp.
+   It is dropped if a newer frame arrived while it was being taken: a page that moved
+   on keeps its newer frame and is sharpened when it stops again. The poll loop's
+   timeout ([[file:../initramfs/web.lisp::defun web-timeout][=web-timeout=]]) wakes us when one is due, so nothing spins.
+
+Chrome renders =floor(1256 / 1.5)= = 837 CSS pixels, so a 150% screenshot is
+1255 x 676, one pixel short each way. [[file:../initramfs/web.lisp::defun web-pad][=web-pad=]] repeats the last column and row
+rather than resampling, which would blur the crisp picture the screenshot was taken
+for.
+
+/Ruled out, measured the same day:/ =setDeviceMetricsOverride='s =scale= parameter
+changes nothing in the frames. CSS =zoom= on the page's root element gives full,
+crisp frames at no cost, but it is not Chrome's zoom: the page still sees the
+full-width viewport, so a narrow layout never kicks in. It was declined for that.
+Tests: =poc/web-test.lisp= (=C-+ C-+= gives =devicePixelRatio= 1.5 and a narrower
+viewport; the pane is full at once and soft, then full and sharp; =C-0= back; the
+upscaler's edges exact).
 
 * 5. The event loop: services
 

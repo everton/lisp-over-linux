@@ -112,6 +112,7 @@
   loading                 ; T between frameStartedLoading and frameStoppedLoading
   frame-w frame-h frame-px ; the newest decoded frame: size + #x00RRGGBB pixels
   pending                 ; the newest UNDECODED frame's base64 string, or NIL
+  pending-sharp           ; ... T when it is a screenshot: already device-sized (§4.7)
   meta                    ; that frame's metadata (scroll offset, scale, device size)
   (want-w 0) (want-h 0)   ; the page rect the last draw gave this tab, in device px
   (sent-w 0) (sent-h 0) (sent-zoom 1) ; ... and what Chrome was last told
@@ -123,7 +124,9 @@
   (cast-at 0)             ; internal-real-time the screencast was (re)started
   input-at                ; when the last input was sent, until a frame answers it
   (latencies '())         ; ms from an input to the frame after it, newest first (≤ 32)
-  capturing               ; a Page.captureScreenshot is in flight (WEB-NUDGE)
+  capturing               ; a Page.captureScreenshot is in flight (WEB-NUDGE, WEB-SHARPEN)
+  soft                    ; T when the frame on show was UPSCALED (page zoom): sharpen it
+  (frame-at 0)            ; internal-real-time the last screencast frame was decoded
   (last-frame-ms nil)     ; ms the last JPEG took to decode + convert
   ;; where the pane showing it last drew it, in that pane's coordinates (its
   ;; surface's: the screen's, or a window's) — what clicks and frames are placed by
@@ -1005,16 +1008,127 @@
                 (setf (web-tab-capturing tab) nil)
                 (let ((data (jget r "result" "data")))
                   (when (and data (null (web-tab-frame-px tab)) (null (web-tab-pending tab)))
-                    (setf (web-tab-pending tab) data)))))))
+                    (setf (web-tab-pending tab) data (web-tab-pending-sharp tab) t)))))))
+
+;;; ---- page zoom: upscale, then sharpen (doc/web-browser.org §4.7) ----------------
+;;; C-+ zooms the way Chrome's own Ctrl-+ does: the page is laid out in fewer CSS
+;;; pixels (the pane's width / the zoom) and rasterised at ZOOM device pixels each
+;;; (WEB-SYNC-SCREENCAST's deviceScaleFactor), so window.innerWidth shrinks and text
+;;; is drawn larger, not enlarged. But a SCREENCAST frame comes at CSS-pixel size —
+;;; Chrome ignores the scale factor there: measured with Chrome 148, a 1256 x 677
+;;; pane at 150% gets 837 x 451 frames — and the blit is 1:1, so the page used to sit
+;;; in the top-left two thirds of the pane with white around it. A SCREENSHOT does
+;;; honour it (1256 x 677), but costs ~54 ms on the dev laptop: too slow for every
+;;; frame. So each frame is scaled up at once (bilinear: soft, but the pane is full
+;;; while you scroll), and once the page has been still for +WEB-SHARPEN-MS+ one
+;;; screenshot replaces it, crisp.
+;;;
+;;; Ruled out, measured the same day: setDeviceMetricsOverride's "scale" changes
+;;; nothing in the frames; CSS zoom on the root element gives full, crisp frames for
+;;; free but is not Chrome's zoom (the page still sees the full-width viewport, so a
+;;; narrow layout never kicks in), and was declined for that.
+
+(defparameter +web-sharpen-ms+ 150
+  "How long a zoomed page must go without a new frame before it is sharpened.")
+
+(defun web-upscale (w h px tw th)
+  "The W x H #x00RRGGBB pixels PX scaled to TW x TH, bilinear (each output pixel a
+   weighted mix of the four source pixels around where it falls). Fixed point: 16
+   fraction bits, so the inner loop is integer arithmetic only."
+  (declare (type fixnum w h tw th) (type (simple-array (unsigned-byte 32) (*)) px)
+           (optimize (speed 3) (safety 0)) (sb-ext:muffle-conditions sb-ext:compiler-note))
+  (let ((out (make-array (* tw th) :element-type '(unsigned-byte 32)))
+        ;; the source step per output pixel, rounded so the last output pixel lands
+        ;; on the last source pixel (floored, it fell short and the edge darkened)
+        (sx (round (* (max 1 (1- w)) 65536) (max 1 (1- tw))))
+        (sy (round (* (max 1 (1- h)) 65536) (max 1 (1- th)))))
+    (declare (type fixnum sx sy))
+    (dotimes (y th out)
+      (let* ((fy (* y sy)) (y0 (min (1- h) (ash fy -16))) (y1 (min (1- h) (1+ y0)))
+             (wy (logand fy #xFFFF)) (r0 (* y0 w)) (r1 (* y1 w)) (o (* y tw)))
+        (declare (type fixnum fy y0 y1 wy r0 r1 o))
+        (dotimes (x tw)
+          (let* ((fx (* x sx)) (x0 (min (1- w) (ash fx -16))) (x1 (min (1- w) (1+ x0)))
+                 (wx (logand fx #xFFFF))
+                 (a (aref px (+ r0 x0))) (b (aref px (+ r0 x1)))
+                 (c (aref px (+ r1 x0))) (d (aref px (+ r1 x1)))
+                 (ix (- 65536 wx)) (iy (- 65536 wy)))
+            (declare (type fixnum fx x0 x1 wx ix iy) (type (unsigned-byte 32) a b c d))
+            ;; one channel: mix along x on both rows, then along y (written out three
+            ;; times rather than looped over the shifts — the loop doubled the cost)
+            (macrolet ((channel (shift)
+                         `(let ((top (+ (* (ldb (byte 8 ,shift) a) ix) (* (ldb (byte 8 ,shift) b) wx)))
+                                (bot (+ (* (ldb (byte 8 ,shift) c) ix) (* (ldb (byte 8 ,shift) d) wx))))
+                            (declare (type fixnum top bot))
+                            (min 255 (ash (+ (* (ash top -8) iy) (* (ash bot -8) wy) #x800000) -24)))))
+              (setf (aref out (+ o x))
+                    (logior (ash (channel 16) 16) (ash (channel 8) 8) (channel 0))))))))))
+
+(defun web-pad (w h px tw th)
+  "The W x H pixels PX grown to TW x TH by repeating the last column and row. For a
+   screenshot of a zoomed page: Chrome renders floor(width / zoom) CSS pixels, so at
+   150% a 1256-pixel pane gets a 1255-pixel picture, and resampling it to fill that
+   last pixel would blur the crisp image the screenshot was taken for."
+  (declare (type fixnum w h tw th) (type (simple-array (unsigned-byte 32) (*)) px))
+  (let ((out (make-array (* tw th) :element-type '(unsigned-byte 32))))
+    (dotimes (y th out)
+      (let ((sy (min y (1- h))))
+        (dotimes (x tw)
+          (setf (aref out (+ (* y tw) x)) (aref px (+ (* sy w) (min x (1- w))))))))))
+
+(defun web-zoomed-size (tab w h)
+  "The size a W x H screencast frame of TAB should be shown at: the pane's page rect
+   when the frame is that rect divided by the zoom (give or take a pixel of rounding
+   per zoom step), else W x H as it is — a frame from before a resize, which the blit
+   shows 1:1 rather than stretching a stale picture."
+  (let ((z (web-tab-sent-zoom tab)) (ww (web-tab-want-w tab)) (wh (web-tab-want-h tab)))
+    (if (and (/= z 1) (< w ww)
+             (<= (abs (- (* w z) ww)) (+ 2 z)) (<= (abs (- (* h z) wh)) (+ 2 z)))
+        (values ww wh)
+        (values w h))))
+
+(defun web-sharpen (tab)
+  "A zoomed page showing an upscaled frame (WEB-TAB-SOFT) that has been still for
+   +WEB-SHARPEN-MS+ gets one screenshot, which Chrome renders at device size. It is
+   kept only if no newer frame arrived while it was being taken: a page that moved
+   on stays with its newer (soft) frame and is sharpened when it stops again."
+  (when (and (web-tab-soft tab) (not (web-tab-capturing tab)) (null (web-tab-pending tab))
+             (eq (web-tab-state tab) :live)
+             (> (- (get-internal-real-time) (web-tab-frame-at tab))
+                (* +web-sharpen-ms+ (/ internal-time-units-per-second 1000))))
+    (let ((asked-at (web-tab-frame-at tab)) (zoom (web-tab-sent-zoom tab)))
+      (setf (web-tab-capturing tab) t)
+      (web-send tab "Page.captureScreenshot" (jobj "format" "jpeg" "quality" *web-quality*)
+                (lambda (r)
+                  (setf (web-tab-capturing tab) nil)
+                  (let ((data (jget r "result" "data")))
+                    (if (and data (= asked-at (web-tab-frame-at tab))
+                             (= zoom (web-tab-sent-zoom tab)) (null (web-tab-pending tab)))
+                        (setf (web-tab-pending tab) data (web-tab-pending-sharp tab) t)
+                        ;; superseded: try again once the page is still
+                        nil)))))))
 
 (defun web-decode-pending (tab)
   "Decode TAB's newest frame, if one is waiting. -> T when the frame changed.
    base64 -> JPEG octets -> stb_image -> #x00RRGGBB pixels, the canvas's own format."
-  (let ((data (shiftf (web-tab-pending tab) nil)))
+  (let ((data (shiftf (web-tab-pending tab) nil))
+        (sharp (shiftf (web-tab-pending-sharp tab) nil)))
     (when data
       (let ((t0 (get-internal-real-time)))
         (multiple-value-bind (w h px) (lol.image:decode-image (base64-decode data) :orient nil)
           (when w
+            ;; a zoomed page's screencast frame is CSS-sized: scale it up to the pane
+            ;; (§4.7); a screenshot is already device-sized
+            (multiple-value-bind (tw th) (if sharp (values w h) (web-zoomed-size tab w h))
+              (let ((soft (and (not sharp) (or (/= tw w) (/= th h)))))
+                (when soft (setf px (web-upscale w h px tw th) w tw h th))
+                ;; a sharp one a pixel or two short of the pane (rounding): pad it
+                (let ((ww (web-tab-want-w tab)) (wh (web-tab-want-h tab)) (z (web-tab-sent-zoom tab)))
+                  (when (and sharp (/= z 1) (<= 0 (- ww w) 2) (<= 0 (- wh h) 2)
+                             (or (< w ww) (< h wh)))
+                    (setf px (web-pad w h px ww wh) w ww h wh)))
+                (setf (web-tab-soft tab) soft)
+                (unless sharp (setf (web-tab-frame-at tab) (get-internal-real-time)))))
             (setf (web-tab-frame-w tab) w (web-tab-frame-h tab) h (web-tab-frame-px tab) px
                   (web-tab-last-frame-ms tab)
                   (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second))
@@ -1037,7 +1151,7 @@
         (dolist (tab *web-tabs*)
           (when (eq (web-tab-state tab) :live)
             (web-sync-screencast tab (eq tab vis))))
-        (when vis (web-nudge vis))
+        (when vis (web-nudge vis) (web-sharpen vis))
         (when (and vis (web-decode-pending vis)) (setf frame t))
         ;; a picker the page asked for, shown now that no dispatch is running
         (loop for (tab payload ctx) = (pop *web-picks*)
@@ -1075,17 +1189,25 @@
 
 (defun web-timeout ()
   "How soon the loop must run WEB-SERVICE even with nothing to read: never (-1) when
-   all is quiet — a frame or a title arrives on the pipe, which wakes the poll. Only a
-   tab waiting to have its size synced needs a prompt second look."
+   all is quiet — a frame or a title arrives on the pipe, which wakes the poll. A tab
+   waiting to have its size synced needs a prompt second look, one waiting for its
+   first frame a slower one, and a zoomed page showing an upscaled frame one when it
+   is due to be sharpened."
   (let ((vis (web-visible-tab)))
     (if (and vis (eq (web-tab-state vis) :live)
              (or (/= (web-tab-want-w vis) (web-tab-sent-w vis))
                  (/= (web-tab-want-h vis) (web-tab-sent-h vis))
                  (not (web-tab-screencasting vis))))
         10
-        (if (and vis (eq (web-tab-state vis) :live) (null (web-tab-frame-px vis)))
-            100                          ; waiting for a first frame: see WEB-NUDGE
-            -1))))
+        (cond ((and vis (eq (web-tab-state vis) :live) (null (web-tab-frame-px vis)))
+               100)                      ; waiting for a first frame: see WEB-NUDGE
+              ((and vis (web-tab-soft vis) (not (web-tab-capturing vis)))
+               ;; a zoomed page showing an upscaled frame: wake when it is due to be
+               ;; sharpened (WEB-SHARPEN)
+               (max 1 (- +web-sharpen-ms+
+                         (round (* 1000 (- (get-internal-real-time) (web-tab-frame-at vis)))
+                                internal-time-units-per-second))))
+              (t -1)))))
 
 ;;; ---- reaping: PID 1's duty to Chrome's orphans --------------------------------
 ;;; When a process dies its children are re-parented to PID 1, and a dead child stays

@@ -345,6 +345,35 @@
                      (equal (web-url-for "localhost:3000") "http://localhost:3000")
                      (equal (web-url-for "10.0.2.2:8000/a") "http://10.0.2.2:8000/a")
                      (search "q=lisp%20machine" (web-url-for "lisp machine"))))
+         ;; page zoom fills the pane (doc/web-browser.org §4.7): Chrome's screencast
+         ;; frames come at CSS size, so a zoomed page is upscaled at once and then
+         ;; replaced by a device-sized screenshot once it is still
+         (destructuring-bind (px py pw ph) (web-tab-page-rect (tab))
+           (declare (ignore px py))
+           (browser-key #\+ 4) (browser-key #\+ 4)           ; C-+ twice: 150%
+           (check "C-+ C-+ is 150%: Chrome's devicePixelRatio, the CSS viewport narrower"
+                  (pump-until (lambda () (and (eql (js "devicePixelRatio") 1.5d0)
+                                              (< (js "innerWidth") (* 0.7 pw))))))
+           (check "a zoomed page fills the pane at once (the frame upscaled, soft)"
+                  (pump-until (lambda () (and (web-tab-soft (tab))
+                                              (= (web-tab-frame-w (tab)) pw)
+                                              (= (web-tab-frame-h (tab)) ph)))))
+           (check "... and is sharpened when still: a device-sized screenshot, still full"
+                  (pump-until (lambda () (and (not (web-tab-soft (tab)))
+                                              (= (web-tab-frame-w (tab)) pw)
+                                              (= (web-tab-frame-h (tab)) ph)))
+                              5))
+           (frame) (write-ppm (format nil "~a/web-zoom-150.ppm" *out*))
+           (browser-key #\0 4)
+           (check "C-0 is 100% again, the frame the pane's size"
+                  (pump-until (lambda () (and (eql (js "devicePixelRatio") 1)
+                                              (= (web-tab-frame-w (tab)) pw))))))
+         (check "web-upscale: bilinear, both edges exact"
+                (let* ((src (make-array 4 :element-type '(unsigned-byte 32)
+                                          :initial-contents '(#x000000 #xFF0000 #x000000 #xFF0000)))
+                       (out (web-upscale 2 2 src 5 3)))
+                  (and (= (aref out 0) 0) (= (aref out 4) #xFF0000)
+                       (= (ldb (byte 8 16) (aref out 2)) 128))))
          ;; numbers worth writing down
          (format t "~&  frames received ~d, last decode ~a ms at ~dx~d~%"
                  (web-tab-frames (tab)) (web-tab-last-frame-ms (tab))
