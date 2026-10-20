@@ -73,7 +73,8 @@ replacing the engine would replace =web-cdp.lisp= and keep the pane.
 =SuperL-b= ("browse") opens a new tab with the address prompt in the minibuffer.
 Type an address or some words and press Enter. The Spotter (=SuperL-Space=) offers
 web rows too: "open URL" when the query looks like an address, "search the web" for
-any other text, and the open web tabs whose title or URL match.
+any other text, the open web tabs whose title or URL match, and pages from your
+history (§4.6).
 
 A web tab is an ordinary tab of the environment. Its label is the page's title, and
 =SuperL-1…9=, =SuperL-Tab= and =SuperL-w= work on it like on any other. Inside it,
@@ -82,7 +83,7 @@ address; clicking the address edits it. Below is the page.
 
 | Key                                              | Does                                                    |
 |--------------------------------------------------+---------------------------------------------------------|
-| =C-l=                                            | the address prompt (an address, or words to search for) |
+| =C-l=                                            | the address prompt: an address, a path, or words to search for; the panel above it lists files or your history (§4.6) |
 | =SuperL-Left= / =SuperL-Right=                   | back / forward in the page's history                    |
 | =C-r=                                            | reload                                                  |
 | =Esc= while loading                              | stop (otherwise =Esc= goes to the page)                 |
@@ -412,6 +413,84 @@ as a desktop Chrome on Linux sends it:
 
 Every new tab gets the string and its hints together.
 
+** 4.6 The address prompt knows paths and your history
+
+/Asked for 2026-10-20: "if I start typing / or ~/ it can infer I'm looking for a file
+and allow me to use TAB to complete, and/or open a file-manager experience at the
+bottom of the window. A similar approach for navigation history."/
+
+=C-l= opens the same one-line minibuffer as before, and a *candidate panel* now sits
+on top of it, over the bottom of the screen. What the panel lists depends on the
+first characters typed:
+
+| You type                              | The panel lists                                                              | Enter on the line          |
+|---------------------------------------+------------------------------------------------------------------------------+----------------------------|
+| =/=, =~/=, =./=, =../= or =file://=   | the folder you are in, like a small file manager: folders first, then files with size and date; what you typed of the name lights up | opens it as a =file://= URL |
+| anything else                         | your history: pages whose address or title contain every word typed           | an address, or a search    |
+| nothing (a new tab)                   | the most recent pages                                                         | the home page              |
+
+Nothing is chosen until you move into the list, so Enter keeps doing what it did:
+it opens what you typed. The keys:
+
+| Key                        | Does                                                                         |
+|----------------------------+------------------------------------------------------------------------------|
+| =Down= / =C-n=             | choose a row (the first, from the line)                                       |
+| =Up= / =C-p=               | the row above; above the first, back to the typed text                        |
+| =Enter=                    | open the chosen row, else the typed text                                      |
+| =Tab=                      | the chosen row into the line, to keep typing; with no row, complete like a shell (common prefix, a folder gets its =/=) |
+| =M-Backspace=              | delete the last word, i.e. go back up one folder                              |
+| =Shift-Delete=             | forget the chosen page (history rows only)                                    |
+| a click / the wheel        | open a row / move the choice                                                  |
+
+So a folder is browsed with Tab: =~/= lists your home, =Doc= =Tab= gives
+=~/Documents/= and the panel lists inside it, =Down= =Tab= enters the chosen
+sub-folder, and =Enter= on a file opens it. =Enter= on a folder opens Chrome's own
+listing of it. A typed path is now always a file: before this, =/etc/hosts=
+became a web search.
+
+*The panel is generic.* Any prompt can have one: [[file:../poc/shell.lisp::defun minibuffer-read][=minibuffer-read=]] takes
+=:candidates=, a function from the text to a list of plists (label, detail, the text
+the row stands for, a section, a "forget" function) and a title. The panel is a
+morph of the desk, [[file:../poc/morphic.lisp::defclass minibuffer-panel][=minibuffer-panel=]], and not of the shell. That way the panes under
+it keep their size: a web page is not resized because you typed into its address
+bar. =desk-sync= adds it, sizes it and removes it with the list. It is not an
+overlay, because the keys stay the minibuffer's. The web pane's candidates come
+from [[file:../initramfs/web.lisp::defun web-address-candidates][=web-address-candidates=]].
+
+*The history is ours, not Chrome's.* Chrome keeps one in an SQLite file inside the
+profile, and reading it would need an SQLite reader. [[file:../initramfs/web.lisp::defun web-history-note][=web-history-note=]] keeps
+one plist per URL (=:url :title :visits :last=, newest first, at most 2000) in
+=~/.lol/web/history.lisp=, mode 0600. A visit is counted on Chrome's
+=Page.frameNavigated= for the main frame and on =Page.navigatedWithinDocument= (a
+single-page app's =pushState=, e.g. the next YouTube video); the title is filled in
+when the page says it. =about:=, =data:=, =chrome:= and =javascript:= URLs and the
+home page are not kept. The file is written atomically and fsync'd, at most every
+10 s and when Chrome is shut down at power-off. A crash can lose the last few seconds
+of history and nothing else. A diskless boot keeps it in memory.
+
+How matches are ranked, in [[file:../initramfs/web.lisp::defun web-history-matches][=web-history-matches=]]: every word must occur in the URL or
+the title, ignoring case. Then a blend of recency and frequency (Firefox calls this
+"frecency"): each visit counts as a day more recent, up to a month's worth, and a
+page whose address /starts/ with the first word (=git= for =github.com=) comes before
+the rest. The Spotter uses the same function: its web rows now include up to five
+history pages that no open tab shows.
+
+*Where a file is, depends on who looks.* The panel lists files as the environment
+sees them, but Chrome opens them inside its container ([[file:containers.org][containers.org]]), whose root
+is the host's Debian. The two agree only under the folders =lol-ct.c= binds in:
+=/home=, =/tmp=, =/dev=, =/sys=. Without care, =/usr/= would list the initramfs's
+few files while Chrome opened the host's. So in the guest, an absolute path outside
+those folders is listed from =/mnt/host=, our mount of the host's root
+([[file:../initramfs/web.lisp::defun web-chrome-root][=web-chrome-root=]]). The rows still read =/usr/share/=, as Chrome names them. The
+container's overlays can add files that =/mnt/host= does not show; for a listing that
+is close enough. On the host, both run in the same root and nothing is mapped.
+
+Tests: [[file:../poc/url-prompt-test.lisp][poc/url-prompt-test.lisp]] (host, no Chrome, 44 checks: the URL rules, the
+history's file, ranking and 0600 mode, the panel by keys, by click and by
+Shift-Delete, the =/mnt/host= mapping, and after every step the incrementally
+repaired screen equal to a fresh paint; =LOL_SHOTS=DIR= keeps two screenshots).
+=check-web.lisp= drives it in the guest with real keys (§8.1; written, not yet run).
+
 * 5. The event loop: services
 
 The browser's loop ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) used to wake
@@ -602,7 +681,14 @@ the keyboard. *From 2026-10-13 to 2026-10-16, five of its checks failed.* The ch
 that a tab with no URL shows the guide opened a second tab and left it focused, so
 the tab-title, link, back, typing and wheel checks all ran against the guide. The
 check now refocuses the test page's tab, and the wheel check also exposed the
-foreground-page bug in §3.3. Whether Chrome's own popup stayed shut is asked only on the host: the
+foreground-page bug in §3.3. Since 2026-10-20 it also drives the address prompt's
+panel (§4.6) with real keys: =/usr/sh= lists =/usr/share/= from the host's root,
+=Down= =Tab= takes it, =doc/= =Enter= opens Chrome's listing of =/usr/share/doc/=,
+and =C-n= =Enter= on "lol test" loads the test page from the history. /That section
+was written on 2026-10-20 from inside the environment, where it could not run: there
+is no =/dev/kvm=, and QEMU's =fat:= drive puts a temporary file in =/var/tmp= (it
+ignores =TMPDIR=), which fails on the container's overlay with EOVERFLOW. Not run
+yet; run it from the host's Debian./ Whether Chrome's own popup stayed shut is asked only on the host: the
 net REPL's =WEB-JS= waits for the browser's loop, which is inside the modal chooser. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
 
 ** 8.2 Numbers

@@ -2011,19 +2011,68 @@
   completer              ; (lambda (text)) -> new text, or NIL — Tab
   single-key             ; T: the next key answers (y/n), no Enter needed
   hint                   ; a short dim note at the right end, or NIL
-  secret)                ; T: drawn as bullets — a Wi-Fi passphrase (initramfs/net-views.lisp)
+  secret                 ; T: drawn as bullets — a Wi-Fi passphrase (initramfs/net-views.lisp)
+  candidates             ; (lambda (text)) -> (values CANDS TITLE), or NIL — see below
+  (cands '())            ; the candidates for the text as it is now (plists, below)
+  title                  ; the candidate panel's header line
+  (sel nil)              ; the chosen candidate's index, or NIL: Enter answers the TEXT
+  (top 0))               ; the panel's first visible slot (DRAW-LIST keeps it)
+
+;;; The candidate panel. A prompt given CANDIDATES — a function of the text — shows
+;;; what that text could become, in a list just above the line, recomputed after every
+;;; edit: the web pane's address prompt lists a folder's entries while you type a path
+;;; and your history while you type anything else (initramfs/web.lisp). Nothing is
+;;; chosen until you move into the list (Down / C-n), so Enter keeps answering what you
+;;; typed; once a row is chosen, Enter answers the row's :TEXT and Tab copies it into
+;;; the line to go on typing (a folder's ends in /, so its own entries come up next).
+;;; Each candidate is a plist:
+;;;   :label  what the row says        :detail  dim text at its right (size, a URL)
+;;;   :text   what the row stands for  :group   a section header ("Folders", "Files")
+;;;   :match  the typed text to light  :stripe  a colour at the row's left edge
+;;;   :forget a function: Shift-Delete calls it and the row goes (a history entry)
+;;; The panel is a morph of the desk's (MINIBUFFER-PANEL, poc/morphic.lisp) that comes
+;;; and goes with the list; this file only knows the state and how to draw it.
 
 (defun minibuffer-read (prompt on-done &key (initial "") on-change on-cancel completer
-                                             single-key hint secret)
+                                             single-key hint secret candidates)
   "Open the minibuffer with PROMPT, pre-filled with INITIAL and the caret at its end.
    ON-DONE is called with the final text on Enter (or with the key's character, for
-   a SINGLE-KEY prompt); everything else is optional. Returns at once — the answer
+   a SINGLE-KEY prompt); everything else is optional. CANDIDATES fills the list above
+   the line (see above), at once and after every edit. Returns at once — the answer
    comes later, through ON-DONE."
   (setf *minibuffer* (make-mb :prompt prompt :text initial :point (length initial)
                               :on-done on-done :on-change on-change :on-cancel on-cancel
                               :completer completer :single-key single-key :hint hint
-                              :secret secret))
+                              :secret secret :candidates candidates))
+  (minibuffer-refresh-candidates *minibuffer*)
   nil)
+
+(defun minibuffer-refresh-candidates (mb &key keep-sel)
+  "Ask MB's CANDIDATES function again for its text. The choice is dropped (the list
+   changed under it) unless KEEP-SEL, which keeps the same index where it still fits
+   — after Shift-Delete removed the chosen row. An error in the function empties the
+   list and says why in the status line: a typo in a path must not end the prompt."
+  (when (mb-candidates mb)
+    (multiple-value-bind (cands title)
+        (handler-case (funcall (mb-candidates mb) (mb-text mb))
+          (serious-condition (c) (setf *browser-status* (princ-to-string c)) nil))
+      (setf (mb-cands mb) cands (mb-title mb) title
+            (mb-sel mb) (and keep-sel (mb-sel mb) cands (min (mb-sel mb) (1- (length cands))))
+            (mb-top mb) (if keep-sel (mb-top mb) 0)))))
+
+(defun minibuffer-chosen (mb)
+  "The candidate chosen in MB's list, or NIL."
+  (and (mb-sel mb) (nth (mb-sel mb) (mb-cands mb))))
+
+(defun minibuffer-move (mb delta)
+  "Move the choice in MB's list by DELTA rows. Down from no choice chooses the first
+   row; Up from the first gives the choice back to the typed text."
+  (let ((n (length (mb-cands mb))) (sel (mb-sel mb)))
+    (setf (mb-sel mb)
+          (cond ((zerop n) nil)
+                ((null sel) (if (plusp delta) 0 nil))
+                ((< (+ sel delta) 0) nil)
+                (t (min (1- n) (+ sel delta)))))))
 
 (defun minibuffer-finish (fn &rest args)
   "Close the minibuffer, THEN call FN — so a callback that opens the next prompt (a
@@ -2037,7 +2086,8 @@
 (defun minibuffer-edited (mb)
   (when (mb-on-change mb)
     (handler-case (funcall (mb-on-change mb) (mb-text mb))
-      (serious-condition (c) (setf *browser-status* (princ-to-string c))))))
+      (serious-condition (c) (setf *browser-status* (princ-to-string c)))))
+  (minibuffer-refresh-candidates mb))
 
 (defun minibuffer-paste-text (text)
   "TEXT as one minibuffer line: a prompt holds ONE line, so newlines and tabs become
@@ -2051,11 +2101,15 @@
    M-< / M-> (start / end, as in every other text here), C-b/C-f, Backspace / C-d
    (Delete), C-k kills to the end, C-u clears the line (so does the ✕ at its right),
    M-Backspace deletes a word, C-y / C-v / Shift-Insert paste the clipboard (newest
-   entry, newlines made spaces). Returns NIL (BROWSER-KEY's 'carry on')."
+   entry, newlines made spaces). With a candidate list up: Down / C-n and Up / C-p
+   choose a row, Enter answers the chosen row, Tab copies it into the line, and
+   Shift-Delete forgets it (when the row can be forgotten). Returns NIL (BROWSER-KEY's
+   'carry on')."
   (let* ((mb *minibuffer*)
          (text (mb-text mb)) (pt (min (mb-point mb) (length text)))
          (ctrl (lol.canvas:ctrl-p state)) (meta (lol.canvas:meta-p state))
-         (shift (lol.canvas:shift-p state)))
+         (shift (lol.canvas:shift-p state))
+         (chosen (minibuffer-chosen mb)))
     (flet ((set-text (new point)
              (setf (mb-text mb) new (mb-point mb) (max 0 (min point (length new))))
              (minibuffer-edited mb)))
@@ -2064,6 +2118,19 @@
          (minibuffer-finish (mb-on-cancel mb)))
         ((mb-single-key mb)
          (minibuffer-finish (mb-on-done mb) (if (characterp key) key :other)))
+        ;; the candidate list: moving in it, and taking a row
+        ((and (mb-cands mb) (or (eq key :down) (and ctrl (member key '(#\n #\N)))))
+         (minibuffer-move mb 1))
+        ((and (mb-cands mb) (or (eq key :up) (and ctrl (member key '(#\p #\P)))))
+         (minibuffer-move mb -1))
+        ((and chosen (member key '(:return #\Return #\Newline)))
+         (minibuffer-finish (mb-on-done mb) (getf chosen :text)))
+        ((and chosen (eq key :tab))
+         (set-text (getf chosen :text) (length (getf chosen :text))))
+        ((and chosen shift (eq key :delete) (getf chosen :forget))
+         (handler-case (funcall (getf chosen :forget))
+           (serious-condition (c) (setf *browser-status* (princ-to-string c))))
+         (minibuffer-refresh-candidates mb :keep-sel t))
         ((member key '(:return #\Return #\Newline))
          (minibuffer-finish (mb-on-done mb) text))
         ((and (eq key :tab) (mb-completer mb))
@@ -2133,6 +2200,64 @@
         (lol.canvas:draw-string canvas *bfont* (mb-hint mb)
                                 (- w 10 (lol.canvas:string-px *bfont* (mb-hint mb))) (status-text-y h) *ui-dim*))
       rect)))
+
+(defparameter +minibuffer-panel-rows+ 10
+  "The most candidate rows shown at once; more scroll (the choice keeps itself in view).")
+
+(defun minibuffer-panel-rows (mb)
+  "MB's candidates as list-widget rows, in a vector (DRAW-LIST's shape)."
+  (map 'vector (lambda (c)
+                 (lol.widgets:make-row (getf c :label) :detail (getf c :detail)
+                                       :group (getf c :group) :match (getf c :match)
+                                       :stripe (getf c :stripe)))
+       (mb-cands mb)))
+
+(defun minibuffer-panel-rect (w h)
+  "Where the candidate panel goes on a screen W x H — (x y w h), full width, sitting on
+   the minibuffer — or NIL when there is nothing to list. Its height fits the rows (a
+   section header takes a slot like a row), at most +MINIBUFFER-PANEL-ROWS+ of them and
+   never more than half the screen, plus the header line."
+  (let ((mb *minibuffer*))
+    (when (and mb (mb-cands mb))
+      (let* ((slots (length (lol.widgets:list-layout (minibuffer-panel-rows mb))))
+             (room (max 1 (floor (- (floor h 2) +row-h+) +row-h+)))
+             (n (min slots +minibuffer-panel-rows+ room))
+             (ph (+ +row-h+ (* n +row-h+) 4)))
+        (list 0 (- h (status-h) ph) w ph)))))
+
+(defun draw-minibuffer-panel (canvas x y w h)
+  "The candidate panel in the rect X Y W H: an amber rule and a header line (the list's
+   TITLE, how many, the keys), then the rows, the chosen one lit. -> the rows' hit map
+   (DRAW-LIST's), for a click."
+  (let* ((mb *minibuffer*)
+         (rows (minibuffer-panel-rows mb))
+         (keys (if (mb-sel mb) "Enter opens · Tab takes it · ↑ back to the text"
+                   "↓ / C-n choose · Tab completes · Enter opens what you typed"))
+         (ty (+ y 1 (max 0 (floor (- +row-h+ (lol.canvas:font-ch *bfont*)) 2)))))
+    (lol.canvas:fill-rect canvas x y w h *ui-panel*)
+    (lol.canvas:fill-rect canvas x y w 1 *ui-amber*)
+    (lol.canvas:draw-string canvas *bfont*
+                            (clip-text (format nil "~a  (~d)" (or (mb-title mb) "") (length rows))
+                                       (max 8 (floor (* w 1/2) (lol.canvas:font-cw *bfont*))))
+                            10 ty *ui-amber*)
+    (lol.canvas:draw-string canvas *bfont* keys
+                            (- (+ x w) 10 (lol.canvas:string-px *bfont* keys)) ty *ui-dim*)
+    (multiple-value-bind (top hits)
+        (lol.widgets:draw-list canvas (+ x 4) (+ y +row-h+ 2) (- w 8) (- h +row-h+ 4) rows
+                               :sel (or (mb-sel mb) -1) :top (mb-top mb)
+                               :follow-sel (and (mb-sel mb) t))
+      (setf (mb-top mb) top)
+      hits)))
+
+(defun minibuffer-panel-pick (hits y)
+  "A click at Y on the candidate panel whose rows were drawn as HITS: answer that row,
+   as Enter on it would. -> T when a row was hit."
+  (let* ((mb *minibuffer*)
+         (i (and mb (lol.widgets:hit-row hits y)))
+         (c (and i (nth i (mb-cands mb)))))
+    (when c
+      (minibuffer-finish (mb-on-done mb) (getf c :text))
+      t)))
 
 ;;; ---- incremental search: C-s / C-r ------------------------------------------
 ;;; The search itself is the text view's (poc/textview.lisp, "Incremental search");

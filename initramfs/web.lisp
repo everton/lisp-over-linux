@@ -196,6 +196,8 @@
     (cond
       ((zerop (length s)) (web-home-url))
       ((search "://" s) s)
+      ;; a path — / ~/ ./ ../ — is a file on the disk (it used to become a search)
+      ((path-query-p s) (web-file-url (web-expand-path s)))
       ((some (lambda (p) (and (>= (length s) (length p)) (string-equal p s :end2 (length p))))
              '("about:" "data:" "file:" "chrome:" "view-source:" "javascript:"))
        s)
@@ -211,6 +213,234 @@
                      "http" "https")
                  s)))
       (t (format nil *web-search* (url-encode s))))))
+
+(defun web-expand-path (text)
+  "A typed path as an absolute one: ~ is the home folder, ./ and ../ are taken from
+   it too (the address bar has no folder of its own), and a trailing slash is kept —
+   it is how a folder was typed."
+  (let* ((home (home-directory))
+         (abs (cond ((char= (char text 0) #\/) text)
+                    ((char= (char text 0) #\~) (concatenate 'string home (subseq text 1)))
+                    (t (path-join home text))))
+         (norm (normalize-path abs)))
+    (if (and (> (length text) 1) (char= (char text (1- (length text))) #\/)
+             (string/= norm "/"))
+        (concatenate 'string norm "/")
+        norm)))
+
+(defun web-file-url (path)
+  "The file:// URL for the absolute PATH: every octet but the unreserved characters
+   and the slashes percent-encoded, so a space or a # in a file name stays part of it."
+  (with-output-to-string (o)
+    (write-string "file://" o)
+    (loop for b across (sb-ext:string-to-octets path :external-format :utf-8)
+          do (if (or (<= 48 b 57) (<= 65 b 90) (<= 97 b 122) (member b '(45 46 95 126 47)))
+                 (write-char (code-char b) o)
+                 (format o "%~2,'0X" b)))))
+
+;;; ---- the history: every page you went to ------------------------------------------
+;;; Chrome keeps a history of its own, in an SQLite file in the profile, which we would
+;;; need an SQLite reader to use. Ours is the simplest thing that answers "where did I
+;;; go?": one plist per URL — (:url :title :visits :last) — newest visit first, in
+;;; ~/.lol/web/history.lisp as one READable list (0600: what you read is private). It
+;;; is written at most every +WEB-HISTORY-SAVE-EVERY+ seconds and when Chrome is shut
+;;; down, not on every visit: the write is fsync'd, on the environment's thread. A crash
+;;; can lose the last few seconds of it; nothing else. A diskless boot keeps it in
+;;; memory only.
+
+(defparameter +web-history-max+ 2000 "Pages kept; the least recent go first.")
+(defparameter +web-history-save-every+ 10 "Seconds between two writes of the file.")
+
+(defvar *web-history* :unread
+  "The history, newest first, or :UNREAD until it is first needed (WEB-HISTORY).")
+(defvar *web-history-dirty* nil "Changed since it was last written?")
+(defvar *web-history-saved-at* 0 "GET-UNIVERSAL-TIME of the last write.")
+
+(defun web-history-path () (lol-path "web/history.lisp"))
+
+(defun web-history ()
+  "The history, read from the disk the first time. Never signals: an unreadable file
+   is an empty history (and is left alone — it is written over only after a visit)."
+  (when (eq *web-history* :unread)
+    (setf *web-history*
+          (let ((path (web-history-path)))
+            (or (and path (path-exists-p path)
+                     (ignore-errors
+                       (with-open-file (s (native-path path) :external-format :utf-8)
+                         (let* ((*read-eval* nil) (form (read s nil nil)))
+                           (and (listp form)
+                                (remove-if-not (lambda (e) (and (listp e) (stringp (getf e :url))))
+                                               form))))))
+                '()))))
+  *web-history*)
+
+(defun web-history-save (&key force)
+  "Write the history when it changed — at once with FORCE, else only when the last
+   write is +WEB-HISTORY-SAVE-EVERY+ seconds old. Never signals."
+  (let ((path (web-history-path)) (now (get-universal-time)))
+    (when (and path *web-history-dirty* (listp *web-history*)
+               (or force (>= (- now *web-history-saved-at*) +web-history-save-every+)))
+      (ignore-errors
+        (let ((dir (path-parent path)))
+          (loop for d in (list (path-parent dir) dir)
+                unless (path-exists-p d) do (make-directory d)))
+        (write-file-atomically
+         path (sb-ext:string-to-octets
+               (with-standard-io-syntax
+                 (let ((*print-readably* nil))
+                   (format nil ";; LoL web history — newest first; safe to edit or delete.~%~s~%"
+                           *web-history*)))
+               :external-format :utf-8))
+        (set-mode path #o600)
+        (setf *web-history-dirty* nil *web-history-saved-at* now)))))
+
+(defun web-history-keeps-p (url)
+  "Is URL worth remembering? Pages, yes; Chrome's own and the blank page, data: and
+   javascript: URLs, and the home page (the guide, always one key away), no."
+  (and (stringp url) (plusp (length url))
+       (not (some (lambda (p) (and (>= (length url) (length p)) (string-equal p url :end2 (length p))))
+                  '("about:" "data:" "chrome:" "chrome-error:" "devtools:" "javascript:" "view-source:")))
+       (not (equal url (web-home-url)))))
+
+(defun web-history-note (url &key title)
+  "Chrome went to URL: count a visit and move it to the front. With TITLE, only name
+   the entry (the title arrives after the visit, once the page says it)."
+  (when (web-history-keeps-p url)
+    (let* ((h (web-history))
+           (e (find url h :key (lambda (e) (getf e :url)) :test #'string=)))
+      (cond (title
+             (when (and e (string/= title (or (getf e :title) "")))
+               (setf (getf e :title) title *web-history-dirty* t)))
+            (t
+             (let ((e (or e (list :url url :title nil :visits 0 :last 0))))
+               (incf (getf e :visits))
+               (setf (getf e :last) (get-universal-time))
+               (setf *web-history* (cons e (remove e h :test #'eq))
+                     *web-history-dirty* t)
+               (when (> (length *web-history*) +web-history-max+)
+                 (setf *web-history* (subseq *web-history* 0 +web-history-max+)))))))
+    (web-history-save)))
+
+(defun web-history-forget (url)
+  "Remove URL from the history (Shift-Delete on its row), and write that at once —
+   a page you asked to forget should not wait on the disk."
+  (when (listp (web-history))
+    (setf *web-history* (remove url *web-history* :key (lambda (e) (getf e :url)) :test #'string=)
+          *web-history-dirty* t)
+    (web-history-save :force t)))
+
+(defun web-url-sans-scheme (url)
+  "\"https://www.example.org/a\" -> \"example.org/a\": what a person types of it."
+  (let* ((s (let ((p (search "://" url))) (if p (subseq url (+ p 3)) url))))
+    (if (and (> (length s) 4) (string-equal "www." s :end2 4)) (subseq s 4) s)))
+
+(defun web-history-matches (query &key (limit 50))
+  "The history entries QUERY finds, best first. Every space-separated word of it must
+   occur in the URL or the title, ignoring case. Best is a blend of how recent and how
+   often (Firefox calls it frecency): each visit counts as a day more recent, up to a
+   month's worth, and a page whose address STARTS with what you typed (\"git\" for
+   github.com) comes first — that is the page you are most likely typing."
+  (let* ((words (loop with s = (string-trim " " query) and start = 0
+                      for sp = (position #\Space s :start start)
+                      for w = (subseq s start sp)
+                      when (plusp (length w)) collect w
+                      while sp do (setf start (1+ sp))))
+         (first-word (first words))
+         (scored '()))
+    (dolist (e (web-history))
+      (let ((url (getf e :url)) (title (or (getf e :title) "")))
+        (when (every (lambda (w) (or (search w url :test #'char-equal) (search w title :test #'char-equal)))
+                     words)
+          (let ((bare (web-url-sans-scheme url)))
+            (push (cons (+ (getf e :last 0)
+                           (* 86400 (min 30 (getf e :visits 1)))
+                           (if (and first-word (>= (length bare) (length first-word))
+                                    (string-equal first-word bare :end2 (length first-word)))
+                               (* 86400 365) 0))
+                        e)
+                  scored)))))
+    (let ((sorted (mapcar #'cdr (stable-sort (nreverse scored) #'> :key #'car))))
+      (if (> (length sorted) limit) (subseq sorted 0 limit) sorted))))
+
+;;; ---- the address prompt's candidates ----------------------------------------------
+;;; What MINIBUFFER-READ's candidate panel (poc/shell.lisp) shows under C-l, decided by
+;;; the first characters typed: a path (/ ~/ ./ ../ file://) lists the folder it is in,
+;;; like a small file manager — folders first, then files with their size and date;
+;;; anything else lists the history. Tab on a folder's row goes into it, Enter opens
+;;; the row (a folder opens as Chrome's listing of it).
+
+;;; One subtlety: the panel lists files as WE see them, but Chrome opens them inside its
+;;; container (doc/containers.org), whose root is the host's Debian. The two views
+;;; agree only where lol-ct.c binds our folders in — /home, /tmp, /dev, /sys. In the
+;;; guest every other absolute path is listed from /mnt/host, the host's root as we
+;;; mount it, so /usr/share/doc/ shows what Chrome will open there and not the
+;;; initramfs's own few files. (The container's overlays can add to what /mnt/host
+;;; shows; for a listing, that is close enough.)
+
+(defun web-chrome-root ()
+  "Where Chrome's / is in our file system when they differ: /mnt/host in the guest,
+   NIL on the host (there Chrome runs in the same root as we do)."
+  (and (web-in-guest-p) (path-exists-p "/mnt/host/usr") "/mnt/host"))
+
+(defun web-shared-path-p (abs)
+  "Is the absolute path ABS one Chrome's container sees exactly as we do?"
+  (some (lambda (d) (or (string= abs d)
+                        (and (> (length abs) (length d)) (string= d abs :end2 (length d))
+                             (char= (char abs (length d)) #\/))))
+        '("/home" "/tmp" "/dev" "/sys")))
+
+(defun web-path-candidates (text)
+  "The folder entries a path TEXT could complete to, as candidate plists; and the
+   panel's title, which says which folder they are in. An absolute path outside the
+   shared folders is listed from Chrome's root (WEB-CHROME-ROOT, above)."
+  (let* ((root (and (char= (char text 0) #\/) (not (web-shared-path-p (web-expand-path text)))
+                    (web-chrome-root)))
+         (query (if root (concatenate 'string root text) text))
+         (unroot (lambda (s) (if (and root (>= (length s) (length root)) (string= root s :end2 (length root)))
+                                 (subseq s (length root)) s))))
+    (multiple-value-bind (dir partial prefix) (parse-path-query query :home (home-directory))
+      (let ((rows (path-completions query :home (home-directory) :limit 300)))
+        (values
+       (mapcar (lambda (r)
+                 (destructuring-bind (name dir-p full label) r
+                   (setf label (funcall unroot label))
+                   (let ((e (and (not dir-p) (ignore-errors (file-entry full)))))
+                     (list :label (if dir-p (concatenate 'string name "/") name)
+                           :detail (cond (dir-p "folder")
+                                         (e (format nil "~a  ~a"
+                                                    (human-size (if (eq (fentry-type e) :symlink)
+                                                                    (fentry-target-size e)
+                                                                    (fentry-size e)))
+                                                    (format-mtime (fentry-mtime e))))
+                                         (t ""))
+                           :text label
+                           :group (if dir-p "Folders" "Files")
+                           :stripe (and dir-p *ui-accent*)
+                           :match (and (plusp (length partial)) partial)))))
+               rows)
+         ;; the folder as you typed it (~ stays ~), like the rows' own text
+         (if dir (format nil "files in ~a" (funcall unroot prefix)) "no such folder"))))))
+
+(defun web-address-candidates (tab)
+  "The candidate function for TAB's address prompt (see above). The URL the prompt
+   opened with lists nothing — it is the page you are on — until you edit it."
+  (let ((opened-with (web-tab-url tab)))
+    (lambda (text)
+      (let ((q (string-trim " " text)))
+        (cond
+          ((path-query-p q) (web-path-candidates q))
+          ((equal text opened-with) nil)
+          (t (values
+              (mapcar (lambda (e)
+                        (let ((url (getf e :url)) (title (getf e :title)))
+                          (list :label (if (and title (plusp (length title))) title (web-url-sans-scheme url))
+                                :detail (format nil "~a~@[  · ~d visits~]" (web-url-sans-scheme url)
+                                                (let ((v (getf e :visits 1))) (and (> v 1) v)))
+                                :text url
+                                :match (and (plusp (length q)) (not (find #\Space q)) q)
+                                :forget (lambda () (web-history-forget url)))))
+                      (web-history-matches q))
+              (if (zerop (length q)) "recent pages" (format nil "history matching ~s" q)))))))))
 
 ;;; ---- starting Chrome ----------------------------------------------------------
 
@@ -497,6 +727,7 @@
                 (when (and (stringp title) (plusp (length title))
                            (not (equal title (web-tab-title tab))))
                   (setf (web-tab-title tab) title)
+                  (web-history-note (web-tab-url tab) :title title)
                   (web-retitle tab))))))
 
 (defun web-refresh-history (tab)
@@ -624,10 +855,12 @@
        (let ((fr (jget params "frame")))
          (unless (jget fr "parentId")             ; the main frame, not an iframe
            (setf (web-tab-url tab) (jget fr "url"))
+           (web-history-note (web-tab-url tab))
            (web-retitle tab)
            (web-refresh-history tab))))
       ((string= method "Page.navigatedWithinDocument")  ; a single-page app's pushState
        (setf (web-tab-url tab) (jget params "url"))
+       (web-history-note (web-tab-url tab))
        (web-retitle tab)
        (web-refresh-title tab)
        (web-refresh-history tab))
@@ -1459,11 +1692,17 @@ window.__lolPickerApply = function(id, v){
 
 (defun web-prompt-address (tab)
   "C-l, or a click on the address: edit the URL in the minibuffer; Enter loads it.
-   C-y / C-v pastes a copied URL, C-u or the ✕ clears it (MINIBUFFER-KEY)."
-  (minibuffer-read "url or search: " (lambda (text) (web-navigate tab text))
+   C-y / C-v pastes a copied URL, C-u or the ✕ clears it (MINIBUFFER-KEY). Above the
+   line, the candidates (WEB-ADDRESS-CANDIDATES): a folder's files once the text is a
+   path, else the history — Down / C-n chooses one, Tab takes it into the line."
+  (minibuffer-read "url, path or search: " (lambda (text) (web-navigate tab text))
                    :initial (if (member (web-tab-url tab) (list "about:blank" (web-home-url)) :test #'equal)
                                  "" (web-tab-url tab))  ; a blank or home tab: an empty prompt
-                   :hint "Enter loads · C-y pastes · C-u clears · C-g cancels"))
+                   :completer (lambda (text)
+                                (let ((q (string-trim " " text)))
+                                  (if (path-query-p q) (complete-path-query q :home (home-directory)) text)))
+                   :candidates (web-address-candidates tab)
+                   :hint "Enter loads · / or ~/ a file · C-u clears · C-g cancels"))
 
 (defvar *web-find* "" "The last find-in-page query.")
 
@@ -1595,8 +1834,8 @@ window.__lolPickerApply = function(id, v){
 
 (defun web-spotter-rows (query)
   "The Spotter's web rows for QUERY: \"open\" when it looks like an address, \"search
-   the web\" for any other text of two or more characters, and the open tabs whose
-   title or URL contains it."
+   the web\" for any other text of two or more characters, the open tabs whose title
+   or URL contains it, and up to five pages from the history that no tab shows."
   (let ((q (string-trim " " query)) (out '()))
     (when (web-url-like-p q)
       (push (list :label (format nil "open ~a" (web-url-for q)) :detail "web page"
@@ -1609,6 +1848,18 @@ window.__lolPickerApply = function(id, v){
         (push (list :label (web-tab-label tab) :detail (format nil "web tab · ~a" (web-tab-url tab))
                     :group "web" :kind :restart :subject (subj-web tab))
               out)))
+    ;; pages from the history that no open tab shows, the five best
+    (when (and (>= (length q) 2) (not (path-query-p q)))   ; a path has rows of its own
+      (loop for e in (web-history-matches q :limit 20)
+            for url = (getf e :url)
+            with shown = 0
+            while (< shown 5)
+            unless (find url *web-tabs* :key #'web-tab-url :test #'equal)
+              do (incf shown)
+                 (push (list :label (or (getf e :title) (web-url-sans-scheme url))
+                             :detail (format nil "history · ~a" (web-url-sans-scheme url))
+                             :group "web" :kind :restart :subject (subj-web-open url))
+                       out)))
     (when (and (>= (length q) 2) (not (web-url-like-p q)))
       (push (list :label (format nil "search the web for ~s" q) :detail "web search"
                   :group "web" :kind :restart :subject (subj-web-open (format nil *web-search* (url-encode q))))
@@ -1650,6 +1901,7 @@ window.__lolPickerApply = function(id, v){
 (defun web-shutdown ()
   "Close Chrome cleanly: Browser.close lets it flush the profile (cookies, history)
    to disk before the disk is remounted read-only at power-off."
+  (web-history-save :force t)              ; before the disk goes read-only
   (when *web-chrome*
     ;; let go of it FIRST, so the browser's loop stops reading a pipe being closed
     (let ((c (shiftf *web-chrome* nil)))

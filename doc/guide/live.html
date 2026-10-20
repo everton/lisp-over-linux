@@ -62,7 +62,7 @@ Design: <a href="../code-browser.org">code-browser.org</a> §3, §3a, §6.</p>
 a reviewable list of changes with history.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2404</span></a>,
+  <li><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2529</span></a>,
     <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:797</span></a>,
     <a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:238</span></a>,
     <a class="ref" data-ref="initramfs/registry.lisp#accept-package" href="../../initramfs/registry.lisp"><code>accept-package</code><span class="loc">initramfs/registry.lisp:203</span></a>,
@@ -84,7 +84,7 @@ a reviewable list of changes with history.</figcaption>
   <tr><td><kbd>C-c C-p</kbd></td><td>Print it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-print-it" href="../../poc/shell.lisp"><code>workspace-print-it</code><span class="loc">poc/shell.lisp:890</span></a></td><td>inserts output and value into the buffer, under the form</td></tr>
   <tr><td><kbd>C-c C-i</kbd></td><td>Inspect it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-inspect-it" href="../../poc/shell.lisp"><code>workspace-inspect-it</code><span class="loc">poc/shell.lisp:906</span></a></td><td><code>trail-push</code> of the value, so the inspector opens</td></tr>
   <tr><td><kbd>C-c C-d</kbd></td><td>Debug it</td><td><a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:918</span></a></td><td>evaluates with the debugger armed</td></tr>
-  <tr><td><kbd>C-c C-c</kbd></td><td>Accept</td><td><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2404</span></a></td><td>defines it, as above</td></tr>
+  <tr><td><kbd>C-c C-c</kbd></td><td>Accept</td><td><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2529</span></a></td><td>defines it, as above</td></tr>
 </table>
 <p>"The form before point" is found by reading forms from the start of the buffer to the caret and keeping the last
 complete one (<a class="ref" data-ref="poc/shell.lisp#form-before-point" href="../../poc/shell.lisp"><code>form-before-point</code><span class="loc">poc/shell.lisp:757</span></a>). Evaluation captures
@@ -124,7 +124,7 @@ cannot take PID 1 down.</p>
     (<a class="ref" data-ref="initramfs/model.lisp#restart-frame" href="../../initramfs/model.lisp"><code>restart-frame</code><span class="loc">initramfs/model.lisp:1003</span></a>). Why only some locals can be set, and the SBCL
     setter that faults on one kind: <a href="../inspector-history.org">inspector-history.org</a> §5.4.</li>
   <li>The stage arms the same handler around every simulation tick
-    (<a class="ref" data-ref="poc/morphic.lisp#step-stage-pane" href="../../poc/morphic.lisp"><code>step-stage-pane</code><span class="loc">poc/morphic.lisp:1818</span></a>), so a collision with no method opens the
+    (<a class="ref" data-ref="poc/morphic.lisp#step-stage-pane" href="../../poc/morphic.lisp"><code>step-stage-pane</code><span class="loc">poc/morphic.lisp:1881</span></a>), so a collision with no method opens the
     debugger with the stage's own restarts (<code>define-method</code> drops a method template into the Workspace).</li>
 </ul>
 <div class="ruled-out">Several comments and two docs said the debugger is entered through <code>*debugger-hook*</code>.
@@ -137,7 +137,7 @@ supervisor menu.</div>
 <p>The <code>(present (x t))</code> fallback is the inspector (<a class="ref" data-ref="initramfs/present.lisp#inspector-view" href="../../initramfs/present.lisp"><code>inspector-view</code><span class="loc">initramfs/present.lisp:1055</span></a>).
 Its rows come from <a class="ref" data-ref="initramfs/model.lisp#inspect-places" href="../../initramfs/model.lisp"><code>inspect-places</code><span class="loc">initramfs/model.lisp:507</span></a>. A row that is a real place carries
 a setter in <code>item-edit</code>, and <kbd>C-c C-c</kbd> on it writes a value
-(<a class="ref" data-ref="poc/shell.lisp#set-field" href="../../poc/shell.lisp"><code>set-field</code><span class="loc">poc/shell.lisp:2291</span></a>). <kbd>C-c C-e</kbd> evaluates with <code>self</code> and the slots
+(<a class="ref" data-ref="poc/shell.lisp#set-field" href="../../poc/shell.lisp"><code>set-field</code><span class="loc">poc/shell.lisp:2416</span></a>). <kbd>C-c C-e</kbd> evaluates with <code>self</code> and the slots
 bound (<a class="ref" data-ref="initramfs/model.lisp#eval-in-context" href="../../initramfs/model.lisp"><code>eval-in-context</code><span class="loc">initramfs/model.lisp:598</span></a>). "Why is this alive?" asks the GC
 (<a class="ref" data-ref="initramfs/model.lisp#retention-path" href="../../initramfs/model.lisp"><code>retention-path</code><span class="loc">initramfs/model.lisp:662</span></a>). The history and cost of each power is in
 <a href="../inspector-history.org">inspector-history.org</a>.</p>

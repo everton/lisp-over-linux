@@ -42,7 +42,9 @@
    #:draw-panel #:draw-bar #:draw-scrollbar #:draw-list #:draw-grid #:draw-card
    #:draw-query-line #:scrim #:row-match
    ;; hit testing
-   #:hit-row #:hit-cell #:clip-text))
+   #:hit-row #:hit-cell #:clip-text
+   ;; layout (a caller sizing a list to its rows)
+   #:list-layout))
 
 (in-package :lol.widgets)
 

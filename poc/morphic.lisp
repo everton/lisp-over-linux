@@ -182,6 +182,68 @@
   (list (lol.morph:morph-local-bounds m)
         (and *trails* (status-line-content (current-pane)))))
 
+(defclass minibuffer-panel (watched-morph)
+  ((hits :initform nil :accessor panel-hits
+         :documentation "Its rows' hit map as last drawn."))
+  (:documentation "The minibuffer's candidate list (shell.lisp, \"The candidate
+   panel\"): a band sitting on the status line, over the bottom of whatever is behind
+   it. A child of the desk, not of the shell, so the panes under it keep their size —
+   a web page is not resized because you typed into its address. SYNC-MINIBUFFER-PANEL
+   adds it, sizes it and removes it with the list; it is not an overlay, because the
+   keys stay the minibuffer's (BROWSER-KEY hands them to MINIBUFFER-KEY)."))
+
+(defmethod lol.morph:morph-opaque-p ((m minibuffer-panel)) t)
+(defmethod lol.morph:morph-name ((m minibuffer-panel)) "the minibuffer's candidates")
+
+(defmethod lol.morph:draw-morph ((m minibuffer-panel) canvas clip)
+  (declare (ignore clip))
+  (when (and *minibuffer* (mb-cands *minibuffer*))
+    (destructuring-bind (x y w h) (lol.morph:morph-local-bounds m)
+      (setf (panel-hits m) (draw-minibuffer-panel canvas x y w h)))))
+
+(defmethod morph-signature ((m minibuffer-panel))
+  (let ((mb *minibuffer*))
+    (list (lol.morph:morph-local-bounds m)
+          (and mb (list (mb-title mb) (mb-sel mb) (mb-cands mb))))))
+
+(defmethod lol.morph:handle-event ((m minibuffer-panel) e)
+  "A press on a row answers it; the wheel moves the choice. Every press here is the
+   panel's: one that missed the rows must not end the prompt, as a press elsewhere
+   does (PRESS-PRELUDE)."
+  (case (lol.morph:event-kind e)
+    (:down (setf (hand-press) nil)
+           (minibuffer-panel-pick (panel-hits m) (lol.morph:event-y e))
+           t)
+    (:wheel (when *minibuffer*
+              (minibuffer-move *minibuffer* (if (plusp (lol.morph:event-notches e)) -1 1)))
+            t)
+    ((:up :drag :right :middle :move) t)
+    (t nil)))
+
+(defun sync-minibuffer-panel (desk)
+  "Make DESK's candidate panel agree with the minibuffer: there, the right size and on
+   top of the windows when there is a list to show; gone (what it covered repaired)
+   when there is not."
+  (let* ((panel (find-if (lambda (m) (typep m 'minibuffer-panel)) (lol.morph:morph-children desk)))
+         (rect (destructuring-bind (x y w h) (lol.morph:morph-bounds desk)
+                 (declare (ignore x y))
+                 (minibuffer-panel-rect w h))))
+    (cond ((and rect (null panel))
+           (let ((p (make-instance 'minibuffer-panel)))
+             (setf (lol.morph:morph-bounds p) rect)
+             (lol.morph:add-morph desk p)
+             (lol.morph:invalidate p)))
+          ((and rect (not (equal rect (lol.morph:morph-bounds panel))))
+           (lol.morph:set-morph-bounds panel rect))
+          ((and panel (null rect))
+           (lol.morph:remove-morph panel)))
+    (let ((p (or panel (find-if (lambda (m) (typep m 'minibuffer-panel)) (lol.morph:morph-children desk)))))
+      ;; above the windows, below an overlay (the Spotter opened over a prompt)
+      (when (and p rect (lol.morph:morph-owner p)
+                 (let ((above (rest (member p (lol.morph:morph-children desk)))))
+                   (some (lambda (m) (not (typep m 'overlay))) above)))
+        (lol.morph:raise-morph p)))))
+
 ;;; ===========================================================================
 ;;; A trail on screen: the accordion, as a layout
 ;;; ===========================================================================
@@ -1454,6 +1516,7 @@
       (when (and win (not (eq win (car (last (desk-windows desk))))) (not (top-overlay desk)))
         (lol.morph:raise-morph win))
       (setf (lol.morph:world-focus desk) (or focus (desk-shell desk))))
+    (sync-minibuffer-panel desk)
     (dolist (m (lol.morph:morph-descendants desk))
       (when (or (typep m 'watched-morph) (typep m 'pane-body) (and (pane-p m) (pane-mode m)))
         (check-morph m)))

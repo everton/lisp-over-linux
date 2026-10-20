@@ -24,6 +24,9 @@
 ;;;;     its viewport is the window's pane, its frames reach the window's store and the
 ;;;;     screen, the wheel scrolls it, a click and keys land in it, and after the window
 ;;;;     is dragged elsewhere the page and a click follow it;
+;;;;   - C-l's candidate panel: a path typed over QMP lists the folder as Chrome sees
+;;;;     it, Down/Tab take a row, Enter opens the folder in Chrome; the history offers
+;;;;     the test page back and C-n, Enter loads it (doc/web-browser.org §4.6);
 ;;;;   - power-off's WEB-SHUTDOWN ends every Chrome process and leaves no zombie.
 ;;;;
 ;;;; It also prints what the doc records: Chrome's memory (PSS over its processes,
@@ -226,6 +229,41 @@
                 collect (list px py) into pts
               when (>= (length pts) n) return pts
               finally (return pts))))))
+
+(defun address-prompt ()
+  "C-l's candidate panel (doc/web-browser.org §4.6), by real keys: a path lists the
+   folder as CHROME sees it (from /mnt/host outside /home and /tmp), Tab takes a row,
+   Enter opens the folder in Chrome; then the history offers the test page back."
+  (format t "~&~%== the address prompt: paths and the history ==~%")
+  (check "the test page is in the history, with its title"
+         (search "LoL test index" (or (probe "(getf (first (web-history-matches \"10.0.2.2\")) :title)") "")))
+  (qmp-hold "ctrl" "l") (sleep 0.6)
+  (qmp-hold "ctrl" "u") (sleep 0.4)
+  (type-text "/usr/sh") (sleep 0.6)
+  (row "candidates for /usr/sh" (probe "(mapcar (lambda (c) (getf c :text)) (mb-cands *minibuffer*))"))
+  (check "/usr/sh lists /usr/share/ (Chrome's root: the host's /usr, not the initramfs's)"
+         (search "\"/usr/share/\"" (or (probe "(mapcar (lambda (c) (getf c :text)) (mb-cands *minibuffer*))") "")))
+  (check "the panel is on screen, a morph of the desk"
+         (string= "T" (probe "(and (find-if (lambda (m) (typep m 'minibuffer-panel)) (lol.morph:morph-children *world*)) t)")))
+  (qmp-key "down") (sleep 0.4) (qmp-key "tab") (sleep 0.6)
+  (check "Down, Tab: the line holds /usr/share/"
+         (string= "\"/usr/share/\"" (probe "(mb-text *minibuffer*)")))
+  (type-text "doc/") (sleep 0.6)
+  (shot "web-address-path")
+  (qmp-key "ret")
+  (check "Enter opens the folder in Chrome (its own listing of file:///usr/share/doc/)"
+         (wait-until 30 (lambda () (search "/usr/share/doc/" (or (title) "")))))
+  (check "the prompt and its panel are gone"
+         (string= "NIL" (probe "(or *minibuffer* (find-if (lambda (m) (typep m 'minibuffer-panel)) (lol.morph:morph-children *world*)))")))
+  (qmp-hold "ctrl" "l") (sleep 0.6)
+  (qmp-hold "ctrl" "u") (sleep 0.4)
+  (type-text "lol test") (sleep 0.6)
+  (row "candidates for \"lol test\"" (probe "(mapcar (lambda (c) (getf c :label)) (mb-cands *minibuffer*))"))
+  (shot "web-address-history")
+  (qmp-hold "ctrl" "n") (sleep 0.4)
+  (qmp-key "ret")
+  (check "C-n, Enter: the page from the history loads"
+         (wait-until 30 (lambda () (search "LoL test index" (or (title) ""))))))
 
 (defun page-in-a-window ()
   (format t "~&~%== a page in a window ==~%")
@@ -440,6 +478,7 @@
   (wait-until 10 (lambda () (string= (chooser) "NIL")))
 
   (page-in-a-window)
+  (address-prompt)
 
   (format t "~&~%== the public web, and the sandbox ==~%")
   ;; No precondition on OUR /etc/resolv.conf: lol-ct gives the container one (ours,

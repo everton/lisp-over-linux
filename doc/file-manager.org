@@ -173,6 +173,13 @@ that is a closure and costs nothing. It edits like a line should: ←/→, =C-a=
 =C-k=, =C-u= clears, =M-Backspace= deletes a word, *Tab completes paths*, Enter
 answers, Esc or =C-g= cancels, and a click anywhere ends it.
 
+Since 2026-10-20 a prompt can also show a *candidate panel*: =minibuffer-read='s
+=:candidates= is a function from the text to the rows a list above the line shows,
+and =Down= / =C-n= choose one, Tab takes it into the line, Enter answers it. The web
+pane's address prompt uses it to list a folder's files while you type a path, a
+smaller file manager of its own, and your history otherwise
+([[file:web-browser.org][web-browser.org]] §4.6).
+
 * 6. Previews: preview = side, drill = vertical
 
 The browser's navigation rule is that /moving/ the selection previews it on the right
