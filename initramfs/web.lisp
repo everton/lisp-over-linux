@@ -148,6 +148,8 @@
   ;; where the pane showing it last drew it, in that pane's coordinates (its
   ;; surface's: the screen's, or a window's) — what clicks and frames are placed by
   page-rect               ; (x y w h) of the page image
+  progress-rect           ; (x y w h) of the loading strip between toolbar and page
+  (progress-at 0)         ; internal-real-time the strip was last painted on its own
   (bar-rects '())         ; ((:back x0 x1) (:forward …) (:reload …) (:address …))
   bar-y)                  ; (y0 . y1) of the toolbar
 
@@ -1265,27 +1267,34 @@
   "How soon the loop must run WEB-SERVICE even with nothing to read: never (-1) when
    all is quiet — a frame or a title arrives on the pipe, which wakes the poll. A tab
    waiting to have its size synced needs a prompt second look, one waiting for its
-   first frame a slower one, and a zoomed page showing an upscaled frame one when it
-   is due to be sharpened."
-  (let ((vis (web-visible-tab)))
-    (if (and vis (eq (web-tab-state vis) :live)
-             (or (/= (web-tab-want-w vis) (web-tab-sent-w vis))
-                 (/= (web-tab-want-h vis) (web-tab-sent-h vis))
-                 (not (web-tab-screencasting vis))))
-        10
-        (cond ((and vis (eq (web-tab-state vis) :live) (null (web-tab-frame-px vis)))
-               100)                      ; waiting for a first frame: see WEB-NUDGE
-              ;; a shared screen's next update (WEB-SHARE-STEP)
-              ((web-share-timeout))
-              ;; a call's question waiting for the minibuffer to be free
-              (*web-media-asks* 100)
-              ((and vis (web-tab-soft vis) (not (web-tab-capturing vis)))
-               ;; a zoomed page showing an upscaled frame: wake when it is due to be
-               ;; sharpened (WEB-SHARPEN)
-               (max 1 (- +web-sharpen-ms+
-                         (round (* 1000 (- (get-internal-real-time) (web-tab-frame-at vis)))
-                                internal-time-units-per-second))))
-              (t -1)))))
+   first frame a slower one, a zoomed page showing an upscaled frame one when it
+   is due to be sharpened, and a loading page one per step of its strip (50 ms)."
+  (let* ((vis (web-visible-tab))
+         (base (web-timeout-1 vis)))
+    (if (and vis (web-tab-loading vis))
+        (if (minusp base) 50 (min base 50))
+        base)))
+
+(defun web-timeout-1 (vis)
+  "WEB-TIMEOUT for everything but the loading strip."
+  (if (and vis (eq (web-tab-state vis) :live)
+           (or (/= (web-tab-want-w vis) (web-tab-sent-w vis))
+               (/= (web-tab-want-h vis) (web-tab-sent-h vis))
+               (not (web-tab-screencasting vis))))
+      10
+      (cond ((and vis (eq (web-tab-state vis) :live) (null (web-tab-frame-px vis)))
+             100)                      ; waiting for a first frame: see WEB-NUDGE
+            ;; a shared screen's next update (WEB-SHARE-STEP)
+            ((web-share-timeout))
+            ;; a call's question waiting for the minibuffer to be free
+            (*web-media-asks* 100)
+            ((and vis (web-tab-soft vis) (not (web-tab-capturing vis)))
+             ;; a zoomed page showing an upscaled frame: wake when it is due to be
+             ;; sharpened (WEB-SHARPEN)
+             (max 1 (- +web-sharpen-ms+
+                       (round (* 1000 (- (get-internal-real-time) (web-tab-frame-at vis)))
+                              internal-time-units-per-second))))
+            (t -1))))
 
 ;;; ---- reaping: PID 1's duty to Chrome's orphans --------------------------------
 ;;; When a process dies its children are re-parented to PID 1, and a dead child stays
@@ -1332,6 +1341,40 @@
 
 (defun web-bar-h () (+ (lol.canvas:font-ch *bfont*) 10))
 
+(defun web-progress-h ()
+  "The loading strip's height: a few pixels, more with a bigger font."
+  (max 3 (floor (lol.canvas:font-ch *bfont*) 6)))
+
+(defparameter +web-progress-period-ms+ 1200
+  "How long the loading strip's bar takes to cross the pane once.")
+
+(defun draw-web-progress (canvas tab)
+  "The strip between the toolbar and the page. While TAB is LOADING — from
+   Page.frameStartedLoading, which arrives within ~10 ms of the click, to
+   frameStoppedLoading — a bar a third of the pane wide slides across it, its place
+   taken from the clock, so whoever draws it (the pane, or WEB-PROGRESS-STEP alone)
+   draws the same thing. Chrome draws no such thing in headless (no window, no tab
+   strip), and a page that keeps showing the old picture for the seconds a server
+   takes to answer looked frozen. -> the strip's rect."
+  (destructuring-bind (x y w h) (web-tab-progress-rect tab)
+    (lol.canvas:fill-rect canvas x y w h *ui-bg*)
+    (when (web-tab-loading tab)
+      (let* ((ms (round (* 1000 (get-internal-real-time)) internal-time-units-per-second))
+             (bw (max 20 (floor w 3)))
+             ;; from just off the left edge to just off the right one
+             (bx (+ x (- bw) (floor (* (+ w bw) (mod ms +web-progress-period-ms+))
+                                    +web-progress-period-ms+)))
+             (x0 (max x bx)) (x1 (min (+ x w) (+ bx bw))))
+        (when (> x1 x0)
+          (lol.canvas:fill-rect canvas x0 y (- x1 x0) h *ui-accent*))))
+    (list x y w h)))
+
+(defun web-progress-due-p (tab)
+  "Is TAB's strip loading and due a new picture (20 a second)?"
+  (and tab (web-tab-loading tab) (web-tab-progress-rect tab)
+       (>= (- (get-internal-real-time) (web-tab-progress-at tab))
+           (floor internal-time-units-per-second 20))))
+
 (defun draw-web-button (canvas label x y h enabled)
   "A text button; -> its right edge."
   (let* ((cw (lol.canvas:font-cw *bfont*))
@@ -1369,8 +1412,12 @@
                               (+ ax 6) (+ y 7) (if secure *ui-text* *ui-dim*))
       (push (list :address ax (+ ax aw)) rects))
     (setf (web-tab-bar-rects tab) rects (web-tab-bar-y tab) (cons y (+ y bh)))
+    ;; --- the loading strip: still while the page is, a sliding bar while it loads ---
+    (let ((sh (web-progress-h)))
+      (setf (web-tab-progress-rect tab) (list x (+ y bh) w sh))
+      (draw-web-progress canvas tab))
     ;; --- the page ---
-    (let* ((py (+ y bh 2)) (ph (- h bh 2)))
+    (let* ((py (+ y bh (web-progress-h))) (ph (- h bh (web-progress-h))))
       (setf (web-tab-page-rect tab) (list x py w ph)
             (web-tab-want-w tab) w (web-tab-want-h tab) ph)
       (if (web-tab-frame-px tab)
@@ -1874,7 +1921,24 @@ function share(a){
         (push (setf e (cons origin perms)) *web-grants*))
     (when *web-chrome*
       (cdp-send *web-chrome* "Browser.grantPermissions"
-                (jobj "origin" origin "permissions" (coerce (cdr e) 'vector))))))
+                (jobj "origin" origin
+                      "permissions"
+                      ;; the camera with its pan, tilt and zoom too: a page may ask
+                      ;; permissions.query({name: 'camera', panTiltZoom: true}), which
+                      ;; said DENIED with videoCapture alone (measured, Chrome 148).
+                      ;; Chrome 148 calls it cameraPanTiltZoom; the protocol's older
+                      ;; name, videoCapturePanTiltZoom, is refused ("Unknown permission
+                      ;; type") and takes the WHOLE grant down with it
+                      (coerce (if (member "videoCapture" (cdr e) :test #'string=)
+                                  (adjoin "cameraPanTiltZoom" (cdr e) :test #'string=)
+                                  (cdr e))
+                              'vector))
+                ;; a refused grant leaves the page denied: say why, in session.log
+                :callback (lambda (r)
+                            (let ((err (jget r "error" "message")))
+                              (when err
+                                (session-log "web: Chrome refused the grant to ~a: ~a"
+                                             origin err))))))))
 
 (defun web-granted-p (origin perms)
   (subsetp perms (cdr (assoc origin *web-grants* :test #'string=)) :test #'string=))
@@ -1932,11 +1996,13 @@ function share(a){
             (when perms (web-in-call tab))
             (web-media-answer tab ctx id t) t)
            (*minibuffer* nil)
-           (t (minibuffer-read
+           (t (session-log "web: ~a asks for ~{~a~^ and ~}" origin perms)
+              (minibuffer-read
                (format nil "~a wants your ~{~a~^ and ~}:  y allow  ·  a always  ·  n no "
                        (web-origin-host origin)
                        (mapcar (lambda (p) (if (equal p "audioCapture") "microphone" "camera")) perms))
                (lambda (k)
+                 (session-log "web: ~a answered ~s" origin k)
                  (cond ((member k '(#\y #\Y #\a #\A))
                         (web-grant origin perms)
                         (when (member k '(#\a #\A)) (web-save-grant origin perms))
@@ -1944,7 +2010,9 @@ function share(a){
                         (web-media-answer tab ctx id t))
                        (t (web-media-answer tab ctx id :false))))
                :single-key t
-               :on-cancel (lambda () (web-media-answer tab ctx id :false)))
+               :on-cancel (lambda ()
+                            (session-log "web: ~a's question cancelled" origin)
+                            (web-media-answer tab ctx id :false)))
               t))))
       ((equal kind "display")
        (cond
@@ -2555,9 +2623,17 @@ function share(a){
    finds which morph, by its signature); a frame alone is painted here, wherever the
    pane is, and composited by the world even when other damage is pending."
   (declare (ignore dirty))
-  (case (web-service)
-    (:redraw :redraw)
-    (:frame (web-present-frame canvas) nil)))
+  (let ((r (web-service)))
+    (when (eq r :frame) (web-present-frame canvas))
+    ;; the loading strip's next step, painted alone like a frame (a few rows of
+    ;; pixels, not the pane)
+    (let ((tab (web-visible-tab)))
+      (when (and (not (eq r :redraw)) (web-progress-due-p tab)
+                 (fboundp 'pane-painted) (boundp '*world*) (symbol-value '*world*))
+        (setf (web-tab-progress-at tab) (get-internal-real-time))
+        (funcall 'pane-painted (current-pane) canvas
+                 (lambda (c) (list (draw-web-progress c tab))))))
+    (and (eq r :redraw) :redraw)))
 
 (defun web-shutdown ()
   "Close Chrome cleanly: Browser.close lets it flush the profile (cookies, history)

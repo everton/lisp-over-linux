@@ -191,6 +191,79 @@ function pixel(x, y){
      :name "call page")
     (values (nth-value 1 (sb-bsd-sockets:socket-name s)) s)))
 
+(defun serve-slow-page (seconds)
+  "An HTTP server on 127.0.0.1 whose /slow page answers after SECONDS, its / page
+   linking there at once -> the port. For the loading strip (doc/web-browser.org §4.9)."
+  (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
+    (setf (sb-bsd-sockets:sockopt-reuse-address s) t)
+    (sb-bsd-sockets:socket-bind s #(127 0 0 1) 0)
+    (sb-bsd-sockets:socket-listen s 8)
+    (sb-thread:make-thread
+     (lambda ()
+       (loop
+         (let ((c (ignore-errors (sb-bsd-sockets:socket-accept s))))
+           (unless c (return))
+           (let ((c c))
+             (sb-thread:make-thread
+              (lambda ()
+                (ignore-errors
+                 (let* ((io (sb-bsd-sockets:socket-make-stream c :input t :output t
+                                                                 :element-type :default))
+                        (req (read-line io nil "")))
+                   (loop for l = (read-line io nil "")
+                         while (> (length (string-trim '(#\Return) l)) 0))
+                   (let ((body (if (search "/slow" req)
+                                   (progn (sleep seconds) "<title>LoL slow</title><h1>slow</h1>")
+                                   "<title>LoL fast</title><a id=go href='/slow' style='font-size:40px'>slow</a>")))
+                     (format io "HTTP/1.1 200 OK~c~cContent-Type: text/html~c~cContent-Length: ~d~c~cConnection: close~c~c~c~c~a"
+                             #\Return #\Newline #\Return #\Newline (length body) #\Return #\Newline
+                             #\Return #\Newline #\Return #\Newline body)
+                     (finish-output io))))
+                (ignore-errors (sb-bsd-sockets:socket-close c)))
+              :name "slow page")))))
+       :name "slow server")
+    (nth-value 1 (sb-bsd-sockets:socket-name s))))
+
+(defun strip-bar ()
+  "Where the visible tab's loading strip is lit: (first last) columns in the accent,
+   or NIL when it is all background."
+  (destructuring-bind (x y w h) (web-tab-progress-rect (tab))
+    (declare (ignore h))
+    (let ((px (lol.canvas:canvas-pixels *canvas*)) (lit '()))
+      (dotimes (i w)
+        (when (= (aref px (+ (* y *w*) x i)) *ui-accent*) (push i lit)))
+      (and lit (list (car (last lit)) (first lit))))))
+
+(defun loop-turn ()
+  "What fb-browser.lisp's loop does with the web service each turn: WEB-LOOP-SERVICE
+   (which paints a frame or the loading strip by itself), then the world's repair."
+  (web-loop-service *canvas* nil)
+  (lol.morph:world-repair *world* *canvas*)
+  (when *web-chrome* (cdp-wait-readable *web-chrome* 20)))
+
+(defun loading-checks ()
+  (let* ((port (serve-slow-page 2)))
+    (web-navigate (tab) (format nil "http://127.0.0.1:~d/" port))
+    (pump-until (lambda () (and (equal (title) "LoL fast") (not (web-tab-loading (tab))))))
+    (check "a loaded page's strip is still (background only)"
+           (progn (frame) (null (strip-bar))))
+    (multiple-value-bind (x y) (element-center "go") (browser-click x y))
+    (let ((t0 (get-internal-real-time)))
+      (check "a click on a slow link: loading within 200 ms, the strip lit"
+             (and (pump-until (lambda () (web-tab-loading (tab))) 2)
+                  (< (- (get-internal-real-time) t0) (* 0.2 internal-time-units-per-second))
+                  (progn (loop-turn) (strip-bar)))))
+    (let ((a (strip-bar)))
+      (loop repeat 15 do (loop-turn) (sleep 0.02))
+      (check "... and its bar moves while the server has not answered"
+             (and (web-tab-loading (tab)) (strip-bar) (not (equal a (strip-bar))))))
+    (write-ppm (format nil "~a/web-loading.ppm" *out*))
+    (check "the timeout wakes the loop for it (50 ms)" (<= 1 (web-timeout) 50))
+    (check "loaded: the strip is still again"
+           (and (pump-until (lambda () (and (equal (title) "LoL slow")
+                                            (not (web-tab-loading (tab))))) 10)
+                (progn (frame) (null (strip-bar)))))))
+
 (defun fill-rect (canvas x y w h colour)
   (let ((px (lol.canvas:canvas-pixels canvas)) (cw (lol.canvas:canvas-w canvas)))
     (loop for j from y below (+ y h) do
@@ -240,6 +313,22 @@ function pixel(x, y){
         (check "calls: n refuses the camera: NotAllowedError"
                (and (answer-prompt "wants your camera" #\n)
                     (pump-until (lambda () (equal (js "R.cam") "rej NotAllowedError")))))
+        ;; asked again the way Meet asks: with pan, tilt and zoom. A grant naming a
+        ;; permission Chrome does not know is refused WHOLE, and the camera with PTZ
+        ;; stayed denied while the plain camera said granted — Meet then kept asking
+        (js "run('ptz', navigator.mediaDevices.getUserMedia({video: {pan: true, tilt: true, zoom: true}}))")
+        (check "calls: y to a pan/tilt/zoom camera: not refused (no NotAllowedError)"
+               (and (answer-prompt "wants your camera" #\y)
+                    (let ((r (pump-until (lambda () (let ((r (js "R.ptz"))) (and (not (equal r "waiting")) r))))))
+                      (and r (not (search "NotAllowed" r))))))
+        (check "calls: ... the camera granted with and without panTiltZoom"
+               (pump-until
+                (lambda ()
+                  (equal (js "Promise.all([navigator.permissions.query({name:'camera'}),
+                                           navigator.permissions.query({name:'camera', panTiltZoom: true})])
+                                .then(ps => ps.map(p => p.state).join(' '))")
+                         "granted granted"))))
+        (js "window.ptz && ptz.getTracks().forEach(t => t.stop())")
         (check "calls: the tab in a call is focused (timers at full speed)"
                (pump-until (lambda () (eq (js "document.hasFocus()") t))))
         ;; the screen
@@ -557,6 +646,7 @@ function pixel(x, y){
                        (out (web-upscale 2 2 src 5 3)))
                   (and (= (aref out 0) 0) (= (aref out 4) #xFF0000)
                        (= (ldb (byte 8 16) (aref out 2)) 128))))
+         (loading-checks)
          (call-checks)
          ;; numbers worth writing down
          (format t "~&  frames received ~d, last decode ~a ms at ~dx~d~%"

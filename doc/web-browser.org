@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (66 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (73 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -645,6 +645,22 @@ there would be a grant to every origin. Two facts about the grant: it lasts only
 long as Chrome, and it /replaces/ an origin's set, so [[file:../initramfs/web.lisp::defun web-grant][=web-grant=]] always sends the
 union of what the origin has.
 
+/Found on the laptop 2026-10-20: Meet stayed in its "allow the camera and
+microphone" dialog./ The kernel's webcam (tag #32) was there and Chrome listed it
+("Integrated Webcam (0bda:58fe)"); a plain =getUserMedia= for it, granted, worked.
+What did not was the /camera with pan, tilt and zoom/: a page can ask
+=navigator.permissions.query({name: 'camera', panTiltZoom: true})=, and with
+=videoCapture= alone granted that said =denied= while the plain camera said
+=granted=. So a camera grant now carries =cameraPanTiltZoom= too, and both read
+=granted=. The name matters: the protocol's older =videoCapturePanTiltZoom= is
+refused by Chrome 148 ("Unknown permission type"), and one unknown name makes
+Chrome refuse the /whole/ grant, so the camera and the microphone are denied
+with it. A grant Chrome refuses, every question and every answer now go to
+=session.log= ("web: ..."). Ruled out while looking: Chrome's log line
+"video_capture_service_impl.cc: Bind context provider failed" appears on every
+camera start, also when the camera works. It is noise (no GPU context), not the
+fault.
+
 *** M3. Sharing a tab — ruled out, replaced by M5
 
 Headless Chrome /can/ capture a tab: with
@@ -716,8 +732,9 @@ screen.
 
 *** Still open
 
-- *A real call.* Sign-in (§4.5's hints), joining, hearing, being heard, presenting:
-  to be done on the laptop. The test page uses the same calls as Meet, not Meet.
+- *A real call.* Sign-in works (§4.5); the camera dialog was the next stop (M2's
+  pan/tilt/zoom). Joining, hearing, being heard and presenting are still to be done
+  on the laptop. The test page uses the same calls as Meet, not Meet.
 - *CPU.* Headless means no GPU: Meet's video decode, WebRTC's encoding of the
   camera and the shared screen, the screencast's JPEGs and our decode all run in
   software. Unmeasured.
@@ -728,6 +745,33 @@ screen.
   rect; not offered yet.
 - *The guest check.* =check-web.lisp= has no calls section yet; the guest's QEMU
   sound card and the container's =/dev/snd= are what it would prove.
+
+** 4.9 A loading page shows it: the strip under the toolbar
+
+/Asked for 2026-10-20: "when things are loading I don't see any reaction, it seems
+frozen."/ A link to a slow server leaves the old page on screen until the new one
+answers. Chrome headless draws no tab spinner and no progress bar, because it has no
+window. Our only sign was the toolbar's =reload= turning into =stop=.
+
+Measured with a server that answers after 3 s: =Page.frameStartedLoading= arrives
+about 12 ms after the click, and =frameStoppedLoading= when the page has loaded. So
+the tab already knew (=web-tab-loading=). It now shows it. A strip a few pixels high
+sits between the toolbar and the page ([[file:../initramfs/web.lisp::defun draw-web-progress][=draw-web-progress=]]). It is still while the page
+is, and while the page loads a bar a third of its width slides across, once every
+1.2 s, in the accent colour. The bar's place comes from the clock, so the pane
+drawing itself and the strip drawn alone show the same picture.
+While a page loads, =web-timeout= wakes the loop every 50 ms, and
+[[file:../initramfs/web.lisp::defun web-loop-service][=web-loop-service=]] paints only the strip, as a frame is painted (§5). That is a few
+rows of pixels, not the pane.
+
+Not covered: a page's own background requests (=fetch=, =XMLHttpRequest=), such
+as a sign-in's "Next". They send no =Page= event, and seeing them would mean the
+=Network= domain: an event with headers for every request a page makes, hundreds
+on Google's pages. Pages like that draw their own spinner.
+
+=web-test= drives a real slow server. The strip is still when loaded, lit within
+200 ms of the click, moving while the server has not answered, and still again
+once the page has loaded.
 
 * 5. The event loop: services
 
