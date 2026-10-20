@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (78 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (84 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -165,10 +165,14 @@ never interleave with the protocol. Our end of the reply pipe is non-blocking:
 Since 2026-10-17 the *command* pipe is non-blocking too. A Chrome that stops
 reading (hung, or stopped) fills its 64 KB, and the writer is the environment's
 thread, so a blocking write froze the screen. [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]] now waits at most
-=+cdp-write-seconds+= (5) for room. After that it closes the pipe: half a message has
-corrupted the stream anyway. Chrome exits when its command pipe closes, so the pane
-reports "Chrome exited" and =r= restarts it. =poc/web-test.lisp= asserts it with a
-child process that never reads its stdin.
+=+cdp-write-seconds+= (5) with /no progress/ (every octet Chrome takes starts the wait
+again; until 2026-10-20 it was a deadline for the whole message, which a busy Chrome
+missed on a big one, §4.8). After that it closes the pipe, since half a message has
+corrupted the stream anyway, and sends Chrome =SIGTERM=. Closing alone was thought to
+make Chrome exit; on the laptop it did not, and a Chrome without its command pipe
+answered nothing. The reader then sees EOF, the pane reports "Chrome exited" and =r=
+restarts it. =poc/web-test.lisp= asserts both: a child process that never reads its
+stdin is given up on, and one that reads slowly but steadily is not.
 
 ** 3.3 Tabs, sessions, and frames
 
@@ -691,7 +695,22 @@ page like Meet waits on), and the camera and microphone open. So the script's
 for the camera and the microphone together ("meet.google.com has your microphone and
 camera blocked: y allow · a always · n keep blocked"). On =y= the query is answered
 again: =granted=. =a= keeps the grant across Chrome's restarts, as before; the
-stored block itself stays in the profile, overridden each time. Ruled out: Chrome's new =<permission>= element, an in-page button
+stored block itself stays in the profile, overridden each time.
+
+/The third try asked, and was dismissed./ =session.log= had the question at 19:46:11
+("asks for audioCapture and videoCapture (blocked in the profile)") and, 3 s later,
+"question cancelled", not an answer: any press in the browser ended an open
+minibuffer prompt (=press-prelude=, "a click is a change of subject"), and the user
+had clicked Meet's own "Allow" button under its dialog. A page's question is now
+/sticky/ (=*minibuffer-sticky*=, set by =minibuffer-read='s =:sticky=): a press
+leaves it open, only =y=, =a=, =n=, Esc or =C-g= end it. The same goes for a page's
+=alert= / =confirm= / =prompt=, which pause the page until answered. While a page
+waits, the strip over its foot says so ("the page is waiting for your answer in the
+line below ↓", =web-asking=): the minibuffer is at the screen's bottom, easy to miss
+while the page shows a dialog of its own. The flag is a variable beside
+=*minibuffer*= rather than a slot of the =mb= struct, so a running image could take it
+from a patch (=~/meet-patch.lisp=, tested by loading it into the =e1a244a= image's
+sources with a live tab). Ruled out: Chrome's new =<permission>= element, an in-page button
 that would ask through Chrome's own prompt; Chrome 148 does not have it
 (=HTMLPermissionElement= is undefined).
 
@@ -752,6 +771,34 @@ have); =v4l2loopback=, a fake camera fed with our frames (out of tree, and the k
 has no module support, =CONFIG_MODULES= unset); =--use-file-for-fake-video-capture=
 (plays a file, not a live feed).
 
+*** The first shared call: a lost Chrome, and why
+
+/Tried on the laptop 2026-10-20 20:08: the camera and microphone worked, sharing
+worked while the call's tab was on screen, and switching to another pane froze the
+call, then "the pipe is broken", and Chrome loaded nothing more./ =session.log= said
+"web: Chrome did not read its pipe for 5 s (fd 12 closed)", 24 s after
+=getDisplayMedia=. Switching panes changes the whole screen, so the next update was
+the whole 1920 x 1200 screen in one message, 8.8 MB. Two faults met there:
+
+- [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]]'s 5 s guard was a deadline for the /whole message/. It is
+  there to catch a Chrome that has stopped reading, but a Chrome busy with the call
+  (video encoding in software) reads 8.8 MB slower than that while reading steadily.
+  The wait now restarts with every octet Chrome takes: only 5 s with no progress
+  gives up. =web-test= proves it with a stand-in that reads 64 KB every 0.2 s: 1 MB
+  takes about 3 s against a 1 s wait, and the pipe is kept.
+- Giving up closed the pipe, and the doc said Chrome then exits. It did not: it ran
+  on without its command pipe, so every later command failed ("Chrome's command pipe
+  is closed", a failed turn of the environment for each key into the tab) and no page
+  loaded. Giving up now also sends Chrome =SIGTERM=, so the reader sees EOF, the
+  tabs say Chrome exited, and =r= starts it again.
+
+And the update itself is capped: [[file:../initramfs/web.lisp::defun web-share-take][=web-share-take=]] cuts what changed into at most
+=+web-share-max-pixels+= (512 x 512, 1 MB of base64) per update, a rect too big cut
+into bands of whole rows, the rest kept for the next update. A whole screen is nine
+updates, about a second at 10 a second (measured: 8.8 MB in 9 updates, all there in
+1.1 s), and the environment's thread never writes more than 1 MB at a time. The call
+had looked frozen because that one write held the thread.
+
 *** A call in the background
 
 You present while looking at another pane, so the call's tab is not Chrome's
@@ -772,6 +819,13 @@ screen.
 - *CPU.* Headless means no GPU: Meet's video decode, WebRTC's encoding of the
   camera and the shared screen, the screencast's JPEGs and our decode all run in
   software. Unmeasured.
+- *One device, one stream.* Seen in the first call's log: Meet opens the microphone
+  twice, the second time raw (no echo cancellation), and the second open fails with
+  =NotReadableError= ("Could not start audio source"): =plughw:0,0= is the hardware
+  itself, which takes one capture and one playback stream. The call went on with the
+  first. Chrome's log also showed a playback open refused as busy, so two sounds at
+  once (a chime during the call) can fail the same way. ALSA's =dsnoop= / =dmix=
+  plugins share one device among several streams; not tried yet.
 - *One microphone.* =plughw:0,0= capture opens once: recording a call with the
   recorder (=SuperL-r=) while Chrome holds the mic fails for whichever opens second.
   ALSA's =dsnoop=, or the recorder taking Chrome's sound, would be the way.

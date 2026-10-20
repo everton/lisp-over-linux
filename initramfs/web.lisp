@@ -150,6 +150,7 @@
   page-rect               ; (x y w h) of the page image
   progress-rect           ; (x y w h) of the loading strip between toolbar and page
   (progress-at 0)         ; internal-real-time the strip was last painted on its own
+  (progress-ms 0)         ; ... and the clock in ms it was drawn for: the bar's place
   (bar-rects '())         ; ((:back x0 x1) (:forward …) (:reload …) (:address …))
   bar-y)                  ; (y0 . y1) of the toolbar
 
@@ -976,7 +977,10 @@
                              (if (equal type "prompt") "" "[Enter OK / C-g cancel]"))
                      (lambda (text) (funcall answer t (and (equal type "prompt") text)))
                      :initial (if (equal type "prompt") (or (jget params "defaultPrompt") "") "")
-                     :on-cancel (lambda () (funcall answer nil)))
+                     :on-cancel (lambda () (funcall answer nil))
+                     ;; the page is paused until answered: a click on it must not
+                     ;; dismiss the question (only Enter, Esc or C-g do)
+                     :sticky t)
     (setf *web-changed* t)))
 
 ;;; ---- the service: one turn of the browser's loop ---------------------------------
@@ -1352,18 +1356,21 @@
   "The strip between the toolbar and the page. While TAB is LOADING — from
    Page.frameStartedLoading, which arrives within ~10 ms of the click, to
    frameStoppedLoading — a bar a third of the pane wide slides across it, its place
-   taken from the clock, so whoever draws it (the pane, or WEB-PROGRESS-STEP alone)
-   draws the same thing. Chrome draws no such thing in headless (no window, no tab
+   taken from the last step's clock (WEB-TAB-PROGRESS-MS, moved on by
+   WEB-LOOP-SERVICE), never from the clock now: whoever draws it between two steps
+   (the pane, a repair, a fresh paint) draws the same picture. Chrome draws no such thing in headless (no window, no tab
    strip), and a page that keeps showing the old picture for the seconds a server
    takes to answer looked frozen. -> the strip's rect."
   (destructuring-bind (x y w h) (web-tab-progress-rect tab)
     (lol.canvas:fill-rect canvas x y w h *ui-bg*)
     (when (web-tab-loading tab)
-      (let* ((ms (round (* 1000 (get-internal-real-time)) internal-time-units-per-second))
+      (let* ((ms (web-tab-progress-ms tab))
              (bw (max 20 (floor w 3)))
-             ;; from just off the left edge to just off the right one
-             (bx (+ x (- bw) (floor (* (+ w bw) (mod ms +web-progress-period-ms+))
-                                    +web-progress-period-ms+)))
+             ;; its centre crosses from the left edge to the right one, so at least
+             ;; half of it always shows — the first picture too, drawn before any
+             ;; step (MS 0), when a bar entering from off the edge showed nothing
+             (bx (+ x (- (floor bw 2)) (floor (* w (mod ms +web-progress-period-ms+))
+                                              +web-progress-period-ms+)))
              (x0 (max x bx)) (x1 (min (+ x w) (+ bx bw))))
         (when (> x1 x0)
           (lol.canvas:fill-rect canvas x0 y (- x1 x0) h *ui-accent*))))
@@ -2023,6 +2030,19 @@ function share(a){
 (defun web-origin-host (origin)
   (let ((i (search "://" origin))) (if i (subseq origin (+ i 3)) origin)))
 
+(defparameter +web-asking-note+
+  "the page is waiting for your answer in the line below  ↓"
+  "What the foot of a page says while one of its questions is in the minibuffer.")
+
+(defun web-asking (tab &optional (on t))
+  "Point at the question TAB's page is waiting on, over the page's own foot (the
+   status strip DRAW-WEB-BODY draws): the minibuffer at the screen's bottom is easy
+   to miss while the page shows a dialog of its own. ON nil takes the note away
+   (only ours — an error the tab shows is left alone)."
+  (cond (on (setf (web-tab-status tab) +web-asking-note+))
+        ((equal (web-tab-status tab) +web-asking-note+) (setf (web-tab-status tab) nil)))
+  (setf *web-changed* t))
+
 (defun web-ask-media (tab payload ctx)
   "Answer one question of TAB's media script (PAYLOAD, its JSON). -> NIL when it must
    wait (the minibuffer is busy with another question)."
@@ -2055,6 +2075,7 @@ function share(a){
            (*minibuffer* nil)
            (t (session-log "web: ~a asks for ~{~a~^ and ~}~:[~; (blocked in the profile)~]"
                            origin perms (eq (jget msg "blocked") t))
+              (web-asking tab)
               (minibuffer-read
                (format nil (if (eq (jget msg "blocked") t)
                                ;; the page found them blocked in Chrome's profile
@@ -2064,15 +2085,17 @@ function share(a){
                        (mapcar (lambda (p) (if (equal p "audioCapture") "microphone" "camera")) perms))
                (lambda (k)
                  (session-log "web: ~a answered ~s" origin k)
+                 (web-asking tab nil)
                  (cond ((member k '(#\y #\Y #\a #\A))
                         (web-grant origin perms)
                         (when (member k '(#\a #\A)) (web-save-grant origin perms))
                         (web-in-call tab)
                         (web-media-answer tab ctx id t))
                        (t (web-media-answer tab ctx id :false))))
-               :single-key t
+               :single-key t :sticky t
                :on-cancel (lambda ()
                             (session-log "web: ~a's question cancelled" origin)
+                            (web-asking tab nil)
                             (web-media-answer tab ctx id :false)))
               t))))
       ((equal kind "display")
@@ -2082,15 +2105,19 @@ function share(a){
           (setf *browser-status* "the screen is already shared with another page")
           t)
          (*minibuffer* nil)
-         (t (minibuffer-read
+         (t (web-asking tab)
+            (minibuffer-read
              (format nil "~a wants to see your screen:  y share the whole screen  ·  n no "
                      (web-origin-host origin))
              (lambda (k)
+               (web-asking tab nil)
                (if (member k '(#\y #\Y))
                    (web-share-start tab ctx origin id)
                    (web-media-answer tab ctx id :false)))
-             :single-key t
-             :on-cancel (lambda () (web-media-answer tab ctx id :false)))
+             :single-key t :sticky t
+             :on-cancel (lambda ()
+                          (web-asking tab nil)
+                          (web-media-answer tab ctx id :false)))
             t)))
       (t t))))
 
@@ -2198,6 +2225,28 @@ function share(a){
         for x1 = (min cw (+ x w)) for y1 = (min ch (+ y h))
         when (and (> x1 x0) (> y1 y0)) collect (list x0 y0 (- x1 x0) (- y1 y0))))
 
+(defparameter +web-share-max-pixels+ (* 512 512)
+  "The most pixels one update carries: 1 MB of base64. A bigger change — the whole
+   screen, when you switch panes — goes as horizontal bands over the next updates
+   (WEB-SHARE-TAKE), so neither Chrome nor the environment's thread ever has to
+   swallow a whole 8.8 MB frame at once (a 1920 x 1200 screen: 9 updates, about a
+   second at +WEB-SHARE-FPS+).")
+
+(defun web-share-take (rects &optional (budget +web-share-max-pixels+))
+  "Split RECTS into what one update carries — at most BUDGET pixels, a rect too big
+   for what is left cut into a band of whole rows — and the rest.
+   -> (values taken rest)."
+  (let ((taken '()) (rest '()))
+    (dolist (r rects)
+      (destructuring-bind (x y w h) r
+        (cond ((<= budget 0) (push r rest))
+              ((<= (* w h) budget) (push r taken) (decf budget (* w h)))
+              (t (let ((rows (max 1 (floor budget w))))
+                   (push (list x y w (min h rows)) taken)
+                   (when (> h rows) (push (list x (+ y rows) w (- h rows)) rest))
+                   (setf budget 0))))))
+    (values (nreverse taken) (nreverse rest))))
+
 (defun web-share-pointer ()
   "The pointer as the shared screen shows it: (values x y), -1 -1 while it is hidden."
   (if (or (fb-var "*CURSOR-HIDDEN*") (not (fb-var "*FB-MOUSE*")))
@@ -2226,14 +2275,16 @@ function share(a){
                      (>= (- (get-internal-real-time) (web-share-sent-at sh))
                          (/ internal-time-units-per-second +web-share-fps+)))
             (let* ((cw (lol.canvas:canvas-w canvas)) (ch (lol.canvas:canvas-h canvas))
-                   (rects (web-share-clip (if (web-share-full sh)
-                                              (list (list 0 0 cw ch))
-                                              (web-share-damage sh))
-                                          cw ch))
+                   (todo (web-share-clip (if (web-share-full sh)
+                                             (list (list 0 0 cw ch))
+                                             (web-share-damage sh))
+                                         cw ch))
                    (t0 (get-internal-real-time))
                    (tab (web-share-tab sh))
                    (bytes 0))
-              (setf (web-share-full sh) nil (web-share-damage sh) '()
+              ;; at most +WEB-SHARE-MAX-PIXELS+ now; the rest is the next update's
+              (multiple-value-bind (rects rest) (web-share-take todo)
+              (setf (web-share-full sh) nil (web-share-damage sh) rest
                     (web-share-busy sh) t (web-share-sent-at sh) t0
                     (web-share-px sh) px (web-share-py sh) py)
               (handler-case
@@ -2256,7 +2307,7 @@ function share(a){
               (incf (web-share-updates sh))
               (incf (web-share-octets sh) bytes)
               (setf (web-share-last-ms sh)
-                    (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)))))))))
+                    (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second))))))))))
 
 (defun web-share-timeout ()
   "ms until a pending shared-screen update may go, or NIL when none is pending."
@@ -2691,7 +2742,9 @@ function share(a){
     (let ((tab (web-visible-tab)))
       (when (and (not (eq r :redraw)) (web-progress-due-p tab)
                  (fboundp 'pane-painted) (boundp '*world*) (symbol-value '*world*))
-        (setf (web-tab-progress-at tab) (get-internal-real-time))
+        (setf (web-tab-progress-at tab) (get-internal-real-time)
+              (web-tab-progress-ms tab) (round (* 1000 (get-internal-real-time))
+                                               internal-time-units-per-second))
         (funcall 'pane-painted (current-pane) canvas
                  (lambda (c) (list (draw-web-progress c tab))))))
     (and (eq r :redraw) :redraw)))

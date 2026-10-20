@@ -414,11 +414,24 @@ function pixel(x, y){
                       "run('scr3', navigator.mediaDevices.getDisplayMedia({video: true}))")
             (answer-prompt "wants to see your screen" #\y)
             (pump-until (lambda () (and *web-share* (web-share-busy *web-share*))))
-            (let ((t0 (get-internal-real-time)))
-              (check "calls: a whole 1920x1200 screen arrives (the page answers ok)"
-                     (pump-until (lambda () (and *web-share* (not (web-share-busy *web-share*))))))
-              (format t "~&    (1920x1200: ~,1f MB, encode + write ~d ms, page answered after ~d ms more)~%"
-                      (/ (web-share-octets *web-share*) 1048576.0) (web-share-last-ms *web-share*)
+            (let ((t0 (get-internal-real-time)) (o0 (web-share-octets *web-share*))
+                  (u0 (web-share-updates *web-share*)))
+              ;; a whole screen goes as bands of at most +WEB-SHARE-MAX-PIXELS+ (1 MB
+              ;; each): the laptop's first shared call lost Chrome to one 8.8 MB write
+              (check "calls: a whole 1920x1200 screen arrives, in 1 MB bands (the page answers ok)"
+                     (pump-until (lambda () (and *web-share* (not (web-share-busy *web-share*))
+                                                 (null (web-share-damage *web-share*))
+                                                 (not (web-share-full *web-share*))))
+                                 30))
+              ;; (the first band left before U0 was read: 8 more of the 9)
+              (check "calls: ... in 8 more updates, none bigger than 1.1 MB"
+                     (and (< (web-share-last-ms *web-share*) 1000)
+                          (>= (- (web-share-updates *web-share*) u0) 8)
+                          (< (/ (- (web-share-octets *web-share*) o0) (- (web-share-updates *web-share*) u0))
+                             (* 1.1 1048576))))
+              (format t "~&    (1920x1200: ~,1f MB in ~d updates, the last encoded + written in ~d ms; all there after ~d ms)~%"
+                      (/ (- (web-share-octets *web-share*) o0) 1048576.0)
+                      (- (web-share-updates *web-share*) u0) (web-share-last-ms *web-share*)
                       (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)))
             (web-share-stop)))
         ;; a site whose camera and microphone are BLOCKED: Meet's case, a block
@@ -436,8 +449,18 @@ function pixel(x, y){
           (pump-until (lambda () (equal (call-js "navigator.permissions.query({name:'camera'}).then(p => p.state)")
                                         "denied")))
           (call-js "navigator.permissions.query({name:'microphone'}).then(p => window.Q1 = p.state); 1")
+          ;; Meet's laptop try: the question was up, the user clicked Meet's own
+          ;; "allow" button, and the press dismissed our question (any press ended
+          ;; the minibuffer). A page's question is STICKY now: only a key answers it
+          (check "calls: the blocked site's question survives a press (sticky), the page's foot pointing at it"
+                 (and (pump-until (lambda () (and *minibuffer* (search "blocked" (mb-prompt *minibuffer*)))))
+                      (progn (press-prelude) (frame) t)   ; what every press does first
+                      *minibuffer* (search "blocked" (mb-prompt *minibuffer*))
+                      (equal (web-tab-status call) +web-asking-note+)))
           (check "calls: a site with its camera and microphone blocked is asked about (\"blocked\")"
                  (answer-prompt "has your microphone and camera blocked" #\y))
+          (check "calls: ... answered: the page's foot is clear again"
+                 (null (web-tab-status call)))
           (check "calls: ... y: the page's query answers granted (the block overridden)"
                  (pump-until (lambda () (equal (call-js "window.Q1") "granted"))))
           (call-js "run('unb', MediaDevices.prototype.getUserMedia.call(navigator.mediaDevices, {audio: true}))")
@@ -715,6 +738,31 @@ function pixel(x, y){
                   (handler-case (progn (cdp-write-octets c (make-array 1 :element-type '(unsigned-byte 8))) nil)
                     (error () t)))))
     (ignore-errors (sb-ext:process-kill p 9)) (ignore-errors (sb-ext:process-close p)))
+  ;; ... but a Chrome that READS, slowly, is not cut off: the wait is for no progress,
+  ;; not for the whole message (it was a deadline for the whole message, and a busy
+  ;; Chrome reading a shared screen's 8.8 MB frame missed it: 2026-10-20). The
+  ;; stand-in reads 64 KB every 0.2 s: 1 MB takes ~3 s, three times the wait
+  (let* ((p (sb-ext:run-program "/bin/sh" '("-c" "while dd bs=65536 count=1 status=none of=/dev/null; do sleep 0.2; done")
+                                :input :stream :output :stream :wait nil))
+         (c (%make-chrome :process p :to-fd (sb-sys:fd-stream-fd (sb-ext:process-input p))
+                          :from-fd (sb-sys:fd-stream-fd (sb-ext:process-output p))))
+         (+cdp-write-seconds+ 1)
+         (t0 (get-internal-real-time)))
+    (set-nonblocking (chrome-to-fd c))
+    (let ((err (handler-case (progn (cdp-write-octets c (make-array (* 1024 1024) :element-type '(unsigned-byte 8))) nil)
+                 (error (e) (princ-to-string e))))
+          (secs (/ (- (get-internal-real-time) t0) internal-time-units-per-second)))
+      (check "a Chrome that reads slowly but steadily keeps its pipe (1 MB over ~3 s, wait 1 s)"
+             (and (null err) (chrome-to-fd c) (> secs 1.5))))
+    (ignore-errors (sb-ext:process-kill p 9)) (ignore-errors (sb-ext:process-close p)))
+  (check "web-share-take: a 1920x1200 screen is cut into whole-row bands within the budget"
+         (multiple-value-bind (taken rest) (web-share-take (list (list 0 0 1920 1200)))
+           (and (equal taken (list (list 0 0 1920 (floor +web-share-max-pixels+ 1920))))
+                (equal rest (list (list 0 (floor +web-share-max-pixels+ 1920) 1920
+                                        (- 1200 (floor +web-share-max-pixels+ 1920))))))))
+  (check "web-share-take: small rects all fit, nothing left"
+         (multiple-value-bind (taken rest) (web-share-take (list (list 0 0 10 10) (list 5 5 20 20)))
+           (and (= (length taken) 2) (null rest))))
   (let ((ok (every #'cdr *results*)))
     (format t "~&===== ~a (~d checks) =====~%" (if ok "ALL PASS" "FAILURES") (length *results*))
     (sb-ext:exit :code (if ok 0 1))))

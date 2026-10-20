@@ -135,12 +135,12 @@ page walks through it.</p>
 
 <h2>Commands: content declares, the shell disposes</h2>
 <p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:346</span></a> returns data. It never opens anything itself.
-The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3590</span></a>), builds menu
-entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3632</span></a>) and runs the chosen one through
-<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3569</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:4051</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:4065</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:4040</span></a>. That function calls whatever <code>*chooser*</code> the
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3600</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3642</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3579</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:4061</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:4075</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:4050</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser</code> (an overlay, <code>poc/overlays.lisp</code>) on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>
@@ -210,7 +210,7 @@ redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcapti
     Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
     <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
     This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2881</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2889</span></a></span>
     One <code>cond</code>, in priority order: minibuffer, <kbd>M-.</kbd>/<kbd>M-,</kbd>, Esc as Meta, <kbd>C-g</kbd>,
     the Super layer, the side pane, the stage, editable panes, read-only text, the subject's own keys, and last the
     list keys, where <kbd>Enter</kbd> calls <code>trail-push</code>.</li>

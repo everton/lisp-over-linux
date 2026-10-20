@@ -2151,8 +2151,15 @@
 ;;; The panel is a morph of the desk's (MINIBUFFER-PANEL, poc/morphic.lisp) that comes
 ;;; and goes with the list; this file only knows the state and how to draw it.
 
+(defvar *minibuffer-sticky* nil
+  "T while the open prompt is STICKY: a press elsewhere leaves it open, only a key
+   answers it — a web page's question, which a click on the page that asked must not
+   dismiss (doc/web-browser.org §4.8). A variable beside *MINIBUFFER* rather than an
+   MB slot: a running image can take it from a patch, while a new slot would change
+   the struct under every function that reads one.")
+
 (defun minibuffer-read (prompt on-done &key (initial "") on-change on-cancel completer
-                                             single-key hint secret candidates)
+                                             single-key hint secret candidates sticky)
   "Open the minibuffer with PROMPT, pre-filled with INITIAL and the caret at its end.
    ON-DONE is called with the final text on Enter (or with the key's character, for
    a SINGLE-KEY prompt); everything else is optional. CANDIDATES fills the list above
@@ -2161,7 +2168,8 @@
   (setf *minibuffer* (make-mb :prompt prompt :text initial :point (length initial)
                               :on-done on-done :on-change on-change :on-cancel on-cancel
                               :completer completer :single-key single-key :hint hint
-                              :secret secret :candidates candidates))
+                              :secret secret :candidates candidates)
+        *minibuffer-sticky* sticky)
   (minibuffer-refresh-candidates *minibuffer*)
   nil)
 
@@ -3337,9 +3345,11 @@
 (defun press-prelude ()
   "What any press in the browser does first: it ends a drag (only a press in text
    re-arms one), and it ends an open prompt — a click is a change of subject, like
-   C-g (the live filter keeps what was typed: its ON-CANCEL decides that, not us)."
+   C-g (the live filter keeps what was typed: its ON-CANCEL decides that, not us) —
+   unless the prompt is STICKY, which only a key ends."
   (setf (hand-press) nil)
-  (when *minibuffer* (minibuffer-finish (mb-on-cancel *minibuffer*))))
+  (when (and *minibuffer* (not *minibuffer-sticky*))
+    (minibuffer-finish (mb-on-cancel *minibuffer*))))
 
 (defun tab-strip-click (tabs closes plus x)
   "A press at X in the tab strip, whose hit maps are TABS, CLOSES and PLUS (as
