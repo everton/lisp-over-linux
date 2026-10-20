@@ -71,11 +71,11 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
   <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §12): an object with bounds that
     draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a> redraws only what is damaged, and in each damaged rect only the
     morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
-    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1480</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1651</span></a>), or the
+    (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1598</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1769</span></a>), or the
     column beside it — and what is IN a pane, its body, is a morph of its own (a list, a text view, a grid, a stage, a
     page, a terminal: <a class="ref" data-ref="poc/shell.lisp#pane-body" href="../../poc/shell.lisp"><code>pane-body</code><span class="loc">poc/shell.lisp:143</span></a>). A key in a text view redraws the lines it changed, nothing else;
     what else changed is found by each morph's signature
-    (<a class="ref" data-ref="poc/morphic.lisp#desk-sync" href="../../poc/morphic.lisp"><code>desk-sync</code><span class="loc">poc/morphic.lisp:1489</span></a>).</li>
+    (<a class="ref" data-ref="poc/morphic.lisp#desk-sync" href="../../poc/morphic.lisp"><code>desk-sync</code><span class="loc">poc/morphic.lisp:1492</span></a>).</li>
   <li><a class="ref" data-ref="poc/canvas.lisp#make-canvas" href="../../poc/canvas.lisp"><code>make-canvas</code><span class="loc">poc/canvas.lisp:78</span></a>,
     <a class="ref" data-ref="poc/canvas.lisp#draw-string" href="../../poc/canvas.lisp"><code>draw-string</code><span class="loc">poc/canvas.lisp:464</span></a>: for each character, paint the pixels the glyph
     covers, blended over what is there (a TrueType glyph rasterised by <code>poc/ttf.lisp</code> and cached per size; or, for the fallback font, the bits that are on). <a class="ref" data-ref="poc/canvas.lisp#load-font" href="../../poc/canvas.lisp"><code>load-font</code><span class="loc">poc/canvas.lisp:418</span></a> reads
@@ -153,7 +153,7 @@ for (<a class="ref" data-ref="poc/morph.lisp#world-dispatch" href="../../poc/mor
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#evdev-abs-range" href="../../initramfs/fb-browser.lisp"><code>evdev-abs-range</code><span class="loc">initramfs/fb-browser.lisp:439</span></a>). A touchpad's motion is integrated as relative
     (<a class="ref" data-ref="initramfs/fb-browser.lisp#pad-motion" href="../../initramfs/fb-browser.lisp"><code>pad-motion</code><span class="loc">initramfs/fb-browser.lisp:641</span></a>), and a tap is a click.</li>
   <li>A press goes to the morph under the pointer, in that morph's coordinates: a tab, a breadcrumb, a window's title
-    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:3239</span></a>) decides what was under the pointer from what
+    bar — or a pane's body, whose press (<a class="ref" data-ref="poc/shell.lisp#pane-click" href="../../poc/shell.lisp"><code>pane-click</code><span class="loc">poc/shell.lisp:3357</span></a>) decides what was under the pointer from what
     <em>that body</em> recorded when it last drew: its list rows, its text, its grid's cells. A press on a row that moves
     is not a click: the <em>hand</em> picks the row's subject up, to be dropped on another morph
     (<a class="ref" data-ref="poc/morph.lisp#world-drop" href="../../poc/morph.lisp"><code>world-drop</code><span class="loc">poc/morph.lisp:719</span></a>).</li>

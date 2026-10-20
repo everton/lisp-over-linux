@@ -800,17 +800,20 @@
 
 (defun draw-window-title (canvas w win focused)
   "The minimal title bar (doc/morphic.org §9, decision 6), in the tab strip's own
-   style: the trail's kind stripe on top, its SuperL number quiet, its title bright
-   (the accent when focused), and a close box at the right."
+   style: the trail's kind stripe on top, its SuperL number quiet, its kind's icon,
+   its title bright (the accent when focused), and a close box at the right."
   (let ((trail (window-trail win)) (i (window-trail-index win)))
     (lol.canvas:fill-rect canvas 0 0 w +bar-h+ (if focused *ui-hi* *ui-panel*))
     (when trail (lol.canvas:fill-rect canvas 0 0 w 2 (trail-kind-color trail)))
-    (let* ((num (format nil " ~d ~c " (1+ (or i 0)) (code-char #xB7)))
-           (room (max 4 (floor (- w (* 3 (char-w)) 24 (lol.canvas:string-px *bfont* num))
-                               (char-w))))
-           (pen (lol.canvas:draw-string canvas *bfont* num 4 (text-dy +bar-h+) *ui-dim*)))
-      (lol.canvas:draw-string canvas *bfont* (clip-text (if trail (trail-title trail) "") room)
-                              pen (text-dy +bar-h+) (if focused *ui-accent* *ui-text*)))
+    (multiple-value-bind (text icon) (if trail (trail-label trail) "")   ; as its tab shows it
+      (let* ((num (format nil " ~d ~c " (1+ (or i 0)) (code-char #xB7)))
+             (room (max 4 (floor (- w (* 3 (char-w)) 24 (lol.canvas:string-px *bfont* num)
+                                    (tab-icon-width icon))
+                                 (char-w))))
+             (pen (lol.canvas:draw-string canvas *bfont* num 4 (text-dy +bar-h+) *ui-dim*))
+             (pen (if trail (draw-tab-icon canvas icon pen 0 (trail-kind-color trail)) pen)))
+        (lol.canvas:draw-string canvas *bfont* (clip-text text room)
+                                pen (text-dy +bar-h+) (if focused *ui-accent* *ui-text*))))
     (lol.canvas:draw-string canvas *bfont* (string (code-char 215))
                             (window-close-x win) (text-dy +bar-h+)
                             (if focused *ui-dim* *ui-rule*))

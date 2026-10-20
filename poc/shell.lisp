@@ -407,6 +407,39 @@
   "The tab label for TRAIL — the ROOT pane's subject, short enough to be a tab."
   (short-title (view-title (pane-view (first trail)))))
 
+(defparameter +title-icons+
+  '(("terminal" . :terminal) ("journal" . :journal) ("agent" . :agent)
+    ("folder" . :folder) ("file" . :file) ("image" . :image))
+  "Leading words of a view title that a tab shows as an ICON (+TAB-ICONS+) instead of
+   spelling them: the word only says what kind of thing the tab holds, and a picture
+   two cells wide says it while leaving the tab's 16 characters to the name.")
+
+(defun view-icon (view)
+  "The icon a VIEW's kind earns by itself, whatever its title says: a web page's title
+   is the page's own, so the kind is all that tells a browser tab apart."
+  (case (view-kind view) (:web :web) (:terminal :terminal)))
+
+(defun trail-label (trail)
+  "What TRAIL's tab (and its window's title bar) shows: (values TEXT ICON). TEXT is
+   TRAIL-TITLE without the kind word an ICON stands for — \"terminal bash\" is the
+   terminal icon and \"bash\", \"agent · fix the build\" the agent and \"fix the build\".
+   What follows the word after a dash is a gloss (\"journal - every Accept, kept…\"),
+   so that tab is the icon alone. ICON is NIL for a tab with no picture."
+  (let* ((view (pane-view (first trail)))
+         (title (view-title view))
+         (kind-icon (view-icon view))
+         (sp (position #\Space title))
+         (word-icon (and sp (cdr (assoc (subseq title 0 sp) +title-icons+ :test #'string-equal)))))
+    (if (and word-icon (or (null kind-icon) (eq word-icon kind-icon)))
+        (let* ((rest (string-left-trim " " (subseq title sp)))
+               (sep (and (plusp (length rest)) (char rest 0))))
+          (values (cond ((member sep (list #\- (code-char #x2014))) "")          ; a gloss
+                        ((member sep (list #\: (code-char #xB7)))
+                         (short-title (string-left-trim " " (subseq rest 1))))
+                        (t (short-title rest)))
+                  word-icon))
+        (values (short-title title) kind-icon))))
+
 (defvar *restore-desk-fn* nil
   "A function of no arguments that rebuilds *TRAILS* from the saved desk and returns
    true, or returns NIL when there is none. Set by initramfs/desk.lisp, which loads
@@ -1372,6 +1405,87 @@
                      do (lol.canvas:fill-rect canvas (+ x (* c s)) (+ y0 (* r s)) s s color)))
     (+ x (* s (length (aref rows 0))))))
 
+;;; ---- tab icons: what kind of thing a tab holds, drawn instead of spelled ----------
+;;; Same cell art as the agent's creature above, painted in the tab's kind colour, so
+;;; the stripe and the picture agree. Which tab gets which: TRAIL-LABEL.
+
+(defparameter +tab-icons+
+  `((:terminal . #("XXXXXXXXX"
+                   "X.......X"
+                   "X.X.....X"
+                   "X..X....X"
+                   "X...X...X"
+                   "X..X....X"
+                   "X.X..XX.X"
+                   "X.......X"
+                   "XXXXXXXXX"))
+    (:web      . #("...XXX..."
+                   ".XX.X.XX."
+                   ".X.X.X.X."
+                   "X..X.X..X"
+                   "XXXXXXXXX"
+                   "X..X.X..X"
+                   ".X.X.X.X."
+                   ".XX.X.XX."
+                   "...XXX..."))
+    (:journal  . #("XXXXXXXX"
+                   "XX.....X"
+                   "XX.XXX.X"
+                   "XX.....X"
+                   "XX.XXX.X"
+                   "XX.....X"
+                   "XX.XXX.X"
+                   "XX.....X"
+                   "XXXXXXXX"))
+    (:folder   . #("XXXX....."
+                   "X...X...."
+                   "XXXXXXXXX"
+                   "X.......X"
+                   "X.......X"
+                   "X.......X"
+                   "XXXXXXXXX"))
+    (:file     . #("XXXXX..."
+                   "X...XX.."
+                   "X...X.X."
+                   "X...XXXX"
+                   "X......X"
+                   "X......X"
+                   "X......X"
+                   "X......X"
+                   "XXXXXXXX"))
+    (:image    . #("XXXXXXXXX"
+                   "X.......X"
+                   "X....XX.X"
+                   "X....XX.X"
+                   "X.......X"
+                   "X..X....X"
+                   "X.XXX.X.X"
+                   "XXXXXXXXX"))
+    (:agent    . ,+agent-icon-rows+))
+  "Each tab icon as rows of cells, X painted. At most 9 rows, so one scale fits all.")
+
+(defun tab-icon-scale ()
+  "Pixels per icon cell: the 9-row icons as tall as the tab strip holds (2 at 6x15)."
+  (max 1 (floor (- +bar-h+ 6) 9)))
+
+(defun tab-icon-width (icon)
+  "Width ICON takes in a tab, the gap after it included; 0 for NIL."
+  (let ((rows (cdr (assoc icon +tab-icons+))))
+    (if rows (+ (* (tab-icon-scale) (length (aref rows 0))) (floor (char-w) 2)) 0)))
+
+(defun draw-tab-icon (canvas icon x y0 color)
+  "Paint ICON with its top-left cell at X, centred vertically in the bar that starts
+   at Y0. The agent keeps its own orange. Returns the x after it and its gap."
+  (let ((rows (cdr (assoc icon +tab-icons+))) (s (tab-icon-scale)))
+    (when rows
+      (let ((y (+ y0 (floor (- +bar-h+ (* s (length rows))) 2)))
+            (color (if (eq icon :agent) *agent-icon-color* color)))
+        (loop for row across rows for r from 0
+              do (loop for ch across row for c from 0
+                       when (char= ch #\X)
+                         do (lol.canvas:fill-rect canvas (+ x (* c s)) (+ y (* r s)) s s color)))))
+    (+ x (tab-icon-width icon))))
+
 (defun tray-item-icon-width (it)
   "Extra width an item's :ICON takes before its text (the agent's creature), or 0."
   (if (eq (getf it :icon) :agent) (+ (agent-icon-width) 5) 0))
@@ -1415,8 +1529,9 @@
   (and *trail-windowed-p* (funcall *trail-windowed-p* trail)))
 
 (defun draw-tabs (canvas w)
-  "The top tab strip: one tab per open trail, each with a kind-coloured stripe and its
-   SuperL-number badge; the active one is highlighted (brighter bg + accent top-rule +
+  "The top tab strip: one tab per open trail, each with a kind-coloured stripe, its
+   SuperL-number badge and, where its title began with a kind word (\"terminal\",
+   \"journal\") or it is a web page, an icon in place of the word (TRAIL-LABEL); the active one is highlighted (brighter bg + accent top-rule +
    an × close), and a + after the last tab opens a fresh Workspace. The design mock-up
    (media/browser-views-design.html §1) puts the × on EVERY tab, not only the focused
    one — closing a tab you are not in is the common case. Returns its hit maps, so
@@ -1431,8 +1546,10 @@
           for active = (= i *active*)
           for closer = multi                     ; every tab gets a ×, once there are >1
           for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
-          for title = (format nil "~a " (clip-text (trail-title trail) 16))
-          for lw = (+ (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))
+          for (text icon) = (multiple-value-list (trail-label trail))   ; an icon for the kind word
+          for title = (format nil "~a " (clip-text text 16))
+          for lw = (+ (lol.canvas:string-px *bfont* num) (tab-icon-width icon)
+                      (lol.canvas:string-px *bfont* title))
           for tw = (+ lw (if closer (+ (char-w) 8) 0))   ; the x box
           while (or (trail-windowed-p trail)       ; a window's trail takes no room here
                     (< (+ x tw) (- w (+ (char-w) 20) (tray-width))))  ; room for the + button and the tray
@@ -1443,7 +1560,8 @@
                (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
                (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
                ;; number quiet, title bright (active accent, inactive plain text)
-               (let ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) (text-dy +bar-h+) *ui-dim*)))
+               (let* ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) (text-dy +bar-h+) *ui-dim*))
+                      (pen (draw-tab-icon canvas icon pen 0 (trail-kind-color trail))))
                  (lol.canvas:draw-string canvas *bfont* title pen (text-dy +bar-h+)
                                          (if active *ui-accent* *ui-text*)))
                ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
@@ -1461,7 +1579,7 @@
                          (lol.canvas:fill-rect canvas dx dy s s dot)
                          (lol.canvas:draw-rect canvas dx dy s s dot)))))
                (when closer
-                 (let ((cx (+ x (lol.canvas:string-px *bfont* num) (lol.canvas:string-px *bfont* title))))
+                 (let ((cx (+ x lw)))
                    (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
                                            (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
                    (push (cons i (cons cx (+ cx (char-w) 8))) closes)))

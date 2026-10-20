@@ -1502,7 +1502,13 @@ across the top — numbered, ad-hoc and pinned alike, each with a × and a
 kind-coloured stripe, and each labelled by its *subject* rather than its view title
 (=short-title=: the mock-up's tabs read =draw=, =parse-headers=, =Playground=, and a
 tab that spent its sixteen characters on the word "package" and then clipped the
-package's name would be exactly backwards — the kind is already the stripe) — the current trail's
+package's name would be exactly backwards — the kind is already the stripe). Where
+the kind word is not a Lisp one — a terminal, the journal, an agent conversation, a
+folder, a file, an image — or the title cannot carry it at all (a web page's title
+is the page's own), the tab draws a small *icon* for the kind and keeps its sixteen
+characters for the name: =terminal bash= is the terminal icon and =bash=
+(=trail-label= and =+tab-icons+= in [[file:../poc/shell.lisp::defun trail-label][shell.lisp]], 2026-10-20; a window's title
+bar shows the same) — the current trail's
 *accordion* filling the rest, and the *Spotter* as the one summoned overlay
 (modal, momentary — it earns its float, and is fully opaque over a dimmed stage).
 Everything else is tiled, full width; the mouse is an accelerant, not a
