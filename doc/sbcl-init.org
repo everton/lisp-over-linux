@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #31). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #31; #32 built, not booted yet). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
@@ -38,7 +38,9 @@ the soft/hard-lockup and hung-task detectors, and pstore on EFI variables
 gives =/dev/snd= to the user and =mixer.lisp= sets the codec up — [[file:screencast.org][screencast.org]]). Tag #30 makes the kernel SMP: the
 image's threads run on every CPU, the userland unchanged ([[file:kernel-config.org][kernel-config.org]] §10). Tag #31 adds
 kexec, so a restart into a new build skips the firmware ([[file:kernel-config.org][kernel-config.org]] §11; section
-"Updating from inside" below). Since #26 the network REPL is *off* unless the boot asks
+"Updating from inside" below). Tag #32 adds the webcam (V4L2 + USB Video Class; preinit gives
+=/dev/video*= to the user) for video calls in the web pane ([[file:kernel-config.org][kernel-config.org]] §12,
+[[file:web-browser.org][web-browser.org]] §4.8). Since #26 the network REPL is *off* unless the boot asks
 for it ([[file:networking.org][networking.org]]).
 Since 2026-10-12 a second static C program ships beside
 preinit: =/sbin/lol-ct=, which runs a command inside the host's own Debian as a
@@ -239,7 +241,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/keyboard-layout.lisp][=keyboard-layout.lisp=]]  | the host's X layouts (=us,br=) in the console keymap: pt-BR in the AltGr tables (Right Alt held), Caps Lock toggles the plain ones, the Caps light and the tray's BR; only when the host's =/etc/default/keyboard= lists br ([[file:input.org][input.org]] §1; guest =check-keyboard.lisp=) |
   | [[file:../initramfs/player.lisp][=player.lisp=]]           | play a video with the HOST's MPlayer full screen: =*screen-lent*= turns off every write of ours to =/dev/fb0=, keys become its =-slave= commands, the whole frame is presented when it ends ([[file:screencast.org][screencast.org]] §8, §13) |
   | [[file:../initramfs/damage-log.lisp][=damage-log.lisp=]]       | the recorder's damage-log FORMAT: rects (zlib) and pointer records stamped in µs, and =dmg-replay=, a log back into frames at a rate; pure, host-tested by =poc/damage-log-test.lisp= ([[file:screencast.org][screencast.org]] §13.5) |
-  | [[file:../initramfs/recorder.lisp][=recorder.lisp=]]         | screencasts: =*frame-tap*= marks the canvas changed, a 30 fps sampler service copies it (the pointer drawn on the copy), a writer thread feeds the host's ffmpeg in the container (H.264 + the mic over ALSA), pause/resume as segments joined with =-c copy=, =ffprobe= into =result.lisp=; =SuperL-r= / =SuperL-S-r=, the tray's REC, the recorder pane ([[file:screencast.org][screencast.org]] §13; guest =check-recorder.lisp=) |
+  | [[file:../initramfs/recorder.lisp][=recorder.lisp=]]         | screencasts: =*frame-taps*= marks the canvas changed, a 30 fps sampler service copies it (the pointer drawn on the copy), a writer thread feeds the host's ffmpeg in the container (H.264 + the mic over ALSA), pause/resume as segments joined with =-c copy=, =ffprobe= into =result.lisp=; =SuperL-r= / =SuperL-S-r=, the tray's REC, the recorder pane ([[file:screencast.org][screencast.org]] §13; guest =check-recorder.lisp=) |
   | [[file:../initramfs/file-views.lisp][=file-views.lisp=]]        | folders and files as SUBJECTS: =present= / =present-preview= / =commands-for=, the sniffers and archive readers ([[file:file-manager.org][file-manager.org]])                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
   | [[file:../poc/terminal.lisp][=poc/terminal.lisp=]]      | =lol.terminal=: the VT engine — UTF-8 bytes in, a cell grid out; keys, mouse and paste encoded back ([[file:terminal.org][terminal.org]])                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
   | [[file:../initramfs/pty.lisp][=pty.lisp=]]               | pseudo-terminals: =/dev/ptmx=, =posix_spawn= with =POSIX_SPAWN_SETSID= so the child's controlling terminal is the slave ([[file:terminal.org][terminal.org]] §3)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -560,7 +562,9 @@ that option from =*posix-argv*=, so the role dispatch still sees no argument).
 Since tag #29 (2026-10-17) =give_devices= hands =/dev/snd/*= to the user too — the
 mixer (=controlC0=), playback and capture (=pcmC0D0p= / =pcmC0D0c=) — so =mixer.lisp= and
 the host's ffmpeg and mplayer in a container can open the sound card
-([[file:screencast.org][screencast.org]] §3.1).
+([[file:screencast.org][screencast.org]] §3.1). Since tag #32 it hands over =/dev/video*= as well, the
+webcam, which the host's Chrome opens from the web container for a video call
+([[file:web-browser.org][web-browser.org]] §4.8).
 
 Every step is non-fatal; with no disk it is exactly the old shim and the Lisp runs
 as root. The full story — why each mount flag, why capabilities, why in C and not

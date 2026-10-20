@@ -180,7 +180,7 @@
              (:rects (dmg-write-rects stream (second rec) (third rec)))
              (:pointer (apply #'dmg-write-pointer stream (rest rec))))))
     (close stream)))
-(setf *frame-tap* 'rec-note-frame)
+(pushnew 'rec-note-frame *frame-taps*)
 
 ;;; ---- files ------------------------------------------------------------------------
 

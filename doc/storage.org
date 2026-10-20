@@ -310,7 +310,8 @@ a build but only the environment can install it.
 
 And preinit hands the user more things before the drop: =/dev/rfkill= (in
 =give_devices=, so a hotplugged radio's is handed over too — the Wi-Fi kill switch),
-=/dev/snd/*= (tag #29, the sound card: [[file:screencast.org][screencast.org]] §3.1)
+=/dev/snd/*= (tag #29, the sound card: [[file:screencast.org][screencast.org]] §3.1),
+=/dev/video*= (tag #32, the webcam: [[file:web-browser.org][web-browser.org]] §4.8)
 and the one file =/etc/resolv.conf= in our root, which =dns.lisp= rewrites from each
 DHCP lease.
 

@@ -176,13 +176,13 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
     The cpio list maps <code>initramfs/preinit</code> to <code>/init</code> and <code>initramfs/lisp-init</code>
     to <code>/sbin/lisp</code>. It also ships glibc's loader, <code>libc</code> and <code>libm</code>, because
     the SBCL runtime is a dynamically linked program.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/preinit.c#&quot;int main(void)&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:741</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/preinit.c#&quot;int main(void)&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:745</span></a></span>
     Why C first? An SBCL executable finds its own heap by reading <code>/proc/self/exe</code>, so
     <code>/proc</code> has to be mounted before SBCL starts. preinit then does the privileged work once, while
     it is still root:
     <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:272</span></a>,
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:644</span></a>,
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:709</span></a>.
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:648</span></a>,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:713</span></a>.
     Then it <code>execve</code>s the Lisp. <code>execve</code> replaces the program, not the process, so the Lisp
     <em>is</em> PID 1. Details are on <a href="system.html">Storage, privilege, network</a>.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#init-toplevel" href="../../initramfs/supervisor.lisp"><code>init-toplevel</code><span class="loc">initramfs/supervisor.lisp:176</span></a></span>

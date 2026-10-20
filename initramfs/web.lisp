@@ -91,6 +91,23 @@
 (defvar *web-extra-args* '()
   "More Chrome switches, appended last (e.g. \"--force-dark-mode\").")
 
+(defvar *web-audio-device* :auto
+  "The ALSA device Chrome plays and records with (doc/web-browser.org §4.8). ALSA's
+   \"default\" is the host's PipeWire, which does not run in the image: Chrome then
+   fails to open any sound (\"Host is down\"). :AUTO is the card itself, plughw:0,0 as
+   the recorder uses it, unless a sound server IS running (a host test on Debian's
+   desktop, where PipeWire holds the card); a string names a device; NIL leaves Chrome
+   to its own choice.")
+
+(defun web-audio-device ()
+  (if (eq *web-audio-device* :auto)
+      (let ((run (or (sb-ext:posix-getenv "XDG_RUNTIME_DIR")
+                     (format nil "/run/user/~d" (sb-unix:unix-getuid)))))
+        (unless (or (probe-file (format nil "~a/pipewire-0" run))
+                    (probe-file (format nil "~a/pulse/native" run)))
+          "plughw:0,0"))
+      *web-audio-device*))
+
 (defvar *web-zoom* 1
   "Device pixels per CSS pixel — the page zoom. C-+ / C-- / C-0 change it; it is a
    real deviceScaleFactor, so text is re-laid-out and re-rasterised larger, not a
@@ -510,6 +527,11 @@
          (format nil "--window-size=~d,~d" (max 200 w) (max 200 h))
          ;; nothing to talk to: no D-Bus, no GPU. These only quieten the log.
          "--disable-gpu" "--disable-features=MediaRouter,DialMediaRouteProvider")
+   ;; a page's sound and the microphone: ALSA, on the card itself (*WEB-AUDIO-DEVICE*)
+   (let ((dev (web-audio-device)))
+     (when dev
+       (list (format nil "--alsa-output-device=~a" dev)
+             (format nil "--alsa-input-device=~a" dev))))
    (unless (web-sandbox-p) (list "--no-sandbox"))
    *web-extra-args*
    (list "about:blank")))
@@ -588,6 +610,8 @@
                                     (subseq product (1+ (position #\/ product))))))
   (setf *web-chrome-state* :ready *web-changed* t)
   (let ((c *web-chrome*))
+    ;; the sites you always allow the microphone or camera (WEB-GRANT-SAVED)
+    (web-grant-saved)
     ;; Target.* events about every tab: created (a popup), info changed (a title),
     ;; destroyed (window.close())
     (cdp-send c "Target.setDiscoverTargets" (jobj "discover" t))
@@ -650,6 +674,8 @@
     ;; the pickers headless Chrome draws where the screencast cannot see them
     ;; (WEB-PICKER-SETUP, "pickers" below)
     (web-picker-setup tab)
+    ;; the microphone, the camera and the screen, for calls (WEB-MEDIA-SETUP, "calls")
+    (web-media-setup tab)
     (setf (web-tab-sent-w tab) 0 (web-tab-screencasting tab) nil)
     ;; an ADOPTED page (a popup) was already loading before we attached, so its
     ;; load events are gone: ask for what they would have told us
@@ -788,6 +814,19 @@
    WEB-EVENT is still inside the dispatch loop of CDP-PUMP.")
 (defparameter +web-picker-binding+ "__lolPicker"
   "The name of the binding the page script reports through.")
+(defparameter +web-media-binding+ "__lolMedia"
+  "The binding the calls' page script reports through (\"calls\" below, §4.8).")
+(defvar *web-media-asks* '()
+  "(tab payload context-id) for every question a page's media script asked, oldest
+   first. Filled by WEB-EVENT, answered by WEB-SERVICE (like *WEB-PICKS*).")
+(defvar *web-grants* '()
+  "(origin . permission names) granted in THIS Chrome's life — Browser.grantPermissions
+   lasts until Chrome exits, and REPLACES an origin's set, so the whole set is sent
+   each time.")
+(defvar *web-share* nil "The screen being shared into a page (a WEB-SHARE), or NIL.")
+(defvar *frame-taps* '()
+  "fb-browser.lisp's list of functions told what each repair presented — defined
+   there; again here for the host, where it is not loaded.")
 (defvar *web-pump-thread* nil
   "The thread that runs WEB-SERVICE, i.e. the one that reads Chrome's pipe.")
 
@@ -872,11 +911,12 @@
       ;; the page script asked for a picker (a <select> was clicked): queued, and
       ;; shown by WEB-SERVICE once this dispatch is over (WEB-PICK)
       ((string= method "Runtime.bindingCalled")
-       (when (equal (jget params "name") +web-picker-binding+)
-         (setf *web-picks*
-               (append *web-picks*
-                       (list (list tab (jget params "payload")
-                                   (jget params "executionContextId"))))))))))
+       (let ((entry (list tab (jget params "payload") (jget params "executionContextId"))))
+         (cond ((equal (jget params "name") +web-picker-binding+)
+                (setf *web-picks* (append *web-picks* (list entry))))
+               ;; a call asked for the microphone, the camera or the screen (WEB-ASK-MEDIA)
+               ((equal (jget params "name") +web-media-binding+)
+                (setf *web-media-asks* (append *web-media-asks* (list entry))))))))))
 
 (defun web-browser-event (method params)
   "Events that belong to the browser rather than to a tab: downloads."
@@ -937,6 +977,8 @@
     (setf *web-error* (format nil "Chrome exited~:[~; while starting~] — r restarts it~@[ (its log: ~a)~]"
                               (eq *web-chrome-state* :starting) log)
           *web-chrome* nil *web-chrome-state* :failed *web-changed* t)
+  ;; grants die with Chrome, and so does a shared screen's page
+  (setf *web-grants* '() *web-share* nil *web-media-asks* '())
     (dolist (tab *web-tabs*)
       (setf (web-tab-state tab) :dead (web-tab-session tab) nil (web-tab-screencasting tab) nil
             (web-tab-open-url tab) (web-tab-url tab)))))
@@ -1158,7 +1200,17 @@
               while tab
               do (when (and (eq tab vis) (eq (web-tab-state tab) :live))
                    (web-pick tab payload ctx)
-                   (setf *web-changed* t)))))
+                   (setf *web-changed* t))))
+      ;; a call's questions, from ANY tab (a call goes on in the background); one
+      ;; that must wait for the minibuffer stays first in line
+      (loop while *web-media-asks*
+            do (destructuring-bind (tab payload ctx) (first *web-media-asks*)
+                 (if (or (not (eq (web-tab-state tab) :live))
+                         (web-ask-media tab payload ctx))
+                     (progn (pop *web-media-asks*) (setf *web-changed* t))
+                     (return))))
+      ;; the shared screen's changes, into its page
+      (web-share-step))
     (web-reap-orphans)
     (cond ((shiftf *web-changed* nil) :redraw)
           (frame :frame))))
@@ -1201,6 +1253,10 @@
         10
         (cond ((and vis (eq (web-tab-state vis) :live) (null (web-tab-frame-px vis)))
                100)                      ; waiting for a first frame: see WEB-NUDGE
+              ;; a shared screen's next update (WEB-SHARE-STEP)
+              ((web-share-timeout))
+              ;; a call's question waiting for the minibuffer to be free
+              (*web-media-asks* 100)
               ((and vis (web-tab-soft vis) (not (web-tab-capturing vis)))
                ;; a zoomed page showing an upscaled frame: wake when it is due to be
                ;; sharpened (WEB-SHARPEN)
@@ -1611,6 +1667,463 @@ window.__lolPickerApply = function(id, v){
                               :initial (let ((v (jget msg "value"))) (if (stringp v) v ""))
                               :hint "Enter sets it · C-g leaves it"))))))))
 
+;;; ---- calls: the microphone, the camera, sharing the screen (§4.8) ---------------
+;;; A video call (Google Meet) asks the browser for three things a desktop has and we
+;;; must hand over on purpose:
+;;;
+;;; - SOUND. Chrome opens the card itself, through ALSA, once told which device
+;;;   (WEB-CHROME-ARGV's --alsa-*-device): ALSA's "default" is the host's PipeWire,
+;;;   which is not running here, and Chrome then fails with "Host is down".
+;;; - PERMISSION for the microphone and camera. Chrome asks with a bubble in its
+;;;   window, and headless has no window: an unanswered getUserMedia is simply
+;;;   DENIED (measured, Chrome 148). So the page script below asks US first, through a
+;;;   binding as the pickers do; we ask you in the minibuffer and grant the page's
+;;;   origin with Browser.grantPermissions; then the page's own call goes through.
+;;; - THE SCREEN. Chrome can only capture what it draws or a display it is shown, and
+;;;   headless has neither: getDisplayMedia waits forever for a picker nobody sees.
+;;;   So the page script answers getDisplayMedia ITSELF, with a canvas's stream, and
+;;;   we paint our screen into that canvas: the rects each repair changed
+;;;   (*FRAME-TAPS*, fb-browser.lisp) and the pointer, at most +WEB-SHARE-FPS+ times a
+;;;   second. To Meet it is a screen like any other.
+;;;
+;;; A tab in a call is kept FOCUSED (Emulation.setFocusEmulationEnabled): it is
+;;; rarely the tab on screen while you present, and a background page's timers run
+;;; at about 1 Hz — measured, 5 ticks of a 100 ms interval in 5 s; with focus
+;;; emulation 52. Its WebRTC frames keep flowing either way.
+
+(defparameter +web-media-js+
+  "(function(){
+if (window.__lolMediaInstalled) return;
+window.__lolMediaInstalled = true;
+var md = navigator.mediaDevices;
+if (!md) return;                  /* not a secure context: the page gets no media at all */
+/* a question to Lisp, answered by __lolMediaAnswer(id, answer) */
+var waiting = new Map(), next = 1;
+function ask(msg){
+  return new Promise(function(resolve){
+    msg.id = next++; msg.origin = location.origin;
+    waiting.set(msg.id, resolve);
+    window.__lolMedia(JSON.stringify(msg));
+  });
+}
+window.__lolMediaAnswer = function(id, answer){
+  var r = waiting.get(id);
+  if (r) { waiting.delete(id); r(answer); }
+};
+function denied(){ return new DOMException('Permission denied', 'NotAllowedError'); }
+/* the microphone and camera: ask first, then Chrome's own call (now granted) */
+var gum = md.getUserMedia.bind(md);
+md.getUserMedia = function(c){
+  c = c || {};
+  return ask({kind: 'user', audio: !!c.audio, video: !!c.video}).then(function(ok){
+    if (!ok) throw denied();
+    return gum(c);
+  });
+};
+/* the screen: a canvas we paint, as a stream */
+md.getDisplayMedia = function(c){
+  return ask({kind: 'display'}).then(function(a){
+    if (!a) throw denied();
+    return share(a);
+  });
+};
+function share(a){
+  var base = document.createElement('canvas'), out = document.createElement('canvas');
+  base.width = out.width = a.w; base.height = out.height = a.h;
+  var bg = base.getContext('2d'), og = out.getContext('2d');
+  var stream = out.captureStream(), track = stream.getVideoTracks()[0];
+  /* what a real screen's track says, for pages that look */
+  var settings = track.getSettings.bind(track);
+  track.getSettings = function(){
+    var s = settings(); s.displaySurface = 'monitor'; s.logicalSurface = true; s.cursor = 'always';
+    return s;
+  };
+  var me = {}, px = -100, py = -100, stop = track.stop.bind(track);
+  /* the page stopped presenting: tell Lisp, which stops sending */
+  track.stop = function(){
+    if (window.__lolShare === me) {
+      window.__lolShare = null; clearInterval(me.timer);
+      window.__lolMedia(JSON.stringify({kind: 'stop', origin: location.origin}));
+    }
+    stop();
+  };
+  /* a still screen sends no frames; one a second keeps the receiver sure it is alive */
+  me.timer = setInterval(function(){ if (track.readyState === 'live') track.requestFrame(); }, 1000);
+  function pixels(b64, w, h){
+    var img = new ImageData(w, h), d = img.data, n = w * h, i, j, k;
+    if (Uint8Array.fromBase64) {        /* native decoding, where Chrome has it */
+      var s = Uint8Array.fromBase64(b64);
+      for (i = 0, j = 0, k = 0; i < n; i++, j += 3, k += 4) {
+        d[k] = s[j]; d[k + 1] = s[j + 1]; d[k + 2] = s[j + 2]; d[k + 3] = 255;
+      }
+    } else {
+      var t = atob(b64);
+      for (i = 0, j = 0, k = 0; i < n; i++, j += 3, k += 4) {
+        d[k] = t.charCodeAt(j); d[k + 1] = t.charCodeAt(j + 1); d[k + 2] = t.charCodeAt(j + 2); d[k + 3] = 255;
+      }
+    }
+    return img;
+  }
+  function arrow(x, y){
+    og.save(); og.translate(x, y); og.beginPath();
+    og.moveTo(0, 0); og.lineTo(0, 17); og.lineTo(4, 13); og.lineTo(7, 20);
+    og.lineTo(10, 19); og.lineTo(7, 12); og.lineTo(12, 12); og.closePath();
+    og.fillStyle = '#fff'; og.strokeStyle = '#000'; og.fill(); og.stroke(); og.restore();
+  }
+  /* RECTS: [x, y, w, h, base64 of w*h RGB pixels]; X, Y: the pointer (-1: hidden).
+     BASE holds the screen; OUT, the stream's canvas, is BASE plus the arrow. */
+  me.put = function(rects, x, y){
+    for (var i = 0; i < rects.length; i++) {
+      var r = rects[i];
+      bg.putImageData(pixels(r[4], r[2], r[3]), r[0], r[1]);
+      og.drawImage(base, r[0], r[1], r[2], r[3], r[0], r[1], r[2], r[3]);
+    }
+    var bx = Math.max(0, px - 2), by = Math.max(0, py - 2);
+    og.drawImage(base, bx, by, 18, 26, bx, by, 18, 26);
+    px = x; py = y;
+    if (x >= 0) arrow(x, y);
+    return 'ok';
+  };
+  /* Lisp stopped sharing: end the track as a real one ends */
+  me.end = function(){ track.stop(); track.dispatchEvent(new Event('ended')); };
+  window.__lolShare = me;
+  return stream;
+}
+})();"
+  "The page script behind calls (see the section's header): getUserMedia asks us
+   before Chrome is asked, and getDisplayMedia is answered with a canvas we paint.")
+
+(defparameter +web-share-fps+ 10
+  "At most this many updates a second go to a shared screen's page. Meet sends a
+   screen at about 5 frames a second anyway.")
+
+(defvar *web-share-canvas* nil
+  "A function returning the canvas to share — NIL: the framebuffer's (*FB-CANVAS*).
+   Set by poc/web-test.lisp, which has no framebuffer.")
+
+(defstruct web-share
+  tab ctx origin
+  canvas                ; the canvas we read pixels from
+  (damage '())          ; rects (x y w h) presented since the last send
+  (full t)              ; ... or the whole canvas
+  busy                  ; an update is in flight: the next waits for its answer
+  (sent-at 0)           ; internal-real-time of the last send
+  (px -2) (py -2)       ; the pointer as last sent
+  (updates 0) (octets 0) ; sent so far, for the doc's numbers
+  (last-ms 0))          ; ms the last update took to encode and write
+
+(defun web-permissions-path () (lol-path "web/permissions.lisp"))
+
+(defun web-saved-grants ()
+  "The origins you said \"always\" to: ((origin . permissions) ...), from the disk."
+  (let ((path (web-permissions-path)))
+    (and path (path-exists-p path)
+         (ignore-errors
+           (with-open-file (s (native-path path) :external-format :utf-8)
+             (let* ((*read-eval* nil) (form (read s nil nil)))
+               (remove-if-not (lambda (e) (and (consp e) (stringp (car e)) (listp (cdr e))))
+                              (and (listp form) form))))))))
+
+(defun web-save-grant (origin perms)
+  "Remember PERMS for ORIGIN in ~/.lol/web/permissions.lisp (0600). Never signals."
+  (let* ((path (web-permissions-path))
+         (all (web-saved-grants))
+         (e (assoc origin all :test #'string=)))
+    (when path
+      (if e
+          (setf (cdr e) (union (cdr e) perms :test #'string=))
+          (push (cons origin perms) all))
+      (ignore-errors
+        (let ((dir (path-parent path)))
+          (loop for d in (list (path-parent dir) dir)
+                unless (path-exists-p d) do (make-directory d)))
+        (write-file-atomically
+         path (sb-ext:string-to-octets
+               (with-standard-io-syntax
+                 (format nil ";; LoL web: sites always allowed the microphone/camera; delete a line to be asked again.~%~s~%" all))
+               :external-format :utf-8))
+        (set-mode path #o600)))))
+
+(defun web-grant (origin perms)
+  "Grant ORIGIN PERMS (\"audioCapture\" \"videoCapture\") on top of what it has."
+  (let ((e (assoc origin *web-grants* :test #'string=)))
+    (if e
+        (setf (cdr e) (union (cdr e) perms :test #'string=))
+        (push (setf e (cons origin perms)) *web-grants*))
+    (when *web-chrome*
+      (cdp-send *web-chrome* "Browser.grantPermissions"
+                (jobj "origin" origin "permissions" (coerce (cdr e) 'vector))))))
+
+(defun web-granted-p (origin perms)
+  (subsetp perms (cdr (assoc origin *web-grants* :test #'string=)) :test #'string=))
+
+(defun web-grant-saved ()
+  "At Chrome's start: grant again what you said \"always\" to."
+  (setf *web-grants* '())
+  (loop for (origin . perms) in (web-saved-grants) do (web-grant origin perms)))
+
+(defun web-media-setup (tab)
+  "Give TAB's page the media binding and script (Runtime is enabled by the pickers'
+   WEB-PICKER-SETUP, which runs first)."
+  (let ((s (web-tab-session tab)) (c *web-chrome*))
+    (cdp-send c "Runtime.addBinding" (jobj "name" +web-media-binding+) :session s)
+    (cdp-send c "Page.addScriptToEvaluateOnNewDocument" (jobj "source" +web-media-js+) :session s)
+    (cdp-send c "Runtime.evaluate" (jobj "expression" +web-media-js+) :session s)))
+
+(defun web-media-answer (tab ctx id answer)
+  "Settle the page's question ID with ANSWER (a JSON value: T, :FALSE, a JOBJ)."
+  (web-send tab "Runtime.evaluate"
+            (apply #'jobj "expression"
+                   (format nil "window.__lolMediaAnswer(~d, ~a)" id (json-string answer))
+                   (and ctx (list "contextId" ctx)))))
+
+(defun web-in-call (tab)
+  "TAB now has the microphone, the camera or the screen: keep it focused, so its
+   timers run at full speed when another pane is on screen (see the header)."
+  (web-send tab "Emulation.setFocusEmulationEnabled" (jobj "enabled" t)))
+
+(defun web-origin-host (origin)
+  (let ((i (search "://" origin))) (if i (subseq origin (+ i 3)) origin)))
+
+(defun web-ask-media (tab payload ctx)
+  "Answer one question of TAB's media script (PAYLOAD, its JSON). -> NIL when it must
+   wait (the minibuffer is busy with another question)."
+  (let* ((msg (ignore-errors (read-json (coerce payload 'simple-string))))
+         (kind (jget msg "kind")) (id (jget msg "id"))
+         (origin (let ((o (jget msg "origin"))) (and (stringp o) o))))
+    (cond
+      ((null msg) t)
+      ((equal kind "stop")
+       (when (and *web-share* (eq (web-share-tab *web-share*) tab))
+         (web-share-stop :page t))
+       t)
+      ;; a file: page's origin is "null": a grant could only be for EVERY origin
+      ((or (null origin) (equal origin "null"))
+       (web-media-answer tab ctx id :false)
+       (setf *browser-status* "a page with no origin (a file) cannot have the microphone, camera or screen")
+       t)
+      ((equal kind "user")
+       (let ((perms (append (and (eq (jget msg "audio") t) (list "audioCapture"))
+                            (and (eq (jget msg "video") t) (list "videoCapture")))))
+         (cond
+           ((or (null perms) (web-granted-p origin perms))
+            (when perms (web-in-call tab))
+            (web-media-answer tab ctx id t) t)
+           (*minibuffer* nil)
+           (t (minibuffer-read
+               (format nil "~a wants your ~{~a~^ and ~}:  y allow  ·  a always  ·  n no "
+                       (web-origin-host origin)
+                       (mapcar (lambda (p) (if (equal p "audioCapture") "microphone" "camera")) perms))
+               (lambda (k)
+                 (cond ((member k '(#\y #\Y #\a #\A))
+                        (web-grant origin perms)
+                        (when (member k '(#\a #\A)) (web-save-grant origin perms))
+                        (web-in-call tab)
+                        (web-media-answer tab ctx id t))
+                       (t (web-media-answer tab ctx id :false))))
+               :single-key t
+               :on-cancel (lambda () (web-media-answer tab ctx id :false)))
+              t))))
+      ((equal kind "display")
+       (cond
+         ((and *web-share* (not (eq (web-share-tab *web-share*) tab)))
+          (web-media-answer tab ctx id :false)
+          (setf *browser-status* "the screen is already shared with another page")
+          t)
+         (*minibuffer* nil)
+         (t (minibuffer-read
+             (format nil "~a wants to see your screen:  y share the whole screen  ·  n no "
+                     (web-origin-host origin))
+             (lambda (k)
+               (if (member k '(#\y #\Y))
+                   (web-share-start tab ctx origin id)
+                   (web-media-answer tab ctx id :false)))
+             :single-key t
+             :on-cancel (lambda () (web-media-answer tab ctx id :false)))
+            t)))
+      (t t))))
+
+;;; Sharing the screen: our pixels into the page's canvas
+
+(defun web-share-source ()
+  (if *web-share-canvas* (funcall *web-share-canvas*) (fb-var "*FB-CANVAS*")))
+
+(defun web-share-start (tab ctx origin id)
+  "Start sharing the screen with TAB's page: answer its getDisplayMedia with the
+   screen's size, and send the whole screen first."
+  (let ((canvas (web-share-source)))
+    (cond
+      ((null canvas)
+       (web-media-answer tab ctx id :false)
+       (setf *browser-status* "no screen to share"))
+      (t
+       (when *web-share* (web-share-stop))
+       (setf *web-share* (make-web-share :tab tab :ctx ctx :origin origin :canvas canvas))
+       (web-in-call tab)
+       (web-media-answer tab ctx id (jobj "w" (lol.canvas:canvas-w canvas)
+                                          "h" (lol.canvas:canvas-h canvas)))
+       (setf *browser-status* (format nil "sharing the screen with ~a" (web-origin-host origin))
+             *web-changed* t)))))
+
+(defun web-share-stop (&key page)
+  "Stop sharing. PAGE: the page stopped it (its track was stopped); else we tell the
+   page, whose track then ends as a real screen's does."
+  (let ((sh (shiftf *web-share* nil)))
+    (when sh
+      (unless page
+        (let ((tab (web-share-tab sh)))
+          (when (and (eq (web-tab-state tab) :live) *web-chrome*)
+            (web-send tab "Runtime.evaluate"
+                      (apply #'jobj "expression" "window.__lolShare && window.__lolShare.end()"
+                             (and (web-share-ctx sh) (list "contextId" (web-share-ctx sh))))))))
+      (setf *browser-status* "stopped sharing the screen" *web-changed* t))))
+
+(defun web-share-note (rects full)
+  "The frame tap (*FRAME-TAPS*): RECTS of the canvas were presented, or the whole of
+   it (FULL). Kept until the next send."
+  (let ((sh *web-share*))
+    (when sh
+      (if (or full (> (+ (length rects) (length (web-share-damage sh))) 32))
+          (setf (web-share-full sh) t (web-share-damage sh) '())
+          (unless (web-share-full sh)
+            (setf (web-share-damage sh) (append rects (web-share-damage sh))))))))
+(pushnew 'web-share-note *frame-taps*)
+
+(defparameter +web-b64-octets+
+  (map '(simple-array (unsigned-byte 8) (64)) #'char-code
+       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"))
+
+(defun web-share-message (id session ctx rects canvas px py)
+  "The framed Runtime.evaluate that calls __lolShare.put with RECTS of CANVAS and the
+   pointer, built as octets directly (CDP-SEND-BUILT). Three bytes of colour are
+   exactly four base64 characters, so each pixel becomes four octets with no
+   carrying between pixels: what makes a 9 MB frame cost milliseconds, not seconds."
+  (declare (optimize (speed 3) (safety 0)))
+  (let* ((cw (lol.canvas:canvas-w canvas))
+         (src (lol.canvas:canvas-pixels canvas))
+         (head (sb-ext:string-to-octets
+                (format nil "{\"id\":~d,\"sessionId\":~a,\"method\":\"Runtime.evaluate\",\"params\":{~@[\"contextId\":~d,~]\"expression\":\"window.__lolShare && window.__lolShare.put(["
+                        id (json-string session) ctx)))
+         (tail (sb-ext:string-to-octets (format nil "],~d,~d)\"}}" px py)))
+         (pieces (loop for (x y w h) in rects
+                       collect (sb-ext:string-to-octets (format nil "[~d,~d,~d,~d,'" x y w h))))
+         (n (+ (length head) (length tail) 1
+               (loop for (nil nil w h) in rects for p in pieces
+                     sum (+ (length p) (* 4 w h) 2))
+               (max 0 (1- (length rects)))))
+         (out (make-array n :element-type '(unsigned-byte 8) :initial-element 0))
+         (o 0)
+         (b64 +web-b64-octets+))
+    (declare (type (simple-array (unsigned-byte 8) (*)) out)
+             (type (simple-array (unsigned-byte 8) (64)) b64)
+             (type (simple-array (unsigned-byte 32) (*)) src)
+             (type fixnum o cw))
+    (flet ((put (octets) (replace out (the (simple-array (unsigned-byte 8) (*)) octets) :start1 o)
+             (incf o (length (the (simple-array (unsigned-byte 8) (*)) octets)))))
+      (put head)
+      (loop for (x y w h) in rects for p in pieces for first = t then nil
+            do (unless first (setf (aref out o) 44) (incf o))      ; ,
+               (put p)
+               (let ((x x) (y y) (w w) (h h))
+                 (declare (type fixnum x y w h))
+                 (dotimes (row h)
+                   (let ((i (+ (* (+ y row) cw) x)))
+                     (declare (type fixnum i))
+                     (dotimes (col w)
+                       (let ((v (aref src (+ i col))))
+                         (setf (aref out o) (aref b64 (ldb (byte 6 18) v))
+                               (aref out (+ o 1)) (aref b64 (ldb (byte 6 12) v))
+                               (aref out (+ o 2)) (aref b64 (ldb (byte 6 6) v))
+                               (aref out (+ o 3)) (aref b64 (ldb (byte 6 0) v)))
+                         (incf o 4))))))
+               (setf (aref out o) 39 (aref out (+ o 1)) 93) (incf o 2)) ; ']
+      (put tail))
+    out))                               ; ... and the last octet stays 0: the NUL frame end
+
+(defun web-share-clip (rects cw ch)
+  "RECTS clipped to the canvas, empty ones dropped."
+  (loop for (x y w h) in rects
+        for x0 = (max 0 x) for y0 = (max 0 y)
+        for x1 = (min cw (+ x w)) for y1 = (min ch (+ y h))
+        when (and (> x1 x0) (> y1 y0)) collect (list x0 y0 (- x1 x0) (- y1 y0))))
+
+(defun web-share-pointer ()
+  "The pointer as the shared screen shows it: (values x y), -1 -1 while it is hidden."
+  (if (or (fb-var "*CURSOR-HIDDEN*") (not (fb-var "*FB-MOUSE*")))
+      (values -1 -1)
+      (values (or (fb-var "*CURSOR-X*") -1) (or (fb-var "*CURSOR-Y*") -1))))
+
+(defun web-share-step ()
+  "Send the shared screen's changes, if any, when the last update was answered and
+   is at least 1/+WEB-SHARE-FPS+ s old. Called every turn by WEB-SERVICE."
+  (let ((sh *web-share*))
+    (when sh
+      (let ((tab (web-share-tab sh)))
+        (unless (and (eq (web-tab-state tab) :live) *web-chrome*)
+          (setf *web-share* nil *browser-status* "stopped sharing the screen: the page is gone"
+                *web-changed* t)
+          (return-from web-share-step nil)))
+      (multiple-value-bind (px py) (web-share-pointer)
+        (let ((canvas (web-share-source)))
+          (when (and canvas (not (eq canvas (web-share-canvas sh))))
+            ;; a new canvas (the screen's size changed): all of it, and the page is told
+            ;; nothing — its canvas keeps the size it was made with, and is cropped
+            (setf (web-share-canvas sh) canvas (web-share-full sh) t))
+          (when (and canvas (not (web-share-busy sh))
+                     (or (web-share-full sh) (web-share-damage sh)
+                         (/= px (web-share-px sh)) (/= py (web-share-py sh)))
+                     (>= (- (get-internal-real-time) (web-share-sent-at sh))
+                         (/ internal-time-units-per-second +web-share-fps+)))
+            (let* ((cw (lol.canvas:canvas-w canvas)) (ch (lol.canvas:canvas-h canvas))
+                   (rects (web-share-clip (if (web-share-full sh)
+                                              (list (list 0 0 cw ch))
+                                              (web-share-damage sh))
+                                          cw ch))
+                   (t0 (get-internal-real-time))
+                   (tab (web-share-tab sh))
+                   (bytes 0))
+              (setf (web-share-full sh) nil (web-share-damage sh) '()
+                    (web-share-busy sh) t (web-share-sent-at sh) t0
+                    (web-share-px sh) px (web-share-py sh) py)
+              (handler-case
+                  (cdp-send-built *web-chrome*
+                                  (lambda (id)
+                                    (let ((m (web-share-message id (web-tab-session tab) (web-share-ctx sh)
+                                                                rects canvas px py)))
+                                      (setf bytes (length m))
+                                      m))
+                                  :callback (lambda (r)
+                                              (setf (web-share-busy sh) nil)
+                                              ;; the page navigated away, or its script is gone
+                                              (unless (equal (jget r "result" "result" "value") "ok")
+                                                (when (eq *web-share* sh)
+                                                  (setf *web-share* nil *web-changed* t
+                                                        *browser-status* "stopped sharing the screen: the page went away")))))
+                (error (e)
+                  (setf *web-share* nil *web-changed* t
+                        *browser-status* (format nil "stopped sharing the screen: ~a" e))))
+              (incf (web-share-updates sh))
+              (incf (web-share-octets sh) bytes)
+              (setf (web-share-last-ms sh)
+                    (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)))))))))
+
+(defun web-share-timeout ()
+  "ms until a pending shared-screen update may go, or NIL when none is pending."
+  (let ((sh *web-share*))
+    (when (and sh (not (web-share-busy sh))
+               (or (web-share-full sh) (web-share-damage sh)
+                   (multiple-value-bind (px py) (web-share-pointer)
+                     (or (/= px (web-share-px sh)) (/= py (web-share-py sh))))))
+      (max 1 (- (round 1000 +web-share-fps+)
+                (round (* 1000 (- (get-internal-real-time) (web-share-sent-at sh)))
+                       internal-time-units-per-second))))))
+
+(defun web-call-tray-item ()
+  "SHARING while the screen is shared — never silently (sysinfo.lisp's TRAY-ITEMS)."
+  (when *web-share*
+    (list :kind :sharing :tone :low
+          :text (format nil "SHARING ~a" (web-origin-host (web-share-origin *web-share*))))))
+
 ;;; ---- input: pointer --------------------------------------------------------------
 
 (defun fb-var (name)
@@ -1899,24 +2412,28 @@ window.__lolPickerApply = function(id, v){
 
 (defmethod commands-for ((s subj-web))
   (let ((tab (subj-web-tab s)))
-    (list (make-command :label "Address..." :key "C-l" :surfaces '(:menu :halo)
-                        :action (lambda () (web-prompt-address tab)))
-          (make-command :label "Back" :key "SuperL-left" :surfaces '(:menu)
-                        :action (lambda () (web-go tab -1)))
-          (make-command :label "Forward" :key "SuperL-right" :surfaces '(:menu)
-                        :action (lambda () (web-go tab 1)))
-          (make-command :label "Reload" :key "C-r" :surfaces '(:menu :halo)
-                        :action (lambda () (web-reload tab)))
-          (make-command :label "Find in page..." :key "C-f" :surfaces '(:menu)
-                        :action (lambda () (web-find tab)))
-          (make-command :label "Copy page URL" :surfaces '(:menu :halo)
-                        :action (lambda () (copy-to-clipboard (web-tab-url tab))))
-          (make-command :label "Duplicate tab" :surfaces '(:menu)
-                        :action (lambda () (web-new-tab (web-tab-url tab))))
-          (make-command :label "New web tab" :key "SuperL-b" :surfaces '(:menu)
-                        :action (lambda () (web-open)))
-          (make-command :label "Downloads folder" :surfaces '(:menu)
-                        :action (lambda () (funcall 'open-files (web-downloads-dir)))))))
+    (remove nil
+     (list (make-command :label "Address..." :key "C-l" :surfaces '(:menu :halo)
+                         :action (lambda () (web-prompt-address tab)))
+           (make-command :label "Back" :key "SuperL-left" :surfaces '(:menu)
+                         :action (lambda () (web-go tab -1)))
+           (make-command :label "Forward" :key "SuperL-right" :surfaces '(:menu)
+                         :action (lambda () (web-go tab 1)))
+           (make-command :label "Reload" :key "C-r" :surfaces '(:menu :halo)
+                         :action (lambda () (web-reload tab)))
+           (make-command :label "Find in page..." :key "C-f" :surfaces '(:menu)
+                         :action (lambda () (web-find tab)))
+           (make-command :label "Copy page URL" :surfaces '(:menu :halo)
+                         :action (lambda () (copy-to-clipboard (web-tab-url tab))))
+           (make-command :label "Duplicate tab" :surfaces '(:menu)
+                         :action (lambda () (web-new-tab (web-tab-url tab))))
+           (make-command :label "New web tab" :key "SuperL-b" :surfaces '(:menu)
+                         :action (lambda () (web-open)))
+           (make-command :label "Downloads folder" :surfaces '(:menu)
+                         :action (lambda () (funcall 'open-files (web-downloads-dir))))
+           (when *web-share*
+             (make-command :label "Stop sharing the screen" :surfaces '(:menu :halo)
+                           :action #'web-share-stop))))))
 
 (defmethod subject-hints ((s subj-web) pane)
   (declare (ignore pane))

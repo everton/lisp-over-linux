@@ -83,10 +83,10 @@ a clean read-only disk at power-off) stay with a small helper inside preinit.</f
   <li>Mounting: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:272</span></a>.
     The filesystem is mounted read-write, because one superblock has one rw/ro state and <code>/home</code> needs to write.
     Then the <code>/mnt/host</code> <em>view</em> is bind-remounted read-only.</li>
-  <li>Dropping privileges: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:709</span></a>.
+  <li>Dropping privileges: <a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:713</span></a>.
     Shrink the bounding set, <code>PR_SET_KEEPCAPS</code>, set gid then uid, <code>capset</code>, then raise each of the five as
     <em>ambient</em>. Ambient capabilities are what survive <code>execve</code> for a non-root program.</li>
-  <li>The helper: <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:644</span></a>.
+  <li>The helper: <a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:648</span></a>.
     Its real uid is the user's, so the user may signal it, and its effective uid is 0, so it keeps root's powers.
     The Lisp side is <a class="ref" data-ref="initramfs/process.lisp#release-disk" href="../../initramfs/process.lisp"><code>release-disk</code><span class="loc">initramfs/process.lisp:36</span></a> and
     <a class="ref" data-ref="initramfs/process.lisp#power-off" href="../../initramfs/process.lisp"><code>power-off</code><span class="loc">initramfs/process.lisp:93</span></a>.</li>

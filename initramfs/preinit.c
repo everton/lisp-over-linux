@@ -369,6 +369,10 @@ static void give_devices(uid_t uid, gid_t gid) {
      * them from the container, which bind-mounts our /dev. "" matches every name;
      * the S_ISCHR test above skips the by-path/ directory. */
     chown_dir_matching("/dev/snd", "", uid, gid);
+    /* The camera (tag #32, doc/web-browser.org §4.8): the webcam's V4L2 nodes
+     * (video0 the picture, video1 its metadata). The host's Chrome opens them from
+     * the web container, which bind-mounts our /dev, for a call's getUserMedia. */
+    chown_dir_matching("/dev", "video", uid, gid);
 }
 
 /* /etc/resolv.conf (doc/networking.org §2c). The Lisp rewrites it from every DHCP

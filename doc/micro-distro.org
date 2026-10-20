@@ -26,7 +26,7 @@ Status: *WORKING* — verified end-to-end in QEMU + OVMF (UEFI) AND on real
 hardware (boots on the laptop). See =* Testing=.
 Kernel build: linux-7.2.5. Config tag =#16= = first working glibc build;
 tag =#17= = same but with the musl-built init (see =* Shrinking init with musl=).
-Current tag: =#31= (kexec) — the history of every tag is [[file:kernel-config.org][kernel-config.org]]'s change log.
+Current tag: =#32= (the webcam) — the history of every tag is [[file:kernel-config.org][kernel-config.org]]'s change log.
 USB written to /dev/sda (Kingston DataTraveler 3.0, 57.7G): GPT + one ESP
 (ef00, FAT32) with the kernel copied to \EFI\BOOT\BOOTX64.EFI.
 

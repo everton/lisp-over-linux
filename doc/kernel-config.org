@@ -51,7 +51,9 @@ SOUND|SND|SND_PCM|SND_HDA_INTEL|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_ALC269|\
 SND_HDA_GENERIC|SND_SOC|SND_HDA_CODEC_HDMI|SND_USB_AUDIO|\
 SMP|NR_CPUS|SCHED_SMT|SCHED_MC|SCHED_MC_PRIO|HOTPLUG_CPU|TREE_RCU|TINY_RCU|\
 CPU_FREQ|X86_INTEL_PSTATE|\
-KEXEC|KEXEC_CORE|KEXEC_FILE|KEXEC_SIG|CRASH_DUMP|EFI_RUNTIME_MAP)=' .config | sort
+KEXEC|KEXEC_CORE|KEXEC_FILE|KEXEC_SIG|CRASH_DUMP|EFI_RUNTIME_MAP|\
+MEDIA_SUPPORT|MEDIA_SUPPORT_FILTER|MEDIA_CAMERA_SUPPORT|MEDIA_USB_SUPPORT|VIDEO_DEV|\
+USB_VIDEO_CLASS|USB_VIDEO_CLASS_INPUT_EVDEV|MEDIA_SUBDRV_AUTOSELECT)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -72,6 +74,10 @@ grep -E '^CONFIG_NR_CPUS=' .config          # expect CONFIG_NR_CPUS=16
 # kexec is ON since tag #31 (§11) — the file-based call only, no crash kernel:
 grep -cE '^CONFIG_KEXEC_FILE=y' .config      # expect 1
 grep -cE '^CONFIG_CRASH_DUMP=y' .config      # expect 0
+
+# the webcam is ON since tag #32 (§12) — UVC alone, no TV or radio:
+grep -cE '^CONFIG_USB_VIDEO_CLASS=y' .config  # expect 1
+grep -cE '^CONFIG_MEDIA_ANALOG_TV_SUPPORT=y' .config  # expect 0
 #+end_src
 
 * 1. Boot — how the kernel becomes the EFI application
@@ -414,6 +420,36 @@ EFI framebuffer should, since the old kernel's =screen_info= is handed over
 and HD-Audio, whose drivers all have shutdown paths. The =:restart-via :firmware= setting
 (=~/.lol/settings=) is there in case one does not; see the change log's #31 entry.
 
+* 12. The webcam — V4L2 + USB Video Class, NEW in tag #32
+
+A video call in the web pane wants the camera ([[file:web-browser.org][web-browser.org]] §4.8). The laptop's is
+a USB device (=0bda:58fe= "Integrated_Webcam_HD" in =lsusb=) that speaks the *USB
+Video Class* (UVC), the standard every USB webcam follows, so one driver covers it
+and any external one. The kernel side is *V4L2* (Video4Linux 2): a character device
+per camera, =/dev/video0=, opened and read with ioctls (=VIDIOC_QUERYCAP=,
+=VIDIOC_S_FMT=, buffers mapped with =mmap=). Chrome speaks V4L2 itself, so nothing
+in our userland reads the camera; preinit only gives the nodes to the user, as it
+does =/dev/snd= ([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]), and lol-rootd's poll hands over a camera
+plugged in later.
+
+| Option                       | State | Role |
+|------------------------------+-------+------|
+| =CONFIG_MEDIA_SUPPORT=       | y     | the media subsystem's menu: everything below lives under it (=drivers/media/Kconfig=) |
+| =CONFIG_MEDIA_SUPPORT_FILTER= | y    | show only the kinds of device we name; without it every kind (TV tuners, radio, SDR) defaults to y |
+| =CONFIG_MEDIA_CAMERA_SUPPORT= | y    | "cameras and video grabbers": the one kind we name. Its default pulls in =VIDEO_DEV= |
+| =CONFIG_MEDIA_USB_SUPPORT=   | y     | media drivers for USB devices: the menu =USB_VIDEO_CLASS= is in |
+| =CONFIG_VIDEO_DEV=           | y     | the V4L2 core: =/dev/videoN=, the ioctls |
+| =CONFIG_USB_VIDEO_CLASS=     | y     | the UVC driver (=drivers/media/usb/uvc/=); selects =VIDEOBUF2_VMALLOC= (its buffers) and =UVC_COMMON= |
+| =CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV= | n | a camera's snapshot BUTTON as an input device. The laptop's has none, and every keyboard-like evdev is opened by the input code ([[file:input.org][input.org]] §4¾) |
+| =CONFIG_MEDIA_SUBDRV_AUTOSELECT= | n | defaults to y with the filter on: it selects =I2C_MUX= and the tuners/sensors other boards need |
+| analog / digital TV, radio, SDR, platform, test drivers | n | other kinds of media device, set off by hand under the filter |
+
+=make olddefconfig= then added, unasked: =MEDIA_CONTROLLER= (the =/dev/media0= graph
+of a device's parts), =V4L2_ASYNC= / =V4L2_FWNODE= / =VIDEO_V4L2_I2C= /
+=VIDEO_V4L2_SUBDEV_API= (V4L2 core helpers), =VIDEOBUF2_CORE= / =_MEMOPS= / =_V4L2=,
+=VIDEO_CAMERA_LENS= (a menu with nothing chosen in it), and =DMA_SHARED_BUFFER=
+(dma-buf, which videobuf2 selects), and with it =NET_DEVMEM=, whose default follows it.
+
 * Deliberately OFF (and what it would take to turn on)
 
 ** Sound through the DSP, HDMI audio, USB and Bluetooth audio — OFF (tag #29)
@@ -626,3 +662,13 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   on #30, =kexec_file_load= answered ENOSYS). [[file:../check-update.lisp][=check-update.lisp=]], which kexecs a
   guest, is written but /not run yet/: the guest checks need KVM, so Debian. Not yet
   booted on the laptop.
+- =#32= *The webcam* (2026-10-20): =MEDIA_SUPPORT= with its filter, =MEDIA_CAMERA_SUPPORT=,
+  =MEDIA_USB_SUPPORT=, =VIDEO_DEV=, =USB_VIDEO_CLASS= (§12); set off by hand: the other
+  media kinds (TV, radio, SDR, platform, test), =MEDIA_SUBDRV_AUTOSELECT= and
+  =USB_VIDEO_CLASS_INPUT_EVDEV=. =make olddefconfig= added the V4L2 and videobuf2
+  helpers listed in §12, =MEDIA_CONTROLLER=, and =DMA_SHARED_BUFFER= with =NET_DEVMEM=.
+  19 more =CONFIG_= lines set than at #31 (1,203). Built inside the environment
+  (=./build.sh --kernel=, kernel and userland, 1 min 59 s wall, incremental on #31).
+  =bootx64.efi= is 4,555,776 bytes at #32 (4,428,800 at #31). Userland in the same tag:
+  preinit gives =/dev/video*= to the user; the web pane's video calls
+  ([[file:web-browser.org][web-browser.org]] §4.8). /Not booted yet/, in QEMU or on the laptop.

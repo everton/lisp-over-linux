@@ -18,11 +18,13 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (46 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (64 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
 cannot see them (§4.4).
+Since 2026-10-20 a page can have the microphone, the camera (tag #32) and the screen,
+for a video call (§4.8).
 
 A shorter, illustrated walk through this pane and the terminal, written for reading
 in the web pane itself (it is its own page, offline), is
@@ -542,6 +544,156 @@ Tests: =poc/web-test.lisp= (=C-+ C-+= gives =devicePixelRatio= 1.5 and a narrowe
 viewport; the pane is full at once and soft, then full and sharp; =C-0= back; the
 upscaler's edges exact).
 
+** 4.8 Video calls: Google Meet, with screen sharing
+
+/Asked 2026-10-20: "what would be necessary to run google meeting, including sharing
+the screen?", then "write it up first, then go after all this"./ The section was
+written as a plan first; each part now says what was measured and what was built.
+
+*STATUS (2026-10-20): BUILT and host-tested; not yet tried in a real call.* Sound,
+the microphone, the permission prompts and the shared screen are tested against
+Chrome 148 on the laptop, from inside the environment (=poc/web-test.lisp=, 18
+"calls:" checks). The camera needs kernel tag #32, built, not booted yet. A Meet
+call itself, signed in, with another person, is still to be done on the laptop.
+
+*** What a call needs, against what our Chrome had
+
+A Meet call is a web page plus four things a desktop gives a browser for free:
+speakers, a microphone, a camera, and a screen to share. Our Chrome runs headless in
+a container (§6), so each one has to be handed to it on purpose.
+
+| Need          | What the page calls      | What our Chrome lacked                                                          | Now                          |
+|---------------+--------------------------+---------------------------------------------------------------------------------+------------------------------|
+| Hear the call | an =<audio>= element     | a sound device: ALSA's =default= is the host's PipeWire, not running here       | =--alsa-*-device= (M1)       |
+| Speak         | =getUserMedia({audio})=  | the same, plus a permission nobody can click (no bubble without a window)       | M1 + our prompt (M2)         |
+| Be seen       | =getUserMedia({video})=  | =/dev/video0=: no V4L2 in the kernel until tag #32                              | tag #32 + our prompt (M4)    |
+| Share         | =getDisplayMedia()=      | anything to capture: headless has no display, and the picker is never shown     | our canvas (M5)              |
+| Sign in       | Google's login           | nothing since §4.5, which sends the client hints with the user agent            | to be confirmed in a call    |
+
+*** M1. Sound and the microphone — measured, then two switches
+
+Measured with a page on =https://example.com= and Chrome's switches varied
+(2026-10-20, Chrome 148, the laptop's ALC289):
+
+- With no switch, a played tone leaves the card's playback =closed=
+  (=/proc/asound/card0/pcm0p/sub0/status=), and =getUserMedia= fails with
+  =NotReadableError: Could not start audio source=. Chrome's log says why:
+  =PcmOpen: default,Host is down=. Debian's Chrome tries PulseAudio, finds no
+  server, falls back to ALSA as expected, and ALSA's =default= is PipeWire's plugin,
+  which has no PipeWire to talk to.
+- With =--alsa-output-device=plughw:0,0 --alsa-input-device=plughw:0,0= the tone's
+  playback is =RUNNING= on the card, and the microphone streams: capture =RUNNING=, a
+  peak level of 0.097 from the room. =enumerateDevices= then lists the card's ALSA
+  devices by name.
+
+So [[file:../initramfs/web.lisp::defun web-chrome-argv][=web-chrome-argv=]] passes both switches, with the device from
+[[file:../initramfs/web.lisp::defun web-audio-device][=web-audio-device=]]: =plughw:0,0= (the card itself, as the recorder uses it), unless a
+sound server is running (a socket at =$XDG_RUNTIME_DIR/pipewire-0= or =pulse/native=:
+a host test on Debian's desktop, where PipeWire holds the card).
+
+*** M2. Permissions — our prompt, Chrome's grant
+
+Without a window Chrome cannot ask "allow microphone?". Measured: a =getUserMedia=
+nobody answers is refused at once with =NotAllowedError= (it does not wait). What
+works is =Browser.grantPermissions= for the page's origin, after which
+=navigator.permissions= says =granted= and the call goes through.
+
+So a page script ([[file:../initramfs/web.lisp::defparameter +web-media-js+][=+web-media-js+=]], installed into every document as the pickers'
+script is, §4.4) wraps =navigator.mediaDevices.getUserMedia=: it asks us first,
+through a binding, and calls Chrome's own function only after the answer.
+[[file:../initramfs/web.lisp::defun web-ask-media][=web-ask-media=]] asks you in the minibuffer: "meet.google.com wants your microphone and
+camera: y allow · a always · n no". =y= grants the origin until Chrome exits; =a=
+also writes it to =~/.lol/web/permissions.lisp= (0600), granted again at every start
+of Chrome; =n= or =C-g= refuses with =NotAllowedError=, as a refusing user would. A
+page with no origin (a =file:= page's is ="null"=) is refused without asking: a grant
+there would be a grant to every origin. Two facts about the grant: it lasts only as
+long as Chrome, and it /replaces/ an origin's set, so [[file:../initramfs/web.lisp::defun web-grant][=web-grant=]] always sends the
+union of what the origin has.
+
+*** M3. Sharing a tab — ruled out, replaced by M5
+
+Headless Chrome /can/ capture a tab: with
+=--auto-select-tab-capture-source-by-title=Example=, a
+=getDisplayMedia({preferCurrentTab: true})= gave a live 800 x 600 stream of the page
+(=displaySurface: browser=). But the tab is picked by a title fixed on Chrome's
+command line at start, and anything else (no switch, or
+=--auto-select-desktop-capture-source=) leaves the promise waiting forever for a
+picker that is never drawn; =--use-fake-ui-for-media-stream= picks the desktop and
+fails (=NotReadableError=: no display). Sharing a web tab also meets §3.3's rule: only
+the tab on screen renders. So the native path was dropped; M5 shares what is on
+our screen, which includes any web tab on it.
+
+*** M4. The camera — kernel tag #32
+
+The laptop's webcam is USB Video Class (=0bda:58fe= "Integrated_Webcam_HD" in
+=lsusb=). Tag #32 adds V4L2 and the UVC driver ([[file:kernel-config.org][kernel-config.org]] §12), and preinit's
+=give_devices= hands =/dev/video*= to the user as it does =/dev/snd=; the container
+bind-mounts our =/dev=, and Chrome speaks V4L2 itself. The permission is M2's
+prompt ("wants your camera"). /Not booted yet./
+
+*** M5. Sharing the screen — our canvas as a screen
+
+Chrome cannot capture what it cannot see, so the page is handed a picture of our
+screen as if it were one:
+
+1. The same page script replaces =getDisplayMedia=. After you answer "y share the
+   whole screen", it makes a canvas the screen's size and returns
+   =canvas.captureStream()=; the track says =displaySurface: monitor= to pages that
+   look, and stopping it tells us. Meet's /Present now/ sends that canvas.
+2. We paint the canvas through the DevTools pipe we already hold, with
+   =Runtime.evaluate= calling the page's =__lolShare.put=. What goes is only what
+   changed: [[file:../initramfs/web.lisp::defun web-share-note][=web-share-note=]] is one of =*frame-taps*= (fb-browser.lisp, the
+   recorder's hook made a list), told the rects of every repair; a full frame, or
+   more than 32 rects, sends the whole screen. The pointer is drawn by the page over
+   a copy, since our pointer is never in the canvas (fb-browser.lisp draws it
+   straight to the screen).
+3. Three bytes of colour are exactly four base64 characters, so
+   [[file:../initramfs/web.lisp::defun web-share-message][=web-share-message=]] turns each pixel into four octets of the message with no
+   carrying between pixels, building the whole message as octets
+   (=cdp-send-built=, web-cdp.lisp) instead of through =json-string=.
+4. At most =+web-share-fps+= (10) updates a second, and the next waits for the
+   page's answer to the last: the screencast's flow control, run the other way.
+
+Measured on the laptop (Chrome 148, =poc/web-test.lisp=): a whole 1920 x 1200 screen
+is 8.8 MB, 32 ms of the environment's thread to encode and write, and the page
+answers about 190 ms later (its decode; =Uint8Array.fromBase64= took that from 208 to
+184 ms). A repaired rect is a few kilobytes. While sharing, the tray says
+=SHARING meet.google.com=, in red; the web tab's menu has "Stop sharing the screen",
+and Meet's own "Stop presenting" works too (the track's =ended= event fires).
+
+/Ruled out:/ a WebSocket from the page to PID 1 on =127.0.0.1= (it would need an HTTP
+server and the WebSocket handshake's SHA-1 in Lisp, for no gain over the pipe we
+have); =v4l2loopback=, a fake camera fed with our frames (out of tree, and the kernel
+has no module support, =CONFIG_MODULES= unset); =--use-file-for-fake-video-capture=
+(plays a file, not a live feed).
+
+*** A call in the background
+
+You present while looking at another pane, so the call's tab is not Chrome's
+foreground page (§3.3). Measured with two tabs and a canvas sent over a loopback
+=RTCPeerConnection=: from the background tab every frame we drew still arrived (50
+of 50), but its timers ran at about 1 Hz (5 ticks of a 100 ms =setInterval= in 5 s;
+52 in the foreground). Meet's own code runs on timers. With
+=Emulation.setFocusEmulationEnabled= on that tab the timers came back (52 in 5 s), so
+a tab given the microphone, camera or screen is kept focused
+([[file:../initramfs/web.lisp::defun web-in-call][=web-in-call=]]). The test asserts it: 19 ticks in about 2 s with another tab on
+screen.
+
+*** Still open
+
+- *A real call.* Sign-in (§4.5's hints), joining, hearing, being heard, presenting:
+  to be done on the laptop. The test page uses the same calls as Meet, not Meet.
+- *CPU.* Headless means no GPU: Meet's video decode, WebRTC's encoding of the
+  camera and the shared screen, the screencast's JPEGs and our decode all run in
+  software. Unmeasured.
+- *One microphone.* =plughw:0,0= capture opens once: recording a call with the
+  recorder (=SuperL-r=) while Chrome holds the mic fails for whichever opens second.
+  ALSA's =dsnoop=, or the recorder taking Chrome's sound, would be the way.
+- *The whole screen only.* A window or a single pane could be shared by cutting its
+  rect; not offered yet.
+- *The guest check.* =check-web.lisp= has no calls section yet; the guest's QEMU
+  sound card and the container's =/dev/snd= are what it would prove.
+
 * 5. The event loop: services
 
 The browser's loop ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) used to wake
@@ -757,12 +909,11 @@ decode and a rectangle blit for what the eye sees.
 
 * 9. Limits, and what is next
 
-- *A page's sound is untried.* Since tag #29 the image has sound ([[file:screencast.org][screencast.org]]), and
-  the container sees =/dev/snd=, but whether headless Chrome plays a page's audio there
-  has not been tested — its ALSA would look for the =default= device, which the host's
-  configuration points at PipeWire (screencast.org §2). A page's video comes through
-  the screencast like any other pixels, unsynchronised; a video file plays properly with
-  the host's MPlayer (=play-video=, §8 there).
+- /Tried 2026-10-20: a page's sound./ Headless Chrome plays through the card once told
+  which ALSA device (§4.8, M1): its =default= is the host's PipeWire, not running here.
+  Measured from inside the environment on the laptop; not yet in the guest. A page's
+  video comes through the screencast like any other pixels, unsynchronised; a video
+  file plays properly with the host's MPlayer (=play-video=, §8 there).
 - /Fixed 2026-10-19: non-ASCII typing./ The console sends UTF-8, and =fb-read-key= used
   to make each byte a character (=ç= arrived as two wrong ones); it decodes UTF-8 now,
   and pt-BR is typed with Right Alt or Caps Lock ([[file:input.org][input.org]] §1, "Two layouts").

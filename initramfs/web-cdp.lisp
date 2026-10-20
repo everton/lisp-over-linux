@@ -366,6 +366,17 @@
       (cdp-write-octets c framed)
       id)))
 
+(defun cdp-send-built (c build &key callback)
+  "Send a message BUILD makes itself: BUILD is called with the message id and returns
+   the whole framed octets (the JSON and its NUL). For a message too big to go through
+   JOBJ and JSON-STRING character by character — the shared screen's pixels, about
+   9 MB a frame (web.lisp, WEB-SHARE-SEND). -> the id."
+  (sb-thread:with-recursive-lock ((chrome-lock c))
+    (let ((id (shiftf (chrome-next-id c) (1+ (chrome-next-id c)))))
+      (when callback (setf (gethash id (chrome-callbacks c)) callback))
+      (cdp-write-octets c (funcall build id))
+      id)))
+
 ;;; ---- reading ------------------------------------------------------------------
 
 (defun cdp-read-available (c)

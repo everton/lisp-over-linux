@@ -781,7 +781,8 @@ a take on the laptop — the real mic, real speech, the CPU at 1920×1200 — is
 
 ** 13.1 What shipped
 
-- *The tap and the lent screen.* =*frame-tap*= is called by =present-frame= and
+- *The tap and the lent screen.* The functions in =*frame-taps*= (one function until
+  2026-10-20, a list since a shared screen taps it too: web-browser.org §4.8) are called by =present-frame= and
   =present-repair=; =*screen-lent*= turns off all five functions that write
   =/dev/fb0= (=put-cursor=, =present-frame=, =present-repair=, =move-cursor=,
   =hide-cursor=), and while it is set the loop gives input events to the player
@@ -874,7 +875,7 @@ The recorder pane's =m= switches the next recording between =live= and =log=
 (=*rec-mode*=); the tray then says =REC LOG=. In a logged take nothing is encoded
 while you talk:
 
-- *The picture*: =*frame-tap*= now passes the repair's rects (=present-repair=) or
+- *The picture*: the tap now passes the repair's rects (=present-repair=) or
   "the whole frame" (=present-frame=); in log mode the tap cuts those rects out of
   the canvas (a copy, cheap) and hands them to a log-writer thread, which compresses
   them with =lol.deflate= and appends them to =seg-NNN.dmg=. The format is its own

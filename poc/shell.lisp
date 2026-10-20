@@ -1516,7 +1516,7 @@
       (when (eq (getf it :icon) :agent)
         (setf pen (+ 5 (draw-agent-icon canvas pen (if (eq (getf it :tone) :off) *ui-dim* *agent-icon-color*)))))
       (setf pen (lol.canvas:draw-string canvas *bfont* (getf it :text) pen (text-dy +bar-h+)
-                                        (if (member (getf it :kind) '(:battery :wifi :wired :agent :recording))   ; :agent — agent-ui.lisp; :recording — recorder.lisp
+                                        (if (member (getf it :kind) '(:battery :wifi :wired :agent :recording :sharing))   ; :agent — agent-ui.lisp; :recording — recorder.lisp; :sharing — web.lisp
                                             (tray-tone-color (getf it :tone))
                                             *ui-text*))))
     (values x0 clip)))

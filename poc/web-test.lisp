@@ -17,6 +17,7 @@
 
 (require :sb-introspect)
 (require :sb-posix)
+(require :sb-bsd-sockets)
 
 (defparameter *poc-dir* (make-pathname :directory (pathname-directory *load-truename*)))
 (defparameter *root-dir* (merge-pathnames "../" *poc-dir*))
@@ -140,6 +141,181 @@
 <p><input id=dl list=L style='font-size:20px'><datalist id=L><option value=one><option value=two><option value=three></datalist></p>
 <p><input id=co type=color> <input id=dt type=date style='font-size:20px'></p></body>")
   (page "three.html" "<!doctype html><title>LoL page three</title><h1>Page three</h1>"))
+
+;;; ---- calls: the microphone, the camera, the shared screen (§4.8) ------------------
+;;; A file: page has no origin, and nothing can be granted to "null", so the call page
+;;; is served over http from 127.0.0.1 — a loopback address is a secure context, as
+;;; an https page is.
+
+(defparameter +call-page+ "<!doctype html><title>LoL call</title>
+<body style='margin:0;background:#222'>
+<video id=v muted autoplay playsinline style='width:320px;height:200px'></video>
+<script>
+window.R = {}; window.TICKS = 0; setInterval(function(){ TICKS++; }, 100);
+function run(name, p){ R[name] = 'waiting';
+  p.then(function(s){ window[name] = s; R[name] = 'ok'; },
+         function(e){ R[name] = 'rej ' + e.name; }); return 1; }
+/* the shared screen as a viewer sees it: the stream's newest frame, one pixel */
+function pixel(x, y){
+  var v = document.getElementById('v'), c = document.createElement('canvas');
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  if (!c.width) return 'no video';
+  var g = c.getContext('2d'); g.drawImage(v, 0, 0);
+  var d = g.getImageData(x, y, 1, 1).data; return [d[0], d[1], d[2]].join(',');
+}
+</script>")
+
+(defun serve-call-page ()
+  "A one-page HTTP server on 127.0.0.1 -> (values port socket)."
+  (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
+    (setf (sb-bsd-sockets:sockopt-reuse-address s) t)
+    (sb-bsd-sockets:socket-bind s #(127 0 0 1) 0)
+    (sb-bsd-sockets:socket-listen s 8)
+    (sb-thread:make-thread
+     (lambda ()
+       (loop
+         (let ((c (ignore-errors (sb-bsd-sockets:socket-accept s))))
+           (unless c (return))
+           (ignore-errors
+             (let ((io (sb-bsd-sockets:socket-make-stream c :input t :output t :element-type :default
+                                                            :external-format :utf-8)))
+               (loop for l = (read-line io nil "") while (> (length (string-trim '(#\Return) l)) 0))
+               (let ((body (sb-ext:string-to-octets +call-page+ :external-format :utf-8)))
+                 (format io "HTTP/1.1 200 OK~c~cContent-Type: text/html; charset=utf-8~c~cContent-Length: ~d~c~cConnection: close~c~c~c~c"
+                         #\Return #\Newline #\Return #\Newline (length body) #\Return #\Newline
+                         #\Return #\Newline #\Return #\Newline)
+                 (finish-output io)
+                 (write-sequence (map 'string #'code-char body) io))
+               (finish-output io)))
+           (ignore-errors (sb-bsd-sockets:socket-close c)))))
+     :name "call page")
+    (values (nth-value 1 (sb-bsd-sockets:socket-name s)) s)))
+
+(defun fill-rect (canvas x y w h colour)
+  (let ((px (lol.canvas:canvas-pixels canvas)) (cw (lol.canvas:canvas-w canvas)))
+    (loop for j from y below (+ y h) do
+      (loop for i from x below (+ x w) do (setf (aref px (+ (* j cw) i)) colour)))))
+
+(defun near-rgb-p (text r g b)
+  "TEXT (\"r,g,b\" from the page) within a video codec's rounding of R G B."
+  (let ((v (ignore-errors (mapcar #'parse-integer (split-commas text)))))
+    (and (= (length v) 3)
+         (every (lambda (a e) (<= (abs (- a e)) 12)) v (list r g b)))))
+
+(defun split-commas (s)
+  (loop with start = 0 for i = (position #\, s :start start)
+        collect (subseq s start i) while i do (setf start (1+ i))))
+
+(defun answer-prompt (needle key)
+  "Wait for the minibuffer to ask with NEEDLE in its prompt, then press KEY. -> T."
+  (and (pump-until (lambda () (and *minibuffer* (search needle (mb-prompt *minibuffer*)))) 10)
+       (progn (browser-key key 0) (frame) t)))
+
+(defun call-checks ()
+  (multiple-value-bind (port sock) (serve-call-page)
+    (let* ((share (lol.canvas:make-canvas 320 200))
+           (origin (format nil "http://127.0.0.1:~d" port))
+           (*web-share-canvas* (lambda () share)))
+      (fill-rect share 0 0 320 200 #xFF8000)
+      (web-new-tab (format nil "~a/call.html" origin))
+      (check "calls: the call page loads from 127.0.0.1 (a secure context)"
+             (pump-until (lambda () (and (equal (title) "LoL call") (eq (js "isSecureContext") t)))))
+      (let ((call (tab)))
+        ;; the microphone: asked in the minibuffer, then Chrome's own call goes through
+        (js "run('mic', navigator.mediaDevices.getUserMedia({audio: true}))")
+        (check "calls: getUserMedia asks in the minibuffer (\"wants your microphone\")"
+               (answer-prompt "wants your microphone" #\y))
+        (check "calls: y grants the origin: the page's permission says granted"
+               (pump-until (lambda () (equal (js "navigator.permissions.query({name:'microphone'}).then(p => p.state)")
+                                             "granted"))))
+        (check "calls: ... and the page's call is not refused (no NotAllowedError)"
+               (let ((r (pump-until (lambda () (let ((r (js "R.mic"))) (and (not (equal r "waiting")) r))))))
+                 (format t "~&    (getUserMedia: ~a)~%" r)
+                 (and r (not (search "NotAllowed" r)))))
+        (js "run('mic2', navigator.mediaDevices.getUserMedia({audio: true}))")
+        (check "calls: a second ask of a granted origin is not asked again"
+               (pump-until (lambda () (and (not (equal (js "R.mic2") "waiting")) (null *minibuffer*)))))
+        (js "window.mic && mic.getTracks().forEach(t => t.stop()); window.mic2 && mic2.getTracks().forEach(t => t.stop())")
+        (js "run('cam', navigator.mediaDevices.getUserMedia({video: true}))")
+        (check "calls: n refuses the camera: NotAllowedError"
+               (and (answer-prompt "wants your camera" #\n)
+                    (pump-until (lambda () (equal (js "R.cam") "rej NotAllowedError")))))
+        (check "calls: the tab in a call is focused (timers at full speed)"
+               (pump-until (lambda () (eq (js "document.hasFocus()") t))))
+        ;; the screen
+        (js "run('scr', navigator.mediaDevices.getDisplayMedia({video: true}))")
+        (check "calls: getDisplayMedia asks (\"wants to see your screen\")"
+               (answer-prompt "wants to see your screen" #\y))
+        (check "calls: ... and gets a stream the screen's size, a monitor"
+               (pump-until (lambda ()
+                             (and (equal (js "R.scr") "ok")
+                                  (equal (js "(s => s.width + 'x' + s.height + ' ' + s.displaySurface)(scr.getVideoTracks()[0].getSettings())")
+                                         "320x200 monitor")))))
+        (check "calls: the tray says SHARING"
+               (search "SHARING 127.0.0.1" (getf (web-call-tray-item) :text)))
+        (js "document.getElementById('v').srcObject = scr")
+        (check "calls: a viewer of the stream sees our screen (orange)"
+               (pump-until (lambda () (near-rgb-p (js "pixel(160, 100)") 255 128 0))))
+        ;; a changed rect goes alone
+        (fill-rect share 40 30 100 60 #x0080FF)
+        (web-share-note (list (list 40 30 100 60)) nil)
+        (check "calls: a repaired rect reaches the viewer (blue there, orange beside)"
+               (pump-until (lambda () (and (near-rgb-p (js "pixel(90, 60)") 0 128 255)
+                                           (near-rgb-p (js "pixel(200, 150)") 255 128 0)))))
+        (format t "~&    (shared: ~d updates, ~d octets, the last in ~d ms)~%"
+                (web-share-updates *web-share*) (web-share-octets *web-share*)
+                (web-share-last-ms *web-share*))
+        ;; the call goes on with another tab on screen
+        (web-new-tab (url "two.html"))
+        (pump-until (lambda () (equal (title) "LoL page two")))
+        (let ((t0 (cdp-eval *web-chrome* (web-tab-session call) "TICKS"))
+              (u0 (web-share-updates *web-share*)))
+          (fill-rect share 200 120 60 40 #x00C000)
+          (web-share-note (list (list 200 120 60 40)) nil)
+          (loop repeat 40 do (frame) (cdp-wait-readable *web-chrome* 50))
+          (let ((ticks (- (cdp-eval *web-chrome* (web-tab-session call) "TICKS") t0)))
+            (check "calls: in the background, the call's timers still run (focus emulation)"
+                   (> ticks 10))
+            (check "calls: ... and the shared screen's updates are still taken"
+                   (and (> (web-share-updates *web-share*) u0) (not (web-share-busy *web-share*))))
+            (format t "~&    (background: ~d ticks of 100 ms in about 2 s)~%" ticks)))
+        ;; stopping, from either side
+        (cdp-eval *web-chrome* (web-tab-session call) "scr.getVideoTracks()[0].stop()")
+        (check "calls: the page stopping its track stops the sharing"
+               (pump-until (lambda () (null *web-share*))))
+        (cdp-eval *web-chrome* (web-tab-session call)
+                  "run('scr2', navigator.mediaDevices.getDisplayMedia({video: true}))")
+        (answer-prompt "wants to see your screen" #\y)
+        (pump-until (lambda () (equal (cdp-eval *web-chrome* (web-tab-session call) "R.scr2") "ok")))
+        (cdp-eval *web-chrome* (web-tab-session call)
+                  "scr2.getVideoTracks()[0].onended = function(){ R.ended = 'yes'; }")
+        (web-share-stop)
+        (check "calls: stopping it here ends the page's track (its ended event fires)"
+               (pump-until (lambda () (equal (cdp-eval *web-chrome* (web-tab-session call) "R.ended") "yes"))))
+        (check "calls: the encoder: #x123456 is base64 \"EjRW\", four octets a pixel"
+               (let* ((c (lol.canvas:make-canvas 2 1)))
+                 (setf (aref (lol.canvas:canvas-pixels c) 0) #x123456
+                       (aref (lol.canvas:canvas-pixels c) 1) #xFFFFFF)
+                 (let ((m (map 'string #'code-char (web-share-message 7 "S" nil (list (list 0 0 2 1)) c -1 -1))))
+                   (and (search "[[0,0,2,1,'EjRW////']],-1,-1)" m)
+                        (char= (char m (1- (length m))) (code-char 0))
+                        (read-json (subseq m 0 (1- (length m))))))))
+        ;; what a whole laptop screen costs: encode + write, then the page's answer
+        (let ((big (lol.canvas:make-canvas 1920 1200)))
+          (fill-rect big 0 0 1920 1200 #x336699)
+          (let ((*web-share-canvas* (lambda () big)))
+            (cdp-eval *web-chrome* (web-tab-session call)
+                      "run('scr3', navigator.mediaDevices.getDisplayMedia({video: true}))")
+            (answer-prompt "wants to see your screen" #\y)
+            (pump-until (lambda () (and *web-share* (web-share-busy *web-share*))))
+            (let ((t0 (get-internal-real-time)))
+              (check "calls: a whole 1920x1200 screen arrives (the page answers ok)"
+                     (pump-until (lambda () (and *web-share* (not (web-share-busy *web-share*))))))
+              (format t "~&    (1920x1200: ~,1f MB, encode + write ~d ms, page answered after ~d ms more)~%"
+                      (/ (web-share-octets *web-share*) 1048576.0) (web-share-last-ms *web-share*)
+                      (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)))
+            (web-share-stop)))))
+    (ignore-errors (sb-bsd-sockets:socket-close sock))))
 
 ;;; ---- the run --------------------------------------------------------------------
 
@@ -374,6 +550,7 @@
                        (out (web-upscale 2 2 src 5 3)))
                   (and (= (aref out 0) 0) (= (aref out 4) #xFF0000)
                        (= (ldb (byte 8 16) (aref out 2)) 128))))
+         (call-checks)
          ;; numbers worth writing down
          (format t "~&  frames received ~d, last decode ~a ms at ~dx~d~%"
                  (web-tab-frames (tab)) (web-tab-last-frame-ms (tab))
