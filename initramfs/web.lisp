@@ -1780,22 +1780,61 @@ window.__lolMediaAnswer = function(id, answer){
   if (r) { waiting.delete(id); r(answer); }
 };
 function denied(){ return new DOMException('Permission denied', 'NotAllowedError'); }
+/* what the page did, for session.log: no answer, at most 100 lines a document,
+   the first saying which document — only pages that touch the media are logged */
+var notes = 0;
+function note(what){
+  if (notes++ >= 100) return;
+  if (notes === 1) what = '(in ' + location.origin + location.pathname + ') ' + what;
+  try {
+    window.__lolMedia(JSON.stringify({kind: 'note', what: String(what).slice(0, 300),
+                                      origin: location.origin, top: window === window.top}));
+  } catch (e) {}
+}
+/* Wrapped on the PROTOTYPE, not on navigator.mediaDevices: a page can call
+   MediaDevices.prototype.getUserMedia.call(...) and pass an instance property by */
+var MD = MediaDevices.prototype;
 /* the microphone and camera: ask first, then Chrome's own call (now granted) */
-var gum = md.getUserMedia.bind(md);
-md.getUserMedia = function(c){
+var gum = MD.getUserMedia;
+MD.getUserMedia = function(c){
   c = c || {};
+  var self = this;
+  note('getUserMedia ' + JSON.stringify(c));
   return ask({kind: 'user', audio: !!c.audio, video: !!c.video}).then(function(ok){
     if (!ok) throw denied();
-    return gum(c);
+    return gum.call(self, c);
+  }).then(function(s){
+    note('getUserMedia ok: ' + s.getTracks().map(function(t){ return t.kind + ' ' + t.label; }).join(', '));
+    return s;
+  }, function(e){
+    note('getUserMedia failed: ' + e.name + ' ' + e.message);
+    throw e;
   });
 };
+/* the old callback forms, through the new one */
+['getUserMedia', 'webkitGetUserMedia'].forEach(function(n){
+  if (navigator[n]) navigator[n] = function(c, ok, fail){ md.getUserMedia(c).then(ok, fail); };
+});
 /* the screen: a canvas we paint, as a stream */
-md.getDisplayMedia = function(c){
+MD.getDisplayMedia = function(c){
+  note('getDisplayMedia');
   return ask({kind: 'display'}).then(function(a){
     if (!a) throw denied();
     return share(a);
   });
 };
+/* what the page learns of its camera and microphone permissions */
+if (window.Permissions) {
+  var pq = Permissions.prototype.query;
+  Permissions.prototype.query = function(d){
+    var r = pq.call(this, d);
+    if (d && /camera|microphone/.test(d.name))
+      r.then(function(p){ note('permissions.query ' + JSON.stringify(d) + ' = ' + p.state); },
+             function(e){ note('permissions.query ' + JSON.stringify(d) + ' failed: ' + e.name); });
+    return r;
+  };
+}
+
 function share(a){
   var base = document.createElement('canvas'), out = document.createElement('canvas');
   base.width = out.width = a.w; base.height = out.height = a.h;
@@ -1979,6 +2018,11 @@ function share(a){
          (origin (let ((o (jget msg "origin"))) (and (stringp o) o))))
     (cond
       ((null msg) t)
+      ;; what the page did with its media, for diagnosing a call (no answer wanted)
+      ((equal kind "note")
+       (session-log "web: page ~a~:[ (a frame)~;~]: ~a" origin (eq (jget msg "top") t)
+                    (jget msg "what"))
+       t)
       ((equal kind "stop")
        (when (and *web-share* (eq (web-share-tab *web-share*) tab))
          (web-share-stop :page t))

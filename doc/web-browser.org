@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (73 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (75 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -660,6 +660,23 @@ with it. A grant Chrome refuses, every question and every answer now go to
 "video_capture_service_impl.cc: Bind context provider failed" appears on every
 camera start, also when the camera works. It is noise (no GPU context), not the
 fault.
+
+/Still stuck after that fix, the same day./ This time =session.log= had no question
+from Meet at all, while Chrome's log showed its camera service starting and the
+microphone found busy. So Meet reached the devices by a route the script did not
+wrap. Two changes. First, the script wraps =MediaDevices.prototype.getUserMedia=
+(and the old =navigator.webkitGetUserMedia=) rather than the one
+=navigator.mediaDevices= object, so a page calling the prototype's function is
+asked too. Second, the page now reports what it does: each =getUserMedia= with its
+constraints, its result (the tracks, or the error's name), and each
+=permissions.query= for the camera or microphone with its answer. The first line
+from a document names it, and only pages that touch the media are logged
+("web: page ..." in =session.log=). If that log still shows nothing from Meet, the
+call comes from a frame we do not attach to: we attach to the page's own target
+only, so a cross-site iframe (a separate renderer process) gets neither the script
+nor the binding. Ruled out: Chrome's new =<permission>= element, an in-page button
+that would ask through Chrome's own prompt; Chrome 148 does not have it
+(=HTMLPermissionElement= is undefined).
 
 *** M3. Sharing a tab — ruled out, replaced by M5
 

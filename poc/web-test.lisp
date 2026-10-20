@@ -305,6 +305,23 @@ function pixel(x, y){
                (let ((r (pump-until (lambda () (let ((r (js "R.mic"))) (and (not (equal r "waiting")) r))))))
                  (format t "~&    (getUserMedia: ~a)~%" r)
                  (and r (not (search "NotAllowed" r)))))
+        (check "calls: what the page did is in session.log (the script, the call, its tracks)"
+               (pump-until
+                (lambda ()
+                  (let ((log (ignore-errors
+                              (with-open-file (i (format nil "~asession.log" (host-log-dir)))
+                                (let ((s (make-string (file-length i))))
+                                  (subseq s 0 (read-sequence s i)))))))
+                    (and log (search "web: page" log) (search "(in http://127.0.0.1" log)
+                         (not (search "index.html" log))   ; a page that never asked
+                         (search "getUserMedia {\"audio\":true}" log)
+                         (search "getUserMedia ok: audio" log))))))
+        ;; the prototype's function, as a page may call it, is asked too
+        (js "run('mic3', MediaDevices.prototype.getUserMedia.call(navigator.mediaDevices, {audio: true}))")
+        (check "calls: MediaDevices.prototype.getUserMedia goes through us (granted: no ask)"
+               (equal (pump-until (lambda () (let ((r (js "R.mic3"))) (and (not (equal r "waiting")) r))))
+                      "ok"))
+        (js "window.mic3 && mic3.getTracks().forEach(t => t.stop())")
         (js "run('mic2', navigator.mediaDevices.getUserMedia({audio: true}))")
         (check "calls: a second ask of a granted origin is not asked again"
                (pump-until (lambda () (and (not (equal (js "R.mic2") "waiting")) (null *minibuffer*)))))

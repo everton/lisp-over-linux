@@ -62,7 +62,7 @@ window.LOL_DEPS = {
     {file: "initramfs/tour.lisp", layer: 3, role: "a guided walk through the running system, inside the system", lines: 158, defs: 10, packages: [], load: 8},
     {file: "initramfs/update.lisp", layer: 7, role: "install the next build of this image, from inside it, and restart", lines: 136, defs: 16, packages: [], load: 69},
     {file: "initramfs/web-cdp.lisp", layer: -1, role: "talk to a headless Chrome over the DevTools protocol, on a pipe", lines: 515, defs: 38, packages: [], load: 50},
-    {file: "initramfs/web.lisp", layer: -1, role: "the web pane: a Chrome tab as a subject in the shell", lines: 2656, defs: 205, packages: [], load: 51},
+    {file: "initramfs/web.lisp", layer: -1, role: "the web pane: a Chrome tab as a subject in the shell", lines: 2700, defs: 205, packages: [], load: 51},
     {file: "initramfs/wifi.lisp", layer: 0, role: "Wi-Fi: the radio, the host's wpa_supplicant, and our own control of it", lines: 674, defs: 76, packages: [], load: 61},
     {file: "initramfs/worker-live.lisp", layer: 3, role: "a second process whose view stays LIVE", lines: 736, defs: 83, packages: [], load: 52},
     {file: "initramfs/worker.lisp", layer: 3, role: "a second process that contributes a VIEW, not pixels", lines: 215, defs: 18, packages: [], load: 11},
