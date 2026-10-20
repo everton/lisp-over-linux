@@ -77,6 +77,12 @@
   (format t "  t) network REPL on TCP :4005  [~a]~%"
           (if (net-repl-running-p) "RUNNING" "stopped"))
   (format t "  s) shut down (power off)~%")
+  (format t "  e) restart~%")
+  ;; a finished build in the checkout that /boot/lisp does not hold (update.lisp):
+  ;; installable from here too, which is what you want when the environment is the
+  ;; thing that broke
+  (let ((new (ignore-errors (pending-build))))
+    (when new (format t "  u) install the new build and restart  [~a]~%" (build-label new))))
   (format t "============================================~%")
   (format t "choice> ") (finish-output)
   (draw-alien))                  ; (re)paint the alien LAST so it stays on screen
@@ -159,6 +165,8 @@
                    (:stopped
                     (format t "~&network REPL disabled.~%"))))
                 ((string-equal choice "s") (console-shutdown))   ; asks: save the desk? (desk.lisp)
+                ((string-equal choice "e") (console-restart))  ; the same question (desk.lisp)
+                ((string-equal choice "u") (console-restart :install t))
                 ((string= choice ""))                 ; bare Enter: just redraw
                 (t (format t "~&unknown choice: ~a~%" choice)))))
         (serious-condition (c)

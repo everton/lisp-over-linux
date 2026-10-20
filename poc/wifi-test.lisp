@@ -12,7 +12,7 @@
 (defvar *here* (make-pathname :name nil :type nil :defaults *load-truename*))
 (load (merge-pathnames "host-logging.lisp" *here*))   ; the modules log (session-log.lisp)
 (handler-bind ((warning #'muffle-warning))
-  (dolist (f '("net" "dhcp" "dns" "sntp" "tls" "wifi"))
+  (dolist (f '("process" "net" "dhcp" "dns" "sntp" "tls" "wifi"))
     (load (merge-pathnames (format nil "../initramfs/~a.lisp" f) *here*))))
 
 (defvar *fails* 0)

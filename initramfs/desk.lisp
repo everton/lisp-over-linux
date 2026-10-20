@@ -340,9 +340,10 @@
 
 ;;; ---- the supervisor's 's' -----------------------------------------------------------------
 
-(defun console-shutdown ()
-  "The supervisor menu's 's': the leave menu's question, asked in text. Unsaved file
-   buffers are named first, since nothing here can save them."
+(defun console-shutdown (&key (verb "shut down") (then #'power-off))
+  "The supervisor menu's 's': the leave menu's question, asked in text, before THEN
+   (POWER-OFF; CONSOLE-RESTART passes a restart). Unsaved file buffers are named
+   first, since nothing here can save them."
   (let ((dirty (loop for trail in *trails* append (remove-if-not #'file-pane-dirty-p trail))))
     (when dirty
       (format t "~&~d file~:p with unsaved changes (lost at power-off; 'b' to go back and save):~%"
@@ -350,14 +351,28 @@
       (dolist (p dirty) (format t "   ~a~%" (getf (view-data (pane-view p)) :path))))
     (if (persistence-available-p)
         (progn
-          (format t "~&Save the desk first?  y) save and shut down  n) shut down without saving  c) cancel~%> ")
+          (format t "~&Save the desk first?  y) save and ~a  n) ~a without saving  c) cancel~%> "
+                  verb verb)
           (finish-output)
           (let ((a (string-trim " " (or (read-line *standard-input* nil "c") "c"))))
-            (cond ((string-equal a "y") (save-desk) (power-off))
-                  ((string-equal a "n") (leave-without-saving) (power-off))
-                  (t (format t "~&not shutting down.~%")))))
+            (cond ((string-equal a "y") (save-desk) (funcall then))
+                  ((string-equal a "n") (leave-without-saving) (funcall then))
+                  (t (format t "~&not going to ~a.~%" verb)))))
         (progn
-          (format t "~&No disk - nothing is kept. Shut down?  y/n~%> ") (finish-output)
+          (format t "~&No disk - nothing is kept. ~@(~a~)?  y/n~%> " verb) (finish-output)
           (if (string-equal (string-trim " " (or (read-line *standard-input* nil "n") "n")) "y")
-              (power-off)
-              (format t "~&not shutting down.~%"))))))
+              (funcall then)
+              (format t "~&not going to ~a.~%" verb))))))
+
+(defun console-restart (&key install)
+  "The supervisor menu's 'e' (restart) and, with INSTALL, 'u': install the checkout's
+   new build into /boot/lisp first (update.lisp) — refused, nothing else happens."
+  (if (not install)
+      (console-shutdown :verb "restart" :then #'restart-machine)
+      (handler-case
+          (let ((info (progn (format t "~&Installing the new build into /boot/lisp...~%")
+                             (finish-output)
+                             (install-pending-build))))
+            (format t "~&Installed ~a.~%" (build-label info))
+            (console-shutdown :verb "restart" :then #'restart-machine))
+        (error (c) (format t "~&Not installed: ~a~%" c)))))

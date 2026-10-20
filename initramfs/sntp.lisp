@@ -91,9 +91,7 @@
 
 (defconstant +rootd-sig-settime+ 40 "preinit.c's ROOTD_SIG_SETTIME — a fixed number, not SIGRTMIN+n.")
 
-(defun rootd-pid ()
-  (let ((p (sb-ext:posix-getenv "LOL_ROOTD_PID")))
-    (and p (ignore-errors (parse-integer p)))))
+;; ROOTD-PID: process.lisp (loaded earlier), which every lol-rootd request shares
 
 (defun set-system-clock (unix-ms)
   "Set the wall clock to UNIX-MS (milliseconds since 1970). As root: clock_settime

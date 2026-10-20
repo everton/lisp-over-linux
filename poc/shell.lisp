@@ -3973,17 +3973,20 @@
     (if i (activate-trail i) (new-trail (subj-modules)))))
 
 (defvar *leave-action* nil
-  "How the environment was left: :POWER-OFF or :CONSOLE (the supervisor's menu), set
-   by LEAVE-MENU. The backend reads it once it has given the screen back.")
+  "How the environment was left: :CONSOLE (the supervisor's menu), a power-off or a
+   restart (LEAVE-MENU lists them), set by LEAVE-MENU. The backend reads it once it
+   has given the screen back.")
 
 (defun leave-menu ()
   "SuperL-q: ask how to leave — down to the supervisor's console menu (the REPL, the
    worker, the other roots), or shut down, saving the desk or not
    (doc/session-persistence.org §4). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
-   :SAVE-POWER-OFF or :POWER-OFF), or NIL when the menu is dismissed. The console
-   comes first so that a reflexive Return is the step you can come back from. On a
-   diskless boot nothing can be kept, and the one shut-down entry says so instead of
-   offering a save that would write to RAM. With no menus on this backend (the X11
+   :SAVE-POWER-OFF, :POWER-OFF, :SAVE-RESTART, :RESTART or :UPDATE-RESTART — the
+   last offered only when a finished build waits in the checkout, update.lisp), or
+   NIL when the menu is dismissed. The console comes first so that a reflexive
+   Return is the step you can come back from. On a diskless boot nothing can be
+   kept, and the shut-down and restart entries say so instead of offering a save
+   that would write to RAM. With no menus on this backend (the X11
    host) there is nothing to power off, so it simply quits."
   (if (null *chooser*)
       (progn (setf *leave-action* :console) :quit)
@@ -3991,20 +3994,44 @@
              (x (- (floor (or (third screen) 800) 2) 100))
              (y (- (floor (or (fourth screen) 600) 2) 40))
              (keep (and (fboundp 'persistence-available-p) (funcall 'persistence-available-p)))
+             ;; a finished build in the checkout that /boot/lisp does not hold yet
+             ;; (update.lisp; NIL on a diskless boot, where there is no /boot/lisp)
+             (new (and (fboundp 'pending-build) (ignore-errors (funcall 'pending-build))))
              (e (funcall *chooser* :menu
-                         (cons (menu-entry "Supervisor console" :console :key "1" :group "leave")
-                               (if keep
-                                   (list (menu-entry "Save and shut down" :save-power-off
-                                                     :key "2" :group "leave")
-                                         (menu-entry "Shut down without saving" :power-off
-                                                     :key "3" :group "leave"))
-                                   (list (menu-entry "Shut down (no disk - nothing is kept)"
-                                                     :power-off :key "2" :group "leave"))))
+                         (append
+                          (list (menu-entry "Supervisor console" :console :key "1" :group "leave"))
+                          (if keep
+                              (list (menu-entry "Save and shut down" :save-power-off
+                                                :key "2" :group "leave")
+                                    (menu-entry "Shut down without saving" :power-off
+                                                :key "3" :group "leave")
+                                    (menu-entry "Save and restart" :save-restart
+                                                :key "4" :group "leave"))
+                              (list (menu-entry "Shut down (no disk - nothing is kept)"
+                                                :power-off :key "2" :group "leave")
+                                    (menu-entry "Restart (nothing is kept)" :restart
+                                                :key "4" :group "leave")))
+                          (when new
+                            (list (menu-entry (format nil "Install the new build and restart (~a)"
+                                                      (funcall 'build-label new))
+                                              :update-restart :key "5" :group "leave"))))
                          x y)))
-        (when (and e (or (not (member (getf e :action) '(:power-off :save-power-off)))
-                         (unsaved-files-resolved-p x y)))
+        (when (and e (or (member (getf e :action) '(:console))
+                         (unsaved-files-resolved-p x y))
+                   (or (not (eq (getf e :action) :update-restart))
+                       (build-installed-p)))
           (setf *leave-action* (getf e :action))
           :quit))))
+
+(defun build-installed-p ()
+  "The leave menu's \"Install the new build and restart\": install it NOW, while the
+   environment is still on screen, so a refusal is read in the status line and
+   nothing has been left — the restart itself happens after the screen is given back
+   (*LEAVE-ACTION*). True when the build is in /boot/lisp."
+  (handler-case (progn (funcall 'install-pending-build) t)
+    (error (c)
+      (setf *browser-status* (format nil "Not installed: ~a" c))
+      nil)))
 
 (defun unsaved-files-resolved-p (x y)
   "Before shutting down: are there file panes with unsaved changes, and if so, what

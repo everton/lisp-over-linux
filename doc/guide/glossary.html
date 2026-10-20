@@ -40,18 +40,18 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>EFISTUB</dt>
   <dd>The kernel image built so that UEFI firmware can run it directly as an EFI application. No bootloader is needed. Here the
     <code>bzImage</code> is copied to <code>\EFI\BOOT\BOOTX64.EFI</code>, the path firmware tries by default
-    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:406</span></a>;
+    (<a class="ref" data-ref="build.sh#&quot;cp &quot;$KERNEL/arch/x86/boot/bzImage&quot;&quot;" data-label="build.sh" href="../../build.sh"><code>build.sh</code><span class="loc">build.sh:431</span></a>;
     <a href="../micro-distro.org">micro-distro.org</a>).</dd>
   <dt>initramfs, cpio</dt>
   <dd>A <code>cpio</code> archive the kernel unpacks into an in-memory filesystem and uses as <code>/</code>. Ours is a separate file,
     not built into the kernel, listed line by line in <a class="ref" data-ref="initramfs/initramfs.sbcl.list" href="../../initramfs/initramfs.sbcl.list"><code>initramfs.sbcl.list</code><span class="loc">initramfs/initramfs.sbcl.list</span></a>.</dd>
   <dt>PID 1</dt>
   <dd>The first user process. The kernel panics if it exits, and orphaned processes are re-parented to it. Here it is
-    <code>preinit</code> and then, after <code>execve</code>, the Lisp (<a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:84</span></a>,
+    <code>preinit</code> and then, after <code>execve</code>, the Lisp (<a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:90</span></a>,
     whose docstring says "Never returns").</dd>
   <dt>devtmpfs</dt>
   <dd>A filesystem the kernel fills with <code>/dev</code> nodes for the devices it finds, so no udev is needed. Mounted first thing in
-    <a class="ref" data-ref="initramfs/preinit.c#&quot;mount(&quot;devtmpfs&quot;&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:599</span></a>. Its nodes are root-owned,
+    <a class="ref" data-ref="initramfs/preinit.c#&quot;mount(&quot;devtmpfs&quot;&quot;" data-label="preinit main" href="../../initramfs/preinit.c"><code>preinit main</code><span class="loc">initramfs/preinit.c:746</span></a>. Its nodes are root-owned,
     which is why <code>lol-rootd</code> exists.</dd>
   <dt>sysfs, /proc</dt>
   <dd>Kernel state presented as small text files. The framebuffer's geometry comes from <code>/sys/class/graphics/fb0</code>
@@ -86,14 +86,14 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>capabilities, ambient set</dt>
   <dd>Root's power split into about 40 pieces. A capability is normally lost across <code>execve</code> for a non-root program. The
     <em>ambient</em> set (Linux 4.3+) is how it survives. preinit keeps five
-    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:562</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int become_user&quot;" data-label="become_user" href="../../initramfs/preinit.c"><code>become_user</code><span class="loc">initramfs/preinit.c:709</span></a>).</dd>
   <dt>bind mount</dt>
   <dd>The same directory made visible at a second path, possibly with different flags. Only <code>/mnt/host/home</code> is bound onto
-    <code>/home</code> (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:270</span></a>).</dd>
+    <code>/home</code> (<a class="ref" data-ref="initramfs/preinit.c#&quot;static int mount_storage(void)&quot;" data-label="mount_storage" href="../../initramfs/preinit.c"><code>mount_storage</code><span class="loc">initramfs/preinit.c:272</span></a>).</dd>
   <dt>real vs effective uid</dt>
   <dd>The effective uid decides permissions; the real uid decides who may signal you. <code>lol-rootd</code> is real = user,
     effective = root, so the user's Lisp can signal it and it keeps root's powers
-    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:499</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/preinit.c#&quot;static pid_t start_rootd&quot;" data-label="start_rootd" href="../../initramfs/preinit.c"><code>start_rootd</code><span class="loc">initramfs/preinit.c:644</span></a>).</dd>
 </dl>
 
 <h2>SBCL and the image</h2>

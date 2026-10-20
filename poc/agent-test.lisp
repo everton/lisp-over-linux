@@ -34,7 +34,7 @@
       (funcall 'load-recording (merge-pathnames m *root*)))
     ;; the transport: the networking track's HTTP-REQUEST, loaded as poc/http-test.lisp
     ;; loads it (plain http to 127.0.0.1 needs neither DNS nor TLS, but they come along)
-    (dolist (f '("net" "dhcp" "dns" "sntp" "tls" "http"))
+    (dolist (f '("process" "net" "dhcp" "dns" "sntp" "tls" "http"))
       (load (merge-pathnames (format nil "initramfs/~a.lisp" f) *root*)))
     ;; the tools and the store load after the transport, as in build.sh's order
     ;; (agent-ui.lisp, between them there, needs the shell; it is left out here)

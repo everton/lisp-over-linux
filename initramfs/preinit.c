@@ -17,7 +17,8 @@
  *   2. fork a tiny root helper, "lol-rootd", that keeps the few privileged
  *      jobs the Lisp cannot do as a user: chown hotplugged devices to the
  *      user, remount the disk read-only before power-off, set the clock, and
- *      copy the host's Wi-Fi profiles for the user.
+ *      copy the host's Wi-Fi profiles for the user, and install a new build
+ *      into the host's /boot/lisp.
  *   3. become the USER (e.g. everton, uid 1000) before exec'ing the Lisp,
  *      keeping only five named capabilities. Everything the environment
  *      creates on the real disk is then owned by the user — and it cannot
@@ -40,6 +41,7 @@
 #include <fcntl.h>
 #include <grp.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -423,7 +425,7 @@ static void on_usr1(int sig) { (void)sig; want_shutdown = 1; }
 /* ---- two more requests, each one signal (doc/networking.org §2c, §7) ------ */
 /*
  * A request to lol-rootd is a SIGNAL, never a message to parse: the whole
- * vocabulary is three signal numbers, so there is nothing for a confused or
+ * vocabulary is a handful of signal numbers, so there is nothing for a confused or
  * hostile Lisp to smuggle in. The numbers are fixed here and in the Lisp (not
  * SIGRTMIN+n, which glibc and musl number differently: 34 vs 35).
  *
@@ -496,7 +498,150 @@ static void do_nmimport(uid_t uid, gid_t gid) {
     say("lol-rootd: nm import: %d profile(s) copied to %s", n, dst);
 }
 
-static pid_t start_rootd(uid_t uid, gid_t gid, int have_disk) {
+/* ---- ROOTD_SIG_INSTALL (42): a new build into the host's /boot/lisp ------- */
+/*
+ * The host's GRUB boots /boot/lisp/{bzImage,initramfs.cpio} (doc/micro-distro.org,
+ * "Booting from the host's GRUB"). Those files are root's, on the host's root
+ * filesystem, which we only ever see read-only — so updating the image used to
+ * mean booting Debian for one `sudo cp`. Now the environment copies a finished
+ * build into ~/.lol/stage/ and sends us this signal (update.lisp).
+ *
+ * Like the other requests, it carries nothing: the source is ALWAYS the user's
+ * <home>/.lol/stage/, the destination ALWAYS /boot/lisp/, the names fixed below.
+ * The source is opened AS THE USER (setfsuid), with O_NOFOLLOW, so a stage file
+ * that is a symlink to /etc/shadow, say, is refused rather than copied where GRUB
+ * reads. Each file must look like what it claims to be — a bzImage has "MZ" at 0
+ * and "HdrS" at 0x202 (the x86 boot protocol, linux/Documentation/arch/x86/
+ * boot.rst), a newc cpio "070701" at 0 — which catches a half-written build, not
+ * a malicious one: whoever may install an image may run any code as root at the
+ * next boot anyway. That is the point of the request, and doc/storage.org §6
+ * says so.
+ *
+ * Writing: /mnt/host is a read-only BIND view of a superblock that is read-write
+ * (our /home lives on it), so a bind remount without MS_RDONLY makes the view
+ * writable for the copy and another puts it back. Each file goes to .NAME.new
+ * (fsync'd) first; only when all three are written does the old NAME become
+ * NAME.prev and .NAME.new become NAME — a failed copy leaves the installed image
+ * as it was, and the previous one stays at hand for a rollback from Debian.
+ *
+ * The answer goes to /tmp/lol-install.status, written as the user: "ok" or
+ * "error: …" on one line. update.lisp removes it, signals, and waits for it.
+ */
+#define ROOTD_SIG_INSTALL 42
+static volatile sig_atomic_t want_install = 0;
+static void on_install(int sig) { (void)sig; want_install = 1; }
+
+struct stage_file { const char *name; long long min, max; const char *magic; long off; };
+static const struct stage_file stage_files[] = {
+    { "bzImage",        1 << 20, 64LL << 20, "HdrS",    0x202 },
+    { "initramfs.cpio", 1 << 20,  2LL << 30, "070701",  0 },
+    { "build-info",     8,        4096,      "(:stamp", 0 },
+};
+#define NSTAGE (int)(sizeof stage_files / sizeof stage_files[0])
+
+static void install_status(uid_t uid, gid_t gid, const char *fmt, ...) {
+    char line[400];
+    va_list ap;
+    va_start(ap, fmt); vsnprintf(line, sizeof line, fmt, ap); va_end(ap);
+    say("lol-rootd: install: %s", line);
+    setfsgid(gid); setfsuid(uid);
+    int fd = open("/tmp/lol-install.status",
+                  O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0600);
+    setfsuid(0); setfsgid(0);
+    if (fd < 0) return;
+    size_t len = strlen(line);
+    line[len] = '\n';                           /* vsnprintf left room: len < 400 */
+    if (write(fd, line, len + 1) < 0) { /* nothing more to tell anyone */ }
+    close(fd);
+}
+
+/* Copy all of IN (from offset 0) into a new file at TO; fsync it. 0 or an errno. */
+static int copy_fd_to(int in, const char *to) {
+    static char buf[1 << 20];
+    int out = open(to, O_WRONLY | O_CREAT | O_TRUNC | O_NOFOLLOW | O_CLOEXEC, 0644);
+    if (out < 0) return errno;
+    int err = 0;
+    if (lseek(in, 0, SEEK_SET) != 0) err = errno;
+    for (ssize_t n; !err && (n = read(in, buf, sizeof buf)) != 0; ) {
+        if (n < 0) { if (errno != EINTR) err = errno; continue; }
+        for (ssize_t done = 0; !err && done < n; ) {
+            ssize_t w = write(out, buf + done, (size_t)(n - done));
+            if (w < 0) { if (errno != EINTR) err = errno; } else done += w;
+        }
+    }
+    if (!err && fsync(out) != 0) err = errno;
+    if (close(out) != 0 && !err) err = errno;
+    return err;
+}
+
+static void do_install(uid_t uid, gid_t gid, const char *home) {
+    static const char *dir = "/mnt/host/boot/lisp";
+    int fds[NSTAGE];
+    for (int i = 0; i < NSTAGE; i++) fds[i] = -1;
+
+    /* 1. open and check every stage file, as the user */
+    for (int i = 0; i < NSTAGE; i++) {
+        const struct stage_file *s = &stage_files[i];
+        char path[400], head[8] = { 0 };
+        struct stat st;
+        snprintf(path, sizeof path, "%s/.lol/stage/%s", home, s->name);
+        setfsgid(gid); setfsuid(uid);
+        fds[i] = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+        setfsuid(0); setfsgid(0);
+        const char *why = NULL;
+        if (fds[i] < 0) why = strerror(errno);
+        else if (fstat(fds[i], &st) != 0 || !S_ISREG(st.st_mode)) why = "not a regular file";
+        else if (st.st_size < s->min || st.st_size > s->max) why = "implausible size";
+        else if (pread(fds[i], head, strlen(s->magic), s->off) != (ssize_t)strlen(s->magic)
+                 || memcmp(head, s->magic, strlen(s->magic)))
+            why = "wrong magic (not a finished build?)";
+        else if (i == 0 && pread(fds[i], head, 2, 0) == 2 && memcmp(head, "MZ", 2))
+            why = "no MZ header (not an EFI bzImage)";
+        if (why) {
+            install_status(uid, gid, "error: %s: %s", path, why);
+            for (int j = 0; j <= i; j++) if (fds[j] >= 0) close(fds[j]);
+            return;
+        }
+    }
+
+    /* 2. the host's /boot, writable for a moment */
+    if (mount(NULL, "/mnt/host", NULL, MS_REMOUNT | MS_BIND | MS_NOSUID | MS_NODEV, NULL) != 0) {
+        install_status(uid, gid, "error: remounting /mnt/host read-write: %s", strerror(errno));
+        for (int i = 0; i < NSTAGE; i++) close(fds[i]);
+        return;
+    }
+    int err = 0;
+    const char *failed = "";
+    struct stat dst;
+    if (mkdir(dir, 0755) != 0 && errno != EEXIST) { err = errno; failed = dir; }
+    else if (lstat(dir, &dst) != 0 || !S_ISDIR(dst.st_mode)) { err = ENOTDIR; failed = dir; }
+
+    /* 3. every file to .NAME.new, then 4. all of them into place */
+    char tmp[NSTAGE][300], fin[NSTAGE][300], prev[sizeof fin[0] + 8];
+    for (int i = 0; i < NSTAGE; i++) {
+        snprintf(tmp[i], sizeof tmp[i], "%s/.%s.new", dir, stage_files[i].name);
+        snprintf(fin[i], sizeof fin[i], "%s/%s", dir, stage_files[i].name);
+    }
+    for (int i = 0; !err && i < NSTAGE; i++)
+        if ((err = copy_fd_to(fds[i], tmp[i]))) failed = tmp[i];
+    for (int i = 0; !err && i < NSTAGE; i++) {
+        snprintf(prev, sizeof prev, "%s.prev", fin[i]);
+        if (rename(fin[i], prev) != 0 && errno != ENOENT) { err = errno; failed = prev; }
+        else if (rename(tmp[i], fin[i]) != 0) { err = errno; failed = fin[i]; }
+    }
+    if (err) for (int i = 0; i < NSTAGE; i++) unlink(tmp[i]);
+    int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (dfd >= 0) { fsync(dfd); close(dfd); }
+    for (int i = 0; i < NSTAGE; i++) close(fds[i]);
+
+    /* 5. read-only again — before answering, so "ok" means it is all on disk */
+    if (mount(NULL, "/mnt/host", NULL, MS_REMOUNT | MS_BIND | MS_RDONLY | MS_NOSUID | MS_NODEV, NULL) != 0)
+        say("lol-rootd: install: read-only remount of /mnt/host failed: %s", strerror(errno));
+    if (err) install_status(uid, gid, "error: %s: %s", failed, strerror(err));
+    else     install_status(uid, gid, "ok");
+}
+
+static pid_t start_rootd(uid_t uid, gid_t gid, const char *home, int have_disk) {
     pid_t pid = fork();
     if (pid != 0) return pid;                   /* parent (or fork failed: -1) */
     prctl(PR_SET_NAME, "lol-rootd");
@@ -513,10 +658,12 @@ static pid_t start_rootd(uid_t uid, gid_t gid, int have_disk) {
         sa.sa_flags = SA_SIGINFO;
         sigaction(ROOTD_SIG_SETTIME, &sa, NULL);
         signal(ROOTD_SIG_NMIMPORT, on_nmimport);
+        signal(ROOTD_SIG_INSTALL, on_install);
     }
     for (;;) {
         if (want_settime)  { want_settime = 0;  do_settime(); }
         if (want_nmimport) { want_nmimport = 0; do_nmimport(uid, gid); }
+        if (want_install)  { want_install = 0;  if (have_disk) do_install(uid, gid, home); }
         if (want_shutdown) {
             sync();
             if (have_disk) {
@@ -686,7 +833,7 @@ int main(void) {
     give_resolv_conf(u.uid, u.gid, u.ok);
     if (u.ok) {
         give_devices(u.uid, u.gid);
-        pid_t rootd = start_rootd(u.uid, u.gid, have_disk);
+        pid_t rootd = start_rootd(u.uid, u.gid, u.home, have_disk);
         if (rootd > 0) {
             snprintf(env_rootd, sizeof env_rootd, "LOL_ROOTD_PID=%d", (int)rootd);
             envp[n_env++] = env_rootd;

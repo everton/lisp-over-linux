@@ -289,6 +289,23 @@ development that is mostly fine. Three answers, cheapest first:
    /Estimate/, and it widens what the root helper does. It needs the same
    scrutiny as [[file:storage.org][storage.org]] §6.
 
+*Why =sudo= cannot work in here (asked 2026-10-20).* Any one of four things is enough
+to stop it:
+1. lol-ct sets =PR_SET_NO_NEW_PRIVS= before the exec, so the kernel ignores setuid
+   bits.
+2. =/mnt/host=, and the =/home= bound from it, are =nosuid=, a flag locked inside a
+   user namespace.
+3. uid 0 is not in the one-uid map, so =setuid(0)= fails, and a file owned by an
+   unmapped uid (=/usr/bin/sudo=, root's) never grants its setuid.
+4. =sudo= itself refuses an =/etc/sudoers= that is not owned by uid 0, and here it
+   is owned by =nobody=.
+Under all of that, PID 1 is not root either, so there is nothing to hand down.
+Root on the host's Debian (=apt install= into it) stays a job for booting Debian.
+That was the user's decision the same day, and option 1 above still holds. The
+one administrative job the environment *does* need, installing its own next build
+into =/boot/lisp=, does not go through a container at all. It is a fixed
+=lol-rootd= request ([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]).
+
 * 4. The host prototype (verified)
 
 The probe was run with util-linux =unshare= on the host as the ordinary user, with
@@ -470,6 +487,19 @@ the project's Ruby. The price is that whatever your login dotfiles print heads
 every run pane. On the build host that is an ssh-agent banner and an =ssh-add=
 passphrase prompt, which reads end-of-file and gives up. Set the variable to
 ='("bash" "-c")= to skip the dotfiles, and with them the =PATH= they set.
+
+*Building the image itself* works in the =default= container (2026-10-20, on the
+laptop): =./build.sh= in 11 s, the kernel's =make -j8 bzImage= in 19.5 s
+incremental, the host's =musl-gcc=, =gcc= and the Wi-Fi firmware all seen through
+the overlays. One thing had to change. =build.sh= names the disk preinit mounts by
+the UUID of the filesystem holding =$HOME= (=findmnt -no UUID -T=), and in here
+=findmnt= has nothing to go on: =/home= shows as a bare =/dev/nvme0n1p2=, with no
+=/dev/disk/by-uuid= and no udev, and the block device is root's to read. The first
+build therefore baked =disk=none=, an image that would never mount the laptop's
+disk. =build.sh= now falls back to the host's =/etc/fstab= (the container's =/etc=
+is an overlay over it), taking the =UUID== of the longest mount point holding
+=$HOME=. Installing the result needs root, and that goes through the environment,
+not this terminal ([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]).
 
 ** From Lisp: the API other parts of the system use
 

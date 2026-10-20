@@ -291,7 +291,7 @@ OPTIONS
       ((string= head "network")
        (require :sb-bsd-sockets)
        (handler-bind ((warning #'muffle-warning))
-         (dolist (m '("net" "dhcp" "dns" "sntp" "tls" "http" "wifi" "net-views"))
+         (dolist (m '("process" "net" "dhcp" "dns" "sntp" "tls" "http" "wifi" "net-views"))
            (load (merge-pathnames (format nil "initramfs/~a.lisp" m) *root-dir*))))
        (funcall 'subj-network))
       ;; terminal:CMD — a real program on a real pty of THIS host (doc/terminal.org)

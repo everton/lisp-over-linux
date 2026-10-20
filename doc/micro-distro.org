@@ -26,7 +26,7 @@ Status: *WORKING* — verified end-to-end in QEMU + OVMF (UEFI) AND on real
 hardware (boots on the laptop). See =* Testing=.
 Kernel build: linux-7.2.5. Config tag =#16= = first working glibc build;
 tag =#17= = same but with the musl-built init (see =* Shrinking init with musl=).
-Current tag: =#30= (SMP) — the history of every tag is [[file:kernel-config.org][kernel-config.org]]'s change log.
+Current tag: =#31= (kexec) — the history of every tag is [[file:kernel-config.org][kernel-config.org]]'s change log.
 USB written to /dev/sda (Kingston DataTraveler 3.0, 57.7G): GPT + one ESP
 (ef00, FAT32) with the kernel copied to \EFI\BOOT\BOOTX64.EFI.
 
@@ -491,6 +491,13 @@ only the kernels it detected itself. Confirm with
 rebuilding needs only =--install-host=: GRUB reads the files at boot, so
 =update-grub= is not needed again.
 
+*Which entry is the default matters once the image restarts itself.* A restart
+through the firmware lands on GRUB's default entry, and only kexec (tag #31) avoids
+the question. On the laptop the entry lives in =/etc/grub.d/06_lisp= rather than
+=40_custom=. The scripts run in name order and =06= sorts before =10_linux=, so with
+=GRUB_DEFAULT=0= our entry is the first and the default, and Debian is one arrow
+key down. With the entry in =40_custom= instead, a firmware restart boots Debian.
+
   - =search --file ... --set=root= makes GRUB find the partition by the file,
     not by a disk number that could shift when a USB stick is plugged in.
   - =gfxpayload=keep= hands the kernel the GOP mode GRUB is already in, which
@@ -516,11 +523,19 @@ path is absent (=EFI_NOT_FOUND=) — see =efi_load_initrd()= in
     pick it from the firmware's own menu (F12 etc.) — with the same ESP-root
     constraint on the cpio. Worth it if the point is to see the firmware do it.
 
+** Updating from inside the environment
+Since 2026-10-20 (tag #31) the image installs its own successor: build in the
+terminal, then =SuperL-q= -> *Install the new build and restart*. lol-rootd copies the
+pair into =/boot/lisp= (the old one kept as =*.prev=) and the image kexecs into it.
+The full story is in [[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]. =--install-host= stays
+the way to do it from Debian.
+
 Safety (true at tag #26): up to tag #24 the image could not even see the host's disk. *Since tag
 #25 it can, on purpose*: NVMe + ext4 are built in, and preinit mounts the
 laptop's root privately — the host's =/= read-only at =/mnt/host=, only =/home=
 writable — then runs the environment as the user, so it can write nowhere the
-user could not ([[file:storage.org][storage.org]]). Do not boot it while the host is *hibernated*:
+user could not ([[file:storage.org][storage.org]]). One exception, since tag #31: on request,
+lol-rootd writes the new build into =/boot/lisp= and nothing else. Do not boot it while the host is *hibernated*:
 mounting a filesystem a sleeping kernel also holds open corrupts it. Secure Boot must be
 off, as for the stick — GRUB's =linux= command refuses an unsigned kernel under
 shim.

@@ -1716,7 +1716,16 @@
   (case (shiftf *leave-action* nil)
     (:power-off (funcall 'leave-without-saving) (power-off))   ; both in desk.lisp, loaded later
     ;; the desk is written HERE, before POWER-OFF's release-disk makes /home read-only
-    (:save-power-off (funcall 'save-desk) (power-off))))
+    (:save-power-off (funcall 'save-desk) (power-off))
+    ;; restarts (process.lisp): kexec into /boot/lisp's image when the kernel can,
+    ;; else the firmware. :UPDATE-RESTART installed the new build already, while the
+    ;; environment was still on screen (BUILD-INSTALLED-P, poc/shell.lisp)
+    (:restart (funcall 'leave-without-saving) (restart-machine))
+    ((:save-restart :update-restart)
+     (if (funcall 'persistence-available-p)
+         (funcall 'save-desk)
+         (funcall 'leave-without-saving))
+     (restart-machine))))
 
 (defun fb-stop-requested-p ()
   "True when a key is waiting and it is Esc or C-g — the file manager's recursive find

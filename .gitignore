@@ -56,3 +56,4 @@ initramfs/firmware.list
 # the outline font, copied from the BUILD HOST by build.sh ($LOL_FONT, default DejaVu Sans
 # Mono): third-party, never committed — doc/fonts.org §6
 initramfs/mono.ttf
+iso_root/build-info

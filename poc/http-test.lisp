@@ -22,7 +22,7 @@
 
 (handler-bind ((warning #'muffle-warning))
   (load (rel "../host-client/http-test-server.lisp"))
-  (dolist (f '("net" "dhcp" "dns" "sntp" "tls" "http"))
+  (dolist (f '("process" "net" "dhcp" "dns" "sntp" "tls" "http"))
     (load (rel (format nil "../initramfs/~a.lisp" f)))))
 
 (setf *host-root* "")                       ; the host's own /, not /mnt/host

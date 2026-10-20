@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #30). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #31). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
@@ -15,7 +15,9 @@ survived since 2026-10-17, [[file:diagnostics.org][diagnostics.org]] §9) — [[
 list; as of now: (r) Lisp REPL, (b) the pixel environment — opening on the
 Workspace ([[file:../initramfs/fb-browser.lisp::defun run-browser-fb][run-browser-fb]]'s default root; the module index is =SuperL-m=), (p) Lisp workspace, (c) change set, (l) the flat CL-USER package view,
 (w) spawn a worker, (a) draw the Land-of-Lisp alien, (m) memory usage, (t) toggle
-the network REPL, (s) shut down (asking whether to save the desk first).
+the network REPL, (s) shut down (asking whether to save the desk first), (e) restart
+(the same question), and (u) install the new build and restart, shown when a finished
+build waits in the checkout (section "Updating from inside" below).
 Shipped as a *separate initrd* (kernel + initramfs.cpio = two files). Rebuild
 with [[file:../build.sh][build.sh]]. Kernel tag #19 = real-hardware fixes: enabling CONFIG_PCI
 (USB keyboard + ACPI power-off both depend on it); tag #20 = bigger fbcon font
@@ -34,7 +36,9 @@ fallback. Tag #28 adds what helps when the KERNEL is stuck: Magic SysRq,
 the soft/hard-lockup and hung-task detectors, and pstore on EFI variables
 ([[file:diagnostics.org][diagnostics.org]] §6). Tag #29 adds sound (HD-Audio + the Realtek codecs; lol-rootd
 gives =/dev/snd= to the user and =mixer.lisp= sets the codec up — [[file:screencast.org][screencast.org]]). Tag #30 makes the kernel SMP: the
-image's threads run on every CPU, the userland unchanged ([[file:kernel-config.org][kernel-config.org]] §10). Since #26 the network REPL is *off* unless the boot asks
+image's threads run on every CPU, the userland unchanged ([[file:kernel-config.org][kernel-config.org]] §10). Tag #31 adds
+kexec, so a restart into a new build skips the firmware ([[file:kernel-config.org][kernel-config.org]] §11; section
+"Updating from inside" below). Since #26 the network REPL is *off* unless the boot asks
 for it ([[file:networking.org][networking.org]]).
 Since 2026-10-12 a second static C program ships beside
 preinit: =/sbin/lol-ct=, which runs a command inside the host's own Debian as a
@@ -251,7 +255,7 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../poc/terminal-pane.lisp][=poc/terminal-pane.lisp=]] | =subj-terminal=: the terminal as a pane — drawing, keys, mouse, =open-terminal=, =SuperL-↵= (uses shell + terminal + pty)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
   | [[file:../poc/morphic.lisp][=poc/morphic.lisp=]]       | the *desk*: the world the environment runs in, the tiled shell as a tree of morphs (=shell-morph=: tab strip and tray, a =trail-area= of the trail's pane morphs, the status line), laid out and its damage found by signature (=desk-sync=), and trails torn off into =trail-window= surfaces holding the same pane morphs — =SuperL-g= and its grab mode, a tab dragged out, title-bar drag, grip resize, re-tile, close; the halo over the morph tree and its window handles; each pane's body laid out and damaged on its own (a text view by its rows); drag and drop (=accept-drop= per morph, =SuperL-p= / =SuperL-d=); the =overlay= class and =run-overlay= (a modal that waits by turning the loop); stepping panes ([[file:morphic.org][morphic.org]] §§12–13; uses morph + shell) |
   | [[file:../poc/overlays.lisp][=poc/overlays.lisp=]]      | the modal cards as overlay morphs: the Spotter (=open-spotter=), the menus and the halo (=run-chooser=, the shell's =*chooser*=), the clipboard manager, the value prompt (=*value-prompt*=) — backend-blind; the debugger and the cheatsheet overlays stay in =fb-browser.lisp= (uses morphic + shell)                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-  | [[file:../initramfs/process.lisp][=process.lisp=]]           | =worker-main=, =spawn-worker=, =power-off=                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+  | [[file:../initramfs/process.lisp][=process.lisp=]]           | =worker-main=, =spawn-worker=, =power-off=, =restart-machine= (kexec, else the firmware), the lol-rootd requests' =rootd-signal=                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
   | [[file:../initramfs/framebuffer.lisp][=framebuffer.lisp=]]       | =draw-alien= (blit the Land-of-Lisp sprite to /dev/fb0)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
   | [[file:../initramfs/meminfo.lisp][=meminfo.lisp=]]           | =report-memory= (the =m)= menu action)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
   | [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]        | =run-browser-fb=: the code browser full-screen on =/dev/fb0= (the =b)= menu option); reads *every* keyboard and pointer at once, with hotplug via inotify on =/dev/input= ([[file:input.org][input.org]] §4¾); its loop decodes input into =lol.morph= events (=input-events=), lets the world route them and sends what the world repaired (=present-repair=); one turn is =fb-cycle=, which a waiting overlay turns too; the debugger, its source viewer, the ASK view and the cheatsheet are overlays here                                                                                                                                                                                                                                                                               |
@@ -268,7 +272,8 @@ into the image; see [[file:code-browser.org][code-browser.org]] §2).
   | [[file:../initramfs/net-views.lisp][=net-views.lisp=]]         | the network as a subject: =SuperL-n=, the Spotter's "network"/"wifi" (uses shell + wifi)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
   | [[file:../initramfs/journal.lisp][=journal.lisp=]]           | the change journal: every Accept appended (fsync'd) to =~/.lol/journal/changes.lisp=, replayed at boot one guarded entry at a time; the journal view ([[file:session-persistence.org][session-persistence.org]])                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
   | [[file:../initramfs/file-out.lisp][=file-out.lisp=]]          | file-out: write each changed definition back into its =.lisp= file in the checkout, verbatim                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-  | [[file:../initramfs/desk.lisp][=desk.lisp=]]              | the desk: tabs, Workspace text, recents saved to =~/.lol/desk/= and restored at boot; the autosave service; the console's =s=                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+  | [[file:../initramfs/desk.lisp][=desk.lisp=]]              | the desk: tabs, Workspace text, recents saved to =~/.lol/desk/= and restored at boot; the autosave service; the console's =s=, =e= and =u=                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+  | [[file:../initramfs/update.lisp][=update.lisp=]]            | the next build: =pending-build= (the checkout's =iso_root/build-info= against =/boot/lisp='s), =install-pending-build= (stage in =~/.lol/stage/=, lol-rootd's signal 42) — section "Updating from inside"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
   | [[file:../initramfs/supervisor.lisp][=supervisor.lisp=]]        | the menu loop, =show-input-devices= / =show-net-interfaces=, =init-toplevel=                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 
 Ordering constraints, so you know which moves are safe: =line-editor= must precede
@@ -522,7 +527,9 @@ setup step, once, before the Lisp exists:
    =/mnt/host=, bind-mount only its =/home= onto ours, make =/mnt/host= read-only;
 3. look the user up in the host's =/etc/passwd= / =/etc/group=, chown the device
    nodes the Lisp opens, fork =lol-rootd= (the one process that stays root: device
-   hotplug + read-only remount at power-off);
+   hotplug + read-only remount at power-off, and three one-signal requests since —
+   the clock, the NetworkManager profiles, and since 2026-10-20 installing a new
+   build into the host's =/boot/lisp=, section "Updating from inside");
 4. drop to the user, keeping five capabilities through =execve= via the *ambient*
    set, and =execve= the Lisp with =HOME=, =USER=, =LOL_ROOTD_PID= (and
    =LOL_NETREPL=1= when QEMU asked for the net REPL — read here because the
@@ -777,6 +784,80 @@ Refresh the real USB (partitioning already done; copy BOTH files):
   sudo cp ~/lisp-over-linux/iso_root/initramfs.cpio       /mnt/initramfs.cpio
   sync; sudo umount /mnt
 #+end_src
+
+* Updating from inside — build, install, restart
+
+/Since 2026-10-20 (tag #31)./ The laptop boots the image through the host's GRUB
+from =/boot/lisp= ([[file:micro-distro.org::Booting from the host's GRUB][micro-distro.org → Booting from the host's GRUB]]). The environment's
+terminal can *build* a new image: its container is the host's own Debian, with the
+same compilers, the checkout in =/home= and room to write (measured 2026-10-20 on the
+laptop: =./build.sh= 11 s, the kernel's =make -j8 bzImage= 19.5 s incremental). It
+could not *install* one. =/boot/lisp= is root's, on the host's root filesystem, which
+the image only ever sees read-only, and a container has no =sudo= (setuid is off
+there by design, [[file:containers.org][containers.org]] §3.4). So every update meant: boot Debian,
+=sudo cp=, boot back. Now it is one step:
+
+1. In the terminal (=SuperL-Return=): =./build.sh= (with =--kernel= if the kernel
+   changed).
+2. =SuperL-q= -> *Install the new build and restart* (key 5; it names the build).
+   From the supervisor's console menu, the same is =u=.
+
+The desk is saved on the way out, as by "Save and shut down", so the restart comes
+back to the same tabs and Workspace text.
+
+What happens, piece by piece:
+
+- *=build.sh=* writes =iso_root/build-info= last, after both files are final: one
+  READable plist, =(:stamp "rev date" :bzimage N :initramfs N)= — the same stamp it
+  bakes into =*build-stamp*=. It is removed when packing starts, so a half-done build
+  never has one vouching for it. It also bakes =*build-root*=, the checkout's path, so
+  the image knows where to look for its successor. =--install-host= copies
+  =build-info= into =/boot/lisp= too. Inside a container it only says to use the menu
+  (=LOL_CONTAINER= is set there).
+- *[[file:../initramfs/update.lisp::defun pending-build][=pending-build=]]* is a finished checkout build (its two files the
+  sizes =build-info= says) whose stamp differs from =/boot/lisp/build-info='s. Only
+  then does the leave menu offer the entry.
+- *[[file:../initramfs/update.lisp::defun install-pending-build][=install-pending-build=]]* runs while the environment is still on screen,
+  so a refusal shows in the status line and nothing has been left. It copies the
+  three files into =~/.lol/stage/=, checks the copy is still that build, and sends
+  =lol-rootd= signal 42. Then it waits (60 s at most) for the one-line answer in
+  =/tmp/lol-install.status=.
+- *lol-rootd* ([[file:../initramfs/preinit.c::static void do_install][=do_install=]]) takes no argument: the source is always
+  =<home>/.lol/stage/=, the destination always =/boot/lisp/=. It opens the stage *as
+  the user* (=setfsuid=, =O_NOFOLLOW=), so a planted symlink to a root-only file is
+  refused rather than copied. It checks each file's magic number (=MZ= and =HdrS= at
+  =0x202= for the bzImage, the x86 boot protocol; =070701= for a newc cpio) and size.
+  It makes the =/mnt/host= view writable for the copy (a bind remount), writes every
+  file to =.NAME.new= with an fsync, and only then renames: the old file to
+  =NAME.prev=, the new one into place. Then the view is read-only again, before it
+  answers =ok=.
+- *[[file:../initramfs/process.lisp::defun restart-machine][=restart-machine=]]* loads =/boot/lisp='s pair with =kexec_file_load(2)= and
+  reboots into it (=LINUX_REBOOT_CMD_KEXEC=). A kernel without kexec answers
+  =ENOSYS=, and then it restarts through the firmware, whose GRUB boots our entry
+  first. =(save-setting :restart-via :firmware)= skips kexec. Both share
+  =stop-for-reboot= with =power-off=: Chrome closed, the session log's last line
+  (=shutdown: restart (kexec)=, so the next boot reads a clean end), sync, the disk
+  read-only.
+
+*Rollback*: the previous pair stays as =bzImage.prev= / =initramfs.cpio.prev=. If a
+new build does not come up, boot Debian (GRUB's next entry) and move them back.
+
+*The first update from #30* goes through the firmware: a #30 kernel has no kexec.
+From #31 on, restarts are kexecs.
+
+*What this widens*: whoever may install an image may run any code as root at the next
+boot. That is the request's purpose, not a side effect. It is still a fixed request
+with no arguments, like the other three, and [[file:storage.org][storage.org]] §6 records it.
+
+Tests: =poc/update-test.lisp= (host, 30 checks) runs lol-rootd's real C
+(=poc/rootd-install-harness.c= =#include=s =preinit.c=) under =unshare -rm= against a
+scratch "host". It checks a whole and a half-written build, the install byte for
+byte, =.prev=, the view read-only again, refusals of a wrong magic and of a
+symlinked stage file, and =kexec-cmdline=. [[file:../check-update.lisp][=check-update.lisp=]] boots a guest on a
+grown copy of =test-disk.img=, presses =SuperL-q= =5=, and asserts the same QEMU
+comes back (the harness's =-no-reboot= would end QEMU on a firmware restart) with the
+desk restored. *Not run yet*: guest checks need KVM, so Debian. Not yet done on the
+laptop either.
 
 * /tmp — what it took
 

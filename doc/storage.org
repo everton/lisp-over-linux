@@ -35,7 +35,7 @@ And the process tree:
 | PID | Program      | Runs as                           | Why                                                                                      |
 |-----+--------------+-----------------------------------+------------------------------------------------------------------------------------------|
 | 1   | =/sbin/lisp= | uid 1000 + 5 capabilities         | the whole environment                                                                    |
-| ~28 | =lol-rootd=  | root (real uid 1000, see §6)      | chown hotplugged devices; remount ro at exit; set the clock, copy NM profiles on request |
+| ~28 | =lol-rootd=  | root (real uid 1000, see §6)      | chown hotplugged devices; remount ro at exit; clock, NM profiles, new build on request   |
 | any | =lol-ct=     | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs                                    |
 
 * 2. The kernel half (tag #25)
@@ -251,7 +251,7 @@ is reachable then, so there is nothing to protect.
 
 * 6. =lol-rootd=: the one process that stays root
 
-Two jobs need root /after/ the drop, and a user may do neither (two small
+Two jobs need root /after/ the drop, and a user may do neither (three small
 requests were added later — end of this section):
 
 - *Hotplug.* A USB mouse plugged in after boot gets a fresh root-owned
@@ -285,6 +285,29 @@ Each is one signal, never a message to parse:
 - *signal 41, copy the host's NetworkManager Wi-Fi profiles* (root-only on the
   host) to =/tmp/lol-nm-import/= — read as root, *written as the user* through
   =setfsuid(2)= ([[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]).
+
+*A fourth (2026-10-20, tag #31): signal 42, install a new build.* It copies
+=~/.lol/stage/{bzImage,initramfs.cpio,build-info}= into the host's =/boot/lisp/=,
+which GRUB boots, so the image can be updated without booting Debian
+([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]). [[file:../initramfs/preinit.c::static void do_install][=do_install=]] keeps the
+other requests' shape: no argument, fixed paths, the source read *as the user*
+(=setfsuid=, =O_NOFOLLOW=, so a staged symlink to =/etc/shadow= is refused, not
+copied), and each file checked for its magic number. =/mnt/host= becomes writable
+only for the copy, by a bind remount of the view (the superblock is read-write
+anyway, for =/home=), then read-only again before it answers in
+=/tmp/lol-install.status=.
+
+This one *does* widen what the user can do, and on purpose. Before it, nothing the
+user ran could change what boots as root. Now the user picks the next image, and
+preinit runs as root in it. The magic-number checks catch a half-written build, not
+a hostile one. That is the same trust Debian gives its =sudo= group, which this user
+is in. The alternative, verifying a signature, needs a key the user would hold
+anyway. With tag #31, =CAP_SYS_BOOT= also lets PID 1 kexec any kernel it can read,
+which is the same power reached another way. So the line that holds is the one
+around PID 1 itself. A container gets no capabilities and cannot signal
+=lol-rootd= (it is in another pid namespace), so a program in the terminal can stage
+a build but only the environment can install it.
+
 And preinit hands the user more things before the drop: =/dev/rfkill= (in
 =give_devices=, so a hotplugged radio's is handed over too — the Wi-Fi kill switch),
 =/dev/snd/*= (tag #29, the sound card: [[file:screencast.org][screencast.org]] §3.1)

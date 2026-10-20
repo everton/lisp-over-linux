@@ -74,7 +74,9 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `check-crash.lisp` | Boot the image **three times** on a writable copy of `test-disk.img` (`*disk-snapshot*` nil): make the runtime `lose()`, assert the panic reboots it, then that the next boot names the crash (log + status line) and archived its `session`, `stderr` and `kernel` logs; power off, and the third boot calls that clean. 13 checks. |
 | `poc/host-logging.lisp` | Loads `deflate.lisp` + `session-log.lisp` for host tests that load modules one at a time, with the logs pointed at `/tmp` — never the real `~/.lol/log`. |
 | `poc/deflate.lisp` | `lol.deflate`: the DEFLATE/zlib/gzip WRITER (LZ77 + fixed Huffman), shared by the image (log archives) and `host-client/png.lisp`. `poc/inflate.lisp` is the reader. |
-| `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, then `execv`s the Lisp. |
+| `initramfs/preinit.c` | The C PID-1 shim: mounts /proc /sys /dev /tmp, finds and mounts the disk, forks `lol-rootd` (root's few jobs; each request is ONE signal: 40 the clock, 41 the NetworkManager profiles, 42 install a new build into `/boot/lisp` — `do_install`: fixed paths, the stage read as the user), drops to the user, then `execv`s the Lisp. |
+| `initramfs/update.lisp` | **Updating the image from inside it** (2026-10-20, `doc/sbcl-init.org` "Updating from inside"): `pending-build` (the checkout's `iso_root/build-info`, written last by `build.sh`, against `/boot/lisp`'s; `*build-root*` is baked by `build.sh`), `install-pending-build` (copy into `~/.lol/stage/`, `lol-rootd` signal 42, its answer in `/tmp/lol-install.status`). Offered as `SuperL-q` key 5 "Install the new build and restart" and the console's `u`; it installs while the environment is still on screen, then `restart-machine`. Host test `poc/update-test.lisp` (30; lol-rootd's real C via `poc/rootd-install-harness.c` under `unshare -rm`); guest `check-update.lisp` (run it from Debian). |
+| `check-update.lisp` | Boot the image on a grown, writable copy of `test-disk.img` with this build planted as the checkout's next one, then `SuperL-q` `5`: assert the guest comes back **in the same QEMU** (a firmware restart would end it: `-no-reboot`), so by kexec, with the previous session ended cleanly by "restart (kexec)", `/boot/lisp` holding the planted stamp, the stage emptied, `/mnt/host` read-only, `console=` not doubled, the Workspace text restored; then debugfs: the three files root's. |
 | `initramfs/journal.lisp` | **The change journal** (`doc/session-persistence.org`): `journal-accept` on `*accept-hooks*` (registry.lisp) appends each Accept as one READable plist, fsync'd, 0600; `boot-replay-journal` (called by `supervisor-main`) replays it guarded per entry with a timeout, retires what the build already has, holds another build's entries as pending, never replays a struct, quarantines a torn tail, logs skips to session.log; `persistence-available-p` (no disk = nothing written); the journal view (`subj-journal`, Spotter "journal": `a` Accept / `d` drop / `F` file out / `D` discard). `*build-stamp*` is set by `build.sh`. |
 | `initramfs/file-out.lisp` | **File-out**: each changed definition replaced in its own `.lisp` file when the build's text occurs exactly once (comments above it kept), else appended to `~/.lol/journal/changes-unfolded.lisp`; born definitions always unfolded. |
 | `initramfs/desk.lisp` | **The desk**: tabs as subject REFERENCES (`desk-ref` out, the whitelisted `desk-subject` back; a trail is cut at an opaque subject), Workspace text + point, recents, file-manager settings, the clipboard only with the `:desk-clipboard N` setting. `save-desk` / autosave every 5 min (a poll-loop service) / `leave-without-saving`; restored once per boot through `open-environment` (which also stopped wiping the tabs on a console round trip); `console-shutdown` is the menu's `s`. |
@@ -107,7 +109,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `initramfs/wifi.lisp`, `initramfs/net-views.lisp` | Wi-Fi: rfkill via `/dev/rfkill`, the host's `wpa_supplicant` run through the host's loader with PID 1's ambient caps, its control socket + events, saved (`~/.lol/wifi/`, 0600) and NetworkManager-imported networks, `kernel-log`, the tray item; and the network view (`SuperL-n`, Spotter "network"/"wifi"). Host test `poc/wifi-test.lisp`. |
 | `poc/dhcp-test.lisp` | `dhcp.lisp` against a real kernel **without root**: re-runs itself under `unshare -rn`, a veth pair whose far end is a fake router in a second namespace, answering by broadcast or **unicast**. Reproduces the laptop's "associated, no address" (a unicast OFFER never reaches a UDP socket) and proves the **packet-socket** receive fixes it. Network failures are also appended to `~/.lol/log/network.log` (readable from Debian afterwards) — `doc/networking.org` §2b. |
 | `check-net.lisp` | Boot with `LOL_GUEST_HOSTROOT=1` and assert the network: lease + default route, resolv.conf, DNS, HTTP to a host test server (chunked, redirect), HTTPS + a refused certificate, SNTP + `lol-rootd` stepping the clock, IPv6, and Wi-Fi without a radio (the host's supplicant driven over `eth0` with its wired driver). |
-| `initramfs/process.lisp` | Process lifecycle for the supervisor: spawn a throwaway worker, and power off via `reboot(2)` through libc FFI. |
+| `initramfs/process.lisp` | Process lifecycle for the supervisor: spawn a throwaway worker; power off and **restart** via `reboot(2)` through libc FFI (`stop-for-reboot` is what both do first). `restart-machine` kexecs `/boot/lisp`'s pair (`kexec_file_load`, tag #31; `kexec-cmdline` drops what `CONFIG_CMDLINE` would add again) and falls back to the firmware on ENOSYS, or when the `:restart-via :firmware` setting says so. `rootd-pid` / `rootd-signal` serve every lol-rootd request. |
 | `initramfs/meminfo.lisp` | The `m)` menu action: RAM accounting in honest layers — Lisp heap, process RSS, the kernel's own resident image, the whole machine. |
 | `initramfs/examples.lisp` | A gallery of CLOS specimens that exist purely to be *looked at* in the browser — chiefly `COLLIDE`, a genuinely 2-argument generic whose dispatch matrix is a real grid with real gaps. |
 | `initramfs/worker.lisp` | **A second PROCESS that contributes a view** (`doc/processes.org` §2, §7). `run-program "/sbin/lisp" ("job" …)` re-execs the image in a `job` role; the child computes and `prin1`s a plain `(:title :rows)` plist down a pipe; the parent reads it with `*read-eval*` nil and rebuilds real subjects around the names, so a row computed elsewhere drills into a local view. `subj-worker` + one `present` method. Synchronous on purpose — its live twin is `worker-live.lisp`. Falls back to in-process on the host (no `/sbin/lisp`) and says so in the view. |
@@ -246,7 +248,7 @@ Prefer a few well-placed sections over one-liners scattered about.
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
   doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
-- Kernel build tags are `#NN` (currently **#30**). Always say which tag a claim
+- Kernel build tags are `#NN` (currently **#31**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference
   them via those names, never an absolute/`$HOME` path. `build.sh` derives its own
@@ -375,6 +377,14 @@ protocol in a tiled, keyboard-first shell. Progress:
   go through `lol-rootd` — do not add capabilities casually; see `doc/storage.org`.
   Diskless boots (the older `check-*.lisp`, any QEMU without `test-disk.img`) still
   run as root. Our `/` is the initramfs; only `/home` is the host's.
+- **The image is updated from inside it** (2026-10-20, tag #31): `./build.sh` in the
+  terminal's container, then `SuperL-q` → "Install the new build and restart".
+  lol-rootd (signal 42) copies `~/.lol/stage/` into the host's `/boot/lisp` and keeps
+  the old pair as `*.prev`; the restart is a kexec, or the firmware (GRUB's default
+  entry is ours: `/etc/grub.d/06_lisp`). `sudo` in a container is impossible by
+  design (`doc/containers.org` §3.5), and `apt` into the host's Debian stays a
+  Debian job — the user's call. A build in the container finds the disk's UUID in
+  the host's `/etc/fstab`, because `findmnt` cannot see it there.
 - **Networking is on** (tag #21 onward): `CONFIG_NET=y` + `INET` + `virtio-net`, and
   the userland ships DHCP (`dhcp.lisp`) and a TCP REPL on :4005 (`net.lisp`).
   Details: `kernel-config.org` and `doc/networking.org`.
