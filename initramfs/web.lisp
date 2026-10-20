@@ -1823,15 +1823,28 @@ MD.getDisplayMedia = function(c){
     return share(a);
   });
 };
-/* what the page learns of its camera and microphone permissions */
+/* What the page learns of its camera and microphone permissions. A site can have
+   them BLOCKED in Chrome's profile (stored as a content setting when a request
+   reached Chrome's own prompt, which headless cannot show, and was denied); a page
+   that reads 'denied' then never calls getUserMedia (Meet shows its 'blocked'
+   dialog). So the first 'denied' asks us — once a document, the camera and the
+   microphone together — and after our grant the query is answered again: granted.
+   A grant overrides the stored block, and the page's PermissionStatus fires
+   'change' as well (measured, Chrome 148). */
 if (window.Permissions) {
-  var pq = Permissions.prototype.query;
+  var pq = Permissions.prototype.query, unblock = null;
   Permissions.prototype.query = function(d){
-    var r = pq.call(this, d);
-    if (d && /camera|microphone/.test(d.name))
-      r.then(function(p){ note('permissions.query ' + JSON.stringify(d) + ' = ' + p.state); },
-             function(e){ note('permissions.query ' + JSON.stringify(d) + ' failed: ' + e.name); });
-    return r;
+    var self = this, r = pq.call(this, d);
+    if (!(d && /^(camera|microphone)$/.test(d.name))) return r;
+    return r.then(function(p){
+      note('permissions.query ' + JSON.stringify(d) + ' = ' + p.state);
+      if (p.state !== 'denied') return p;
+      if (!unblock) unblock = ask({kind: 'user', audio: true, video: true, blocked: true});
+      return unblock.then(function(ok){ return ok ? pq.call(self, d) : p; });
+    }, function(e){
+      note('permissions.query ' + JSON.stringify(d) + ' failed: ' + e.name);
+      throw e;
+    });
   };
 }
 
@@ -2040,9 +2053,13 @@ function share(a){
             (when perms (web-in-call tab))
             (web-media-answer tab ctx id t) t)
            (*minibuffer* nil)
-           (t (session-log "web: ~a asks for ~{~a~^ and ~}" origin perms)
+           (t (session-log "web: ~a asks for ~{~a~^ and ~}~:[~; (blocked in the profile)~]"
+                           origin perms (eq (jget msg "blocked") t))
               (minibuffer-read
-               (format nil "~a wants your ~{~a~^ and ~}:  y allow  ·  a always  ·  n no "
+               (format nil (if (eq (jget msg "blocked") t)
+                               ;; the page found them blocked in Chrome's profile
+                               "~a has your ~{~a~^ and ~} blocked:  y allow  ·  a always  ·  n keep blocked "
+                               "~a wants your ~{~a~^ and ~}:  y allow  ·  a always  ·  n no ")
                        (web-origin-host origin)
                        (mapcar (lambda (p) (if (equal p "audioCapture") "microphone" "camera")) perms))
                (lambda (k)

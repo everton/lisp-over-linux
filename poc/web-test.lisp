@@ -420,7 +420,31 @@ function pixel(x, y){
               (format t "~&    (1920x1200: ~,1f MB, encode + write ~d ms, page answered after ~d ms more)~%"
                       (/ (web-share-octets *web-share*) 1048576.0) (web-share-last-ms *web-share*)
                       (round (* 1000 (- (get-internal-real-time) t0)) internal-time-units-per-second)))
-            (web-share-stop)))))
+            (web-share-stop)))
+        ;; a site whose camera and microphone are BLOCKED: Meet's case, a block
+        ;; stored in Chrome's profile. The page reads "denied" and never calls
+        ;; getUserMedia, so the first denied query must ask us. Chrome is made to
+        ;; answer denied with Browser.setPermission (what the page sees is the same;
+        ;; that our grant overrides a block really stored in the profile was measured
+        ;; separately, doc/web-browser.org §4.8 M2)
+        (flet ((call-js (e) (cdp-eval *web-chrome* (web-tab-session call) e)))
+          (cdp-send *web-chrome* "Browser.resetPermissions" (jobj))
+          (setf *web-grants* '())
+          (dolist (name '("camera" "microphone"))
+            (cdp-send *web-chrome* "Browser.setPermission"
+                      (jobj "permission" (jobj "name" name) "setting" "denied" "origin" origin)))
+          (pump-until (lambda () (equal (call-js "navigator.permissions.query({name:'camera'}).then(p => p.state)")
+                                        "denied")))
+          (call-js "navigator.permissions.query({name:'microphone'}).then(p => window.Q1 = p.state); 1")
+          (check "calls: a site with its camera and microphone blocked is asked about (\"blocked\")"
+                 (answer-prompt "has your microphone and camera blocked" #\y))
+          (check "calls: ... y: the page's query answers granted (the block overridden)"
+                 (pump-until (lambda () (equal (call-js "window.Q1") "granted"))))
+          (call-js "run('unb', MediaDevices.prototype.getUserMedia.call(navigator.mediaDevices, {audio: true}))")
+          (check "calls: ... and getUserMedia goes through without asking again"
+                 (equal (pump-until (lambda () (let ((r (call-js "R.unb"))) (and (not (equal r "waiting")) r))))
+                        "ok"))
+          (call-js "window.unb && unb.getTracks().forEach(t => t.stop()); 1"))))
     (ignore-errors (sb-bsd-sockets:socket-close sock))))
 
 ;;; ---- the run --------------------------------------------------------------------

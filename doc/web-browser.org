@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (75 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (78 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -674,7 +674,24 @@ from a document names it, and only pages that touch the media are logged
 ("web: page ..." in =session.log=). If that log still shows nothing from Meet, the
 call comes from a frame we do not attach to: we attach to the page's own target
 only, so a cross-site iframe (a separate renderer process) gets neither the script
-nor the binding. Ruled out: Chrome's new =<permission>= element, an in-page button
+nor the binding.
+
+/The log's answer, the next try./ Meet never called =getUserMedia= at all. It asked
+=navigator.permissions.query= for the camera and the microphone dozens of times,
+got =denied= every time, and stayed in its dialog. The profile held a stored
+/block/ for =meet.google.com=: Chrome's content settings =media_stream_camera= and
+=media_stream_mic= set to 2 (block), rewritten at the moment of the user's click.
+Our guess at its source: a request that reached Chrome's own prompt, which headless
+cannot show, was denied and stored. A fresh profile answers =prompt=; nothing of ours
+writes this setting. Measured on a test profile with the same block planted in its
+=Preferences=: the page reads =denied=, our =Browser.grantPermissions= overrides it,
+the page then reads =granted= and its =PermissionStatus= fires =change= (the event a
+page like Meet waits on), and the camera and microphone open. So the script's
+=permissions.query= wrapper now asks us at the first =denied= of a document, once,
+for the camera and the microphone together ("meet.google.com has your microphone and
+camera blocked: y allow · a always · n keep blocked"). On =y= the query is answered
+again: =granted=. =a= keeps the grant across Chrome's restarts, as before; the
+stored block itself stays in the profile, overridden each time. Ruled out: Chrome's new =<permission>= element, an in-page button
 that would ask through Chrome's own prompt; Chrome 148 does not have it
 (=HTMLPermissionElement= is undefined).
 
