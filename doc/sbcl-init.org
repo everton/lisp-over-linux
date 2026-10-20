@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #29). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #30). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
@@ -33,7 +33,8 @@ overlayfs, Wi-Fi, IPv6, seccomp, SysV IPC, inotify, fw_cfg, virtio-9p
 fallback. Tag #28 adds what helps when the KERNEL is stuck: Magic SysRq,
 the soft/hard-lockup and hung-task detectors, and pstore on EFI variables
 ([[file:diagnostics.org][diagnostics.org]] §6). Tag #29 adds sound (HD-Audio + the Realtek codecs; lol-rootd
-gives =/dev/snd= to the user and =mixer.lisp= sets the codec up — [[file:screencast.org][screencast.org]]). Since #26 the network REPL is *off* unless the boot asks
+gives =/dev/snd= to the user and =mixer.lisp= sets the codec up — [[file:screencast.org][screencast.org]]). Tag #30 makes the kernel SMP: the
+image's threads run on every CPU, the userland unchanged ([[file:kernel-config.org][kernel-config.org]] §10). Since #26 the network REPL is *off* unless the boot asks
 for it ([[file:networking.org][networking.org]]).
 Since 2026-10-12 a second static C program ships beside
 preinit: =/sbin/lol-ct=, which runs a command inside the host's own Debian as a

@@ -11,7 +11,8 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#29* (SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
+Current tag: *#30* (SMP: every CPU, and with it Intel P-state frequency scaling — §10; built on
+#29 = SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
 the KERNEL is stuck: Magic SysRq, the lockup and hung-task
 detectors, pstore on EFI variables — §6; built on #27 = USB Ethernet dongles, the RTL8153
 and the generic CDC classes, §8; built on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
@@ -20,7 +21,7 @@ NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased t
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
 16x32 fbcon font — *since reverted*, see the Display table and
 [[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
-~780 options are set in total; most are auto-selected defaults. The tables below
+1,180 =CONFIG_= lines are set at #30; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
 * How to regenerate / audit this file
@@ -46,7 +47,9 @@ USB_USBNET|USB_RTL8152|USB_NET_CDCETHER|USB_NET_CDC_NCM|\
 MAGIC_SYSRQ|MAGIC_SYSRQ_DEFAULT_ENABLE|SOFTLOCKUP_DETECTOR|HARDLOCKUP_DETECTOR|\
 DETECT_HUNG_TASK|PSTORE|EFI_VARS_PSTORE|MISC_FILESYSTEMS|\
 SOUND|SND|SND_PCM|SND_HDA_INTEL|SND_HDA_CODEC_REALTEK|SND_HDA_CODEC_ALC269|\
-SND_HDA_GENERIC|SND_SOC|SND_HDA_CODEC_HDMI|SND_USB_AUDIO)=' .config | sort
+SND_HDA_GENERIC|SND_SOC|SND_HDA_CODEC_HDMI|SND_USB_AUDIO|\
+SMP|NR_CPUS|SCHED_SMT|SCHED_MC|SCHED_MC_PRIO|HOTPLUG_CPU|TREE_RCU|TINY_RCU|\
+CPU_FREQ|X86_INTEL_PSTATE)=' .config | sort
 
 # binfmt handlers (what executable formats the kernel can load):
 grep -E 'CONFIG_BINFMT' .config
@@ -59,6 +62,10 @@ grep -cE '^CONFIG_MAC80211_HWSIM=y' .config  # expect 0 (fake radios on every bo
 # sound is ON since tag #29 (§9), through plain HD-Audio — not the DSP drivers:
 grep -cE '^CONFIG_SND_HDA_INTEL=y' .config   # expect 1
 grep -cE '^CONFIG_SND_SOC=y' .config        # expect 0 (no SOF / AVS, §9)
+
+# SMP is ON since tag #30 (§10):
+grep -cE '^CONFIG_SMP=y' .config            # expect 1
+grep -E '^CONFIG_NR_CPUS=' .config          # expect CONFIG_NR_CPUS=16
 #+end_src
 
 * 1. Boot — how the kernel becomes the EFI application
@@ -321,6 +328,51 @@ The userland half: lol-rootd gives =/dev/snd= to the user like =/dev/fb0=
 ([[file:../initramfs/preinit.c::static void give_devices][preinit.c, =give_devices=]]), and [[file:../initramfs/mixer.lisp][mixer.lisp]] sets the codec's switches at
 boot and drives the volume keys.
 
+* 10. Processors — SMP, NEW in tag #30
+
+Until tag #29 the kernel was built with =SMP= off (=NR_CPUS=1=, a choice inherited
+from the first minimal config and kept "minimal" through #23–#24), so the laptop's
+i7-1065G7 — 4 cores, 8 hardware threads — ran as one CPU, and the image's threads
+(the agent's turns, =netd=, the recorder's writer, the run panes' readers, the
+watchdog) only ever took turns. Tag #30 (2026-10-19) turns SMP on. What "bringing up
+the other cores" means in hardware — the BSP, INIT–SIPI–SIPI, the APIC — is
+[[file:background/background.org][background.org]] §6; since #30 it runs on every boot.
+
+| Option                                    | State | Role |
+|-------------------------------------------+-------+------|
+| =CONFIG_SMP=                              | y     | more than one CPU: the APs are woken at boot, the scheduler balances across them, locks become real spinlocks (=QUEUED_SPINLOCKS=, =QUEUED_RWLOCKS=), RCU becomes =TREE_RCU= / =TREE_SRCU= (in place of #23's =TINY_RCU=) |
+| =CONFIG_NR_CPUS=                          | 16    | the most this kernel will run (each slot costs ~8 KB, =arch/x86/Kconfig=); the laptop has 8, QEMU's checks use 4 — 16 leaves room for a bigger machine without the default 64 |
+| =CONFIG_SCHED_SMT=                        | y     | the scheduler knows two hardware threads share a core, so it fills cores before siblings |
+| =CONFIG_SCHED_MC=                         | y     | ... and that cores share a last-level cache (with =SCHED_CLUSTER= and =SCHED_CACHE=, both default y) |
+| =CONFIG_SCHED_MC_PRIO=                    | y     | (default y under =SCHED_MC=) Turbo Boost Max 3.0 core ordering. It =select=s =X86_INTEL_PSTATE=, =X86_AMD_PSTATE= and =CPU_FREQ=: *frequency scaling came along with SMP*, unasked |
+| =CONFIG_X86_INTEL_PSTATE= + =CONFIG_CPU_FREQ= | y | the Intel P-state driver. On Ice Lake, which has HWP (hardware P-states), it registers in active mode with the =powersave= policy (=intel_pstate.c=, =default_driver = &intel_pstate= when =hwp_active=) — the same as the host's Debian; =CPU_FREQ_DEFAULT_GOV_SCHEDUTIL= is only the governor of its passive mode. Under QEMU there is no driver (=scaling_driver= absent) |
+| =CONFIG_HOTPLUG_CPU=                      | y     | =def_bool y= under =SMP= on x86: CPUs can be taken off line (=/sys/devices/system/cpu/cpuN/online=) |
+
+/Pulled in by =make olddefconfig= besides those:/ =ACPI_HOTPLUG_CPU=, =ACPI_CPPC_LIB=
+(+ =PCC=, =MAILBOX=), =ACPI_PLATFORM_PROFILE=, =GENERIC_IRQ_MIGRATION= /
+=GENERIC_PENDING_IRQ= (interrupts moved between CPUs), =RPS= / =XPS= / =RFS_ACCEL=
+(network queues steered to CPUs), =SPLIT_PTE_PTLOCKS= / =PER_VMA_LOCK= (finer
+page-table locking), the =*_SPIN_ON_OWNER= mutex optimisations, the
+=HOTPLUG_*= helpers and RCU's stall detector (=RCU_CPU_STALL_TIMEOUT=21=); dropped:
+=TINY_RCU=, =TINY_SRCU=, =UP_LATE_INIT=, =FORCE_NR_CPUS=,
+=X86_REQUIRED_FEATURE_UP=, =BROKEN_ON_SMP=. 78 =CONFIG_= lines changed in all.
+
+The userland needed no change: SBCL 2.6.8 is built =:sb-thread= and its
+stop-the-world GC signals every thread wherever it runs. The image already had
+threads under #29, preempted at any instruction; what SMP adds is threads running
+/at the same instant/ (a read-modify-write that one CPU never splits can now
+interleave), which is why the whole guest suite was re-run at =-smp 4= (the change
+log's #30 entry) — no race showed. QEMU boots with =-smp 4= since #30
+(=build.sh=, =refresh-screenshot.sh=, the guest harness; =QEMU_SMP= /
+=LOL_QEMU_SMP= change it, =1= gives the old single CPU) so every guest check runs
+on several CPUs. [[file:../check-smp.lisp][=check-smp.lisp=]] asserts it: =cpu/online= = =0-3=, 4 threads of
+one compiled loop taking 764 ms against 692 ms for one (on one CPU, 4×), seen on 4
+CPUs by =sched_getcpu=, and 4 threads allocating through a forced full GC.
+
+/On the laptop (2026-10-20):/ =nproc= = 8 — all four cores and their second
+hardware threads — and =cpu0/cpufreq/scaling_driver= = =intel_pstate=, so the CPU's
+frequency is now managed by the kernel; under #29 there was no cpufreq driver at all.
+
 * Deliberately OFF (and what it would take to turn on)
 
 ** Sound through the DSP, HDMI audio, USB and Bluetooth audio — OFF (tag #29)
@@ -501,4 +553,22 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   the tray's VOL). Verified in QEMU+OVMF by =check-sound.lisp= (15 checks: the card,
   =/dev/snd= owned by uid 1000, the mixer, the volume keys over QMP, ffmpeg recording
   through =plughw:0,0=, mplayer's 440 Hz tone measured at 439.7 Hz in QEMU's WAV).
-  /Not yet booted on the laptop/ — [[file:screencast.org][screencast.org]] §8.5 is the checklist.
+  /Booted on the laptop 2026-10-18/: a screencast recorded and played back with sound
+  through the headset ([[file:screencast.org][screencast.org]] §13.6).
+- =#30= *SMP* (2026-10-19): =SMP=, =NR_CPUS=16=, =SCHED_SMT=, =SCHED_MC= (§10); with
+  them, unasked, =SCHED_MC_PRIO= → =X86_INTEL_PSTATE= / =X86_AMD_PSTATE= / =CPU_FREQ=
+  (frequency scaling, §10's table), =TREE_RCU= in place of =TINY_RCU=, queued
+  spinlocks, RPS/XPS; 78 =CONFIG_= lines changed (=diff= of the sorted =CONFIG_= lines
+  against #29). =SMP= touches nearly every file — 1,914 compiler invocations, 6 min 38 s
+  wall on the i7-1065G7 (=./build.sh --kernel=, 32 min of CPU). =bootx64.efi= is
+  4,412,416 bytes at #30 (4,240,384 at #29); 1,180 =CONFIG_= lines. QEMU boots
+  =-smp 4= from now on. Verified in QEMU+OVMF by =check-smp.lisp= (9 checks) and the
+  whole guest suite at =-smp 4= (23 check scripts, two guests at a time): 19 all
+  pass; =check-terminal='s 5 failures are the same 5 at =LOL_QEMU_SMP=1= (older than
+  #30); =check-containers= fails only "rails -v", the host's rbenv having no global
+  rails; =check-files= and =check-crash= failed on a stale =test-disk.img= — *not
+  SMP*: a writable =build.sh --run= boot on 2026-10-18 had moved the disk's fixture
+  =~/.config/lol/settings= and left an archive behind; both pass on a fresh
+  =./make-test-disk.sh=. /Booted on the laptop 2026-10-20/: =nproc= says 8 and
+  =/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver= says =intel_pstate=; the
+  environment, the terminal and the tools in use as before.

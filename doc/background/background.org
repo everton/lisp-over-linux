@@ -242,11 +242,15 @@ fine-grained locks (spinlocks, RCU). This is universal among modern general-
 purpose OSes — they earned it incrementally, breaking up one big lock into many
 over decades. The BSP is special *only at boot*; afterward it is just core 0.
 
-In this project: under QEMU we boot with a *single vCPU* (no =-smp=), so there is
-only a BSP — no APs, no INIT–SIPI–SIPI, no trampoline ever runs. And our SBCL
-userland is single-threaded. All the bring-up machinery above is present in the
-kernel but simply never exercised here; it wakes up only on =-smp >1= or on the
-real multi-core laptop.
+In this project: until tag #29 the kernel was built with =SMP= off (=NR_CPUS=1=),
+so even the laptop's eight threads ran as one CPU — only a BSP, no APs, no
+INIT–SIPI–SIPI, no trampoline. Since tag #30 (2026-10-19) the kernel is SMP:
+QEMU boots the guest with =-smp 4= (=build.sh= and the guest checks; =QEMU_SMP= /
+=LOL_QEMU_SMP= change it) and the laptop brings up all eight (=nproc= = 8, checked 2026-10-20), so everything above
+now runs on every boot. The SBCL userland was never single-threaded — the agent's
+turns, the network daemon, the recorder's writer and the run panes' readers are
+threads — and since #30 those threads truly run at the same time
+([[file:../kernel-config.org][kernel-config.org]] §10).
 
 * 7. Interrupts on a multicore machine — who gets poked
 

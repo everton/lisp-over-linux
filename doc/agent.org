@@ -559,7 +559,9 @@ same motion as browsing.
 ** 8.7 Ask and keep working
 
 One CPU (=NR_CPUS=1=) and a slow remote oracle: blocking the environment on a
-reply would be the most unnatural thing we could do.
+reply would be the most unnatural thing we could do. (/Written when the kernel
+was uniprocessor; it is SMP since tag #30 — [[file:kernel-config.org][kernel-config.org]] §10 — and the turn
+did end up on a thread of its own, §14./)
 
 - Asking never blocks. You keep browsing; the conversation tab fills in behind
   you. The tab's agent dot carries working / ready (§8.9) — the stripe keeps
