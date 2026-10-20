@@ -201,6 +201,19 @@
       ((= c 9)             (values :tab 0))
       ((= c 0)             (values #\Space 4))               ; C-Space / C-@ = NUL -> C-Space
       ((<= 1 c 26)         (values (code-char (+ c 96)) 4))   ; C-a..C-z, bit 2 = Ctrl
+      ;; UTF-8: the console's keyboard is in Unicode mode (vt.c, default_utf8), so a
+      ;; character past ASCII — ç from the pt-BR layer (keyboard-layout.lisp), á from a
+      ;; dead key — arrives as 2 to 4 bytes: a lead byte 110xxxxx / 1110xxxx /
+      ;; 11110xxx, then that many 10xxxxxx. Until 2026-10-19 each byte became a
+      ;; character of its own, and "ç" (C3 A7) came out as "Ã§".
+      ((<= #xC2 c #xF4)
+       (let* ((n (cond ((< c #xE0) 1) ((< c #xF0) 2) (t 3)))
+              (code (logand c (case n (1 #x1F) (2 #x0F) (t #x07)))))
+         (dotimes (i n (values (or (ignore-errors (code-char code)) #\?) 0))
+           (let ((b (and (fbb-ready-p fd 20) (fbb-read-byte fd))))
+             (if (and b (= (logand b #xC0) #x80))
+                 (setf code (logior (ash code 6) (logand b #x3F)))
+                 (return (values #\? 0)))))))       ; a broken sequence: one ?, not junk
       (t                   (values (code-char c) 0)))))
 
 ;;; ---- mouse: evdev -> a cursor + clicks ----------------------------------
@@ -492,6 +505,9 @@
     ((and (plusp val) (= code 114)) :volume-down)                       ; KEY_VOLUMEDOWN
     ((and (= val 1) (= code 113)) :mute)                                ; KEY_MUTE
     ((and (= val 1) (= code 248)) :mic-mute)                            ; KEY_MICMUTE
+    ;; Caps Lock, when the host's layouts include br (keyboard-layout.lisp): its keymap
+    ;; entry is a VoidSymbol then, so this press is the only trace — X's grp:caps_toggle
+    ((and (= val 1) (= code 58)) :layout-toggle)                        ; KEY_CAPSLOCK
     (t nil)))
 
 (defun unbind-console-ctrl-dot (&optional (fd 0))
@@ -1435,6 +1451,10 @@
 
               ;; the volume keys act at once, whatever has the focus (mixer.lisp);
               ;; the status line says the new level, the tray follows
+              ;; Caps Lock switches the layout, as on the host (keyboard-layout.lisp)
+              ((eq ev :layout-toggle)
+               (when (and (boundp '*layouts-enabled*) (symbol-value '*layouts-enabled*))
+                 (setf *browser-status* (funcall 'toggle-layout))))
               ((member ev '(:volume-up :volume-down :mute :mic-mute))
                (when (fboundp 'audio-key)
                  (setf *browser-status* (ignore-errors (funcall 'audio-key ev)))
@@ -1646,6 +1666,8 @@
         (setf *chooser* 'run-chooser)             ; ... and shows its menus and halos
         (ignore-errors (unbind-console-ctrl-dot)) ; Ctrl-. is end-of-buffer, not Compose
         (ignore-errors (unbind-console-hold))     ; Scroll Lock must not stop the console
+        (when (fboundp 'setup-keyboard-layouts)    ; pt-BR under Right Alt, Caps Lock
+          (ignore-errors (funcall 'setup-keyboard-layouts)))   ; toggles (the host's X)
         (ignore-errors (unbind-console-alt-arrows)) ; Alt-Left/Right are keys, not VT switching
         ;; the touchpad: does a tap click? Off unless the settings say so.
         (setf *tap-to-click* (eq (setting :tap-to-click) t))
@@ -2356,6 +2378,10 @@
      ("Vol+ / Vol- keys"   "volume up / down 5% (held: repeats)")
      ("Mute key"           "mute / unmute (the tray says VOL)")
      ("Mic-mute key"       "microphone off / on"))
+    ("Keyboard  (doc/input.org)"
+     ("Right Alt (held)"   "type pt-BR: ; = ç, [ = ´, ' = ~")
+     ("Caps Lock"          "switch layout US <-> pt-BR (tray: BR)")
+     ("  ´ ~ ^ then a"     "á ã â — dead keys, as in X"))
     ("Recording  (doc/screencast.org)"
      ("Super-r"            "record the screen + the mic;")
      (""                   "  again: pause / resume")
