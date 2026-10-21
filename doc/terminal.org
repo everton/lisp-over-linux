@@ -18,7 +18,7 @@ terminals all their life without needing to know what one is.
 | [[file:../poc/terminal.lisp][poc/terminal.lisp]]      | =lol.terminal=, the *VT engine*: UTF-8 bytes in, a grid of cells out; and the reverse, keys / mouse / paste encoded as bytes. Pure data, no FFI. |
 | [[file:../initramfs/pty.lisp][initramfs/pty.lisp]]     | *pseudo-terminals*: open =/dev/ptmx=, run a program on the slave as a session leader (=posix_spawn=), read, write, resize, reap.                 |
 | [[file:../poc/terminal-pane.lisp][poc/terminal-pane.lisp]] | the *pane*: =subj-terminal=, drawing, keys, the mouse, the clipboard, =open-terminal=, what to run.                                              |
-| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 98 checks, incl. recordings of less, vi and bash.                                                                       |
+| [[file:../poc/terminal-test.lisp][poc/terminal-test.lisp]] | host test of the engine: 99 checks, incl. recordings of less, vi and bash.                                                                       |
 | [[file:../poc/pty-test.lisp][poc/pty-test.lisp]]      | host test of the ptys: 13 checks on real programs (bash, htop).                                                                                  |
 | [[file:../check-terminal.lisp][check-terminal.lisp]]    | the guest check over QMP: 18 checks.                                                                                                             |
 
@@ -268,6 +268,7 @@ sent — the bytes the terminfo entry above promised the program:
 | =S-Tab=            | =ESC[Z=                                   | =kcbt=                                                         |
 | F1-F4 / F5-F12     | =ESC O P=… / =ESC[15~=…                   |                                                                |
 | Return             | CR                                        | the line discipline turns it into LF for the program (=ICRNL=) |
+| =S-↵=              | ESC CR (as =M-↵=)                         | Claude Code's "new line" (its =/terminal-setup= binding); a bare CR would submit |
 
 *Who gets which keys.* A terminal pane takes /every/ key except the =SuperL= layer,
 which stays the environment's on every pane: tabs, the Spotter, closing, leaving.

@@ -1190,7 +1190,13 @@
            (concatenate 'string meta-prefix (string c))))
         (t
          (case key
-           (:return (concatenate 'string meta-prefix
+           ;; Shift-Return sends what Meta-Return does, ESC CR: with no modifier in
+           ;; it a bare CR would be Return itself (xterm sends just that), and ESC CR
+           ;; is what Claude Code reads as "a new line" from a terminal it does not
+           ;; know by name (the binding its /terminal-setup writes for VS Code, Zed,
+           ;; Alacritty). Claude asks for the kitty protocol only from iTerm, kitty,
+           ;; WezTerm, ghostty, tmux, Warp and Windows Terminal (checked in 2.1.305).
+           (:return (concatenate 'string (if (logbitp 0 state) esc meta-prefix)
                                  (if (term-newline-mode term) (format nil "~c~c" #\Return #\Newline)
                                      (string #\Return))))
            (:backspace (concatenate 'string meta-prefix

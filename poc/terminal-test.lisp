@@ -277,6 +277,7 @@
   (check "C-Space is NUL" (encode-key term #\Space 4) (string (code-char 0)))
   (check "M-x" (encode-key term #\x 8) (esc "\\ex"))
   (check "Return" (encode-key term :return 0) (string #\Return))
+  (check "Shift-Return is ESC CR (Claude Code's new line)" (encode-key term :return 1) (esc "\\e\\r"))
   (check "Backspace is DEL (kbs=^?)" (encode-key term :backspace 0) (string (code-char 127)))
   (check "shift-tab (kcbt)" (encode-key term :tab 1) (esc "\\e[Z"))
   (check "Delete" (encode-key term :delete 0) (esc "\\e[3~"))
