@@ -1559,63 +1559,122 @@
 (defun trail-windowed-p (trail)
   (and *trail-windowed-p* (funcall *trail-windowed-p* trail)))
 
+(defun tab-metrics (trail i closer)
+  "How tab I (TRAIL) is drawn: (values NUM TEXT ICON TITLE LW TW) — its \" N · \" badge,
+   its label and icon (TRAIL-LABEL), the clipped title, the label's width and the whole
+   tab's (LW plus the × box when CLOSER). DRAW-TABS measures every tab with this before
+   drawing any, to know which fit."
+  (let* ((num (format nil " ~d ~c " (1+ i) (code-char #xB7)))             ; " 1 · "
+         (text-icon (multiple-value-list (trail-label trail)))           ; an icon for the kind word
+         (title (format nil "~a " (clip-text (first text-icon) 16)))
+         (lw (+ (lol.canvas:string-px *bfont* num) (tab-icon-width (second text-icon))
+                (lol.canvas:string-px *bfont* title))))
+    (values num (first text-icon) (second text-icon) title lw
+            (+ lw (if closer (+ (char-w) 8) 0)))))                       ; the x box
+
+(defun more-label (n)
+  "The overflow button's text for N hidden tabs: \" …3 \"."
+  (format nil " ~c~d " (code-char #x2026) n))
+
+(defun visible-tabs (widths active room)
+  "Which tiled tabs the strip shows: WIDTHS is ((index . tab-width) …) of the tiled
+   trails in order, ACTIVE the lit trail's index, ROOM the pixels they may take (6 px
+   between tabs). -> the sub-list that fits and holds ACTIVE: the run from the first tab
+   when ACTIVE is in it, else the longest run that ENDS at ACTIVE — so SuperL-Tab
+   through a long strip walks the run along with it, as a browser's tab bar does."
+  (flet ((fits (run) (<= (loop for (nil . tw) in run sum (+ tw 6)) (+ room 6))))
+    (let ((pos (or (position active widths :key #'car) 0))
+          (end 1))                        ; the longest run from the first: [0, END)
+      (loop while (and (< end (length widths)) (fits (subseq widths 0 (1+ end))))
+            do (incf end))
+      (if (> end pos)
+          (subseq widths 0 end)
+          ;; ACTIVE is past it: the longest run that ENDS at ACTIVE (one tab at least)
+          (let ((start pos))
+            (loop while (and (> start 0) (fits (subseq widths (1- start) (1+ pos))))
+                  do (decf start))
+            (subseq widths start (1+ pos)))))))
+
 (defun draw-tabs (canvas w)
   "The top tab strip: one tab per open trail, each with a kind-coloured stripe, its
    SuperL-number badge and, where its title began with a kind word (\"terminal\",
    \"journal\") or it is a web page, an icon in place of the word (TRAIL-LABEL); the active one is highlighted (brighter bg + accent top-rule +
    an × close), and a + after the last tab opens a fresh Workspace. The design mock-up
    (media/browser-views-design.html §1) puts the × on EVERY tab, not only the focused
-   one — closing a tab you are not in is the common case. Returns its hit maps, so
-   clicks and drawing can't disagree (the TAB-STRIP morph keeps them):
-   (values TABS CLOSES PLUS) — ((trail-index . (x0 . x1)) …) for the tabs and for their
-   × boxes, and the + button's (x0 . x1). The systray at the right end is a morph of
-   its own, drawn after this one."
-  (let ((x 8) (multi (cdr *trails*))                        ; align with the 8px gutter below
-        (tabs '()) (closes '()) (plus nil))
-    (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
-    (loop for trail in *trails* for i from 0
-          for active = (= i *active*)
-          for closer = multi                     ; every tab gets a ×, once there are >1
-          for num = (format nil " ~d ~c " (1+ i) (code-char #xB7))  ; " 1 · "
-          for (text icon) = (multiple-value-list (trail-label trail))   ; an icon for the kind word
-          for title = (format nil "~a " (clip-text text 16))
-          for lw = (+ (lol.canvas:string-px *bfont* num) (tab-icon-width icon)
-                      (lol.canvas:string-px *bfont* title))
-          for tw = (+ lw (if closer (+ (char-w) 8) 0))   ; the x box
-          while (or (trail-windowed-p trail)       ; a window's trail takes no room here
-                    (< (+ x tw) (- w (+ (char-w) 20) (tray-width))))  ; room for the + button and the tray
-          ;; a trail torn off into a window (doc/morphic.org §5) has no tab: its title
-          ;; bar is its tab. It keeps its NUMBER, so SuperL-N still reaches it.
-          unless (trail-windowed-p trail)
-          do (progn
-               (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
-               (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
-               ;; number quiet, title bright (active accent, inactive plain text)
-               (let* ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) (text-dy +bar-h+) *ui-dim*))
-                      (pen (draw-tab-icon canvas icon pen 0 (trail-kind-color trail))))
-                 (lol.canvas:draw-string canvas *bfont* title pen (text-dy +bar-h+)
-                                         (if active *ui-accent* *ui-text*)))
-               ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
-               ;; §8.9): colour = authority, filled = :interacting, pulsing = working
-               (multiple-value-bind (dot filled)
-                   (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
-                 (when dot
-                   ;; the dot covers the "·" cell, so it grows with the font: 6 px at 6x15
-                   (let* ((s (max 6 (- (char-w) 3)))
-                          (dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
-                          (dy (- (floor +bar-h+ 2) (floor s 2))))
-                     (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) (+ s 2) (+ s 2)
-                                           (if active *ui-hi* *ui-panel*))
-                     (if filled
-                         (lol.canvas:fill-rect canvas dx dy s s dot)
-                         (lol.canvas:draw-rect canvas dx dy s s dot)))))
-               (when closer
-                 (let ((cx (+ x lw)))
-                   (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
-                                           (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
-                   (push (cons i (cons cx (+ cx (char-w) 8))) closes)))
-               (push (cons i (cons x (+ x tw))) tabs)
-               (incf x (+ tw 6))))                ; 6px gap between tabs
+   one — closing a tab you are not in is the common case.
+
+   More tabs than fit: the strip shows a run of them that holds the active one
+   (VISIBLE-TABS), and a \" …N \" button stands at each end that hides N tabs; pressing
+   one lists every tab (OPEN-TAB-LIST, also SuperL-t). Before this, tabs past the right
+   edge were simply not drawn — the active one included.
+
+   Returns its hit maps, so clicks and drawing can't disagree (the TAB-STRIP morph keeps
+   them): (values TABS CLOSES PLUS MORE) — ((trail-index . (x0 . x1)) …) for the tabs
+   and for their × boxes, the + button's (x0 . x1), and the overflow buttons' (x0 . x1)
+   list. The systray at the right end is a morph of its own, drawn after this one."
+  (let* ((x 8) (multi (cdr *trails*))                       ; align with the 8px gutter below
+         (tabs '()) (closes '()) (plus nil) (more '())
+         ;; every tiled trail measured first (a window's trail takes no room here:
+         ;; its title bar is its tab, and it keeps its NUMBER, so SuperL-N reaches it)
+         (widths (loop for trail in *trails* for i from 0
+                       unless (trail-windowed-p trail)
+                         collect (cons i (nth-value 5 (tab-metrics trail i multi)))))
+         (room (- w x (+ (char-w) 20) (tray-width)))         ; room for the + button and the tray
+         (bw (+ (lol.canvas:string-px *bfont* (more-label (length widths))) 6))   ; a … button
+         (shown (if (<= (+ (loop for (nil . tw) in widths sum (+ tw 6)) -6) room)
+                    widths
+                    ;; not all fit: keep room for one overflow button, or for two when
+                    ;; the run that fits beside one hides tabs at both ends
+                    (let ((one (visible-tabs widths *active* (- room bw))))
+                      (if (and (not (eq (car (first one)) (car (first widths))))
+                               (not (eq (car (first (last one))) (car (first (last widths))))))
+                          (visible-tabs widths *active* (- room bw bw))
+                          one))))
+         (before (or (position (car (first shown)) widths :key #'car) 0))
+         (after (- (length widths) before (length shown))))
+    (flet ((more-button (n)
+             (let ((label (more-label n)))
+               (lol.canvas:fill-rect canvas x 0 (lol.canvas:string-px *bfont* label) +bar-h+ *ui-panel*)
+               (let ((x1 (lol.canvas:draw-string canvas *bfont* label x (text-dy +bar-h+) *ui-accent*)))
+                 (push (cons x x1) more)
+                 (setf x (+ x1 6))))))
+      (lol.canvas:fill-rect canvas 0 0 w +bar-h+ *ui-bg*)
+      (when (plusp before) (more-button before))
+      (loop for (i . nil) in shown
+            for trail = (nth i *trails*)
+            for active = (= i *active*)
+            for closer = multi                     ; every tab gets a ×, once there are >1
+            do (multiple-value-bind (num text icon title lw tw) (tab-metrics trail i closer)
+                 (declare (ignore text))
+                 (lol.canvas:fill-rect canvas x 0 tw +bar-h+ (if active *ui-hi* *ui-panel*))
+                 (lol.canvas:fill-rect canvas x 0 tw 2 (trail-kind-color trail))   ; kind stripe on top
+                 ;; number quiet, title bright (active accent, inactive plain text)
+                 (let* ((pen (lol.canvas:draw-string canvas *bfont* num (+ x 2) (text-dy +bar-h+) *ui-dim*))
+                        (pen (draw-tab-icon canvas icon pen 0 (trail-kind-color trail))))
+                   (lol.canvas:draw-string canvas *bfont* title pen (text-dy +bar-h+)
+                                           (if active *ui-accent* *ui-text*)))
+                 ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
+                 ;; §8.9): colour = authority, filled = :interacting, pulsing = working
+                 (multiple-value-bind (dot filled)
+                     (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
+                   (when dot
+                     ;; the dot covers the "·" cell, so it grows with the font: 6 px at 6x15
+                     (let* ((s (max 6 (- (char-w) 3)))
+                            (dx (+ x 2 (lol.canvas:string-px *bfont* (format nil " ~d " (1+ i)))))
+                            (dy (- (floor +bar-h+ 2) (floor s 2))))
+                       (lol.canvas:fill-rect canvas (- dx 1) (- dy 1) (+ s 2) (+ s 2)
+                                             (if active *ui-hi* *ui-panel*))
+                       (if filled
+                           (lol.canvas:fill-rect canvas dx dy s s dot)
+                           (lol.canvas:draw-rect canvas dx dy s s dot)))))
+                 (when closer
+                   (let ((cx (+ x lw)))
+                     (lol.canvas:draw-string canvas *bfont* (string (code-char 215)) cx (text-dy +bar-h+)
+                                             (if active *ui-dim* *ui-rule*))   ; quieter when unfocused
+                     (push (cons i (cons cx (+ cx (char-w) 8))) closes)))
+                 (push (cons i (cons x (+ x tw))) tabs)
+                 (incf x (+ tw 6))))                ; 6px gap between tabs
+      (when (plusp after) (more-button after)))
     ;; the + new-tab button
     (let ((px (+ x 2)))
       (lol.canvas:fill-rect canvas px 0 (+ (char-w) 8) +bar-h+ *ui-panel*)
@@ -1624,7 +1683,23 @@
       (setf x (+ px (char-w) 8)))
     ;; a hairline seam under the whole strip
     (lol.canvas:fill-rect canvas 0 (- +bar-h+ 1) w 1 *ui-rule*)
-    (values tabs closes plus)))
+    (values tabs closes plus (nreverse more))))
+
+(defun open-tab-list (wx wy)
+  "Every open tab as a menu at the screen point WX,WY — the overflow buttons' press and
+   SuperL-t — the current one selected; picking one focuses it (ACTIVATE-TRAIL, as
+   SuperL-N: a trail in a window is raised). The menu's own 1-9 are the tabs' numbers,
+   since the entries are in tab order."
+  (choose-and-run :menu
+                  (loop for trail in *trails* for i from 0
+                        collect (append (menu-entry (format nil "~d · ~a~:[~;  (window)~]"
+                                                            (1+ i) (trail-title trail)
+                                                            (trail-windowed-p trail))
+                                                    (let ((i i)) (lambda () (activate-trail i)))
+                                                    :key (and (< i 9) (format nil "Super-~d" (1+ i)))
+                                                    :group "tabs")
+                                        (and (= i *active*) (list :selected t))))
+                  wx wy))
 
 (defun draw-crumb (canvas x y w pane)
   "A collapsed ancestor bar, W wide at X,Y: a kind-coloured stripe, the subject's
@@ -3002,6 +3077,7 @@
          ((and (characterp key) (position key ")!@#$%^&*(" ))
           (swap-trail (position key ")!@#$%^&*(")) nil)
          ((member key '(#\w #\W)) (close-trail) nil)                           ; close this tab
+         ((member key '(#\t #\T)) (open-tab-list 8 +bar-h+) nil)              ; every tab, as a menu
          ((member key '(#\o #\O)) (toggle-side-focus) nil)                     ; focus list <-> side
          ((eql key #\Space)                                                    ; the Spotter
           (when (fboundp 'open-spotter) (funcall 'open-spotter)) nil)

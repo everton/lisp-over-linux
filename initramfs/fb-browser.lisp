@@ -2430,6 +2430,7 @@
      ("Super-1..9"         "jump to tab N")
      ("Super-S-1..9"       "move this tab to slot N")
      ("Super-Tab"          "cycle tabs (Shift: backwards)")
+     ("Super-t"            "every tab, as a menu (also \" …N \")")
      ("Super-S-Enter/click" "open the selection in a NEW tab")
      ("Super-w"            "close the current tab")
      ("Super-o"            "focus list <-> side pane")

@@ -113,6 +113,8 @@
            :documentation "The same for each tab's × close box.")
    (plus   :initform nil :accessor strip-plus
            :documentation "(x0 . x1) of the + new-tab button.")
+   (more   :initform '() :accessor strip-more
+           :documentation "(x0 . x1) of each \" …N \" overflow button: tabs hidden that side.")
    (tray   :initform nil :accessor strip-tray)
    (press-tab :initform nil :accessor strip-press-tab
               :documentation "The tab a left press landed on, while the button is held:
@@ -130,8 +132,9 @@
     (declare (ignore x y h))
     ;; the lit tab is the TILED trail's, even while a window has the keyboard
     (let ((*active* (tiled-index)))
-      (multiple-value-bind (tabs closes plus) (draw-tabs canvas w)
-        (setf (strip-tabs s) tabs (strip-closes s) closes (strip-plus s) plus)))))
+      (multiple-value-bind (tabs closes plus more) (draw-tabs canvas w)
+        (setf (strip-tabs s) tabs (strip-closes s) closes (strip-plus s) plus
+              (strip-more s) more)))))
 
 (defmethod morph-signature ((s tab-strip))
   (list (lol.morph:morph-local-bounds s) (tiled-index) (tray-width)
@@ -1160,14 +1163,17 @@
        (getf (tab-target s x) :index)))
 
 (defmethod lol.morph:handle-event ((s tab-strip) e)
-  "A press activates a tab, closes one, or opens a Workspace (+); a tab dragged down
+  "A press activates a tab, closes one, opens a Workspace (+) or, on a \" …N \" overflow
+   button, lists every tab (OPEN-TAB-LIST); a tab dragged down
    out of the strip becomes a window, carried by the hand from there (doc/morphic.org
    §5). The right button is a tab's menu, the middle one the halo."
   (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e)))
     (case (lol.morph:event-kind e)
       (:down (press-prelude)
              (setf (strip-press-tab s) (tab-at s x))
-             (tab-strip-click (strip-tabs s) (strip-closes s) (strip-plus s) x)
+             (if (find-if (lambda (r) (<= (car r) x (cdr r))) (strip-more s))
+                 (open-tab-list (lol.morph:event-wx e) (lol.morph:event-wy e))  ; " …N ": every tab
+                 (tab-strip-click (strip-tabs s) (strip-closes s) (strip-plus s) x))
              t)
       (:drag (when (and (strip-press-tab s) (>= y (* 2 +bar-h+)))
                (tear-off-by-pointer (shiftf (strip-press-tab s) nil)

@@ -1595,6 +1595,7 @@ list where the design puts it.
 | =SuperL-1…9=                      | jump to trail /n/                                                                                       |
 | =SuperL-⇧-n=                      | move this trail to slot /n/ (swap with whatever is there)                                               |
 | =SuperL-Tab= / =SuperL-⇧-Tab=     | cycle to next / previous trail                                                                          |
+| =SuperL-t= · a =…N= button        | every trail as a menu (its 1–9 are the tab numbers); pick one to focus it — see below the table         |
 | =SuperL-Space=                    | the Spotter                                                                                             |
 | =SuperL-f=                        | the file manager ([[file:file-manager.org][file-manager.org]])                                                                     |
 | =SuperL-b=                        | a web page, Chrome headless ([[file:web-browser.org][web-browser.org]]); on a web pane =SuperL-←/→= are the page's back / forward |
@@ -1606,6 +1607,17 @@ list where the design puts it.
 | =→=                               | focus the RIGHT-hand column (see below)                                                                 |
 | a plain *click* in the other half | move focus there — the pointer's =SuperL-o= (see below)                                                 |
 | =SuperL-w= · =Esc=                | close the trail · dismiss the Spotter/overlay                                                           |
+
+*More tabs than fit* (2026-10-20). The strip used to stop drawing at the first tab
+that did not fit — every later tab, the active one included, simply had no tab.
+Now =draw-tabs= measures every tiled tab first (=tab-metrics=) and, when they do not
+all fit, shows the run =visible-tabs= picks: from the first tab while that holds the
+active one, else the longest run ending at it — so =SuperL-Tab= walks the run along,
+as a browser's tab bar does. A =…N= button stands at each end that hides /N/ tabs
+(room is reserved for a second button only when the run beside one still hides tabs
+at both ends); pressing either, or =SuperL-t=, opens =open-tab-list=, every trail in
+tab order — a windowed one marked =(window)= — on the current one. Host-tested by
+=poc/morphic-test.lisp= ("more tabs than fit").
 
 =Ctrl/Meta= keeps the semantic actions already listed in §4's Interaction table:
 =C-c C-c= Accept, =C-x C-e= Do it, =C-c C-p= Print it, =C-c C-i= Inspect it, =M-.=
