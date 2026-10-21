@@ -553,6 +553,20 @@ function pixel(x, y){
                      (eq (multiple-value-call #'hover-shape (text-point "h")) :text)))
          (check "off the page (the toolbar) the arrow again"
                 (eq (hover-shape (+ (first (web-tab-page-rect (tab))) 5) (car (web-tab-bar-y (tab)))) :arrow))
+         ;; a report that went nowhere (on the laptop: a Chrome holding an old event
+         ;; handler) must not leave the arrow over a link for good: the page reports
+         ;; only changes, so entering it again tells it to forget its last report
+         (let ((handler (chrome-on-event *web-chrome*)))
+           (setf (chrome-on-event *web-chrome*)
+                 (lambda (m p s) (unless (and (equal m "Runtime.bindingCalled")
+                                              (equal (jget p "name") +web-cursor-binding+))
+                                   (funcall handler m p s))))
+           (multiple-value-call #'hover-shape (element-center "go"))   ; the hand, lost
+           (setf (chrome-on-event *web-chrome*) handler)
+           (check "a lost report: the arrow on the link meanwhile, the hand after leaving and coming back"
+                  (and (eq *shown-shape* :arrow)
+                       (eq (hover-shape (+ (first (web-tab-page-rect (tab))) 5) (car (web-tab-bar-y (tab)))) :arrow)
+                       (eq (multiple-value-call #'hover-shape (element-center "go")) :hand))))
          (frame) (write-ppm (format nil "~a/web-index.ppm" *out*))
          ;; a click on a link, through the shell
          (multiple-value-bind (x y) (element-center "go")

@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (88 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (89 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -892,9 +892,24 @@ another pane, =web-hover= gives the arrow back; during a press (a drag selecting
 text) nothing changes. A cross-site frame inside a page has no script of ours (we
 do not attach to it), so over one the shape stays as it was.
 
+/Tried on the laptop as a live patch, the same evening: nothing changed./ Two faults,
+the second hidden by the first:
+
+- Chrome's event handler was =#'web-event=, a function /object/ handed over when
+  Chrome started and kept for its whole life. The patch redefined =web-event=, and
+  the running Chrome went on calling the old one, which drops the cursor's reports.
+  The handler is now the /symbol/ =web-event=, looked up on every call, so a live
+  redefinition (=C-c C-c=, a patch) reaches it.
+- The page reports only /changes/. A report lost on the way (to that old handler,
+  or one meant for a tab no longer shown) left the page believing we knew: the
+  arrow stayed over a link until the cursor changed to something else. Now, when
+  the pointer enters a page, or another tab's page, =web-hover= first tells that
+  page to forget its last report (=__lolCursorReset=), and its next move reports
+  whatever it finds. A report from a page the pointer is not over is ignored.
+
 =web-test= checks: the hand over a link, the I-beam over a text field and over a
 heading's characters, the arrow over the blank end of that heading's line and on the
-toolbar.
+toolbar, and a lost report recovered by leaving the page and coming back.
 
 * 5. The event loop: services
 

@@ -568,7 +568,11 @@
                               :log (format nil "/tmp/lol-chrome-~d.log" (sb-unix:unix-getpid)))
                 *web-chrome-state* :starting
                 *web-error* nil)
-          (setf (chrome-on-event *web-chrome*) #'web-event)
+          ;; the SYMBOL, not #'web-event: a function object is the definition of the
+          ;; moment, kept for Chrome's whole life, so a WEB-EVENT redefined live (C-c
+          ;; C-c, a patch) would never see its events. A symbol is looked up on each
+          ;; call — the cursor patch of 2026-10-20 did nothing until this.
+          (setf (chrome-on-event *web-chrome*) 'web-event)
           ;; the first answer is the handshake: once Chrome replies, it is up
           (cdp-send *web-chrome* "Browser.getVersion" nil :callback #'web-chrome-ready)
           t)
@@ -1678,7 +1682,10 @@ window.__lolPickerApply = function(id, v){
   "(function(){
 if (window.__lolCursorInstalled) return;
 window.__lolCursorInstalled = true;
-var last = 'default';
+var last = '';
+/* we lost track (the pointer came back, another tab was shown, a report went to an
+   old handler): the next move reports whatever it finds */
+window.__lolCursorReset = function(){ last = ''; };
 function overText(ev){
   var r = document.caretRangeFromPoint && document.caretRangeFromPoint(ev.clientX, ev.clientY);
   if (!r || r.startContainer.nodeType !== 3) return false;
@@ -1711,7 +1718,8 @@ document.addEventListener('mousemove', function(ev){
 
 (defvar *web-cursor* :arrow
   "The shape the page under the pointer last asked for: :arrow :hand or :text.")
-(defvar *web-pointer-on-page* nil "Was the pointer over a web page at the last move?")
+(defvar *web-pointer-on-page* nil
+  "The tab whose page the pointer was over at the last move, or NIL (off every page).")
 
 (defun web-cursor-setup (tab)
   "Give TAB's page the cursor binding and script, as the pickers' (Runtime is
@@ -1734,9 +1742,9 @@ document.addEventListener('mousemove', function(ev){
 (defun web-cursor (tab css)
   "TAB's page reports CSS as the cursor under the pointer: draw it, if that page is
    the one under the pointer."
-  (when (and (eq tab (web-visible-tab)) (stringp css))
+  (when (and (eq tab *web-pointer-on-page*) (stringp css))
     (setf *web-cursor* (web-cursor-shape css))
-    (when *web-pointer-on-page* (web-show-cursor *web-cursor*))))
+    (web-show-cursor *web-cursor*)))
 
 (defun web-pick-anchor (tab msg)
   "The rectangle of the control MSG reports in TAB -> (values x y w h), from its
@@ -2517,16 +2525,25 @@ function share(a){
   ;; a press in progress (a drag selecting text) is the press's: no hover, and the
   ;; shape stays the I-beam or hand it began on
   (when (and (web-visible-tab) (web-press)) (return-from web-hover nil))
-  (let* ((tab (web-visible-tab))
-         (on (and tab
-                  (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
-                                                 (screen-to-pane (current-pane) x y))
-                    (when cx (web-mouse tab "mouseMoved" cx cy) t)))))
-    ;; the pointer's shape: the page's while over it (its answer to this move comes
-    ;; later, WEB-CURSOR), the arrow anywhere else
-    (unless (eq on *web-pointer-on-page*)
-      (setf *web-pointer-on-page* on)
-      (web-show-cursor (if on *web-cursor* :arrow)))))
+  (let ((tab (web-visible-tab)))
+    (multiple-value-bind (cx cy) (if tab
+                                     (multiple-value-call #'web-page-point tab
+                                       (screen-to-pane (current-pane) x y))
+                                     (values nil nil))
+      (let ((on (and cx tab)))
+        ;; the pointer's shape: the page's while over it (its answer to this move
+        ;; comes later, WEB-CURSOR), the arrow anywhere else. The page reports only
+        ;; CHANGES, so on entering a page — or another tab's — it is told to forget
+        ;; its last report: one lost on the way (an old handler, another tab shown)
+        ;; would otherwise leave the arrow over a link until the cursor changed
+        ;; again (2026-10-20, on the laptop). Sent before the move it is for.
+        (unless (eq on *web-pointer-on-page*)
+          (setf *web-pointer-on-page* on *web-cursor* :arrow)
+          (when on
+            (web-send on "Runtime.evaluate"
+                      (jobj "expression" "window.__lolCursorReset && window.__lolCursorReset()")))
+          (web-show-cursor :arrow))
+        (when on (web-mouse tab "mouseMoved" cx cy))))))
 
 (defun web-wheel (lines)
   "The wheel over a web pane: LINES as the shell counts them (+ = down), sent as a
