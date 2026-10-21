@@ -1098,18 +1098,18 @@
   "The silhouette of body B in model space, as a list of (x . y) — scaled to its own
    radius, unrotated. Class identity is carried by SHAPE, which is what frees colour to
    keep meaning what it means everywhere else in the environment."
-  (let ((r (body-r b)))
+  (let ((r (lol.stage:body-r b)))
     (flet ((p (fx fy) (cons (round (* r fx)) (round (* r fy)))))
-      (ecase (body-kind b)
+      (ecase (lol.stage:body-kind b)
         ;; a chevron with a notched tail — a thing with a front
         (:ship (list (p 1 0) (p -0.65 0.68) (p -0.32 0) (p -0.65 -0.68)))
         ;; a narrow dart: all nose, no body
         (:missile (list (p 1.5 0) (p -1 0.5) (p -0.5 0) (p -1 -0.5)))
         ;; an irregular rock, its jitter fixed per instance so it tumbles rather than boils
         (:asteroid
-         (loop for m in (or (body-poly b) '(100 100 100 100 100 100 100 100 100))
+         (loop for m in (or (lol.stage:body-poly b) '(100 100 100 100 100 100 100 100 100))
                for i from 0
-               for th = (/ (* 2 pi i) (length (body-poly b)))
+               for th = (/ (* 2 pi i) (length (lol.stage:body-poly b)))
                collect (cons (round (* r (/ m 100.0) (cos th)))
                              (round (* r (/ m 100.0) (sin th))))))
         ;; a hexagon: built, not born
@@ -1121,63 +1121,63 @@
 (defun stage-body-color (b stage)
   "A body's outline colour. Flash wins (it is the whole point of the frame it appears
    in), then selection, then the plain :class blue every instance wears."
-  (cond ((plusp (body-flash b))
-         (concept-color (if (eq (body-flash-kind b) :condition) :condition :method)))
-        ((eq b (stage-selected stage)) *ui-accent*)
+  (cond ((plusp (lol.stage:body-flash b))
+         (concept-color (if (eq (lol.stage:body-flash-kind b) :condition) :condition :method)))
+        ((eq b (lol.stage:stage-selected stage)) *ui-accent*)
         (t (concept-color :class))))
 
 (defun draw-stage-sprite (canvas b stage ox oy)
   "One body, rotated to its facing and translated into the viewport at OX,OY."
   (let* ((color (stage-body-color b stage))
          ;; the classes with a front point where they are going; the rest tumble
-         (th (if (member (body-kind b) '(:ship :missile))
-                 (atan (body-vy b) (body-vx b))
-                 (/ (body-rot b) 1000.0)))
+         (th (if (member (lol.stage:body-kind b) '(:ship :missile))
+                 (atan (lol.stage:body-vy b) (lol.stage:body-vx b))
+                 (/ (lol.stage:body-rot b) 1000.0)))
          (c (cos th)) (sn (sin th))
-         (r (body-r b))
+         (r (lol.stage:body-r b))
          (pts (mapcar (lambda (p)
-                        (cons (+ ox (body-x b) (round (- (* (car p) c) (* (cdr p) sn))))
-                              (+ oy (body-y b) (round (+ (* (car p) sn) (* (cdr p) c))))))
+                        (cons (+ ox (lol.stage:body-x b) (round (- (* (car p) c) (* (cdr p) sn))))
+                              (+ oy (lol.stage:body-y b) (round (+ (* (car p) sn) (* (cdr p) c))))))
                       (stage-sprite-points b))))
     (lol.canvas:draw-poly canvas pts color)
     ;; the station's ring and core — a hexagon alone reads as a rock
-    (when (eq (body-kind b) :station)
-      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
+    (when (eq (lol.stage:body-kind b) :station)
+      (lol.canvas:draw-circle canvas (+ ox (lol.stage:body-x b)) (+ oy (lol.stage:body-y b))
                               (round (* r 42) 100) color)
-      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b)) 3 color :fill t))
+      (lol.canvas:draw-circle canvas (+ ox (lol.stage:body-x b)) (+ oy (lol.stage:body-y b)) 3 color :fill t))
     ;; a survived hull breach is a scar the ship keeps wearing
-    (when (body-breached b)
+    (when (lol.stage:body-breached b)
       (lol.canvas:draw-line canvas
-                            (+ ox (body-x b) -4) (+ oy (body-y b) -5)
-                            (+ ox (body-x b) 7)  (+ oy (body-y b) 4)
+                            (+ ox (lol.stage:body-x b) -4) (+ oy (lol.stage:body-y b) -5)
+                            (+ ox (lol.stage:body-x b) 7)  (+ oy (lol.stage:body-y b) 4)
                             (concept-color :condition)))
     ;; the selection halo
-    (when (eq b (stage-selected stage))
-      (lol.canvas:draw-circle canvas (+ ox (body-x b)) (+ oy (body-y b))
-                              (+ (body-r b) 8) *ui-accent*))
+    (when (eq b (lol.stage:stage-selected stage))
+      (lol.canvas:draw-circle canvas (+ ox (lol.stage:body-x b)) (+ oy (lol.stage:body-y b))
+                              (+ (lol.stage:body-r b) 8) *ui-accent*))
     ;; NAME is a slot reader, not a caption — it is drawn because the transcript names
     ;; the same string, and the eye has to be able to join the two. It sits to the
     ;; right of the sprite unless that would run it off the viewport, in which case it
     ;; flips to the left: a body drifting into the right-hand wall was pushing its
     ;; label out of the pane and into the divider beside it.
-    (let* ((nm     (lol.examples:name (body-obj b)))
+    (let* ((nm     (lol.examples:name (lol.stage:body-obj b)))
            (npx    (lol.canvas:string-px *bfont* nm))
-           (docked (body-docked b))
-           (right  (+ ox (body-x b) (body-r b) 6))                 ; the usual side
-           (left   (- (+ ox (body-x b)) (body-r b) 6 npx))         ; ends before the sprite
+           (docked (lol.stage:body-docked b))
+           (right  (+ ox (lol.stage:body-x b) (lol.stage:body-r b) 6))                 ; the usual side
+           (left   (- (+ ox (lol.stage:body-x b)) (lol.stage:body-r b) 6 npx))         ; ends before the sprite
            ;; A DOCKED ship sits on the station's rim, so a label beside it lands on
            ;; top of the station's own and the two read as one garbled word
            ;; ("GeneraLambda"). Docking is the only overlap that PERSISTS — collisions
            ;; are over in a frame — so it is the only one worth moving out of the way:
            ;; the ship's name goes underneath, where the radii keep the rows apart.
-           (nx     (cond (docked (- (+ ox (body-x b)) (floor npx 2)))
-                         ((> (+ right npx) (+ ox (stage-w stage))) left)
+           (nx     (cond (docked (- (+ ox (lol.stage:body-x b)) (floor npx 2)))
+                         ((> (+ right npx) (+ ox (lol.stage:stage-w stage))) left)
                          (t right)))
            (ny     (if docked
-                       (+ oy (body-y b) (body-r b) 4)
-                       (+ oy (body-y b) -6))))
+                       (+ oy (lol.stage:body-y b) (lol.stage:body-r b) 4)
+                       (+ oy (lol.stage:body-y b) -6))))
       (lol.canvas:draw-string canvas *bfont* nm (max ox nx) ny
-                              (if (eq b (stage-selected stage)) *ui-accent* *ui-dim*)))))
+                              (if (eq b (lol.stage:stage-selected stage)) *ui-accent* *ui-dim*)))))
 
 (defun draw-stage-transcript (canvas stage x y w h)
   "The tail of the transcript, oldest at the top. Each line is coloured by what it
@@ -1187,8 +1187,8 @@
   (lol.canvas:draw-string canvas *bfont* "TRANSCRIPT" x (+ y 5) *ui-dim*)
   (let* ((step (line-h))                 ; one text line; was 14 under the 6x15 font
          (rows (max 1 (floor (- h step 7) step)))
-         (tail (reverse (subseq (stage-transcript stage)
-                                0 (min rows (length (stage-transcript stage))))))
+         (tail (reverse (subseq (lol.stage:stage-transcript stage)
+                                0 (min rows (length (lol.stage:stage-transcript stage))))))
          (ty (+ y step 5))
          (maxc (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*)))))
     (dolist (e tail)
@@ -1212,20 +1212,20 @@
   (let* ((stage (view-data (pane-view pane)))
          (vh (- h (stage-transcript-h)))
          (ox x) (oy y))
-    (stage-resize stage (max 80 w) (max 80 vh))
+    (lol.stage:stage-resize stage (max 80 w) (max 80 vh))
     (let ((b (pane-body pane)))                   ; for clicks, and the halo's sprites
       (when (typep b 'stage-body) (setf (body-viewport b) (list x y w vh))))
     (lol.canvas:fill-rect canvas x y w vh !#0E1013)
-    (dolist (b (stage-bodies stage))
+    (dolist (b (lol.stage:stage-bodies stage))
       (draw-stage-sprite canvas b stage ox oy))
     ;; the heads-up line: compute-applicable-methods asked BEFORE the contact, so the
     ;; view tells you what will happen rather than only what did
-    (let ((hud (stage-hud-line stage)))
+    (let ((hud (lol.stage:stage-hud-line stage)))
       (lol.canvas:draw-string canvas *bfont*
                               (lol.widgets:clip-text hud (max 8 (floor (- w 8) (lol.canvas:font-cw *bfont*))))
                               (+ x 4) (- (+ y vh) (line-h) 1)
                               (if (search "will signal" hud) (concept-color :condition) *ui-dim*)))
-    (unless (stage-running stage)
+    (unless (lol.stage:stage-running stage)
       (lol.canvas:draw-string canvas *bfont* "PAUSED" (+ x 4) (+ y 4) *ui-amber*))
     (draw-stage-transcript canvas stage x (+ y vh) w (stage-transcript-h))))
 
@@ -1238,11 +1238,11 @@
       (destructuring-bind (x y w vh) (pane-stage-rect pane)
         (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
           (let ((hit (find-if (lambda (b)
-                                (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
+                                (let ((dx (- px x (lol.stage:body-x b))) (dy (- py y (lol.stage:body-y b))))
                                   (<= (+ (* dx dx) (* dy dy))
-                                      (let ((rr (+ (body-r b) 6))) (* rr rr)))))
-                              (reverse (stage-bodies stage)))))
-            (setf (stage-selected stage) hit)
+                                      (let ((rr (+ (lol.stage:body-r b) 6))) (* rr rr)))))
+                              (reverse (lol.stage:stage-bodies stage)))))
+            (setf (lol.stage:stage-selected stage) hit)
             t))))))
 
 (defun stage-open-workspace (pane &optional text)
@@ -1255,7 +1255,7 @@
    LIST ROW and a stage has no rows, so this is the stage's own way in."
   (unless (pane-side pane)
     (setf (pane-side pane) (or (pane-side-stash pane)
-                               (open-pane (subj-stage-workspace)))
+                               (open-pane (lol.stage:subj-stage-workspace)))
           (pane-side-stash pane) nil))
   (setf (pane-editing-side pane) t)
   (when text
@@ -1271,7 +1271,7 @@
    lands in the Workspace beside the stage with focus, ready for C-c C-c. The point is
    that you never retype what the system already worked out."
   (let* ((stage (view-data (pane-view pane)))
-         (tpl (stage-defmethod-template stage)))
+         (tpl (lol.stage:stage-defmethod-template stage)))
     (when tpl
       (stage-open-workspace
        pane
@@ -1280,8 +1280,8 @@
       ;; still on the stage and still moving, and everything else is still colliding;
       ;; leaving it running means the debugger reopens over the half-written method it
       ;; just asked you for. Space resumes when you are ready to see the difference.
-      (setf (stage-running stage) nil)
-      (stage-log stage "paused — writing a method for this pair" :note)
+      (setf (lol.stage:stage-running stage) nil)
+      (lol.stage:stage-log stage "paused — writing a method for this pair" :note)
       (setf *browser-status* "defmethod template — edit the tag, C-c C-c to Accept, spc to resume")
       t)))
 
@@ -1294,12 +1294,12 @@
    time you typed one into the Workspace."
   (let ((stage (view-data (pane-view pane))))
     (case key
-      (#\Space (setf (stage-running stage) (not (stage-running stage))) t)
-      (#\n (step-stage stage) t)
-      (#\s (stage-spawn stage :ship) t)
-      (#\a (stage-spawn stage :asteroid) t)
-      (#\m (stage-spawn stage :missile) t)
-      (#\t (stage-spawn stage :station) t)
+      (#\Space (setf (lol.stage:stage-running stage) (not (lol.stage:stage-running stage))) t)
+      (#\n (lol.stage:step-stage stage) t)
+      (#\s (lol.stage:stage-spawn stage :ship) t)
+      (#\a (lol.stage:stage-spawn stage :asteroid) t)
+      (#\m (lol.stage:stage-spawn stage :missile) t)
+      (#\t (lol.stage:stage-spawn stage :station) t)
       ;; w HIDES the Workspace rather than closing it: it holds text you typed, and
       ;; very likely a defmethod the debugger just handed you. Stash the pane and put
       ;; the SAME buffer back on the next w.
@@ -1309,25 +1309,25 @@
                       (pane-editing-side pane) nil)
                 (stage-open-workspace pane))
            t)
-      (#\r (reset-collide-stage)
+      (#\r (lol.stage:reset-collide-stage)
            (setf (pane-view pane) (present (pane-subject pane))) t)
       ;; Tab cycles the selection through the bodies. The mouse is an ACCELERATOR here,
       ;; not the way in (doc §1's rule, and the reason every list has arrow keys): a
       ;; stage you can only select on by clicking is a stage you cannot use on hardware
       ;; whose pointer has not been brought up yet.
-      (:tab (let* ((bs (stage-bodies stage))
-                   (i (position (stage-selected stage) bs)))
-              (setf (stage-selected stage)
+      (:tab (let* ((bs (lol.stage:stage-bodies stage))
+                   (i (position (lol.stage:stage-selected stage) bs)))
+              (setf (lol.stage:stage-selected stage)
                     (when bs (nth (if i (mod (1+ i) (length bs)) 0) bs))))
             t)
       ;; a sprite is an INSTANCE, and an instance is a subject: Enter opens the
       ;; Inspector on it, the same view any other object gets. Nothing selected yet?
       ;; Select the first, so Enter is never simply inert.
       ((:return #\Return)
-       (let ((sel (or (stage-selected stage) (first (stage-bodies stage)))))
-         (if (eq sel (stage-selected stage))
-             (when sel (trail-push (body-obj sel)))
-             (setf (stage-selected stage) sel)))
+       (let ((sel (or (lol.stage:stage-selected stage) (first (lol.stage:stage-bodies stage)))))
+         (if (eq sel (lol.stage:stage-selected stage))
+             (when sel (trail-push (lol.stage:body-obj sel)))
+             (setf (lol.stage:stage-selected stage) sel)))
        t)
       (t nil))))
 
@@ -3516,10 +3516,10 @@
       (destructuring-bind (x y w vh) (pane-stage-rect pane)
         (when (and (<= x px (+ x w)) (<= y py (+ y vh)))
           (find-if (lambda (b)
-                     (let ((dx (- px x (body-x b))) (dy (- py y (body-y b))))
+                     (let ((dx (- px x (lol.stage:body-x b))) (dy (- py y (lol.stage:body-y b))))
                        (<= (+ (* dx dx) (* dy dy))
-                           (let ((rr (+ (body-r b) 6))) (* rr rr)))))
-                   (reverse (stage-bodies stage))))))))
+                           (let ((rr (+ (lol.stage:body-r b) 6))) (* rr rr)))))
+                   (reverse (lol.stage:stage-bodies stage))))))))
 
 (defun text-target (pane x y)
   "A target for a click at X,Y inside PANE's text view: the word there and, if it
@@ -3568,7 +3568,7 @@
         ((eq (view-kind (pane-view p)) :stage)
          (let ((b (stage-body-at p x y)))
            (if b
-               (list :kind :sprite :pane p :body b :subject (body-obj b))
+               (list :kind :sprite :pane p :body b :subject (lol.stage:body-obj b))
                (pane-itself p))))
         ((and (null (pane-tv p)) (not (member (view-kind (pane-view p)) +non-list-kinds+)))
          (or (row-target p (pane-rows p) y) (pane-itself p)))
@@ -3853,8 +3853,8 @@
   "The square body B of PANE's stage occupies (where PANE drew it), or NIL."
   (let ((vp (pane-stage-rect pane)))
     (when vp
-      (let ((r (body-r b)))
-        (list (- (+ (first vp) (body-x b)) r) (- (+ (second vp) (body-y b)) r) (* 2 r) (* 2 r))))))
+      (let ((r (lol.stage:body-r b)))
+        (list (- (+ (first vp) (lol.stage:body-x b)) r) (- (+ (second vp) (lol.stage:body-y b)) r) (* 2 r) (* 2 r))))))
 
 (defun halo-entries (layer)
   "The handles for LAYER. An element offers its instance and the code that draws it;

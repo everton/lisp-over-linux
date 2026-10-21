@@ -765,6 +765,17 @@ so positions live in =body= structs in [[file:../initramfs/stage.lisp][=stage.li
 body, never the other way round. Nothing on screen can tell you it has ever been on a
 stage, and =(stage-find s "Lambda")= hands you an ordinary =ship=.
 
+The same rule, seen from the package side: the stage is a /client/ of =lol.examples=,
+not part of the specimen, so it lives in its own package, =lol.stage= (since
+2026-10-20; before that it sat in =CL-USER=). =lol.examples='s package view lists the
+specimen and nothing else, and the stage's =body= accessors (=body-x=, =body-p= …) no
+longer share =CL-USER= with every other module. The shell, which paints the stage,
+writes =lol.stage:stage-bodies= the way it writes =lol.examples:name=; the Workspace
+reads in =CL-USER=, so the forms in its primer are qualified too, and a new rule for
+a collision's value is =(defmethod lol.stage:stage-enact ((tag (eql :near-miss)) …))=.
+The "stage" row in =collide='s view still comes through present.lisp's
+=*stage-subject-fn*= hook, which =lol.stage= imports and sets.
+
 *2. Both directions, every contact.* Contact is symmetric and =collide= is not, so
 rather than inventing an argument order the stage calls it *both ways* and records
 both. This pays for itself twice. It makes the author's symmetric pairs legible —

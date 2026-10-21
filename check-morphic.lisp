@@ -524,7 +524,7 @@
     (format t "~&  loop turns in 5 idle seconds: ~a (the clock's seconds, the pointer's hide)~%" n)
     (check "idle, the loop wakes only for the clock (about once a second)" (and n (<= n 8))))
   ;; the stage, running, from the REPL (as check-worker opens its panes)
-  (probe "(progn (new-trail (subj-stage 'lol.examples:collide)) (setf (stage-running (view-data (pane-view (current-pane)))) t) (lol.morph:invalidate *world*) t)" 5.0)
+  (probe "(progn (new-trail (lol.stage:subj-stage 'lol.examples:collide)) (setf (lol.stage:stage-running (view-data (pane-view (current-pane)))) t) (lol.morph:invalidate *world*) t)" 5.0)
   (sleep 2.0)
   (probe "(progn (defvar *zz-reps* nil) (setf *zz-reps* nil) (sb-int:encapsulate 'lol.morph:world-repair 'rec (lambda (f &rest a) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f a) (unless (= n (lol.morph:world-repairs *world*)) (push (lol.morph:world-last-repair *world*) *zz-reps*)))))) (setf *zz-cycles* 0) t)")
   (let ((s0 (probe-int "(lol.morph:morph-steps (holder-pane (desk-shell *world*)))")))
@@ -547,7 +547,7 @@
           (probe "(let ((t0 (get-internal-real-time))) (dotimes (i 50) (lol.morph:invalidate *world*) (multiple-value-call #'present-repair *fb-canvas* (lol.morph:world-repair *world* *fb-canvas*))) (round (* 1000000 (- (get-internal-real-time) t0)) (* 50 internal-time-units-per-second)))" 300))
   (qmp-key "spc") (sleep 1.0)                              ; Space pauses the stage
   (check "Space pauses it: nothing steps, the deadline is -1 again"
-         (and (string= (probe "(stage-running (view-data (pane-view (current-pane))))") "NIL")
+         (and (string= (probe "(lol.stage:stage-running (view-data (pane-view (current-pane))))") "NIL")
               (eql (probe-int "(lol.morph:world-step-timeout *world*)") -1)))
   (probe "(sb-int:unencapsulate 'fb-cycle 'zz)")
   (qmp-hold "meta_l" "w") (sleep 1.0))
@@ -690,9 +690,9 @@
   (measure "a key in a window (its list, moved)" "(zz-time (let ((i 0)) (lambda () (setf (pane-editing-side (current-pane)) nil) (lol.morph:world-dispatch *world* (lol.morph:make-event :kind :key :key (if (evenp (incf i)) :up :down) :state 0)))))")
   (measure "a full repair (shell + window)" "(zz-time (lambda () (lol.morph:invalidate *world*)))")
   (probe "(progn (dolist (w (desk-windows)) (close-window-trail w)) t)")
-  (probe "(progn (new-trail (subj-stage 'lol.examples:collide)) (setf (stage-running (view-data (pane-view (current-pane)))) nil) t)" 5.0)
+  (probe "(progn (new-trail (lol.stage:subj-stage 'lol.examples:collide)) (setf (lol.stage:stage-running (view-data (pane-view (current-pane)))) nil) t)" 5.0)
   (sleep 1.5)
-  (measure "a stage step (its body)" "(zz-time (let ((p (current-pane))) (lambda () (step-stage (view-data (pane-view p))) (lol.morph:invalidate (pane-body p)))))")
+  (measure "a stage step (its body)" "(zz-time (let ((p (current-pane))) (lambda () (lol.stage:step-stage (view-data (pane-view p))) (lol.morph:invalidate (pane-body p)))))")
   (qmp-hold "meta_l" "w") (sleep 1.0))
 
 (defun checks ()

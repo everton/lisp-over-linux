@@ -709,7 +709,7 @@
 (desk-sync *world*) (repair)
 (let* ((p (tiled-pane))
        (st (view-data (pane-view p))))
-  (setf (stage-running st) t)
+  (setf (lol.stage:stage-running st) t)
   (check "a running stage on screen: its pane steps every frame"
          (= (lol.morph:morph-step-ms p) +stage-frame-ms+))
   (lol.morph:world-step-timeout *world*)
@@ -723,18 +723,18 @@
          (and (drew-p (pane-body p)) (repaired-only-p (list* p (pane-body p) (windows)))))
   (check "the screen is right after a step" (screen-right-p))
   ;; a sprite is picked up by its press moving: the hand carries its instance
-  (let* ((sb (pane-body p)) (vp (body-viewport sb)) (b (first (stage-bodies st))))
+  (let* ((sb (pane-body p)) (vp (body-viewport sb)) (b (first (lol.stage:stage-bodies st))))
     (multiple-value-bind (ox oy) (lol.morph:surface-origin sb)
-      (let ((x (+ ox (first vp) (body-x b))) (y (+ oy (second vp) (body-y b))))
-        (setf (stage-running st) nil) (repair)
+      (let ((x (+ ox (first vp) (lol.stage:body-x b))) (y (+ oy (second vp) (lol.stage:body-y b))))
+        (setf (lol.stage:stage-running st) nil) (repair)
         (ev :down :x x :y y) (repair)
-        (check "a press on a sprite selects it at once" (eq (stage-selected st) b))
+        (check "a press on a sprite selects it at once" (eq (lol.stage:stage-selected st) b))
         (ev :drag :x (+ x 30) :y (+ y 20)) (repair)
         (check "... and moved, the hand carries its instance"
-               (eq (getf (lol.morph:hand-payload (lol.morph:world-hand *world*)) :subject) (body-obj b)))
+               (eq (getf (lol.morph:hand-payload (lol.morph:world-hand *world*)) :subject) (lol.stage:body-obj b)))
         (ev :key :key :escape :state 0) (ev :up :x (+ x 30) :y (+ y 20)) (repair)
         (check "Esc puts it back" (null (lol.morph:hand-payload (lol.morph:world-hand *world*))))
-        (setf (stage-running st) t))))
+        (setf (lol.stage:stage-running st) t))))
   ;; the same stage in a window: only that part of its backing store is drawn again
   (keys "s-g esc")
   (let ((w (trail-window-of (nth *active* *trails*))))
@@ -751,7 +751,7 @@
                   (drew-p (pane-body p))
                   (repaired-only-p (list* p (pane-body p) w (window-frame w) (windows))))))
     (check "the screen is right" (screen-right-p))
-    (setf (stage-running st) nil)
+    (setf (lol.stage:stage-running st) nil)
     (check "a paused stage steps nothing: back to -1"
            (= -1 (lol.morph:world-step-timeout *world*)))
     (keys "s-w")))

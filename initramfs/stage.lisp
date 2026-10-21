@@ -34,9 +34,37 @@
 ;;;; paints. The tick is driven by the browser's own poll loop (fb-browser.lisp) — there
 ;;;; is no thread.
 ;;;;
+;;;; Its own package, LOL.STAGE, for the same reason as rule 1 from the other side:
+;;;; the stage is a CLIENT of lol.examples (it calls COLLIDE and makes the instances),
+;;;; not part of the specimen, so it must not crowd lol.examples' package view — and
+;;;; out of CL-USER, its BODY struct's accessors (BODY-X, BODY-P …) no longer share a
+;;;; namespace with every other module's. It imports the five names of the present
+;;;; protocol it speaks; the shell, which paints the stage, writes lol.stage:… for what
+;;;; it reads, exactly as it writes lol.examples:name.
+;;;;
 ;;;; All original code, under this project's MIT licence.
 
-(in-package :cl-user)
+(defpackage :lol.stage
+  (:use :cl)
+  (:documentation "The COLLIDE stage (§3b): lol.examples' instances moving, every contact
+   a real COLLIDE call. Shown from COLLIDE's generic-function view.")
+  ;; the present protocol (present.lisp, in CL-USER) — what a subject speaks
+  (:import-from :cl-user #:present #:commands-for #:make-view #:make-command
+                #:subj-matrix #:*stage-subject-fn*)
+  (:export
+   ;; the subjects, and the one live stage
+   #:subj-stage #:subj-stage-workspace #:collide-stage #:reset-collide-stage
+   ;; a stage: what the shell reads to draw it, and steps it with
+   #:stage #:stage-w #:stage-h #:stage-bodies #:stage-transcript #:stage-running
+   #:stage-selected #:step-stage #:stage-resize #:stage-log #:stage-hud-line
+   #:stage-defmethod-template #:stage-spawn #:stage-find #:stage-any
+   ;; a body: one sprite
+   #:body #:body-obj #:body-kind #:body-x #:body-y #:body-vx #:body-vy #:body-r
+   #:body-rot #:body-flash #:body-flash-kind #:body-docked #:body-breached #:body-poly
+   ;; what a collision's value is enacted by — specialise it on a new tag
+   #:stage-enact))
+
+(in-package :lol.stage)
 
 ;;; ---- geometry per class -----------------------------------------------------
 ;;; Radius and speed are the only per-class physics. They are here rather than in
@@ -617,30 +645,35 @@
 ;;   C-c C-c   Accept      compile a definition below into the image
 ;;   SuperL-o  back to the stage          w  hide this pane
 
+;; The Workspace reads in CL-USER, so the stage's own functions are written
+;; lol.stage:…, as the specimen's are lol.examples:…
+
 ;; Every sprite is an ordinary instance. Reach one by kind:
 
-(stage-any (collide-stage) :ship)
+(lol.stage:stage-any (lol.stage:collide-stage) :ship)
 
 ;; or by the name printed beside it (NIL once it has left the stage):
 
-(stage-find (collide-stage) \"Genera\")
+(lol.stage:stage-find (lol.stage:collide-stage) \"Genera\")
 
 ;; Ask what WOULD dispatch, without calling. This is the question the
 ;; heads-up line at the foot of the stage answers on every tick:
 
-(compute-applicable-methods #'lol.examples:collide
-                            (list (stage-any (collide-stage) :missile)
-                                  (stage-any (collide-stage) :ship)))
+(compute-applicable-methods
+ #'lol.examples:collide
+ (list (lol.stage:stage-any (lol.stage:collide-stage) :missile)
+       (lol.stage:stage-any (lol.stage:collide-stage) :ship)))
 
 ;; Make the call yourself. It returns data and enacts NOTHING — only the
 ;; stage's own tick feeds a value to stage-enact, so poking here is safe:
 
-(lol.examples:collide (stage-any (collide-stage) :missile)
-                      (stage-any (collide-stage) :ship))
+(lol.examples:collide
+ (lol.stage:stage-any (lol.stage:collide-stage) :missile)
+ (lol.stage:stage-any (lol.stage:collide-stage) :ship))
 
 ;; Put something else out there to watch:
 
-(stage-spawn (collide-stage) :asteroid)
+(lol.stage:stage-spawn (lol.stage:collide-stage) :asteroid)
 
 ;; Two ships have no method, and that hole is what opens the debugger.
 ;; Accept this with C-c C-c, press s for a second ship, and watch the
@@ -699,3 +732,5 @@
       (lambda (name)
         (when (eq name 'lol.examples:collide)
           (subj-stage name))))
+
+(in-package :cl-user)

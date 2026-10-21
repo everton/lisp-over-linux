@@ -257,11 +257,11 @@ OPTIONS
       ;; is worth a picture, and its RNG is seeded so N ticks render identically here
       ;; and in the guest. "stage" alone means 240 ticks (four seconds at sixty a tick).
       ((string= head "stage")
-       (let ((st (reset-collide-stage))
+       (let ((st (lol.stage:reset-collide-stage))
              (n (if rest (parse-integer rest) 240)))
-         (setf (stage-w st) 700 (stage-h st) 380)
-         (dotimes (i n) (step-stage st))
-         (subj-stage 'lol.examples:collide)))
+         (setf (lol.stage:stage-w st) 700 (lol.stage:stage-h st) 380)
+         (dotimes (i n) (lol.stage:step-stage st))
+         (lol.stage:subj-stage 'lol.examples:collide)))
       ((string= head "workspace") (subj-workspace))
       ;; containers / run:CMD (doc/containers.org). The host has no lol-ct, so the
       ;; containers view says so; a run is a HOST command (sh -c CMD), run to the end

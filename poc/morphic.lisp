@@ -523,11 +523,11 @@
    transcript's newest line — a step damages it too, explicitly; this catches the
    rest (an eval in the Workspace beside it that moved a ship)."
   (let* ((p (body-pane b)) (st (and p (view-data (pane-view p)))))
-    (and st (list (lol.morph:morph-local-bounds b) (pane-view p) (stage-selected st)
-                  (stage-running st) (first (stage-transcript st))
-                  (mapcar (lambda (o) (list (body-x o) (body-y o) (body-rot o) (body-flash o)
-                                            (body-breached o) (body-docked o)))
-                          (stage-bodies st))))))
+    (and st (list (lol.morph:morph-local-bounds b) (pane-view p) (lol.stage:stage-selected st)
+                  (lol.stage:stage-running st) (first (lol.stage:stage-transcript st))
+                  (mapcar (lambda (o) (list (lol.stage:body-x o) (lol.stage:body-y o) (lol.stage:body-rot o) (lol.stage:body-flash o)
+                                            (lol.stage:body-breached o) (lol.stage:body-docked o)))
+                          (lol.stage:stage-bodies st))))))
 
 (defmethod morph-signature ((b terminal-body))
   (let ((p (body-pane b)))
@@ -1354,7 +1354,7 @@
            (typecase b
              (list-body (let ((it (selected-item src))) (and it (item-subject it))))
              (stage-body (let ((st (view-data (pane-view src))))
-                           (and (stage-selected st) (body-obj (stage-selected st)))))
+                           (and (lol.stage:stage-selected st) (lol.stage:body-obj (lol.stage:stage-selected st)))))
              (text-body (let ((sym (resolve-symbol (token-at-point (pane-tv src)))))
                           (and sym (symbolp sym)
                                (if (jumpable-p sym) (subj-defn sym) sym))))
@@ -1868,7 +1868,7 @@
 
 (defun pane-running-stage (p)
   (and p (pane-view p) (eq (view-kind (pane-view p)) :stage)
-       (let ((st (view-data (pane-view p)))) (and (stage-running st) st))))
+       (let ((st (view-data (pane-view p)))) (and (lol.stage:stage-running st) st))))
 
 (defun pane-step-ms (p)
   "How often P must step: a running stage's frame, a run pane's tick, or NIL — P is
@@ -1908,14 +1908,14 @@
     (restart-case
         (handler-bind ((serious-condition
                          (lambda (c) (setf layout t) (funcall 'run-debugger-fb c))))
-          (dotimes (i due) (step-stage st)))
+          (dotimes (i due) (lol.stage:step-stage st)))
       (abort ()
         :report "Return to the stage (paused)"
         ;; Pausing is the honest outcome: nothing resolved the contact, and the two
         ;; bodies are still overlapping. Resuming would re-signal a second later — a
         ;; modal that reopens on a timer is not a debugger, it is a trap.
-        (setf (stage-running st) nil)
-        (stage-log st "aborted — stage paused; the contact is unresolved" :warn)))
+        (setf (lol.stage:stage-running st) nil)
+        (lol.stage:stage-log st "aborted — stage paused; the contact is unresolved" :warn)))
     ;; [define-method] left a template behind: hand it to the Workspace beside the
     ;; stage — here, not in the restart, whose job is to unwind
     (when (and (pane-view p) (eq (view-kind (pane-view p)) :stage) (stage-take-template p))
