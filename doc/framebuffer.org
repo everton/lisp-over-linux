@@ -629,6 +629,18 @@ shape's hotspot lands on the point (17 x 27 pixels, its corner 5 left of and 7 a
 the point), so drawing, moving and hiding work the same whatever the shape, and
 [[file:../initramfs/fb-browser.lisp::defun set-cursor-shape][=set-cursor-shape=]] redraws the box in place when only the shape changes.
 
+The pointer stays *live-editable*: Accept a new =*cursor-bits*= (=C-c C-c= on its
+=defparameter=) and the next move draws the new arrow. That takes two indirections,
+and the first version of the shapes table had neither, so for a day (2026-10-20 to
+10-21) the demo silently did nothing. (1) =*cursor-shapes*= names each bitmap by its
+/variable/ and [[file:../initramfs/fb-browser.lisp::defun cursor-shape][=cursor-shape=]] reads it at draw time. A table holding the vector
+itself keeps the old one: re-evaluating a =defparameter= gives the variable a /new/
+object, and nothing else learns of it. (2) The box is no longer fixed at load:
+=+cursor-w+= and friends are symbol macros over [[file:../initramfs/fb-browser.lisp::defun cursor-box-geometry][=cursor-box-geometry=]], which
+measures the bitmaps every time it is used (a few µs per move). Erasing uses the box
+=put-cursor= last /sent/ (=*cursor-shown-rect*=), not a recomputed one, so an arrow
+that shrank between two draws leaves nothing of the old one on screen.
+
 Every event loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — the browser, the source viewer, the value
 prompt, the debugger, the cheatsheet, the Spotter — followed one pattern (until
 Morphic step 4 made them all one loop, below): a =dirty=

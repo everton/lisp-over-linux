@@ -899,17 +899,30 @@
 ;;; (doc/web-browser.org §4.10, WEB-CURSOR in web.lisp). Each shape is its bitmap and
 ;;; its HOTSPOT, the pixel that is the point: the arrow's tip, the forefinger's tip,
 ;;; the I-beam's middle.
+;;;
+;;; The table names each bitmap by its VARIABLE, not its value, and DRAW-CURSOR
+;;; reads the variable each time it draws. Holding the vector itself would freeze
+;;; it: Accept a new *CURSOR-BITS* (C-c C-c on its DEFPARAMETER) and the variable
+;;; gets a new vector while the table goes on pointing at the old one — which is
+;;; exactly what happened from 2026-10-20, when this table arrived, until the
+;;; indirection: the live-editing demo "redraw the arrow" quietly stopped working.
 (defparameter *cursor-shapes*
-  (list :arrow (list *cursor-bits* 0 0)
-        :hand (list *cursor-hand-bits* 5 0)
-        :text (list *cursor-text-bits* 3 7))
-  "Shape name -> (bits hotspot-x hotspot-y).")
+  '(:arrow (*cursor-bits* 0 0)
+    :hand (*cursor-hand-bits* 5 0)
+    :text (*cursor-text-bits* 3 7))
+  "Shape name -> (bits-variable hotspot-x hotspot-y).")
+
+(defun cursor-shape (shape)
+  "SHAPE's current bitmap and hotspot (the arrow for an unknown shape).
+   -> (values bits hx hy)"
+  (destructuring-bind (var hx hy) (or (getf *cursor-shapes* shape) (getf *cursor-shapes* :arrow))
+    (values (symbol-value var) hx hy)))
 
 (defvar *cursor-shape* :arrow "The shape the pointer is drawn as (a key of *CURSOR-SHAPES*).")
 
 (defun draw-cursor (canvas x y &optional (shape *cursor-shape*))
   "Blit SHAPE's bits with its hotspot at X,Y — one pixel per cell, clipped."
-  (destructuring-bind (bits hx hy) (or (getf *cursor-shapes* shape) (getf *cursor-shapes* :arrow))
+  (multiple-value-bind (bits hx hy) (cursor-shape shape)
     (let ((white (lol.canvas:rgb #xff #xff #xff))
           (black (lol.canvas:rgb 0 0 0))
           (x (- x hx)) (y (- y hy)))
@@ -1271,14 +1284,27 @@
 ;; The BOX every shape fits in, placed with each shape's hotspot at (+CURSOR-OX+,
 ;; +CURSOR-OY+) inside it: what is copied from the canvas and sent when the pointer
 ;; is drawn, moved or hidden, whatever shape it has (CURSOR-BOX).
-(defparameter +cursor-ox+ (loop for (nil (nil hx)) on *cursor-shapes* by #'cddr maximize hx))
-(defparameter +cursor-oy+ (loop for (nil (nil nil hy)) on *cursor-shapes* by #'cddr maximize hy))
-(defparameter +cursor-w+
-  (loop for (nil (bits hx)) on *cursor-shapes* by #'cddr
-        maximize (+ (- +cursor-ox+ hx) (reduce #'max bits :key #'length))))
-(defparameter +cursor-h+
-  (loop for (nil (bits nil hy)) on *cursor-shapes* by #'cddr
-        maximize (+ (- +cursor-oy+ hy) (length bits))))
+;;
+;; Worked out from the bitmaps at every use, not once at load: a bigger arrow
+;; Accepted into the running image gets a bigger box on its next draw (the same
+;; reason *CURSOR-SHAPES* names variables). Three shapes of ~20 rows each — a few
+;; microseconds per pointer move. The names keep their +...+ spelling as symbol
+;; macros, as poc/widgets.lisp's +ROW-H+ does over the font.
+(defun cursor-box-geometry ()
+  "-> (values ox oy w h): the hotspot's place inside the box, and the box's size."
+  (let ((shapes (loop for (name) on *cursor-shapes* by #'cddr
+                      collect (multiple-value-list (cursor-shape name)))))
+    (let ((ox (loop for (nil hx) in shapes maximize hx))
+          (oy (loop for (nil nil hy) in shapes maximize hy)))
+      (values ox oy
+              (loop for (bits hx) in shapes
+                    maximize (+ (- ox hx) (reduce #'max bits :key #'length)))
+              (loop for (bits nil hy) in shapes
+                    maximize (+ (- oy hy) (length bits)))))))
+(define-symbol-macro +cursor-ox+ (nth-value 0 (cursor-box-geometry)))
+(define-symbol-macro +cursor-oy+ (nth-value 1 (cursor-box-geometry)))
+(define-symbol-macro +cursor-w+ (nth-value 2 (cursor-box-geometry)))
+(define-symbol-macro +cursor-h+ (nth-value 3 (cursor-box-geometry)))
 
 (defun cursor-box (x y)
   "The top-left of the pointer's box for the point X,Y (never off the canvas's
@@ -1318,23 +1344,39 @@
 (defvar *cursor-shown-x* 0 "Where PUT-CURSOR last drew the arrow: what a repair that
    moved it must put back (PRESENT-REPAIR).")
 (defvar *cursor-shown-y* 0)
+(defvar *cursor-shown-rect* nil
+  "The box PUT-CURSOR last sent, (x y w h): what hiding or moving the pointer re-sends
+   from the canvas. Kept rather than recomputed, because the box can change in
+   between — Accept a smaller arrow and recomputing would leave the old one's
+   edges on the screen.")
 
 (defun put-cursor (canvas x y)
   "Show the pointer at X,Y over CANVAS's pixels, sending only its box's patch."
   (when *screen-lent* (return-from put-cursor nil))
   (multiple-value-bind (bx by) (cursor-box x y)
-    (let* ((patch (or *cursor-patch*
-                      (setf *cursor-patch* (lol.canvas:make-canvas +cursor-w+ +cursor-h+))))
-           (dst (lol.canvas:canvas-pixels patch))
-           (src (lol.canvas:canvas-pixels canvas))
-           (cw (lol.canvas:canvas-w canvas))
-           (n (max 0 (min +cursor-w+ (- cw bx)))))    ; columns that are on screen
-      (dotimes (row (max 0 (min +cursor-h+ (- (lol.canvas:canvas-h canvas) by))))
-        (replace dst src :start1 (* row +cursor-w+) :end1 (+ (* row +cursor-w+) n)
-                         :start2 (+ (* (+ by row) cw) bx)))
-      (draw-cursor patch (- x bx) (- y by))
-      (lol.fb:present-fb patch :x0 bx :y0 by)
-      (setf *cursor-shown-x* x *cursor-shown-y* y))))
+    (multiple-value-bind (ox oy bw bh) (cursor-box-geometry)
+      (declare (ignore ox oy))
+      (let* ((patch (if (and *cursor-patch*             ; a new size when the box changed
+                             (= (lol.canvas:canvas-w *cursor-patch*) bw)
+                             (= (lol.canvas:canvas-h *cursor-patch*) bh))
+                        *cursor-patch*
+                        (setf *cursor-patch* (lol.canvas:make-canvas bw bh))))
+             (dst (lol.canvas:canvas-pixels patch))
+             (src (lol.canvas:canvas-pixels canvas))
+             (cw (lol.canvas:canvas-w canvas))
+             (n (max 0 (min bw (- cw bx)))))    ; columns that are on screen
+        ;; a box that shrank since the last draw: put back what the old one covered
+        (when (and *cursor-shown-rect* (not *cursor-hidden*)
+                   (destructuring-bind (ow oh) (cddr *cursor-shown-rect*)
+                     (or (> ow bw) (> oh bh))))
+          (apply #'lol.fb:present-fb-rect canvas *cursor-shown-rect*))
+        (dotimes (row (max 0 (min bh (- (lol.canvas:canvas-h canvas) by))))
+          (replace dst src :start1 (* row bw) :end1 (+ (* row bw) n)
+                           :start2 (+ (* (+ by row) cw) bx)))
+        (draw-cursor patch (- x bx) (- y by))
+        (lol.fb:present-fb patch :x0 bx :y0 by)
+        (setf *cursor-shown-x* x *cursor-shown-y* y
+              *cursor-shown-rect* (list bx by bw bh))))))
 
 (defun set-cursor-shape (shape)
   "Draw the pointer as SHAPE from now on (:arrow :hand :text), at once if it shows."
@@ -1378,10 +1420,10 @@
   "The pointer moved and nothing else changed: put back what was under it (straight
    from CANVAS), then draw it at its new place. Two tiny writes instead of a frame.
    A hidden pointer has nothing to put back; it just reappears."
+  (declare (ignore old-x old-y))          ; the box PUT-CURSOR sent says where it was
   (when *screen-lent* (return-from move-cursor nil))
-  (unless *cursor-hidden*
-    (multiple-value-bind (bx by) (cursor-box old-x old-y)
-      (lol.fb:present-fb-rect canvas bx by +cursor-w+ +cursor-h+)))
+  (when (and *cursor-shown-rect* (not *cursor-hidden*))
+    (apply #'lol.fb:present-fb-rect canvas *cursor-shown-rect*))
   (setf *cursor-hidden* nil)
   (put-cursor canvas *cursor-x* *cursor-y*))
 
@@ -1395,8 +1437,8 @@
   "Take the pointer off the screen: re-send the canvas pixels under it."
   (when *screen-lent* (return-from hide-cursor nil))
   (unless *cursor-hidden*
-    (multiple-value-bind (bx by) (cursor-box *cursor-x* *cursor-y*)
-      (lol.fb:present-fb-rect canvas bx by +cursor-w+ +cursor-h+))
+    (when *cursor-shown-rect*
+      (apply #'lol.fb:present-fb-rect canvas *cursor-shown-rect*))
     (setf *cursor-hidden* t)))
 
 (defun cursor-idle-timeout ()

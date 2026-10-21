@@ -72,7 +72,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     <a href="../input.org">input.org</a>.</dd>
   <dt>poll(2), inotify</dt>
   <dd><code>poll</code> sleeps until one of several fds is readable. <code>inotify</code> makes a directory change readable as an fd.
-    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1171</span></a>).</dd>
+    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1184</span></a>).</dd>
   <dt>raw mode (termios)</dt>
   <dd>A tty normally buffers a line and turns Ctrl-C into a signal. Raw mode delivers each byte as it arrives, which is needed
     for <kbd>C-c C-c</kbd> to reach us (<a class="ref" data-ref="initramfs/line-editor.lisp#with-raw-mode" href="../../initramfs/line-editor.lisp"><code>with-raw-mode</code><span class="loc">initramfs/line-editor.lisp:53</span></a>).</dd>

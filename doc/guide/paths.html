@@ -46,7 +46,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     On the console, Alt-. (or Esc then .) arrives as the bytes <code>ESC .</code>. An ESC followed within 20 ms by a printable
     byte becomes that character with the Meta bit (8) set. A lone ESC becomes <code>:escape</code>, which the shell keeps as a
     "sticky" Meta for the next key.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1719</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1761</span></a></span>
     The loop ORs in the held modifiers from evdev and calls <code>browser-key</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2981</span></a></span>
     The first real branch: Meta and <code>.</code> in a pane with a textview. It comes before the editing branch, or the
@@ -165,7 +165,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
 <ol class="stops">
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:4172</span></a></span>
     A middle click (or Alt-click) in text you can edit pastes PRIMARY. Anywhere else it opens the halo.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#halo-layers" href="../../poc/morphic.lisp"><code>halo-layers</code><span class="loc">poc/morphic.lisp:1645</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#halo-layers" href="../../poc/morphic.lisp"><code>halo-layers</code><span class="loc">poc/morphic.lisp:1649</span></a></span>
     Every thing on screen is a morph that draws itself, so "who drew this pixel" is the morph tree: the thing the
     pointer is on (a word, a row), then each morph from the deepest under the point out — the text view in the pane,
     the pane, what it shows, its trail area, the shell or the window — each offering itself and its drawing functions.</li>
