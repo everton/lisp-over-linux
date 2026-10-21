@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project status</title>
+<!--
+  doc/status.html — one page: what is built, what is in progress, what is owed.
+  Hand-written from each doc's own status lines (2026-10-20, kernel tag #30,
+  main at 2060c7d). The docs stay the truth: when a row here and a doc disagree,
+  fix this page. Everything on it is drawn from the EFFORTS table in the script
+  below, so the map, the open list and the details cannot disagree. Offline by
+  design, like doc/guide/: no fonts, no CDN.
+-->
+<style>
+:root {
+  --bg: #fbfaf7; --panel: #f2f0ea; --fg: #1f2328; --dim: #5d6670; --faint: #8b929a; --rule: #dedad0;
+  --accent: #0f766e; --accent-bg: #d6efeb; --link: #0b5fa5; --code-bg: #eeebe3;
+  --built: #15803d; --wip: #b45309; --owed: #b42318; --idea: #6d28d9;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #14161a; --panel: #1b1e24; --fg: #d6d3c8; --dim: #8a929d; --faint: #6b727c; --rule: #2e343d;
+    --accent: #7fdbca; --accent-bg: #1f3a36; --link: #82aaff; --code-bg: #20242b;
+    --built: #6ee7a0; --wip: #ffb86b; --owed: #ff8a80; --idea: #c4a7ff;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #14161a; --panel: #1b1e24; --fg: #d6d3c8; --dim: #8a929d; --faint: #6b727c; --rule: #2e343d;
+  --accent: #7fdbca; --accent-bg: #1f3a36; --link: #82aaff; --code-bg: #20242b;
+  --built: #6ee7a0; --wip: #ffb86b; --owed: #ff8a80; --idea: #c4a7ff;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg);
+  font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif; }
+a { color: var(--link); }
+code { font-family: ui-monospace, Menlo, Consolas, monospace; background: var(--code-bg);
+  padding: 0 .28em; border-radius: 3px; font-size: .88em; }
+main { max-width: 74rem; margin: 0 auto; padding: 1.4rem 16px 4rem; }
+
+/* ---- header: the verdict in one sentence ---- */
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: .3rem 1rem; }
+h1 { font-size: 1.5rem; margin: 0; }
+.meta { color: var(--dim); font-size: .85rem; }
+.meta button { font: inherit; color: var(--fg); background: var(--panel); border: 1px solid var(--rule);
+  border-radius: 4px; padding: 0 .45rem; cursor: pointer; }
+.verdict { font-size: 1.08rem; margin: .5rem 0 0; max-width: 56rem; }
+.verdict b.w { color: var(--wip); } .verdict b.o { color: var(--owed); }
+.key { font-size: .8rem; color: var(--dim); margin: .5rem 0 0; display: flex; flex-wrap: wrap; gap: .2rem 1rem; }
+
+/* ---- the map: three layers, one line per piece ---- */
+.map { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 1.6rem; margin-top: 1.1rem;
+  border-top: 2px solid var(--fg); padding-top: .2rem; }
+.layer h2 { font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; color: var(--dim);
+  margin: .55rem 0 .25rem; font-weight: 650; display: flex; justify-content: space-between; }
+.layer h2 span { font-weight: 400; letter-spacing: 0; text-transform: none; }
+.row { display: flex; align-items: center; gap: .5rem; padding: .22rem .3rem; border-radius: 5px;
+  text-decoration: none; color: var(--fg); border-bottom: 1px solid var(--rule); }
+.row:hover { background: var(--panel); }
+.row .nm { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: .92rem; }
+.row .tag { font-size: .74rem; color: var(--faint); white-space: nowrap; }
+.pips { display: inline-flex; gap: 3px; flex: none; }
+.pip { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.pip.wip { background: var(--wip); } .pip.owed { background: var(--owed); }
+.pip.idea { background: transparent; box-shadow: inset 0 0 0 1.5px var(--idea); }
+.pip.built { background: var(--built); }
+.tick { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--built); }
+
+/* ---- what is open ---- */
+section { margin-top: 2.2rem; }
+section > h2 { font-size: 1.1rem; margin: 0 0 .6rem; display: flex; align-items: baseline; gap: .6rem; }
+section > h2 small { font-size: .8rem; font-weight: 400; color: var(--dim); }
+.open { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1.6rem; }
+.open h3 { font-size: .8rem; letter-spacing: .06em; text-transform: uppercase; margin: .4rem 0 .3rem;
+  display: flex; align-items: center; gap: .4rem; }
+.open ul { list-style: none; margin: 0 0 .8rem; padding: 0; }
+.open li { padding: .28rem 0; border-bottom: 1px solid var(--rule); font-size: .9rem;
+  display: grid; grid-template-columns: 1fr auto; gap: .6rem; }
+.open li .where { font-size: .78rem; color: var(--faint); white-space: nowrap; }
+.open li .where a { color: var(--dim); }
+.open .ideas li { color: var(--dim); }
+
+/* ---- details per piece ---- */
+details.piece { border-bottom: 1px solid var(--rule); }
+details.piece > summary { cursor: pointer; padding: .45rem .2rem; display: flex; align-items: center; gap: .55rem; list-style: none; }
+details.piece > summary::-webkit-details-marker { display: none; }
+details.piece > summary::before { content: "▸"; color: var(--faint); width: .8em; flex: none; }
+details.piece[open] > summary::before { content: "▾"; }
+details.piece > summary .nm { font-weight: 600; }
+details.piece > summary .tag { color: var(--faint); font-size: .8rem; flex: 1; }
+details.piece:target > summary, details.piece.flash > summary { background: var(--accent-bg); border-radius: 5px; }
+.body { padding: 0 .2rem .8rem 1.75rem; font-size: .9rem; max-width: 56rem; }
+.body p { margin: 0 0 .4rem; }
+.body ul { margin: .2rem 0 .4rem; padding-left: 1rem; }
+.body li { margin: .15rem 0; }
+.body .docs { font-size: .85rem; }
+.body .docs a { margin-right: .7rem; }
+.lbl { font-size: .7rem; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; margin-right: .3rem; }
+.lbl.wip { color: var(--wip); } .lbl.owed { color: var(--owed); } .lbl.idea { color: var(--idea); }
+.layer-head { font-size: .74rem; letter-spacing: .09em; text-transform: uppercase; color: var(--dim);
+  margin: 1.1rem 0 .1rem; font-weight: 650; }
+
+table { border-collapse: collapse; width: 100%; font-size: .88rem; }
+th, td { text-align: left; vertical-align: top; padding: .35rem .5rem; border-bottom: 1px solid var(--rule); }
+th { color: var(--dim); font-weight: 600; font-size: .8rem; }
+.tbl { overflow-x: auto; }
+footer { margin-top: 2.5rem; font-size: .82rem; color: var(--dim); }
+
+@media (max-width: 900px) { .map { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 620px) { .map, .open, .open li { grid-template-columns: 1fr; } .open li { gap: 0; } .open li .where { white-space: normal; } }
+</style>
+<script>
+  // Pin the theme before first paint; same key as doc/guide/ so one choice serves both.
+  try { var t = localStorage.getItem("lol-guide-theme"); if (t && t !== "auto") document.documentElement.dataset.theme = t; } catch (e) {}
+</script>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Project status</h1>
+  <div class="meta">2026-10-20 · kernel tag <strong>#30</strong> · <code>main</code> @ 2060c7d ·
+    theme <button type="button" id="theme">auto</button></div>
+</header>
+<p class="verdict" id="verdict"></p>
+<div class="key">
+  <span><i class="pip built"></i> built</span>
+  <span>then one dot per open item:</span>
+  <span><i class="pip wip"></i> unproven</span>
+  <span><i class="pip owed"></i> owed (a doc names it)</span>
+  <span><i class="pip idea"></i> optional / idea</span>
+  <span>Click a line for its details · each doc is the authority, see <a href="../README.org">README.org</a> · code guide: <a href="guide/index.html">guide/</a></span>
+</div>
+
+<nav class="map" id="map" aria-label="Everything, by layer"></nav>
+
+<section>
+  <h2>What is open <small id="open-count"></small></h2>
+  <div class="open" id="open"></div>
+</section>
+
+<section>
+  <h2>Each piece <small>what it is, what is open, where to read</small></h2>
+  <div id="pieces"></div>
+</section>
+
+<section>
+  <h2>Docs behind the code <small>found while compiling this page; not fixed yet</small></h2>
+  <div class="tbl"><table id="drift"><tr><th>Doc</th><th>Says</th><th>Reality</th></tr></table></div>
+</section>
+
+<footer>Hand-maintained from each document's status line: update the <code>EFFORTS</code> entry in this file
+in the same turn as the doc it cites (AGENTS.md, “Keep the docs in sync with reality”).</footer>
+</main>
+
+<script>
+/* The one table everything above is drawn from.
+   s: "wip" in progress or unproven where it matters, "owed" a doc names it as owed,
+      "idea" optional / recorded but not asked for.
+   Text is trusted HTML (written here, not read from anywhere). */
+var LAYERS = [
+  ["machine", "The machine", "kernel, boot, devices"],
+  ["env", "The environment", "the Lisp world you work in"],
+  ["apps", "Applications", "what runs inside it"]
+];
+var EFFORTS = [
+  // ---- the machine ----
+  { id: "base", layer: "machine", name: "EFISTUB + SBCL as PID 1", tag: "7.2.5 · SBCL 2.6.8",
+    what: "The bzImage as the EFI app, separate initrd, C preinit shim, Lisp supervisor, <code>logcount-fix</code> patching SBCL; also boots from the host's GRUB.",
+    docs: [["micro-distro.org"], ["sbcl-init.org"], ["kernel-config.org"]],
+    items: [
+      { s: "idea", t: "SBCL built static (musl) to drop the shipped glibc", src: ["sbcl-init.org", "Next steps"] },
+      { s: "idea", t: "Do preinit's mounts from Lisp and drop the C shim", src: ["sbcl-init.org", "Next steps"] } ] },
+  { id: "smp", layer: "machine", name: "SMP + frequency scaling", tag: "#30 · laptop 10-20",
+    what: "Every CPU and Intel P-state. <code>nproc</code> is 8 on the laptop; <code>check-smp.lisp</code> in QEMU.",
+    docs: [["kernel-config.org", "§10"]], items: [] },
+  { id: "storage", layer: "machine", name: "Storage, running as the user", tag: "#25",
+    what: "NVMe + ext4, the host root read-only at <code>/mnt/host</code>, only <code>/home</code> shared, PID 1 dropped to the user with five ambient capabilities, <code>lol-rootd</code> for the rest.",
+    docs: [["storage.org"]], items: [] },
+  { id: "net", layer: "machine", name: "Networking + Wi-Fi", tag: "#21–#27 · in use",
+    what: "DHCP (packet socket), default route, DNS, SNTP, HTTP/1.1 + HTTPS (host libssl), IPv6 SLAAC, Wi-Fi through the host's <code>wpa_supplicant</code>, USB Ethernet, the TCP REPL. §7.4's laptop checklist stays for regressions.",
+    docs: [["networking.org"], ["background/learn-networking.org", "tutorial"]], items: [] },
+  { id: "diag", layer: "machine", name: "Diagnostics", tag: "#28",
+    what: "<code>~/.lol/log</code>: session log, pulse and STALL reports with every thread's backtrace, unhandled errors end only their thread, LDB off, <code>kernel.panic=10</code>; SysRq, lockup detectors, efi-pstore.",
+    docs: [["diagnostics.org"]], items: [] },
+  { id: "fb", layer: "machine", name: "Framebuffer", tag: "efifb",
+    what: "efifb → fbcon, <code>/dev/fb0</code> under <code>KD_GRAPHICS</code>, <code>pwrite</code> presentation (mmap not owed).",
+    docs: [["framebuffer.org"]], items: [] },
+  { id: "input", layer: "machine", name: "Input + hotplug", tag: "evdev",
+    what: "Every keyboard and pointer at once via evdev, inotify hotplug, touchpad gestures and emulated buttons.",
+    docs: [["input.org"]],
+    items: [ { s: "wip", t: "Two fingers on the laptop's clickpad: which finger <code>ABS_X/Y</code> follows is untested", src: ["input.org", "“Press and drag”"] } ] },
+  { id: "kbd", layer: "machine", name: "Two keyboard layouts", tag: "us,br",
+    what: "The host's layouts on the console: Right Alt held for pt-BR, Caps Lock toggles, dead keys, UTF-8 typed; <code>check-keyboard.lisp</code>.",
+    docs: [["input.org", "§1"]], items: [] },
+
+  // ---- the environment ----
+  { id: "browser", layer: "env", name: "Code browser", tag: "phases 0–7",
+    what: "The Smalltalk/Pharo-style environment: definition registry, CLOS model, <code>present</code> drill-down, accordion shell, tabs, Spotter, Lisp-native views, live debugger, change set, module index.",
+    docs: [["code-browser.org"], ["tour.org"]],
+    items: [ { s: "idea", t: "Live documents: an <code>.org</code> doc as a subject whose references drill into live code (Org mode's <code>defun</code> links are a first step)", src: ["code-browser.org", "§8½"] } ] },
+  { id: "morphic", layer: "env", name: "Morphic window system", tag: "10-16/17",
+    what: "Panes and their bodies as morphs; trail windows, the halo on windows, every modal an overlay in one loop, per-morph damage, drag and drop, the X11 host loop. “Nothing is owed.”",
+    docs: [["morphic.org"]],
+    items: [ { s: "idea", t: "A picture of the carried thing; dragging a text selection out; dropping onto the stage", src: ["morphic.org", "§13.11"] } ] },
+  { id: "inspector", layer: "env", name: "Inspector powers", tag: "10-16",
+    what: "<code>all-instances</code>, “why is this alive”, eval in the object's context, settable frame locals + restart-frame.",
+    docs: [["inspector-history.org"]],
+    items: [ { s: "wip", t: "Report the SBCL indirect-variable setter bug upstream (draft in <code>sbcl-bug-report/</code>, yours to file)", src: ["inspector-history.org", "§5.4"] } ] },
+  { id: "persist", layer: "env", name: "Session persistence", tag: "phases 0–4",
+    what: "Per-Accept journal with guarded replay at boot, the desk (tabs, Workspace text), file-out into the checkout, the leave menu; all under <code>~/.lol/</code>.",
+    docs: [["session-persistence.org"]],
+    items: [ { s: "idea", t: "Phase 5, image snapshots (fork + <code>save-lisp-and-die</code>)", src: ["session-persistence.org", "§2a"] } ] },
+  { id: "procs", layer: "env", name: "Second processes", tag: "§7–§7¾",
+    what: "A child process that contributes a view, a live one with handles and invalidation, and Accept tried in a child first. The <code>sb-posix</code> audit concluded “change nothing”.",
+    docs: [["processes.org"]],
+    items: [
+      { s: "owed", t: "A child's closures crossing processes (remote inspectors are read-only)", src: ["processes.org", "§8"] },
+      { s: "owed", t: "Sandbox: catch a definition that is wrong to <em>call</em>, not only to load", src: ["processes.org", "§7¾"] },
+      { s: "idea", t: "A socket for a peer we did not start (none exists)", src: ["processes.org", "§8"] } ] },
+  { id: "org", layer: "env", name: "Org in the environment", tag: "10-18",
+    what: "A stated subset of Org: colouring, folding, heading motion, subtree edits, links, the outline as a subject; checked against Emacs 30.2 / Org 9.7.11.",
+    docs: [["org.org"]], items: [] },
+  { id: "fonts", layer: "env", name: "Fonts, resizable", tag: "TrueType",
+    what: "TrueType reader + anti-aliased rasteriser in pure Lisp, resized at run time, saved in <code>~/.lol/settings</code>.",
+    docs: [["fonts.org"]], items: [] },
+  { id: "clip", layer: "env", name: "Clipboard, undo, isearch", tag: "",
+    what: "Kill ring + PRIMARY, rectangles, the <code>SuperL-h</code> manager, undo on the persistent buffer, incremental search.",
+    docs: [["clipboard.org"]], items: [] },
+  { id: "repl", layer: "env", name: "Line editor + REPL", tag: "",
+    what: "Readline-class input in pure Lisp, raw termios via FFI.",
+    docs: [["line-editing.org"]], items: [] },
+  { id: "tray", layer: "env", name: "Systray", tag: "",
+    what: "Battery, clock, Wi-Fi SSID, volume, layout, recorder state.",
+    docs: [["systray.org"]], items: [] },
+  { id: "x11", layer: "env", name: "X11 host backend", tag: "host only",
+    what: "A pure-Lisp X11 client for host development; never shipped in the image.",
+    docs: [["x11.org"]], items: [] },
+  { id: "guide", layer: "env", name: "Guide + in-image tour", tag: "",
+    what: "Offline HTML guide with generated <code>file:line</code> references; <code>subj-tour</code> in the image.",
+    docs: [["tour.org"], ["guide/index.html", "guide/"]], items: [] },
+
+  // ---- applications ----
+  { id: "agent", layer: "apps", name: "The agent (LLM client)", tag: "A0–A2",
+    what: "JSON, SSE, a streamed Messages client, tools over the registry and model, gated writes with restarts, conversations as panes saved to <code>~/.lol/agent/</code>, a preflight and visible failures.",
+    docs: [["agent.org"]],
+    items: [
+      { s: "owed", t: "The REPL prompt's agent mark (<code>refresh-line</code> colours the prompt in one SGR)", src: ["agent.org", "§14.9"] },
+      { s: "owed", t: "Something for <code>:interacting</code> to do", src: ["agent.org", "§14.9"] },
+      { s: "owed", t: "<code>web-fetch</code>: open the page in the web pane through <code>browse</code>", src: ["agent.org", "§14.9"] },
+      { s: "owed", t: "Tests for the plan, the steps toggle, a subagent round trip; a two-boot reopen", src: ["agent.org", "§14.9"] },
+      { s: "idea", t: "TLS 1.3 in Lisp — not planned, HTTPS uses the host's libssl", src: ["agent.org", "§9"] } ] },
+  { id: "web", layer: "apps", name: "Web browser", tag: "headless Chrome",
+    what: "The host's Chrome in a container over DevTools; screencast frames into a pane, input forwarded, our own pickers for <code>&lt;select&gt;</code>, colour and date; tabs as trails.",
+    docs: [["web-browser.org"]],
+    items: [
+      { s: "owed", t: "File upload: <code>Page.setInterceptFileChooserDialog</code> + a file-manager prompt", src: ["web-browser.org", "§9"] },
+      { s: "owed", t: "A per-link right-click menu", src: ["web-browser.org", "§9"] },
+      { s: "wip", t: "A page's sound in the container is untried", src: ["web-browser.org", "§9"] } ] },
+  { id: "term", layer: "apps", name: "Terminal pane", tag: "",
+    what: "A VT engine in pure Lisp, ptys via <code>posix_spawn</code> + setsid, xterm-256color, scrollback, alt screen, OSC 52, mouse and paste.",
+    docs: [["terminal.org"]],
+    items: [ { s: "wip", t: "<code>check-terminal.lisp</code>: 5 failures, the same at <code>-smp 1</code> (older than #30)", src: ["kernel-config.org", "#30 entry"] } ] },
+  { id: "ct", layer: "apps", name: "Containers", tag: "#26 · in use",
+    what: "<code>lol-ct</code>: a user-namespace container over the host's Debian, overlays per directory, run panes, the Lisp API. No <code>apt</code> by design (single-uid namespace).",
+    docs: [["containers.org"]],
+    items: [ { s: "idea", t: "A memory cap per container (<code>CGROUPS</code>/<code>MEMCG</code>), “later, if ever”", src: ["containers.org", "§5"] } ] },
+  { id: "rec", layer: "apps", name: "Screencasts + sound", tag: "#29 · laptop take",
+    what: "HDA sound, a pure-Lisp ALSA mixer, volume keys; the recorder (live or damage log), the host's MPlayer full screen. A take recorded and played on the laptop with the headset.",
+    docs: [["screencast.org"]],
+    items: [
+      { s: "wip", t: "The recorder's meter against real speech in a check (QEMU captures silence)", src: ["screencast.org", "§13"] },
+      { s: "idea", t: "Step 6: key display, system audio (<code>SND_ALOOP</code>), trim, export", src: ["screencast.org", "§10"] },
+      { s: "idea", t: "Step 4b: MPlayer inside a window's rect", src: ["screencast.org", "§8.4"] } ] },
+  { id: "files", layer: "apps", name: "File manager", tag: "SuperL-f",
+    what: "Folders and files as subjects, safe save, create/rename/copy/move, the Spotter path grammar.",
+    docs: [["file-manager.org"]], items: [] },
+  { id: "previews", layer: "apps", name: "Image previews", tag: "",
+    what: "Pure-Lisp INFLATE, PNG/GIF/BMP/…; JPEG/PSD/HDR through a 47 KB <code>libstbi.so</code>.",
+    docs: [["previews.org"]], items: [] }
+];
+var DRIFT = [
+  ["previews.org", "“Not yet in the image” (2026-10-03).", "Wired in: <code>libstbi.so</code> ships at <code>/usr/lib/lol/</code>; <code>check-files.lisp</code> decodes a JPEG in the guest."],
+  ["guide/in-progress.html", "State on 2026-10-12: agent being built, web browser a WPE exploration, terminal no doc, persistence awaiting decisions, tag #26.", "All four built; tag #30. This page carries the status now."],
+  ["kernel-config.org", "#25–#28: “Not yet booted on the laptop”.", "#29 and #30 were booted on the laptop, and Wi-Fi (#26) is in use there."],
+  ["sbcl-init.org", "“Next steps / ideas” wants a debugger that cannot kill PID 1, a remote REPL, reaping.", "The framebuffer debugger, <code>log-unhandled</code> and the TCP REPL exist; the list predates them."]
+];
+
+(function () {
+  function $(id) { return document.getElementById(id); }
+  function link(d) { return '<a href="' + d[0] + '">' + (d[1] && !d[1].startsWith("§") ? d[1] : d[0]) + '</a>' + (d[1] && d[1].startsWith("§") ? " " + d[1] : ""); }
+  function src(e, it) { return '<a href="' + it.src[0] + '">' + it.src[0].replace(/\.org$/, "") + '</a> ' + it.src[1]; }
+  var ORDER = { wip: 0, owed: 1, idea: 2 };
+  var n = { wip: 0, owed: 0, idea: 0 };
+  EFFORTS.forEach(function (e) { e.items.forEach(function (it) { n[it.s]++; }); });
+  var clean = EFFORTS.filter(function (e) { return !e.items.some(function (it) { return it.s !== "idea"; }); }).length;
+
+  // The verdict: the one sentence to read if you read nothing else.
+  $("verdict").innerHTML = "All <b>" + EFFORTS.length + "</b> pieces planned so far are built, and " + clean +
+    " have nothing open. What remains is <b class=\"w\">" + n.wip + " things unproven</b> (mostly on real hardware) and <b class=\"o\">" +
+    n.owed + " owed items</b>, concentrated in the agent, the web pane and the worker processes.";
+
+  // The map.
+  $("map").innerHTML = LAYERS.map(function (L) {
+    var es = EFFORTS.filter(function (e) { return e.layer === L[0]; });
+    return '<div class="layer"><h2>' + L[1] + ' <span>' + es.length + '</span></h2>' + es.map(function (e) {
+      var its = e.items.slice().sort(function (a, b) { return ORDER[a.s] - ORDER[b.s]; });
+      var pips = its.map(function (it) { return '<i class="pip ' + it.s + '"></i>'; }).join("");
+      return '<a class="row" href="#' + e.id + '" data-go="' + e.id + '"><i class="tick"></i><span class="nm">' + e.name +
+        '</span><span class="pips">' + pips + '</span><span class="tag">' + (e.tag || "") + '</span></a>';
+    }).join("") + '</div>';
+  }).join("");
+
+  // What is open, by kind.
+  var groups = [["wip", "In progress / unproven"], ["owed", "Owed"], ["idea", "Optional / ideas"]];
+  $("open-count").textContent = (n.wip + n.owed) + " to do, " + n.idea + " optional";
+  var col = function (g) {
+    var rows = [];
+    EFFORTS.forEach(function (e) { e.items.forEach(function (it) { if (it.s === g[0]) rows.push([e, it]); }); });
+    return '<div class="' + (g[0] === "idea" ? "ideas" : "") + '"><h3><i class="pip ' + g[0] + '"></i>' + g[1] + ' · ' + rows.length + '</h3><ul>' +
+      rows.map(function (r) { return '<li><span>' + r[1].t + '</span><span class="where"><a href="#' + r[0].id + '" data-go="' + r[0].id + '">' + r[0].name + '</a> · ' + src(r[0], r[1]) + '</span></li>'; }).join("") + '</ul></div>';
+  };
+  // Left: what needs doing (unproven, owed). Right: what is merely recorded.
+  $("open").innerHTML = '<div>' + col(groups[0]) + col(groups[1]) + '</div>' + col(groups[2]);
+
+  // Each piece, collapsed.
+  $("pieces").innerHTML = LAYERS.map(function (L) {
+    return '<div class="layer-head">' + L[1] + '</div>' + EFFORTS.filter(function (e) { return e.layer === L[0]; }).map(function (e) {
+      var its = e.items.slice().sort(function (a, b) { return ORDER[a.s] - ORDER[b.s]; });
+      var pips = its.map(function (it) { return '<i class="pip ' + it.s + '"></i>'; }).join("");
+      return '<details class="piece" id="' + e.id + '"><summary><i class="tick"></i><span class="nm">' + e.name + '</span><span class="pips">' + pips + '</span><span class="tag">' + (e.tag || "") +
+        '</span></summary><div class="body"><p>' + e.what + '</p>' +
+        (its.length ? '<ul>' + its.map(function (it) { return '<li><span class="lbl ' + it.s + '">' + { wip: "unproven", owed: "owed", idea: "optional" }[it.s] + '</span>' + it.t + ' <span class="where">(' + src(e, it) + ')</span></li>'; }).join("") + '</ul>' : '') +
+        '<div class="docs">Read: ' + e.docs.map(link).join("") + '</div></div></details>';
+    }).join("");
+  }).join("");
+
+  $("drift").insertAdjacentHTML("beforeend", DRIFT.map(function (d) {
+    return '<tr><td><a href="' + d[0] + '">' + d[0] + '</a></td><td>' + d[1] + '</td><td>' + d[2] + '</td></tr>';
+  }).join(""));
+
+  // A click on the map or the open list opens that piece and scrolls to it.
+  function go(id) {
+    var d = $(id); if (!d) return;
+    d.open = true; d.classList.add("flash"); setTimeout(function () { d.classList.remove("flash"); }, 1400);
+  }
+  document.addEventListener("click", function (ev) { var a = ev.target.closest("[data-go]"); if (a) go(a.dataset.go); });
+  if (location.hash) go(location.hash.slice(1));
+
+  // Theme toggle: auto -> light -> dark, remembered like the guide's.
+  var btn = $("theme"), root = document.documentElement;
+  btn.textContent = root.dataset.theme || "auto";
+  btn.addEventListener("click", function () {
+    var next = { auto: "light", light: "dark", dark: "auto" }[btn.textContent];
+    if (next === "auto") delete root.dataset.theme; else root.dataset.theme = next;
+    btn.textContent = next;
+    try { localStorage.setItem("lol-guide-theme", next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>

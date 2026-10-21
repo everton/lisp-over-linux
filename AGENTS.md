@@ -11,6 +11,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 |------|------|
 | `README.org` | **Entry point.** What the project is + how to reconstruct the env (the `./linux`/`./sbcl` symlinks, `deps.sh`, build). Read first. The only `.org` in root. |
 | `doc/` | All other `.org` documentation lives here (keeps the root clean). |
+| `doc/status.html` | **Project status in one page** (2026-10-20): a one-sentence verdict and a one-screen map of every piece by layer (machine / environment / applications, a dot per open item), then the open items by kind, each piece's details with links to its doc, and doc drift spotted. All drawn from one `EFFORTS` table in its script — update that entry when you change a doc's status. Supersedes `doc/guide/in-progress.html`'s table. |
 | `doc/micro-distro.org` | Base EFISTUB micro-linux: boot chain, USB creation, first-build diagnosis. |
 | `doc/sbcl-init.org` | SBCL as PID 1: preinit shim, supervisor, separate-initrd, build. Extends `micro-distro.org`. |
 | `doc/kernel-config.org` | **Inventory of every kernel option we enable and why.** Single source of truth for `.config`. |
