@@ -798,6 +798,8 @@ into bands of whole rows, the rest kept for the next update. A whole screen is n
 updates, about a second at 10 a second (measured: 8.8 MB in 9 updates, all there in
 1.1 s), and the environment's thread never writes more than 1 MB at a time. The call
 had looked frozen because that one write held the thread.
+/Tried on the laptop the same evening, loaded as a live patch (=~/share-patch.lisp=
+into the 20:05 build): sharing went on across pane switches, Chrome kept its pipe./
 
 *** A call in the background
 
@@ -813,9 +815,10 @@ screen.
 
 *** Still open
 
-- *A real call.* Sign-in works (§4.5); the camera dialog was the next stop (M2's
-  pan/tilt/zoom). Joining, hearing, being heard and presenting are still to be done
-  on the laptop. The test page uses the same calls as Meet, not Meet.
+- *A real call.* Sign-in, the camera and microphone, and presenting across pane
+  switches all worked in Meet on the laptop (2026-10-20, a test meeting). A call
+  with someone else, hearing and being heard, is still to come; the sound bullet
+  below is what to look at then.
 - *CPU.* Headless means no GPU: Meet's video decode, WebRTC's encoding of the
   camera and the shared screen, the screencast's JPEGs and our decode all run in
   software. Unmeasured.
