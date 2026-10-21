@@ -33,6 +33,7 @@
 # HOW IT WORKS (two channels into one QEMU boot):
 #   * The framebuffer console (what the screendump captures) is driven purely by
 #     QMP `send-key` — we type keystrokes into the guest over the QMP socket.
+#   LOL_SHOT_RES=WxH (default 1920x1200, the laptop's panel) sets the guest's screen.
 #   LOL_REPL_PORT=<n> (default 4005) moves the host side of that hostfwd, so a
 #   headless capture can run while an INTERACTIVE QEMU (./build.sh --interactive) is
 #   already holding 4005. Without it the boot silently produced no QMP socket, which
@@ -65,6 +66,14 @@ ISO_ROOT="$MICRO/iso_root"
 SHOTS="$MICRO/media/screenshots"
 
 REPL_PORT="${LOL_REPL_PORT:-4005}"        # host side of the net-REPL hostfwd
+
+# The guest's screen size. QEMU's std VGA advertises this as its EDID preferred
+# mode, OVMF's QemuVideoDxe sets the GOP to it, and efifb inherits that — so the
+# kernel and the image see a 1920x1200 /dev/fb0 with no change on our side.
+# Default: the laptop's own panel (XPS 13 9300), so the shots look like the real
+# thing. Before 2026-10-20 they were OVMF's fallback 1280x800.
+SHOT_RES="${LOL_SHOT_RES:-1920x1200}"
+SHOT_W="${SHOT_RES%x*}"; SHOT_H="${SHOT_RES#*x}"
 
 # A busy port is the one failure mode that does not announce itself: QEMU exits, no
 # QMP socket ever appears, and the driver reports only that. Say so up front instead.
@@ -157,6 +166,7 @@ qemu-system-x86_64 -machine q35,accel=kvm:tcg -m 2048 -smp "${QEMU_SMP:-4}" \
   -netdev user,id=net0,hostfwd=tcp::$REPL_PORT-:4005 \
   -fw_cfg name=opt/lol/netrepl,string=1 \
   -device virtio-net-pci,netdev=net0 \
+  -vga none -device VGA,edid=on,xres="$SHOT_W",yres="$SHOT_H" \
   "${DISK_ARGS[@]}" \
   -serial file:"$WORK/serial.log" -display none -no-reboot \
   -qmp unix:"$QMP",server,nowait 2>"$WORK/qemu.err" &

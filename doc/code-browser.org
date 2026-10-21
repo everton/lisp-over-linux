@@ -377,7 +377,7 @@ the experimental-redefine notes), read-only, in a =:reference= pane — so =M-.=
 =mapcar= in the Workspace opens this (=./refresh-screenshot.sh --scene
 sbcl-source=; asserted in the guest by [[file:../check-files.lisp][check-files.lisp]]):
 
-[[file:../media/screenshots/sbcl-source-2026-10-17.png]]
+[[file:../media/screenshots/sbcl-source-2026-10-20.png]]
 
 * 3. The Smalltalk → Lisp concept map
 
@@ -501,7 +501,7 @@ arguments, so its coverage really is a grid — rows and columns are the
 specializer classes, each cell holds the primary-method count, and a dim =·= is a
 genuine gap where nobody wrote a rule:
 
-[[file:../media/screenshots/matrix-2026-10-17.png]]
+[[file:../media/screenshots/matrix-2026-10-20.png]]
 
 /The dispatch matrix for =collide=. Reproduce with
 =./refresh-screenshot.sh --scene matrix=./
@@ -671,7 +671,7 @@ selected frame's locals in a strip along the bottom. The stack is *still
 standing* — this is =handler-bind=, not =handler-case= — so invoking a restart
 genuinely transfers control rather than unwinding first:
 
-[[file:../media/screenshots/debugger-2026-10-17.png]]
+[[file:../media/screenshots/debugger-2026-10-20.png]]
 
 /The live debugger on =(lol.examples:launch)= — the specimen in
 [[file:../initramfs/examples.lisp][=examples.lisp=]] written for exactly this: =STEER= signals =OFF-COURSE= from inside a
@@ -728,7 +728,7 @@ for everything else. It fits one 1280x800 screen without scrolling — 28 rows a
 today's default font, which is why the closure and its =COMPILE=-d twin share one
 comment line and sit one form to a line. The verbs also sit in the status bar:
 
-[[file:../media/screenshots/workspace-2026-10-17.png]]
+[[file:../media/screenshots/workspace-2026-10-20.png]]
 
 /The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
@@ -740,7 +740,7 @@ collisions *happening*: every sprite is a live CLOS instance from
 matrix is a =no-applicable-method= waiting to open the debugger with the whole
 stack standing.
 
-[[file:../media/screenshots/stage-2026-09-20.png]]
+[[file:../media/screenshots/stage-2026-10-20.png]]
 
 /The =Lambda= has just docked with =Genera=, and the transcript records BOTH
 directions of the call agreeing. =./refresh-screenshot.sh --scene stage=./
@@ -825,12 +825,12 @@ the condition to =run-debugger-fb= exactly as the Workspace's Debug it does (not
 =*debugger-hook*=, which nothing in the image sets), which is the best evidence
 that the stage belongs in this browser rather than beside it.
 
-[[file:../media/screenshots/stage-debugger-2026-09-20.png]]
+[[file:../media/screenshots/stage-debugger-2026-10-20.png]]
 
 /Two missiles meet. =(missile missile)= is one of COLLIDE's three total absences, so
 it signals for real: the rail carries the stage's four restarts above SBCL's own, and
-the stack runs =STAGE-SIGNAL → STEP-STAGE → TICK-LIVE-STAGE → RUN-BROWSER-FB= down to
-PID 1. =./refresh-screenshot.sh --scene stage-debugger=./
+the stack runs =STAGE-SIGNAL → STEP-STAGE → STEP-STAGE-PANE → WORLD-STEP → FB-CYCLE →
+RUN-BROWSER-FB= down to PID 1 — the stage is a stepping morph since Morphic. =./refresh-screenshot.sh --scene stage-debugger=./
 
 *And it has to be ARMED, which was a real bug.* =tick-live-stage= first shipped with
 no handler at all, so a hole reached the =handler-case= wrapped around
@@ -967,11 +967,12 @@ holding the =defmethod= the debugger knew how to write: its specialisers come fr
 two objects that failed to dispatch, so you never retype what the system already
 worked out.
 
-[[file:../media/screenshots/stage-accept-2026-09-20.png]]
+[[file:../media/screenshots/stage-accept-2026-10-20.png]]
 
 /Two missiles found the hole; =[define-method]= wrote the template and =C-c C-c=
-compiled it — "Accepted: collide" in the status line, and the heads-up now says the
-pair dispatches. =./refresh-screenshot.sh --scene stage-accept=./
+compiled it — "Accepted: collide (tried first in pid 63)" in the status line (the
+definition ran in a child process before PID 1 took it), and the heads-up now says the
+pair dispatches, though the stage is still paused. =./refresh-screenshot.sh --scene stage-accept=./
 
 *The Workspace beside the stage is its OWN buffer* — not the one on tab 2, and not
 shared with any other. =subj-workspace= takes no arguments and reads like a singleton,
@@ -987,7 +988,7 @@ presents as =:kind :workspace= — so every verb behaves exactly as it does anyw
 else — but its text is a primer for *this* pane rather than the generic scratch-buffer
 cheatsheet, which is the right text for tab 2 and a wasted screen here:
 
-[[file:../media/screenshots/stage-workspace-2026-09-20.png]]
+[[file:../media/screenshots/stage-workspace-2026-10-20.png]]
 
 /=w= beside the stage. =./refresh-screenshot.sh --scene stage-workspace=./
 
@@ -1040,7 +1041,7 @@ hardware, and a view you can only select on by clicking is a view that fails fir
 It also means the path is testable — a scripted click cannot be landed over QMP, a
 scripted =Tab= can.
 
-[[file:../media/screenshots/stage-inspect-2026-09-20.png]]
+[[file:../media/screenshots/stage-inspect-2026-10-20.png]]
 
 /=Tab= twice, then =Enter=: the Inspector on =#<SHIP Lambda>=, its NAME slot beside
 it, and =stage collide= still in the trail behind. Note the title — =print-object= is
@@ -1132,7 +1133,7 @@ the drill path.
 *Built.* A package view is one expanded list with the selected definition's
 source shown beside it — here =CL-USER= (=l= at the supervisor menu):
 
-[[file:../media/screenshots/package-2026-10-17.png]]
+[[file:../media/screenshots/package-2026-10-20.png]]
 
 /The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it.
 =./refresh-screenshot.sh --scene package=./
@@ -1420,7 +1421,7 @@ Two subjects in [[file:../initramfs/present.lisp][=present.lisp=]] close that ga
   helper that takes a predicate, so the package and module views cannot drift
   apart in look, sort order or tinting — the predicate is their only difference.
 
-[[file:../media/screenshots/modules-2026-10-17.png]]
+[[file:../media/screenshots/modules-2026-10-20.png]]
 
 /The module index — the browser's default root (=b= at the supervisor menu):
 each module with its definition count, the selected one previewed beside. Keys
@@ -1506,7 +1507,7 @@ filters the whole candidate set (every recorded definition, every package, every
 module, plus the named surfaces) by fuzzy *subsequence*, ranked exact > prefix >
 word-boundary > plain:
 
-[[file:../media/screenshots/spotter-2026-10-17.png]]
+[[file:../media/screenshots/spotter-2026-10-20.png]]
 
 /The Spotter on "coll" — =collide= ranked first, ahead of =collapse= and the
 merely-subsequence matches like =colorize-lisp=.
@@ -1902,7 +1903,7 @@ A third trivial backend, *present-to-PNG*, gives us headless screenshot tests
     copied into the cpio, never committed. The size lives in the one shared =font=
     object: =SuperL-= / - / 0= and =C-x C-= / C-- / C-0= change it, the status line
     says so, =~/.lol/settings= remembers it; default 18 px (11×21 cells) for
-    the laptop's 14-inch 1080p panel. Every layout metric — =+row-h+=, =+bar-h+=, the
+    the laptop's 13.4-inch 1920×1200 panel. Every layout metric — =+row-h+=, =+bar-h+=, the
     matrix cells, status line, cards, halo, debugger, gutter — is now a function of
     the current font (the + names are symbol macros), so a size change plus a redraw
     relays out everything. stb_truetype was the allowed escape hatch and proved

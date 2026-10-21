@@ -13,7 +13,7 @@ It runs as the whole userland of a bare Linux kernel. SBCL is *PID 1*: no shell,
 systemd, no X server, no toolkit. The machine boots straight into the environment,
 which draws every pixel itself on the framebuffer.
 
-[[./media/screenshots/windows-2026-10-17.png]]
+[[./media/screenshots/windows-2026-10-20.png]]
 
 /As it boots, under QEMU: the *Workspace* tiled across the screen, a Lisp scratch
 buffer whose lines are verbs, and the *module index* (=Super-m=) torn off into a
@@ -30,7 +30,7 @@ what it captured, a file, a process, a web page. =↵= opens the next pane on th
 selection, so a trail of panes reads as the path you took. =Super-Space= (the
 Spotter) finds anything by name, and =Super-?= lists every key.
 
-[[./media/screenshots/desk-2026-10-17.png]]
+[[./media/screenshots/desk-2026-10-20.png]]
 
 /Live definition: =C-c C-c= on line 10 has compiled =greet= into the running image
 and recorded it in the change set; =C-c C-p= printed =(greet "lisp")= under itself.
@@ -57,7 +57,7 @@ The status bar names the verbs: Do it, Print, Inspect, Debug, define, Ask./
   =F= files the edits back into the source files. It all lives under one =~/.lol/=
   tree ([[file:doc/session-persistence.org][session-persistence.org]]).
 
-[[./media/screenshots/debugger-2026-10-17.png]]
+[[./media/screenshots/debugger-2026-10-20.png]]
 
 /The debugger, from the Workspace's =C-c C-d=: the condition, its restarts (the last
 one asks the agent), the call stack, and the selected frame's locals; =degrees= is
@@ -83,13 +83,13 @@ settable./
   carrying every thread's backtrace, the kernel's log copied to disk
   ([[file:doc/diagnostics.org][diagnostics.org]]).
 
-[[./media/screenshots/browser-2026-10-17.png]]
+[[./media/screenshots/browser-2026-10-20.png]]
 
 /The module index: every definition in the image, grouped by the file it came from,
 beside the selected module's contents. It is the only view that shows the whole
 system, the toolkit included (it lives in its own =lol.*= packages)./
 
-[[./media/screenshots/files-2026-10-17.png]]
+[[./media/screenshots/files-2026-10-20.png]]
 
 /The file manager, filtered to =~/Pictures=, with a JPEG previewed beside the
 listing./
@@ -124,7 +124,7 @@ capabilities, and =execve=​s the Lisp, which stays PID 1 for the life of the m
 Leave the environment (=Super-q=) and you land on the supervisor's console menu,
 with a REPL of its own:
 
-[[./media/screenshots/screenshot-2026-10-17.png]]
+[[./media/screenshots/screenshot-2026-10-20.png]]
 
 /The supervisor's menu and its REPL on the framebuffer console, with the Land of
 Lisp alien (the "LoL" is also a nod to Land of Lisp). Screenshots are archived
@@ -221,9 +221,9 @@ Or skip the stick: =./build.sh --install-host= puts both files in the host's
 
 The symlink is the whole trick: point =./linux= at the new tree and rebuild.
 #+begin_src sh
-  ./deps.sh kernel 6.19          # download + extract + symlink + apply config
-  # if 6.19 has no pinned snapshot yet, configure, then:
-  #   cp linux/.config kernel/config-6.19   (commit it)
+  ./deps.sh kernel 7.3           # download + extract + symlink + apply config
+  # if 7.3 has no pinned snapshot yet, configure, then:
+  #   cp linux/.config kernel/config-7.3    (commit it)
   ./build.sh --kernel
 #+end_src
 Nothing in the project needs editing — only the symlink moves.

@@ -199,12 +199,12 @@ decoded by =libstbi.so= and scaled into the preview beside the listing. (Every s
 here is the stand-in home of =make-test-disk.sh=, captured at tag #25 by
 =./refresh-screenshot.sh --scene files=; see §12.)
 
-[[file:../media/screenshots/files-2026-10-17.png]]
+[[file:../media/screenshots/files-2026-10-20.png]]
 
 An archive previews as its *member list*, without unpacking: =backup.tar.gz= is
 inflated in Lisp, then only the tar headers are read (=--scene files-archive=):
 
-[[file:../media/screenshots/files-archive-2026-10-17.png]]
+[[file:../media/screenshots/files-archive-2026-10-20.png]]
 
 A *video* (=.mp4=, =.mkv=, =.webm=, =.mov=, =.avi=, =.m4v=, =.ogv=, by its name) previews as a
 frame from a tenth of the way in, with its size, codecs and length in the title — what
@@ -340,7 +340,7 @@ form you typed (=~/Doc= completes to =~/Documents/=, not to =/home/…=).
 =SuperL-Space= then =~/Pic= over the Workspace (=--scene spotter-path=): one row, the
 folder with its slash, and the footer saying what Enter will do.
 
-[[file:../media/screenshots/spotter-path-2026-10-17.png]]
+[[file:../media/screenshots/spotter-path-2026-10-20.png]]
 
 *Enter* on a folder opens the file manager there in a new tab. On a *file* it opens
 the file manager at the file's *parent with the file selected* — a choice: the Spotter

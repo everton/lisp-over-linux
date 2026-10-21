@@ -53,6 +53,7 @@
 ;;; leaves the environment as it booted, anything else is a supervisor-menu letter.
 ;;; A step is one of:
 ;;;   (:key   qcode)        a single key
+;;;   (:down  n)            Down n times (a counted row)
 ;;;   (:chord qcode…)       a chord, e.g. (:chord "ctrl" "c")
 ;;;   (:hold  mod key)      press key while mod is HELD (see lol.qmp:hold)
 ;;;   (:click x y)          left-click at absolute x,y (see lol.qmp:click)
@@ -92,8 +93,12 @@
     ;; the Workspace (§3a): a scratch buffer whose verbs eval
     ("workspace" "p" ())
     ;; the dispatch matrix (§4a) for COLLIDE, the 2-axis showcase in examples.lisp:
-    ;;   modules -> initramfs/examples (3rd) -> collide (3rd) -> "dispatch matrix"
-    ("matrix"    "b" ((:key "down") (:key "down") (:key "ret")
+    ;;   modules -> initramfs/examples (12th) -> collide (3rd) -> "dispatch matrix"
+    ;; The row is COUNTED, so every new initramfs/ module sorting before "examples"
+    ;; moves it: it was 3rd until the agent-* modules arrived, and the matrix and
+    ;; stage scenes quietly shot +BROWSE-KINDS+ instead (found 2026-10-20). If they
+    ;; show the wrong module, recount from the module index (the windows shot shows it).
+    ("matrix"    "b" ((:down 11) (:key "ret")
                       (:key "down") (:key "down") (:key "ret")
                       (:wait 1.0) (:key "ret")))
     ;; the live debugger (phase 6): Workspace -> a form that errors -> Debug it.
@@ -109,11 +114,11 @@
                       (:key "tab") (:key "down") (:key "down") (:key "tab")
                       (:wait 0.6)))
     ;; the stage (§3b): the same drill as 'matrix', one row further down —
-    ;;   modules -> initramfs/examples (3rd) -> collide (3rd) -> "stage"
+    ;;   modules -> initramfs/examples (12th) -> collide (3rd) -> "stage"
     ;; The long dwell at the end is the point. Every other scene is finished the
     ;; instant the last key lands; a stage keeps running, so the shot is of a world
     ;; several seconds old with a transcript that has had time to fill.
-    ("stage"     "b" ((:key "down") (:key "down") (:key "ret")
+    ("stage"     "b" ((:down 11) (:key "ret")
                       (:key "down") (:key "down") (:key "ret")
                       (:wait 1.0) (:key "down") (:key "ret") (:wait 13.0)))
     ;; the stage meeting a HOLE (§3b): drill to the stage, then spawn missiles until
@@ -125,31 +130,35 @@
     ;; handler-bind, so the condition reached run-browser-fb's outer handler-case,
     ;; which caught it by unwinding and dropped the user at the supervisor menu with
     ;; the error printed and the stack gone. Keep the scene; it is the regression test.
-    ("stage-debugger" "b" ((:key "down") (:key "down") (:key "ret")
+    ("stage-debugger" "b" ((:down 11) (:key "ret")
                            (:key "down") (:key "down") (:key "ret")
                            (:wait 1.0) (:key "down") (:key "ret") (:wait 1.0)
                            (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
-                           (:wait 8.0)))
+                           (:key "m") (:key "m") (:key "m")
+                           (:wait 14.0)))
     ;; beat 4 of §3b's loop: the hole hands you a method, you Accept it, the world
     ;; changes. Drill to the stage, spawn missiles until two meet (the debugger opens),
+    ;; (Random: at 1920x1200 the stage is roomier and 5 missiles in 8 s sometimes miss —
+    ;; stage-debugger spawns 8 and waits 14. Re-run a scene whose picture shows no meeting.)
     ;; pick restart 4 [define-method], and the template lands in the Workspace BESIDE
     ;; the stage with the specialisers already filled — then C-c C-c compiles it into
     ;; the image. The template's :?? tag is left as-is on purpose: it is a valid
     ;; keyword, so Accept succeeds without any typing and stage-enact falls to its
     ;; default. The scene proves the WIRING; filling the tag in is the human's part.
-    ("stage-accept" "b" ((:key "down") (:key "down") (:key "ret")
+    ("stage-accept" "b" ((:down 11) (:key "ret")
                          (:key "down") (:key "down") (:key "ret")
                          (:wait 1.0) (:key "down") (:key "ret") (:wait 1.0)
                          (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
                          (:wait 8.0)
                          (:key "4") (:key "ret") (:wait 1.5)
+                         (:chord "ctrl" "end")     ; point opens on line 1: Accept reads before it
                          (:chord "ctrl" "c") (:chord "ctrl" "c") (:wait 1.5)))
     ;; keyboard selection + inspect on the stage: Tab twice picks a sprite, Enter
     ;; opens the Inspector on the INSTANCE — an ordinary object view, no stage in it.
     ;; Scripted with the keyboard on purpose: a click cannot be driven reliably over
     ;; QMP (see the note above), and a stage reachable only by mouse would fail the
     ;; project's own rule that the pointer is an accelerator, not a requirement.
-    ("stage-inspect" "b" ((:key "down") (:key "down") (:key "ret")
+    ("stage-inspect" "b" ((:down 11) (:key "ret")
                           (:key "down") (:key "down") (:key "ret")
                           (:wait 1.0) (:key "down") (:key "ret") (:wait 2.0)
                           (:key "spc")                       ; pause, so it holds still
@@ -159,7 +168,7 @@
     ;; stage rather than the generic scratch-buffer cheatsheet. The only coverage of
     ;; the w path, and the only place the editable side pane is shown holding something
     ;; other than a defmethod template.
-    ("stage-workspace" "b" ((:key "down") (:key "down") (:key "ret")
+    ("stage-workspace" "b" ((:down 11) (:key "ret")
                             (:key "down") (:key "down") (:key "ret")
                             (:wait 1.0) (:key "down") (:key "ret") (:wait 2.0)
                             (:key "w") (:wait 1.5)))
@@ -291,6 +300,7 @@
 (defun run-step (step)
   (ecase (first step)
     (:key   (lol.qmp:key (second step))            (sleep 1.2))
+    (:down  (loop repeat (second step) do (lol.qmp:key "down") (sleep 0.4)) (sleep 0.8))
     (:chord (apply #'lol.qmp:keys (rest step))     (sleep 1.2))
     (:hold  (lol.qmp:hold (second step) (third step)) (sleep 1.2))
     (:click (lol.qmp:click (second step) (third step)) (sleep 1.2))

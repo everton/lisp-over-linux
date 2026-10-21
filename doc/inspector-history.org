@@ -614,7 +614,7 @@ of a live abstraction, edited from a list row. That is the Lisp Machine's locati
 
 In the booted machine, on =(make-counter 10 2)= from [[file:../initramfs/examples.lisp][examples.lisp]]:
 
-[[file:../media/screenshots/closure-2026-10-17.png]]
+[[file:../media/screenshots/closure-2026-10-20.png]]
 
 /The two capture rows are the payload — =capture 0= carries =(settable)= because SBCL
 boxed it, =capture 1= does not because it is only ever read. Above them the identity
