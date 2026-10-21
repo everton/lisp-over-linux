@@ -126,7 +126,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
 <dl class="glossary">
   <dt>generic function, method, specializer</dt>
   <dd>A function whose behaviour is chosen from its arguments' classes. Each <code>defmethod</code> handles one combination
-    (its specializers). <code>present</code> is the central one (<a class="ref" data-ref="initramfs/present.lisp#present" href="../../initramfs/present.lisp"><code>present</code><span class="loc">initramfs/present.lisp:341</span></a>).
+    (its specializers). <code>present</code> is the central one (<a class="ref" data-ref="initramfs/present.lisp#present" href="../../initramfs/present.lisp"><code>present</code><span class="loc">initramfs/present.lisp:393</span></a>).
     Tutorial: <a href="../background/learn-clos.org">learn-clos.org</a>.</dd>
   <dt>multiple dispatch, dispatch matrix</dt>
   <dd>Choosing a method on <em>several</em> arguments. <code>lol.examples:collide</code> dispatches on two, and its matrix of
@@ -143,7 +143,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>condition, handler, restart</dt>
   <dd>Lisp's error system separates <em>signalling</em> a condition, <em>handling</em> it, and the <em>restarts</em> (ways out)
     the code around it established. <code>handler-bind</code> runs the handler before unwinding, which is how the debugger sees a
-    live stack (<a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:956</span></a>,
+    live stack (<a class="ref" data-ref="poc/shell.lisp#workspace-debug-it" href="../../poc/shell.lisp"><code>workspace-debug-it</code><span class="loc">poc/shell.lisp:982</span></a>,
     <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:724</span></a>).</dd>
   <dt>closure, captured variable, value cell</dt>
   <dd>A function that remembers variables from where it was made. SBCL stores a captured variable that is assigned in a boxed
@@ -167,11 +167,11 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     the status line and every window is one. The <em>hand</em> is the pointer as a morph: it keeps the press in
     progress, and carries what you pick up to drop it on another morph.</dd>
   <dt>drill</dt>
-  <dd>Opening an item's subject as a new pane at the bottom of the trail (<a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:348</span></a>).</dd>
+  <dd>Opening an item's subject as a new pane at the bottom of the trail (<a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:356</span></a>).</dd>
   <dt>nav split, preview</dt>
-  <dd>A list on the left, a live read-only view of the selected item on the right (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1615</span></a>).</dd>
+  <dd>A list on the left, a live read-only view of the selected item on the right (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1716</span></a>).</dd>
   <dt>Workspace</dt>
-  <dd>A Lisp scratch buffer with Do it / Print it / Inspect it / Debug it / Accept (<a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:844</span></a>).</dd>
+  <dd>A Lisp scratch buffer with Do it / Print it / Inspect it / Debug it / Accept (<a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:896</span></a>).</dd>
   <dt>Accept, change set</dt>
   <dd>Compiling an edit into the running image, and the list of everything accepted this session
     (<a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:238</span></a>).</dd>
@@ -180,10 +180,10 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>halo</dt>
   <dd>Handles around whatever is under the middle button — the morph there and the morphs holding it: what each is,
     and which code drew it. After Morphic
-    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3859</span></a>).</dd>
+    (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3951</span></a>).</dd>
   <dt>stage</dt>
   <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
-    (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:704</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:702</span></a>).</dd>
   <dt>PRIMARY, CLIPBOARD</dt>
   <dd>X11's two selections: PRIMARY is "what you last selected" (middle-click pastes it), CLIPBOARD is what you copied. Kept as plain
     data (<a class="ref" data-ref="poc/clipboard.lisp#primary" href="../../poc/clipboard.lisp"><code>primary</code><span class="loc">poc/clipboard.lisp:267</span></a>; <a href="../clipboard.org">clipboard.org</a>).</dd>

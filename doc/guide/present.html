@@ -44,7 +44,7 @@ layer. It keeps the open trails, routes keys and draws. The full design is in
     "handle" struct such as <code>subj-defn</code> (a definition's source), <code>subj-xref</code> (senders),
     <code>subj-dir</code> (a folder) or <code>subj-tour</code>. A handle exists when one object has several readings. A
     symbol <em>inspected</em> shows its cells, while <code>(subj-defn sym)</code> shows its source.</td>
-    <td><a class="ref" data-ref="initramfs/present.lisp#subj-defn" href="../../initramfs/present.lisp"><code>subj-defn</code><span class="loc">initramfs/present.lisp:70</span></a></td></tr>
+    <td><a class="ref" data-ref="initramfs/present.lisp#subj-defn" href="../../initramfs/present.lisp"><code>subj-defn</code><span class="loc">initramfs/present.lisp:73</span></a></td></tr>
   <tr><td><strong>view</strong></td><td>What <code>(present subject)</code> returns: a title, a <code>kind</code>
     (<code>:list :source :reference :workspace :file :matrix :image :stage …</code>), a list of items, and optional
     <code>text</code> / <code>data</code>.</td><td><a class="ref" data-ref="initramfs/present.lisp#view" href="../../initramfs/present.lisp"><code>view</code><span class="loc">initramfs/present.lisp:41</span></a></td></tr>
@@ -53,7 +53,7 @@ layer. It keeps the open trails, routes keys and draws. The full design is in
     <td><a class="ref" data-ref="initramfs/present.lisp#item" href="../../initramfs/present.lisp"><code>item</code><span class="loc">initramfs/present.lisp:20</span></a></td></tr>
   <tr><td><strong>command</strong></td><td>What a subject affords, as data: a label, then either a target to open or
     an action thunk, the <em>surfaces</em> it appears on (<code>:menu :halo :palette :key</code>), and a key.</td>
-    <td><a class="ref" data-ref="initramfs/present.lisp#command" href="../../initramfs/present.lisp"><code>command</code><span class="loc">initramfs/present.lisp:56</span></a></td></tr>
+    <td><a class="ref" data-ref="initramfs/present.lisp#command" href="../../initramfs/present.lisp"><code>command</code><span class="loc">initramfs/present.lisp:59</span></a></td></tr>
   <tr><td><strong>pane</strong></td><td>The shell's wrapper round one presented view: the subject, the view, the
     selection, the scroll position, and a <code>textview</code> if the view has text.</td>
     <td><a class="ref" data-ref="poc/shell.lisp#pane" href="../../poc/shell.lisp"><code>pane</code><span class="loc">poc/shell.lisp:65</span></a></td></tr>
@@ -95,11 +95,11 @@ throws the deepest pane away and shows the one beneath, which was never discarde
     <code>present-preview</code> for the right-hand preview column. It gives <code>:source</code>,
     <code>:reference</code>, <code>:workspace</code> and <code>:file</code> views a textview, focused (editable) for
     everything except <code>:reference</code>.</li>
-  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:348</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:353</span></a>,
-    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:359</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
-    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:448</span></a> (the first tabs).</li>
+  <li><a class="ref" data-ref="poc/shell.lisp#trail-push" href="../../poc/shell.lisp"><code>trail-push</code><span class="loc">poc/shell.lisp:356</span></a>, <a class="ref" data-ref="poc/shell.lisp#trail-pop" href="../../poc/shell.lisp"><code>trail-pop</code><span class="loc">poc/shell.lisp:361</span></a>,
+    <a class="ref" data-ref="poc/shell.lisp#new-trail" href="../../poc/shell.lisp"><code>new-trail</code><span class="loc">poc/shell.lisp:367</span></a> (a new tab: the Spotter, <kbd>SuperL</kbd>-<kbd>Enter</kbd>),
+    <a class="ref" data-ref="poc/shell.lisp#open-environment" href="../../poc/shell.lisp"><code>open-environment</code><span class="loc">poc/shell.lisp:456</span></a> (the first tabs).</li>
   <li>The <strong>nav split</strong>: when a list pane's selected item has a subject, the right half shows
-    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1615</span></a>).
+    <code>(present-preview subject)</code> live as you move (<a class="ref" data-ref="poc/shell.lisp#preview-for" href="../../poc/shell.lisp"><code>preview-for</code><span class="loc">poc/shell.lisp:1716</span></a>).
     This is how the tour previews each stop's source.</li>
 </ul>
 
@@ -108,39 +108,39 @@ throws the deepest pane away and shows the one beneath, which was never discarde
 shell draws it.</p>
 <table>
   <tr><th>Subject</th><th>Shows</th><th>Method</th></tr>
-  <tr><td><code>package</code></td><td>every recorded definition in it</td><td><a class="ref" data-ref="initramfs/present.lisp#present@package" href="../../initramfs/present.lisp"><code>(present package)</code><span class="loc">initramfs/present.lisp:389</span></a></td></tr>
-  <tr><td><code>subj-modules</code> / <code>subj-module</code></td><td>the module index; one file's definitions</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-modules" href="../../initramfs/present.lisp"><code>(present subj-modules)</code><span class="loc">initramfs/present.lisp:403</span></a></td></tr>
-  <tr><td><code>subj-defn</code></td><td>captured source (<code>:source</code>, editable), or a builtin's reference</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-defn" href="../../initramfs/present.lisp"><code>(present subj-defn)</code><span class="loc">initramfs/present.lisp:431</span></a></td></tr>
-  <tr><td><code>subj-xref</code></td><td>senders of a function</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-xref" href="../../initramfs/present.lisp"><code>(present subj-xref)</code><span class="loc">initramfs/present.lisp:462</span></a></td></tr>
-  <tr><td><code>class</code></td><td>the class DAG and slots</td><td><a class="ref" data-ref="initramfs/present.lisp#present@class" href="../../initramfs/present.lisp"><code>(present class)</code><span class="loc">initramfs/present.lisp:475</span></a></td></tr>
-  <tr><td><code>generic-function</code></td><td>methods, coverage, combination</td><td><a class="ref" data-ref="initramfs/present.lisp#present@generic-function" href="../../initramfs/present.lisp"><code>(present generic-function)</code><span class="loc">initramfs/present.lisp:809</span></a></td></tr>
-  <tr><td><code>subj-matrix</code> / <code>subj-onion</code> / <code>subj-method</code></td><td>the dispatch matrix, the effective-method onion, one method</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-matrix" href="../../initramfs/present.lisp"><code>(present subj-matrix)</code><span class="loc">initramfs/present.lisp:692</span></a></td></tr>
-  <tr><td><code>subj-condition</code></td><td>a condition type's signallers, handlers and restarts</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-condition" href="../../initramfs/present.lisp"><code>(present subj-condition)</code><span class="loc">initramfs/present.lisp:535</span></a></td></tr>
-  <tr><td><code>subj-workspace</code> / <code>subj-change-set</code></td><td>the Workspace primer; what you Accepted</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:844</span></a></td></tr>
-  <tr><td><code>function</code></td><td>a closure's captures as fields; source, senders and disassembly as doors</td><td><a class="ref" data-ref="initramfs/present.lisp#present@function" href="../../initramfs/present.lisp"><code>(present function)</code><span class="loc">initramfs/present.lisp:925</span></a></td></tr>
-  <tr><td><code>subj-instances</code> / <code>-retention</code> / <code>-disassembly</code></td><td>inspector powers (<a href="../inspector-history.org">inspector-history.org</a>)</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-instances" href="../../initramfs/present.lisp"><code>(present subj-instances)</code><span class="loc">initramfs/present.lisp:993</span></a></td></tr>
-  <tr><td><code>t</code> / <code>subj-object</code></td><td>the inspector, so nothing is a dead end</td><td><a class="ref" data-ref="initramfs/present.lisp#present@t" href="../../initramfs/present.lisp"><code>(present t)</code><span class="loc">initramfs/present.lisp:1074</span></a></td></tr>
+  <tr><td><code>package</code></td><td>every recorded definition in it</td><td><a class="ref" data-ref="initramfs/present.lisp#present@package" href="../../initramfs/present.lisp"><code>(present package)</code><span class="loc">initramfs/present.lisp:441</span></a></td></tr>
+  <tr><td><code>subj-modules</code> / <code>subj-module</code></td><td>the module index; one file's definitions</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-modules" href="../../initramfs/present.lisp"><code>(present subj-modules)</code><span class="loc">initramfs/present.lisp:455</span></a></td></tr>
+  <tr><td><code>subj-defn</code></td><td>captured source (<code>:source</code>, editable), or a builtin's reference</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-defn" href="../../initramfs/present.lisp"><code>(present subj-defn)</code><span class="loc">initramfs/present.lisp:483</span></a></td></tr>
+  <tr><td><code>subj-xref</code></td><td>senders of a function</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-xref" href="../../initramfs/present.lisp"><code>(present subj-xref)</code><span class="loc">initramfs/present.lisp:514</span></a></td></tr>
+  <tr><td><code>class</code></td><td>the class DAG and slots</td><td><a class="ref" data-ref="initramfs/present.lisp#present@class" href="../../initramfs/present.lisp"><code>(present class)</code><span class="loc">initramfs/present.lisp:527</span></a></td></tr>
+  <tr><td><code>generic-function</code></td><td>methods, coverage, combination</td><td><a class="ref" data-ref="initramfs/present.lisp#present@generic-function" href="../../initramfs/present.lisp"><code>(present generic-function)</code><span class="loc">initramfs/present.lisp:861</span></a></td></tr>
+  <tr><td><code>subj-matrix</code> / <code>subj-onion</code> / <code>subj-method</code></td><td>the dispatch matrix, the effective-method onion, one method</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-matrix" href="../../initramfs/present.lisp"><code>(present subj-matrix)</code><span class="loc">initramfs/present.lisp:744</span></a></td></tr>
+  <tr><td><code>subj-condition</code></td><td>a condition type's signallers, handlers and restarts</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-condition" href="../../initramfs/present.lisp"><code>(present subj-condition)</code><span class="loc">initramfs/present.lisp:587</span></a></td></tr>
+  <tr><td><code>subj-workspace</code> / <code>subj-change-set</code></td><td>the Workspace primer; what you Accepted</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-workspace" href="../../initramfs/present.lisp"><code>(present subj-workspace)</code><span class="loc">initramfs/present.lisp:896</span></a></td></tr>
+  <tr><td><code>function</code></td><td>a closure's captures as fields; source, senders and disassembly as doors</td><td><a class="ref" data-ref="initramfs/present.lisp#present@function" href="../../initramfs/present.lisp"><code>(present function)</code><span class="loc">initramfs/present.lisp:977</span></a></td></tr>
+  <tr><td><code>subj-instances</code> / <code>-retention</code> / <code>-disassembly</code></td><td>inspector powers (<a href="../inspector-history.org">inspector-history.org</a>)</td><td><a class="ref" data-ref="initramfs/present.lisp#present@subj-instances" href="../../initramfs/present.lisp"><code>(present subj-instances)</code><span class="loc">initramfs/present.lisp:1045</span></a></td></tr>
+  <tr><td><code>t</code> / <code>subj-object</code></td><td>the inspector, so nothing is a dead end</td><td><a class="ref" data-ref="initramfs/present.lisp#present@t" href="../../initramfs/present.lisp"><code>(present t)</code><span class="loc">initramfs/present.lisp:1126</span></a></td></tr>
   <tr><td><code>subj-dir</code> / <code>subj-file</code> / <code>subj-find</code> / <code>subj-file-info</code></td><td>the file manager</td><td><a class="ref" data-ref="initramfs/file-views.lisp#present@subj-file" href="../../initramfs/file-views.lisp"><code>(present subj-file)</code><span class="loc">initramfs/file-views.lisp:752</span></a></td></tr>
   <tr><td><code>subj-worker</code></td><td>a view computed in a <em>second process</em></td><td><a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:189</span></a></td></tr>
-  <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:704</span></a></td></tr>
+  <tr><td><code>subj-stage</code></td><td>COLLIDE's objects moving and dispatching</td><td><a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:702</span></a></td></tr>
   <tr><td><code>subj-tour</code></td><td>the guided tour</td><td><a class="ref" data-ref="initramfs/tour.lisp#present@subj-tour" href="../../initramfs/tour.lisp"><code>(present subj-tour)</code><span class="loc">initramfs/tour.lisp:135</span></a></td></tr>
   <tr><td><code>subj-containers</code> / <code>subj-container</code></td><td>the host Debian as containers (<code>lol-ct</code>); merged as this guide was finished</td><td><a class="ref" data-ref="initramfs/containers.lisp#present@subj-containers" href="../../initramfs/containers.lisp"><code>(present subj-containers)</code><span class="loc">initramfs/containers.lisp:283</span></a></td></tr>
   <tr><td><code>run</code> / <code>subj-runs</code></td><td>a program's output streamed into a read-only pane</td><td><a class="ref" data-ref="initramfs/runs.lisp#present@run" href="../../initramfs/runs.lisp"><code>(present run)</code><span class="loc">initramfs/runs.lisp:246</span></a></td></tr>
 </table>
 <p><strong>To add a subject:</strong> one <code>defstruct</code>, one <code>present</code> method, and optionally
 <code>commands-for</code> and <code>present-preview</code>. To make it findable, push a function onto
-<a class="ref" data-ref="initramfs/present.lisp#*spotter-sources*" href="../../initramfs/present.lisp"><code>*spotter-sources*</code><span class="loc">initramfs/present.lisp:277</span></a>, as <code>tour.lisp</code> and
+<a class="ref" data-ref="initramfs/present.lisp#*spotter-sources*" href="../../initramfs/present.lisp"><code>*spotter-sources*</code><span class="loc">initramfs/present.lisp:329</span></a>, as <code>tour.lisp</code> and
 <code>file-views.lisp</code> do. The shell needs no change. Exercise 6 on the <a href="exercises.html">Exercises</a>
 page walks through it.</p>
 
 <h2>Commands: content declares, the shell disposes</h2>
-<p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:346</span></a> returns data. It never opens anything itself.
-The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3605</span></a>), builds menu
-entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3647</span></a>) and runs the chosen one through
-<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3584</span></a>: call the action, or open the target in place or in a new trail.
-The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:4066</span></a>) and the middle-button halo
-(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:4080</span></a>) both end in
-<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:4055</span></a>. That function calls whatever <code>*chooser*</code> the
+<p><a class="ref" data-ref="initramfs/present.lisp#commands-for" href="../../initramfs/present.lisp"><code>commands-for</code><span class="loc">initramfs/present.lisp:398</span></a> returns data. It never opens anything itself.
+The shell picks the commands for a surface (<a class="ref" data-ref="poc/shell.lisp#subject-commands" href="../../poc/shell.lisp"><code>subject-commands</code><span class="loc">poc/shell.lisp:3697</span></a>), builds menu
+entries from them (<a class="ref" data-ref="poc/shell.lisp#command-entries" href="../../poc/shell.lisp"><code>command-entries</code><span class="loc">poc/shell.lisp:3739</span></a>) and runs the chosen one through
+<a class="ref" data-ref="poc/shell.lisp#run-command" href="../../poc/shell.lisp"><code>run-command</code><span class="loc">poc/shell.lisp:3676</span></a>: call the action, or open the target in place or in a new trail.
+The right button (<a class="ref" data-ref="poc/shell.lisp#context-menu-at" href="../../poc/shell.lisp"><code>context-menu-at</code><span class="loc">poc/shell.lisp:4158</span></a>) and the middle-button halo
+(<a class="ref" data-ref="poc/shell.lisp#pane-middle-click" href="../../poc/shell.lisp"><code>pane-middle-click</code><span class="loc">poc/shell.lisp:4172</span></a>) both end in
+<a class="ref" data-ref="poc/shell.lisp#choose-and-run" href="../../poc/shell.lisp"><code>choose-and-run</code><span class="loc">poc/shell.lisp:4147</span></a>. That function calls whatever <code>*chooser*</code> the
 backend installed: <code>run-chooser</code> (an overlay, <code>poc/overlays.lisp</code>) on the framebuffer, and none on the X11 host runner.</p>
 
 <h2>A keypress, end to end</h2>
@@ -210,18 +210,18 @@ redraw: <code>move-cursor</code> repairs only the pointer's rectangle.</figcapti
     Every ready keyboard is drained, and the loop folds the OR of their held keys (<code>*ctrl-down*</code>,
     <code>*shift-down*</code>, <code>*super-down*</code>) into the state before routing.
     This is why <kbd>SuperL</kbd>-<kbd>Space</kbd> works on a bare console.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2894</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#browser-key" href="../../poc/shell.lisp"><code>browser-key</code><span class="loc">poc/shell.lisp:2981</span></a></span>
     One <code>cond</code>, in priority order: minibuffer, <kbd>M-.</kbd>/<kbd>M-,</kbd>, Esc as Meta, <kbd>C-g</kbd>,
     the Super layer, the side pane, the stage, editable panes, read-only text, the subject's own keys, and last the
     list keys, where <kbd>Enter</kbd> calls <code>trail-push</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:243</span></a></span>
     Presents the subject. A :source view's text goes into a new <code>lol.textview</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#layout-trail-area" href="../../poc/morphic.lisp"><code>layout-trail-area</code><span class="loc">poc/morphic.lisp:336</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="poc/morphic.lisp#layout-trail-area" href="../../poc/morphic.lisp"><code>layout-trail-area</code><span class="loc">poc/morphic.lisp:339</span></a></span>
     The trail's panes are morphs, the children of a trail area: before the repair the desk lays them out — every
     ancestor a breadcrumb bar, the last one expanded — and the pane that moved or appeared is damaged by moving.</li>
   <li><span class="where"><a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a></span>
-    In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1603</span></a>)
-    and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1774</span></a>) — its panel; its list is a
+    In each damaged rect, each morph over it draws itself: here the breadcrumb (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1704</span></a>)
+    and the expanded pane (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1875</span></a>) — its panel; its list is a
     morph of its own, a list body, which records where it drew its rows: what its clicks and the halo read back.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#present-repair" href="../../initramfs/fb-browser.lisp"><code>present-repair</code><span class="loc">initramfs/fb-browser.lisp:1361</span></a></span>
     <code>lol.fb:present-fb</code> of what the world repaired, then the pointer. <a href="pixels.html">Pixels and input</a> covers this half.</li>
