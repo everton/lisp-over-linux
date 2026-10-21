@@ -184,20 +184,21 @@ whole pixels because a grid can only be whole pixels:
 
 For DejaVu Sans Mono (computed with the code itself, one line per size):
 
-| size | cell  | baseline | columns × list rows on 1920×1080 |
+| size | cell  | baseline | columns × list rows on 1920×1200 |
 |------+-------+----------+----------------------------------|
-|   12 | 7×14  |       11 | 274 × 56                         |
-|   14 | 8×16  |       13 | 240 × 51                         |
-|   16 | 10×19 |       15 | 192 × 45                         |
-| *18* | 11×21 |       17 | 174 × 41 — the default           |
-|   20 | 12×23 |       19 | 160 × 38                         |
-|   23 | 14×27 |       21 | 137 × 33                         |
-|   29 | 17×34 |       27 | 112 × 27                         |
-|   40 | 24×47 |       37 | 80 × 20                          |
+|   12 | 7×14  |       11 | 274 × 63                         |
+|   14 | 8×16  |       13 | 240 × 57                         |
+|   16 | 10×19 |       15 | 192 × 50                         |
+| *18* | 11×21 |       17 | 174 × 46 — the default           |
+|   20 | 12×23 |       19 | 160 × 42                         |
+|   23 | 14×27 |       21 | 137 × 37                         |
+|   29 | 17×34 |       27 | 112 × 30                         |
+|   40 | 24×47 |       37 | 80 × 23                          |
 
-*Why 18 px by default.* The laptop is a 14-inch 1920×1080 panel, about 157 pixels to
-the inch; the old 6×15 bitmap's capitals were about 1.5 mm tall there — the complaint
-that started this. At 18 px a capital is about 2.2 mm (close to 10-point type held at
+*Why 18 px by default.* The laptop is a 13.4-inch 1920×1200 panel (an XPS 13 9300; its
+EDID says 29 × 18 cm), about 168 pixels to the inch; the old 6×15 bitmap's capitals
+were about 1.4 mm tall there — the complaint that started this. At 18 px a capital is
+about 2.1 mm (close to 10-point type held at
 arm's length), and a full-width pane still holds 170 columns.
 =lol.canvas:*default-font-size*= holds it; the user's own choice overrides it (§6).
 

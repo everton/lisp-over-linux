@@ -11,7 +11,7 @@ to be read top-to-bottom by someone (re)building the kernel from scratch.
 
 Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
 tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#31* (kexec: the running kernel boots the next image itself, without the
+Current tag: *#32* (the webcam: V4L2 + USB Video Class — §12; built on #31 = kexec: the running kernel boots the next image itself, without the
 firmware or GRUB — §11; built on #30 = SMP: every CPU, and with it Intel P-state
 frequency scaling — §10; built on #29 = SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
 the KERNEL is stuck: Magic SysRq, the lockup and hung-task
@@ -22,7 +22,7 @@ NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased t
 dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
 16x32 fbcon font — *since reverted*, see the Display table and
 [[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
-1,184 =CONFIG_= lines are set at #31; most are auto-selected defaults. The tables below
+1,203 =CONFIG_= lines are set at #32; most are auto-selected defaults. The tables below
 list only the ones that *matter* for this machine — the ones we chose on purpose.
 
 * How to regenerate / audit this file
@@ -671,4 +671,6 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   (=./build.sh --kernel=, kernel and userland, 1 min 59 s wall, incremental on #31).
   =bootx64.efi= is 4,555,776 bytes at #32 (4,428,800 at #31). Userland in the same tag:
   preinit gives =/dev/video*= to the user; the web pane's video calls
-  ([[file:web-browser.org][web-browser.org]] §4.8). /Not booted yet/, in QEMU or on the laptop.
+  ([[file:web-browser.org][web-browser.org]] §4.8). Booted on the laptop the same day:
+  =/dev/video0= to =video3= present, Chrome lists the "Integrated Webcam (0bda:58fe)"
+  and a Meet call had camera and microphone (web-browser.org §4.8). Not booted in QEMU.

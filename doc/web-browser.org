@@ -589,11 +589,11 @@ upscaler's edges exact).
 the screen?", then "write it up first, then go after all this"./ The section was
 written as a plan first; each part now says what was measured and what was built.
 
-*STATUS (2026-10-20): BUILT and host-tested; not yet tried in a real call.* Sound,
+*STATUS (2026-10-20): BUILT, host-tested, and tried in Meet on the laptop (camera, microphone, a shared screen); not yet with another person.* Sound,
 the microphone, the permission prompts and the shared screen are tested against
 Chrome 148 on the laptop, from inside the environment (=poc/web-test.lisp=, 18
-"calls:" checks). The camera needs kernel tag #32, built, not booted yet. A Meet
-call itself, signed in, with another person, is still to be done on the laptop.
+"calls:" checks). The camera needs kernel tag #32, booted on the laptop the same day (camera
+and microphone worked in Meet, below). A call with another person is still to be done.
 
 *** What a call needs, against what our Chrome had
 

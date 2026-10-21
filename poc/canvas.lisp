@@ -293,9 +293,9 @@
 (defconstant +max-font-size+ 40 "Largest pixel size SET-FONT-SIZE allows.")
 
 (defparameter *default-font-size* 18
-  "The em size, in pixels, an outline font starts at. Chosen for a 14-inch 1920x1080
-   panel (~157 dpi): 18 px makes DejaVu Sans Mono's cell 11 x 21, so a full-screen
-   pane holds about 170 columns by 45 rows — readable at arm's length, where the old
+  "The em size, in pixels, an outline font starts at. Chosen for the laptop's 13.4-inch
+   1920x1200 panel (~168 dpi): 18 px makes DejaVu Sans Mono's cell 11 x 21, so a
+   full-screen pane holds about 170 columns by 46 rows — readable at arm's length, where the old
    6 x 15 bitmap was not. ~/.lol/settings overrides it (doc/fonts.org §6).")
 
 (defstruct (glyph (:constructor make-glyph (coverage w h left top)))

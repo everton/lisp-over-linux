@@ -6,8 +6,8 @@
 <title>Project status</title>
 <!--
   doc/status.html — one page: what is built, what is in progress, what is owed.
-  Hand-written from each doc's own status lines (2026-10-20, kernel tag #30,
-  main at 2060c7d). The docs stay the truth: when a row here and a doc disagree,
+  Hand-written from each doc's own status lines (2026-10-20, kernel tag #32,
+  main at 5b9e073). The docs stay the truth: when a row here and a doc disagree,
   fix this page. Everything on it is drawn from the EFFORTS table in the script
   below, so the map, the open list and the details cannot disagree. Offline by
   design, like doc/guide/: no fonts, no CDN.
@@ -122,7 +122,7 @@ footer { margin-top: 2.5rem; font-size: .82rem; color: var(--dim); }
 
 <header>
   <h1>Project status</h1>
-  <div class="meta">2026-10-20 · kernel tag <strong>#30</strong> · <code>main</code> @ 2060c7d ·
+  <div class="meta">2026-10-20 · kernel tag <strong>#32</strong> · <code>main</code> @ 5b9e073 ·
     theme <button type="button" id="theme">auto</button></div>
 </header>
 <p class="verdict" id="verdict"></p>
@@ -177,6 +177,12 @@ var EFFORTS = [
   { id: "smp", layer: "machine", name: "SMP + frequency scaling", tag: "#30 · laptop 10-20",
     what: "Every CPU and Intel P-state. <code>nproc</code> is 8 on the laptop; <code>check-smp.lisp</code> in QEMU.",
     docs: [["kernel-config.org", "§10"]], items: [] },
+  { id: "update", layer: "machine", name: "Updating from inside + kexec", tag: "#31",
+    what: "<code>./build.sh</code> in the terminal's container, then <code>SuperL-q</code> 5: <code>lol-rootd</code> installs the build into <code>/boot/lisp</code> (old pair kept as <code>*.prev</code>) and the running kernel kexecs the new one; the firmware is the fallback.",
+    docs: [["sbcl-init.org", "“Updating from inside”"], ["kernel-config.org", "§11"]],
+    items: [
+      { s: "wip", t: "<code>check-update.lisp</code> (a guest kexecs itself) written, not run yet", src: ["sbcl-init.org", "“Updating from inside”"] },
+      { s: "wip", t: "An install + kexec on the laptop", src: ["sbcl-init.org", "“Updating from inside”"] } ] },
   { id: "storage", layer: "machine", name: "Storage, running as the user", tag: "#25",
     what: "NVMe + ext4, the host root read-only at <code>/mnt/host</code>, only <code>/home</code> shared, PID 1 dropped to the user with five ambient capabilities, <code>lol-rootd</code> for the rest.",
     docs: [["storage.org"]], items: [] },
@@ -254,12 +260,14 @@ var EFFORTS = [
       { s: "owed", t: "Tests for the plan, the steps toggle, a subagent round trip; a two-boot reopen", src: ["agent.org", "§14.9"] },
       { s: "idea", t: "TLS 1.3 in Lisp — not planned, HTTPS uses the host's libssl", src: ["agent.org", "§9"] } ] },
   { id: "web", layer: "apps", name: "Web browser", tag: "headless Chrome",
-    what: "The host's Chrome in a container over DevTools; screencast frames into a pane, input forwarded, our own pickers for <code>&lt;select&gt;</code>, colour and date; tabs as trails.",
+    what: "The host's Chrome in a container over DevTools; screencast frames into a pane, input forwarded, our own pickers for <code>&lt;select&gt;</code>, colour and date; tabs as trails; page zoom; video calls — microphone, the webcam (#32) and a shared screen, tried in Meet on the laptop.",
     docs: [["web-browser.org"]],
     items: [
       { s: "owed", t: "File upload: <code>Page.setInterceptFileChooserDialog</code> + a file-manager prompt", src: ["web-browser.org", "§9"] },
       { s: "owed", t: "A per-link right-click menu", src: ["web-browser.org", "§9"] },
-      { s: "wip", t: "A page's sound in the container is untried", src: ["web-browser.org", "§9"] } ] },
+      { s: "wip", t: "A page's sound in the container is untried", src: ["web-browser.org", "§9"] },
+      { s: "wip", t: "A Meet call with another person (joining, audio, presenting); its CPU cost", src: ["web-browser.org", "§4.8"] },
+      { s: "owed", t: "A calls section in <code>check-web.lisp</code>", src: ["web-browser.org", "§4.8"] } ] },
   { id: "term", layer: "apps", name: "Terminal pane", tag: "",
     what: "A VT engine in pure Lisp, ptys via <code>posix_spawn</code> + setsid, xterm-256color, scrollback, alt screen, OSC 52, mouse and paste.",
     docs: [["terminal.org"]],
@@ -284,7 +292,7 @@ var EFFORTS = [
 ];
 var DRIFT = [
   ["previews.org", "“Not yet in the image” (2026-10-03).", "Wired in: <code>libstbi.so</code> ships at <code>/usr/lib/lol/</code>; <code>check-files.lisp</code> decodes a JPEG in the guest."],
-  ["guide/in-progress.html", "State on 2026-10-12: agent being built, web browser a WPE exploration, terminal no doc, persistence awaiting decisions, tag #26.", "All four built; tag #30. This page carries the status now."],
+  ["guide/in-progress.html", "State on 2026-10-12: agent being built, web browser a WPE exploration, terminal no doc, persistence awaiting decisions, tag #26.", "All four built; tag #32. This page carries the status now."],
   ["kernel-config.org", "#25–#28: “Not yet booted on the laptop”.", "#29 and #30 were booted on the laptop, and Wi-Fi (#26) is in use there."],
   ["sbcl-init.org", "“Next steps / ideas” wants a debugger that cannot kill PID 1, a remote REPL, reaping.", "The framebuffer debugger, <code>log-unhandled</code> and the TCP REPL exist; the list predates them."]
 ];

@@ -6,7 +6,7 @@ Kernel options reference: [[file:kernel-config.org][kernel-config.org]].
 This file extends it: instead of a tiny C =init=, make *SBCL* (Steel Bank
 Common Lisp) the very first userspace process.
 
-STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #31; #32 built, not booted yet). A C preinit mounts
+STATUS: *WORKING* end-to-end in QEMU+OVMF (kernel tag #32; booted on the laptop, not yet in QEMU). A C preinit mounts
 /proc /sys /dev /tmp /dev/pts /dev/shm — and, since #25, the laptop's disk (only =/home= shared;
 [[file:storage.org][storage.org]]) — drops to the user and execs a Lisp *supervisor* (PID 1), which boots straight
 into the pixel environment and falls back to an interactive console menu when you
