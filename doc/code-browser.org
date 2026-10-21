@@ -1588,7 +1588,7 @@ advertise =M-.= for Senders while the shell bound it to the jump — the one key
 status line named was the one key that did something else), and the text-view's own
 =C-a/C-e/C-k/…=
 editing. *Emacs-native motion and selection are in* [[file:../poc/textview.lisp][poc/textview.lisp]]: =C-←/→= and
-=M-b/M-f= move by word (a whole Lisp token); *Shift + any motion* extends the
+=M-b/M-f= (and =M-←/→=) move by word (a whole Lisp token); *Shift + any motion* extends the
 selection; =C-SPC= sets the mark so subsequent motion grows the region until it is
 cleared; =C-Home/End= jump to buffer start / end. On the bare framebuffer the cooked
 tty cannot report a held Shift/Ctrl any more than a bare Ctrl, so the modifier state

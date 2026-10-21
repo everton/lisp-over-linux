@@ -67,7 +67,8 @@ specially, and each turned out differently. All three findings come from
   [[file:../initramfs/fb-browser.lisp::defun unbind-console-alt-arrows][=unbind-console-alt-arrows=]] now binds them, in every keymap table with the
   Alt bit, to the plain cursor keys =K_LEFT= / =K_RIGHT=, which is what alt_map
   already holds for Up and Down. Then they arrive as =ESC [ 1 ; 3 D= / =C= like the
-  rest. =Ctrl-Alt-F1…= still switch VTs.
+  rest. =Ctrl-Alt-F1…= still switch VTs. In a text view they move by word, as =M-b= / =M-f=
+  (=tv-key=, [[file:../poc/textview.lisp][poc/textview.lisp]]); an Org pane keeps them for promote / demote.
 - *Shift-Alt-arrows needed nothing.* The default keymap has no Shift+Alt table, and
   7.2's =keyboard.c= falls back to the plain map for a cursor key when the modifier's
   table is missing. =k_cur= then adds the modifiers.

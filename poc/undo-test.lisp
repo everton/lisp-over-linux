@@ -86,5 +86,20 @@
   (check "count is 0 after motion only" (zerop (tv-undo-count tv)))
   (check "C-_ says there is nothing" (null (tv-undo tv))))
 
+(format t "~&== M-<left> / M-<right> move by word, as M-b / M-f do ==~%")
+(let ((tv (fresh "(defun foo-bar (x) x)")))
+  (key tv :right 8) (key tv :right 8)
+  (let ((by-arrow (tv-point-col tv)))
+    (setf (tv-point-col tv) 0)
+    (key tv #\f 8) (key tv #\f 8)
+    (check "M-<right> twice lands where M-f twice does"
+           (and (> by-arrow 1) (= by-arrow (tv-point-col tv)))))
+  (let ((col (tv-point-col tv)))
+    (key tv :left 8)
+    (let ((by-arrow (tv-point-col tv)))
+      (setf (tv-point-col tv) col)
+      (key tv #\b 8)
+      (check "M-<left> lands where M-b does" (and (< by-arrow col) (= by-arrow (tv-point-col tv)))))))
+
 (format t "~&~:[===== ~d FAILURE(S) =====~;===== ALL PASS =====~]~%" (zerop *fails*) *fails*)
 (sb-ext:exit :code (if (zerop *fails*) 0 1))

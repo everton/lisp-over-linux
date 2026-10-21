@@ -1308,9 +1308,12 @@
          ;; motion extends the region when Shift is held OR the Emacs mark is active
          (ext   (or shift (tv-mark-active tv))))
     (cond
-      ;; ---- Ctrl + a named key: word motion on the arrows (buffer ends on Home/End) ----
-      ((and ctrl (eq key :left))  (move-word tv :left ext)  nil)
-      ((and ctrl (eq key :right)) (move-word tv :right ext) nil)
+      ;; ---- Ctrl + a named key: word motion on the arrows (buffer ends on Home/End).
+      ;;      M-<left> / M-<right> too, as M-b / M-f (Emacs binds them so); the console
+      ;;      sends them since fb-browser's UNBIND-CONSOLE-ALT-ARROWS. An Org pane takes
+      ;;      them first, for promote / demote (org-key). ----
+      ((and (or ctrl meta) (eq key :left))  (move-word tv :left ext)  nil)
+      ((and (or ctrl meta) (eq key :right)) (move-word tv :right ext) nil)
       ((and ctrl (eq key :home))  (setf (tv-point-line tv) 0 (tv-point-col tv) 0)
                                   (unless ext (collapse tv)) (ensure-visible tv) nil)
       ((and ctrl (eq key :end))   (setf (tv-point-line tv) (1- (length (tv-lines tv))))

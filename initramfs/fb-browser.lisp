@@ -2429,7 +2429,7 @@
      ("M-. / Ctrl-click"   "the definition at point / clicked")
      ("M-,"                "senders of the symbol at point"))
     ("Motion & selection"
-     ("C-Left / C-Right"   "by word  (also M-b / M-f)")
+     ("C-Left / C-Right"   "by word  (also M-b/M-f, M-arrows)")
      ("C-a / C-e"          "line start / end")
      ("C-Home / C-End"     "buffer start / end")
      ("Shift + motion"     "extend the selection")
