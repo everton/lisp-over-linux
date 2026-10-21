@@ -911,6 +911,10 @@
 ;; C-c C-d  Debug it: STEER signals inside a RESTART-CASE -- pick a way out.
 (lol.examples:launch)
 
+;; C-c C-i  Inspect it on a subject opens its view: COLLIDE's stage, dispatch
+;; happening. Space pauses; s a m t spawn; w opens a Workspace beside it.
+(lol.stage:subj-stage 'lol.examples:collide)
+
 ;; C-c C-i  Inspect it: a SECOND PROCESS sends a view, not pixels -- its pid
 ;; is not the supervisor's. The live one keeps changing with no key pressed.
 (subj-worker :self)

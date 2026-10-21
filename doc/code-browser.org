@@ -720,11 +720,13 @@ matrix or a restart in the condition view drops its value here. Cheap to build �
 the text view we already have, plus four commands and a transcript stream binding
 for =*standard-output*= during a Do-it.
 
-*Built* — =p= at the supervisor menu. The buffer opens on a primer sized to fit one
-1280x800 screen without scrolling: one runnable form per verb (Do it, define with
-=C-c C-c=, Print it, Debug it on =lol.examples:launch=, Inspect it on a worker's view
-and on a closure), plus one line pointing at the Spotter and =SuperL-?= for everything
-else. The verbs also sit in the status bar:
+*Built* — =p= at the supervisor menu. The buffer opens on a primer of one runnable
+form per verb (Do it, define with =C-c C-c=, Print it, Debug it on
+=lol.examples:launch=, Inspect it on the stage (§3b — a subject opens as its view), on
+a worker's view and on a closure), plus one line pointing at the Spotter and =SuperL-?=
+for everything else. It was sized to fit one 1280x800 screen; at today's default font
+it is 36 lines against 28 visible rows, so the closure examples need a scroll. The
+verbs also sit in the status bar:
 
 [[file:../media/screenshots/workspace-2026-10-17.png]]
 
