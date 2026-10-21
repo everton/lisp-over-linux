@@ -409,42 +409,154 @@
 
 ;;; ---- packages and modules: lists of definitions --------------------------
 
-(defun definition-items (keep-p)
+(defun definition-items (keep-p &optional group-of)
   "Items for every recorded definition KEEP-P accepts — it is called with
    (NAME DEFN) and returns true to include that record. A generic function
    collapses to ONE row that drills into its own view (matrix + methods), so its
    methods do not clutter the list; everything else gets a row per DEFN record.
    Shared by the package view and the module view so the two look, sort and tint
-   identically — the only difference between them is this predicate. Every probe
-   is guarded: this runs in PID 1, and one malformed entry must not break a list."
+   identically — the only difference between them is this predicate. GROUP-OF, when
+   given, is called with NAME and returns the row's section (the package view's
+   \"exported\" / \"internal\"). Every probe is guarded: this runs in PID 1, and one
+   malformed entry must not break a list."
   (let ((items '()) (seen-gfs '()))
     (maphash
      (lambda (name defns)
        (dolist (d defns)
          (when (ignore-errors (funcall keep-p name d))
-           (if (and (ignore-errors (fboundp name))
-                    (ignore-errors (typep (fdefinition name) 'generic-function)))
-               (unless (member name seen-gfs :test #'equal)
-                 (push name seen-gfs)
-                 (push (make-item :label (string-downcase (princ-to-string name))
-                                  :detail "generic function" :kind :generic-function
-                                  :subject (fdefinition name))
-                       items))
-               (push (make-item :label  (string-downcase (princ-to-string name))
-                                :detail (string-downcase (princ-to-string (defn-kind d)))
-                                :kind (defn-kind d)
-                                :subject (subj-defn name (defn-kind d)))
-                     items)))))
+           (let ((group (and group-of (ignore-errors (funcall group-of name)))))
+             (if (and (ignore-errors (fboundp name))
+                      (ignore-errors (typep (fdefinition name) 'generic-function)))
+                 (unless (member name seen-gfs :test #'equal)
+                   (push name seen-gfs)
+                   (push (make-item :label (string-downcase (princ-to-string name))
+                                    :detail "generic function" :kind :generic-function
+                                    :group group :subject (fdefinition name))
+                         items))
+                 (push (make-item :label  (string-downcase (princ-to-string name))
+                                  :detail (string-downcase (princ-to-string (defn-kind d)))
+                                  :kind (defn-kind d) :group group
+                                  :subject (subj-defn name (defn-kind d)))
+                       items))))))
      *registry*)
     (sort items #'string< :key #'item-label)))
 
+;;; A package is an INTERFACE as much as a bag of names: what it exports is the part
+;;; other code may lean on, what it keeps internal is its own business, and the
+;;; DEFPACKAGE form is where that line is drawn. A flat alphabetical list (what this
+;;; view was until 2026-10-20) hid all three, so you could not tell the API from the
+;;; helpers without reading the defpackage elsewhere. Now the view reads top-down
+;;; like the package itself: the definition, what it builds on, then the exported
+;;; names, then the internal ones — each a section the shell heads and rules off.
+
+(defun package-definition-name (p)
+  "The registry key of P's recorded DEFPACKAGE, or NIL (an SBCL package, or one made
+   by MAKE-PACKAGE). Matched by NAME because the key is whatever symbol the form
+   spelled — #:lol.json, :lol.examples — never one interned in P, and an uninterned
+   one is only EQ to itself, so GETHASH on a fresh symbol would miss."
+  (block found
+    (maphash (lambda (name defns)
+               (when (and (symbolp name)
+                          (string= (symbol-name name) (package-name p))
+                          (find :package defns :key #'defn-kind))
+                 (return-from found name)))
+             *registry*)))
+
+(defun symbol-meaning (s)
+  "(values KIND DETAIL) for an exported symbol with no recorded definition — a
+   builtin, or a name exported for its slot, keyword or accessor. The first meaning
+   wins: a row per symbol is enough to see the API; drilling shows all of it."
+  (cond ((special-operator-p s)  (values :macro "special operator"))
+        ((macro-function s)      (values :macro "macro"))
+        ((and (fboundp s) (typep (fdefinition s) 'generic-function))
+         (values :generic-function "generic function"))
+        ((fboundp s)             (values :function "function"))
+        ((find-class s nil)      (values :class "class"))
+        ((member s lambda-list-keywords) (values nil "lambda-list keyword"))
+        ((constantp s)           (values :constant "constant"))
+        ((boundp s)              (values :variable "variable"))
+        (t                       (values nil "symbol — nothing bound"))))
+
+(defun package-header-items (p)
+  "The package's own rows: its DEFPACKAGE (the source, when recorded), and the
+   packages it uses, each drilling to that package."
+  (let* ((key  (ignore-errors (package-definition-name p)))
+         (nicks (package-nicknames p))
+         (defn (if key
+                   (make-item :label (format nil "defpackage ~(~a~)" (package-name p))
+                              :detail (format nil "its definition~@[ · nicknames ~(~{~a~^, ~}~)~]"
+                                              nicks)
+                              :kind :package :group "package"
+                              :subject (subj-defn key :package))
+                   (make-item :label (format nil "~(~a~)" (package-name p))
+                              :detail (format nil "no defpackage recorded — built into SBCL~@[ · nicknames ~(~{~a~^, ~}~)~]"
+                                              nicks)
+                              :kind :package :group "package"
+                              :subject (subj-object p)))))
+    (cons defn
+          (mapcar (lambda (u) (make-item :label (format nil "uses ~(~a~)" (package-name u))
+                                         :detail "its exports visible here"
+                                         :kind :package :group "package" :subject u))
+                  (package-use-list p)))))
+
+(defun package-users-items (p)
+  "The packages that use P, last in its view: COMMON-LISP is used by every package
+   in the image, and forty rows above its API would bury it."
+  (let ((users (sort (mapcar #'package-name (package-used-by-list p)) #'string<)))
+    (mapcar (lambda (n) (make-item :label (string-downcase n) :detail "sees the exports"
+                                   :kind :package
+                                   :group (format nil "used by · ~d" (length users))
+                                   :subject (find-package n)))
+            users)))
+
 (defmethod present ((p package))
-  (make-view :title (format nil "package ~a" (package-name p))
-             :kind :list :subject p
-             :items (definition-items
-                        (lambda (name d)
-                          (declare (ignore d))
-                          (and (symbolp name) (eq (symbol-package name) p))))))
+  (flet ((exported-p (s)
+           (eq (nth-value 1 (find-symbol (symbol-name s) p)) :external)))
+    (let* ((recorded (definition-items
+                         ;; home here, or homed elsewhere and re-exported from here
+                         (lambda (name d)
+                           (declare (ignore d))
+                           (and (symbolp name)
+                                (or (eq (symbol-package name) p) (exported-p name))))
+                         (lambda (name) (if (exported-p name) "exported" "internal"))))
+           (named (make-hash-table :test #'equal))
+           (unrecorded '()))
+      (dolist (i recorded) (setf (gethash (item-label i) named) t))
+      ;; The exported list must be COMPLETE, or it does not answer "what is the API":
+      ;; a builtin, an accessor, a name exported for a keyword argument has no record.
+      ;; Internal symbols are not completed the same way — SBCL's packages hold
+      ;; thousands, and an unrecorded internal is nothing you would browse.
+      (do-external-symbols (s p)
+        (let ((label (string-downcase (symbol-name s))))
+          (unless (gethash label named)
+            (multiple-value-bind (kind detail) (symbol-meaning s)
+              (push (make-item
+                     :label label
+                     :detail (if (eq (symbol-package s) p)
+                                 detail
+                                 (format nil "~a · from ~(~a~)" detail
+                                         (package-name (symbol-package s))))
+                     :kind kind :group "exported"
+                     :subject (if (eq kind :generic-function) (fdefinition s)
+                                  (if kind (subj-defn s) s)))
+                    unrecorded)))))
+      (let* ((rows (sort (append recorded unrecorded) #'string< :key #'item-label))
+             (exported (remove "exported" rows :key #'item-group :test-not #'string=))
+             (internal (remove "internal" rows :key #'item-group :test-not #'string=)))
+        ;; the section head carries the count, so the split reads at a glance
+        (flet ((head (items name)
+                 (let ((g (format nil "~a · ~d" name (length items))))
+                   ;; an empty section still says so: "exports nothing" is an answer
+                   (if items
+                       (dolist (i items items) (setf (item-group i) g))
+                       (list (make-item :label (format nil "(nothing ~a)" name)
+                                        :group g))))))
+          (make-view :title (format nil "package ~a" (package-name p))
+                     :kind :list :subject p
+                     :items (append (package-header-items p)
+                                    (head exported "exported")
+                                    (head internal "internal")
+                                    (package-users-items p))))))))
 
 ;;; ---- modules: the browser's table of contents ----------------------------
 ;;; A flat package list answers "what exists"; it does not answer "where does
@@ -920,17 +1032,9 @@
 (subj-worker :self)
 (subj-live :ticker)
 
-;; C-c C-i  on a closure: its captures are its FIELDS. START is INCF-d, so SBCL
-;; boxes it in a VALUE-CELL: (settable) -- C-c C-c on that row rewrites the live
-;; counter. STEP is only read, stored inline: no place to write. In that view,
-;; C-c C-a applies it (try 3); C-c C-e evals with SELF bound to it.
+;; C-c C-i  a closure: its captures are FIELDS; START is INCF-d, so settable. Then its COMPILE-d twin.
 (lol.examples:make-counter 10 2)
-
-;; The Lispier way builds that closure right here, with COMPILE. C-c C-i it too.
-(funcall (compile nil '(lambda (start step)
-                         (lambda (&optional (bump 1))
-                           (incf start (* step bump)))))
-         10 2)
+(funcall (compile nil '(lambda (start step) (lambda (&optional (n 1)) (incf start (* step n))))) 10 2)
 "))
 
 (defmethod present ((s subj-change-set))

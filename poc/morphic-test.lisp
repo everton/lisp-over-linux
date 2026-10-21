@@ -320,7 +320,7 @@
   (check "the screen is right" (screen-right-p)))
 
 (format t "~&== SuperL-o out of a focused preview: the preview follows the list again ==~%")
-(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(new-trail (parse-subject "module:initramfs/examples.lisp")) (desk-sync *world*) (repair)
 (keys "down right")
 (let ((p (tiled-pane)))
   (check "-> focuses the selection beside the list, unpinned"
@@ -338,7 +338,7 @@
 (close-trail) (desk-sync *world*) (repair)
 
 (format t "~&== a pane's body is a morph: a key in a text view beside a list ==~%")
-(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(new-trail (parse-subject "module:initramfs/examples.lisp")) (desk-sync *world*) (repair)
 (keys "down S-ret")
 (let* ((p (tiled-pane)) (side (pane-side p))
        (lb (pane-body p)) (tb (and side (pane-body side))))
@@ -812,7 +812,7 @@
   (ev :drag :x x2 :y y2) (repair)
   (ev :up :x x2 :y y2) (repair))
 ;; a list tiled, a Workspace in a window beside it
-(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(new-trail (parse-subject "module:initramfs/examples.lisp")) (desk-sync *world*) (repair)
 (let* ((list-pane (tiled-pane)) (list-trail (nth *active* *trails*)) (list-root (first list-trail))
        (row 2) (item (nth row (view-items (pane-view list-pane))))
        (sub (item-subject item)))

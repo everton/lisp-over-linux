@@ -43,7 +43,7 @@ window.LOL_DEPS = {
     {file: "initramfs/net-views.lisp", layer: 3, role: "the network as a SUBJECT: one view of links, routes, DNS, time", lines: 220, defs: 29, packages: [], load: 62},
     {file: "initramfs/net.lisp", layer: 0, role: "bring the network up from Lisp, and serve the REPL over TCP", lines: 457, defs: 55, packages: [], load: 55},
     {file: "initramfs/player.lisp", layer: 7, role: "play a video with the host's MPlayer, full screen, then come back", lines: 249, defs: 23, packages: [], load: 63},
-    {file: "initramfs/present.lisp", layer: 3, role: "the drill-down PRESENT protocol (code browser §4½ / §4½ affordances)", lines: 1183, defs: 142, packages: [], load: 7},
+    {file: "initramfs/present.lisp", layer: 3, role: "the drill-down PRESENT protocol (code browser §4½ / §4½ affordances)", lines: 1287, defs: 146, packages: [], load: 7},
     {file: "initramfs/process.lisp", layer: 0, role: "process lifecycle helpers for the supervisor", lines: 192, defs: 21, packages: [], load: 45},
     {file: "initramfs/pty.lisp", layer: -1, role: "pseudo-terminals: run a program as if a person sat at a terminal", lines: 316, defs: 66, packages: [], load: 30},
     {file: "initramfs/recorder.lisp", layer: 7, role: "screencasts of the environment, with sound, recorded from inside it", lines: 897, defs: 112, packages: [], load: 65},

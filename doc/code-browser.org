@@ -1137,6 +1137,27 @@ source shown beside it — here =CL-USER= (=l= at the supervisor menu):
 /The =CL-USER= package, kind-tinted, with =%serve-net-repl='s source beside it.
 =./refresh-screenshot.sh --scene package=./
 
+*Visibility (2026-10-20).* The list used to be one alphabetical run, so the API
+and the helpers looked alike and you had to find the =defpackage= elsewhere to
+tell them apart. It now reads top-down like the package itself, in sections the
+shell heads with a count:
+
+- *package* — the =defpackage= row (its recorded source beside it; for a package
+  SBCL made, the package object's inspector), then one =uses …= row per package
+  whose exports are visible here unqualified.
+- *exported · N* — complete: every external symbol, including those with no
+  recorded definition (a builtin, an accessor, a symbol exported for its name),
+  which say what they are bound to (=symbol-meaning=) and, if re-exported, where
+  they come from. A package that exports nothing says =(nothing exported)=.
+- *internal · N* — the recorded definitions homed here and not exported. Not
+  completed from the package: SBCL's packages hold thousands of internals with
+  nothing to browse.
+- *used by · N* — last, because =COMMON-LISP= is used by every package in the
+  image and forty rows would bury its API.
+
+=(present (p package))= in [[file:../initramfs/present.lisp][=present.lisp=]]; =definition-items= takes the
+section as an optional =group-of=, so the module view is unchanged.
+
 Drill a few levels and the parents collapse into stacked breadcrumb bars. The
 matrix shot in §3 shows three of them stacked above the expanded pane —
 =modules=, =module initramfs/examples.lisp=, =generic-function collide= — each
@@ -1154,7 +1175,7 @@ The entire thing is *one generic function and one data rule*:
 
 | =present= method                  | the view it returns        | each item targets   |
 |-----------------------------------+----------------------------+---------------------|
-| =(present (p package))=           | its definitions, as a list | a definition        |
+| =(present (p package))=           | its defpackage, then exported / internal | a definition |
 | =(present (gf generic-function))= | the dispatch matrix (§3)   | a =dispatch-query=  |
 | =(present (q dispatch-query))=    | the effective-method onion | a method            |
 | =(present (m method))=            | its source, editable       | a called function   |
@@ -1373,7 +1394,8 @@ command. Do not overload commands to do double duty.)
 
 * 4⅔. The module index — our files ARE our categories  [DONE]
 
-A package view is one flat alphabetical list of every definition in the image.
+A package view is one alphabetical list of a package's definitions (split by
+visibility since 2026-10-20, §4½).
 That answers *"what exists"* and is exactly the wrong shape for *"where does this
 live"* — rooted at =CL-USER= it is a single 300-plus-row list, and Smalltalk's
 class categories are the thing Lisp does not give us (§3's concept map says as
