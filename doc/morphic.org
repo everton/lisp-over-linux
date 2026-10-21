@@ -1605,3 +1605,19 @@ ms, against 2.1 ms before.
 Nothing of §12.8's list. Not done, and not owed by any request: a picture of the
 carried thing beside the arrow (decision 6); dragging a /selection of text/ out of a text
 view (only the name at the caret is picked up, by =SuperL-p=); dropping onto the stage.
+
+** 13.12 Found later: a picture that depends on a generic function (2026-10-20)
+
+Per-morph damage (§12) repaints a morph when its *signature* changes. The stage
+body's signature listed the stage's own state — bodies, selection, running, the
+transcript's newest line — but its heads-up line (=applicable: (missile missile) no
+will signal=) is drawn from =collide='s *methods*, which live outside the stage.
+Accepting a method in the Workspace beside a /paused/ stage changed that line with
+nothing in the stage moving, so the line kept saying "will signal" until the next
+step. It was caught by the =stage-accept= screenshot, whose caption (written before
+§12) said the heads-up changes. Fix: [[file:../poc/morphic.lisp::defmethod morph-signature ((b stage-body))][the stage body's signature]] now includes
+=stage-hud-line= itself (nearest pair, two =compute-applicable-methods=: cheap at a
+stage's ten bodies). Proved in the guest by =./refresh-screenshot.sh --scene
+stage-accept= (the line reads =yes= after the Accept); =poc/morphic-test.lisp= still
+206/206. The general lesson for a new body class: a signature must cover everything
+its drawing *reads*, not only what it *owns*.

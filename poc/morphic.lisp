@@ -524,10 +524,14 @@
 (defmethod morph-signature ((b stage-body))
   "A stage's picture: its bodies where they are, the selection, whether it runs, the
    transcript's newest line — a step damages it too, explicitly; this catches the
-   rest (an eval in the Workspace beside it that moved a ship)."
+   rest (an eval in the Workspace beside it that moved a ship). The heads-up line is
+   in it because it is drawn from the generic function, not the stage: Accepting a
+   method beside a PAUSED stage changes it with nothing else moving (found
+   2026-10-20 — the line said 'will signal' after the Accept until the next step)."
   (let* ((p (body-pane b)) (st (and p (view-data (pane-view p)))))
     (and st (list (lol.morph:morph-local-bounds b) (pane-view p) (lol.stage:stage-selected st)
                   (lol.stage:stage-running st) (first (lol.stage:stage-transcript st))
+                  (lol.stage:stage-hud-line st)
                   (mapcar (lambda (o) (list (lol.stage:body-x o) (lol.stage:body-y o) (lol.stage:body-rot o) (lol.stage:body-flash o)
                                             (lol.stage:body-breached o) (lol.stage:body-docked o)))
                           (lol.stage:stage-bodies st))))))
