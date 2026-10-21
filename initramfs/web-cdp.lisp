@@ -278,8 +278,10 @@
   (let ((fl (%cdp-fcntl fd 3 0)))
     (%cdp-fcntl fd 4 (logior fl #x800))))
 
-(defun shell-quote (s)
-  "S wrapped for /bin/sh: single quotes, and each embedded ' written as '\\''."
+(defun cdp-shell-quote (s)
+  "S wrapped for /bin/sh: single quotes, and each embedded ' written as '\\''.
+   Not SHELL-QUOTE: that name is the file manager's (poc/file-manager.lisp, which
+   leaves a plain path bare), and this file, loaded later, used to redefine it."
   (with-output-to-string (o)
     (write-char #\' o)
     (loop for c across s do (if (char= c #\') (write-string "'\\''" o) (write-char c o)))
@@ -296,7 +298,7 @@
    The final exec replaces the shell, so the process we hold IS Chrome (or, in the
    guest, the container helper that becomes it)."
   (format nil "exec 3<&0 4>&1 >>~a 2>&1 </dev/null; exec~{ ~a~}"
-          (shell-quote log) (mapcar #'shell-quote argv)))
+          (cdp-shell-quote log) (mapcar #'cdp-shell-quote argv)))
 
 (defun start-chrome-process (argv &key (prefix #'identity) (log "/tmp/lol-chrome.log") env)
   "Start ARGV (Chrome's command line) with the DevTools pipe on fds 3/4. -> a CHROME.

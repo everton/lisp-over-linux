@@ -1412,6 +1412,10 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 (defun offline-reason ()
   "Why this machine has no way out, from the lease table — one clause."
   (let ((lease (and (fboundp 'current-lease) (funcall 'current-lease))))
+    ;; LEASE is dhcp.lisp's struct, loaded after this file. SBCL compiles a FUNCALL of
+    ;; a quoted name as a plain call, so say it is meant to stay one (else the build
+    ;; warns that the accessor "could not be inlined").
+    (declare (notinline lease-iface))
     (if lease
         (format nil "~a has a DHCP lease, but no default route goes through it" (funcall 'lease-iface lease))
         "DHCP got no lease, so there is no IPv4 address (Wi-Fi not connected, or no cable)")))

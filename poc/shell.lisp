@@ -524,6 +524,24 @@
    .lolf at BITMAP-PATH — the fallback that always ships. A missing or broken TTF
    (build.sh leaves an EMPTY file when the build host had none) is not an error,
    only a reason to fall back; what was tried and why it failed goes to *ERROR-OUTPUT*
+;; what an open minibuffer holds; its keys and drawing are under "the minibuffer" below
+(defstruct mb
+  prompt                 ; "Rename to: " — drawn in amber before the text
+  (text "")              ; what has been typed (or the initial value)
+  (point 0)              ; the caret, an index into TEXT
+  on-done                ; (lambda (text)) — Enter
+  on-change              ; (lambda (text)) or NIL — after every edit
+  on-cancel              ; (lambda ()) or NIL — Esc / C-g
+  completer              ; (lambda (text)) -> new text, or NIL — Tab
+  single-key             ; T: the next key answers (y/n), no Enter needed
+  hint                   ; a short dim note at the right end, or NIL
+  secret                 ; T: drawn as bullets — a Wi-Fi passphrase (initramfs/net-views.lisp)
+  candidates             ; (lambda (text)) -> (values CANDS TITLE), or NIL — see below
+  (cands '())            ; the candidates for the text as it is now (plists, below)
+  title                  ; the candidate panel's header line
+  (sel nil)              ; the chosen candidate's index, or NIL: Enter answers the TEXT
+  (top 0))               ; the panel's first visible slot (DRAW-LIST keeps it)
+
    so a boot log says why the text looks old."
   (or (loop for p in ttf-paths
             when (and p (probe-file p))
@@ -2124,22 +2142,8 @@
 ;;; The price is that the answer arrives through a CALLBACK (ON-DONE) instead of as a
 ;;; return value — a closure, which in Lisp costs nothing to write.
 
-(defstruct mb
-  prompt                 ; "Rename to: " — drawn in amber before the text
-  (text "")              ; what has been typed (or the initial value)
-  (point 0)              ; the caret, an index into TEXT
-  on-done                ; (lambda (text)) — Enter
-  on-change              ; (lambda (text)) or NIL — after every edit
-  on-cancel              ; (lambda ()) or NIL — Esc / C-g
-  completer              ; (lambda (text)) -> new text, or NIL — Tab
-  single-key             ; T: the next key answers (y/n), no Enter needed
-  hint                   ; a short dim note at the right end, or NIL
-  secret                 ; T: drawn as bullets — a Wi-Fi passphrase (initramfs/net-views.lisp)
-  candidates             ; (lambda (text)) -> (values CANDS TITLE), or NIL — see below
-  (cands '())            ; the candidates for the text as it is now (plists, below)
-  title                  ; the candidate panel's header line
-  (sel nil)              ; the chosen candidate's index, or NIL: Enter answers the TEXT
-  (top 0))               ; the panel's first visible slot (DRAW-LIST keeps it)
+;;; (DEFSTRUCT MB is up beside *MINIBUFFER*: the status line, drawn earlier in this
+;;; file, reads its slots, and an accessor called before its DEFSTRUCT is a full call.)
 
 ;;; The candidate panel. A prompt given CANDIDATES — a function of the text — shows
 ;;; what that text could become, in a list just above the line, recomputed after every
