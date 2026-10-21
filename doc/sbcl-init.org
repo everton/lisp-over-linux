@@ -860,8 +860,9 @@ byte, =.prev=, the view read-only again, refusals of a wrong magic and of a
 symlinked stage file, and =kexec-cmdline=. [[file:../check-update.lisp][=check-update.lisp=]] boots a guest on a
 grown copy of =test-disk.img=, presses =SuperL-q= =5=, and asserts the same QEMU
 comes back (the harness's =-no-reboot= would end QEMU on a firmware restart) with the
-desk restored. *Not run yet*: guest checks need KVM, so Debian. Not yet done on the
-laptop either.
+desk restored. *Passes* (run from Debian, 2026-10-20, 20 checks): boot 2 was 14 s
+old, the previous session ended by "restart (kexec)" and cleanly, =/boot/lisp= held
+the planted stamp, its three files root's. Not yet done on the laptop.
 
 * /tmp — what it took
 

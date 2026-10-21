@@ -178,10 +178,9 @@ var EFFORTS = [
     what: "Every CPU and Intel P-state. <code>nproc</code> is 8 on the laptop; <code>check-smp.lisp</code> in QEMU.",
     docs: [["kernel-config.org", "§10"]], items: [] },
   { id: "update", layer: "machine", name: "Updating from inside + kexec", tag: "#31",
-    what: "<code>./build.sh</code> in the terminal's container, then <code>SuperL-q</code> 5: <code>lol-rootd</code> installs the build into <code>/boot/lisp</code> (old pair kept as <code>*.prev</code>) and the running kernel kexecs the new one; the firmware is the fallback.",
+    what: "<code>./build.sh</code> in the terminal's container, then <code>SuperL-q</code> 5: <code>lol-rootd</code> installs the build into <code>/boot/lisp</code> (old pair kept as <code>*.prev</code>) and the running kernel kexecs the new one; the firmware is the fallback. <code>check-update.lisp</code> passes in QEMU.",
     docs: [["sbcl-init.org", "“Updating from inside”"], ["kernel-config.org", "§11"]],
     items: [
-      { s: "wip", t: "<code>check-update.lisp</code> (a guest kexecs itself) written, not run yet", src: ["sbcl-init.org", "“Updating from inside”"] },
       { s: "wip", t: "An install + kexec on the laptop", src: ["sbcl-init.org", "“Updating from inside”"] } ] },
   { id: "storage", layer: "machine", name: "Storage, running as the user", tag: "#25",
     what: "NVMe + ext4, the host root read-only at <code>/mnt/host</code>, only <code>/home</code> shared, PID 1 dropped to the user with five ambient capabilities, <code>lol-rootd</code> for the rest.",

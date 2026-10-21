@@ -660,8 +660,8 @@ would only need =preinit= to mount =devpts=, no kernel change.)
   firmware fallback ([[file:sbcl-init.org][sbcl-init.org]], "Updating from inside"). Host-tested by
   =poc/update-test.lisp= (30 checks: lol-rootd's real C under =unshare -rm=; there,
   on #30, =kexec_file_load= answered ENOSYS). [[file:../check-update.lisp][=check-update.lisp=]], which kexecs a
-  guest, is written but /not run yet/: the guest checks need KVM, so Debian. Not yet
-  booted on the laptop.
+  guest, passes from Debian (20 checks, 2026-10-20: the guest came back in the same
+  QEMU 14 s later, by kexec). An install + kexec on the laptop is still to be done.
 - =#32= *The webcam* (2026-10-20): =MEDIA_SUPPORT= with its filter, =MEDIA_CAMERA_SUPPORT=,
   =MEDIA_USB_SUPPORT=, =VIDEO_DEV=, =USB_VIDEO_CLASS= (§12); set off by hand: the other
   media kinds (TV, radio, SDR, platform, test), =MEDIA_SUBDRV_AUTOSELECT= and
