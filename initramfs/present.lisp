@@ -220,7 +220,8 @@
   "A fresh list of everything the Spotter can jump to — each a plist
    (:label STRING :detail STRING :group STRING :subject SUBJECT): the named surfaces
    (Workspace, change set), every package, and every recorded definition (deduped by
-   name, its newest kind as the detail). Every row is guarded, since this feeds a live
+   name, its newest kind as the detail), and the CL / SB-EXT builtins
+   (BUILTIN-SPOTTER-CANDIDATES). Every row is guarded, since this feeds a live
    finder in PID 1 and one malformed entry must not break the list.
 
    GROUP is the design mock-up's banding (media/browser-views-design.html §1):
@@ -267,8 +268,56 @@
                                    :subject (if gf (fdefinition name) (subj-defn name)))
                              out)))))
                *registry*))
+    (dolist (c (builtin-spotter-candidates)) (push c out))
     (dolist (c (spotter-extra-candidates)) (push c out))
     (nreverse out)))
+
+(defparameter +spotter-builtin-packages+ '("COMMON-LISP" "SB-EXT")
+  "Packages whose EXTERNAL symbols the Spotter lists as builtins. Until 2026-10-20 it
+   listed only the registry, so `mapcar' could be reached by M-. but not found by name
+   (it showed up only while it sat in the recents, which an empty query alone shows).")
+
+(defun builtin-spotter-candidates ()
+  "One candidate per meaningful external symbol of +SPOTTER-BUILTIN-PACKAGES+ — a
+   special operator, macro, function, constant, variable or class; the first that
+   applies, in that order, so `list' is the function and not the class. A name the
+   registry has (one you redefined and Accepted) is skipped: the definitions band
+   already offers it as YOUR code. The subject is what the registry rows would open:
+   a generic's GF view, a class's class view, else a SUBJ-DEFN, which presents a
+   builtin as its reference view (and SBCL's source, when the tree is on the disk).
+   The package is in the DETAIL, not the label, so typing `gc' ranks sb-ext's `gc'
+   as an exact match."
+  (let ((out '()))
+    (dolist (pname +spotter-builtin-packages+)
+      (let ((pkg (find-package pname))
+            (tag (string-downcase pname)))
+        (when (string= tag "common-lisp") (setf tag "cl"))
+        (when pkg
+          (do-external-symbols (s pkg)
+            (ignore-errors
+              (unless (nth-value 1 (gethash s *registry*))
+                (let* ((gf (and (fboundp s) (not (macro-function s))
+                                (typep (fdefinition s) 'generic-function)))
+                       (class (find-class s nil))
+                       (kind (cond ((special-operator-p s) "special operator")
+                                   ((macro-function s)     "macro")
+                                   (gf                      "generic function")
+                                   ((fboundp s)            "function")
+                                   ((and (boundp s) (constantp s)) "constant")
+                                   ((boundp s)             "variable")
+                                   ((and class (subtypep class 'condition)) "condition")
+                                   (class                  "class"))))
+                  (when kind
+                    (push (list :label (string-downcase (symbol-name s))
+                                :detail (format nil "~a · ~a" kind tag)
+                                :group "builtins"
+                                :subject (cond (gf (fdefinition s))
+                                               ((member kind '("condition" "class")
+                                                        :test #'string=)
+                                                class)
+                                               (t (subj-defn s))))
+                          out)))))))))
+    out))
 
 ;; Other modules add candidates without present.lisp naming them: each entry is a
 ;; function of no arguments returning a list of candidate plists. The file manager

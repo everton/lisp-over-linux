@@ -1542,6 +1542,19 @@ the top row is still the best match overall — which matters, because that is t
 =↵= opens. And an *empty* query opens on your *recents* (=note-recent=, filled by
 =trail-push= / =new-trail=), since "where was I" is the only question an empty finder
 can usefully answer.
+*It finds the builtins too* (2026-10-20). Until then its candidates were only the
+registry's definitions, so =mapcar= could be reached by =M-.= but not found by name:
+it showed up only while it sat in the recents, and those show for an *empty* query
+alone, eight at most — so it seemed to have been findable once and then quietly
+stopped being. =builtin-spotter-candidates= ([[file:../initramfs/present.lisp::defun builtin-spotter-candidates][present.lisp]]) adds a *builtins*
+band: every external symbol of =COMMON-LISP= and =SB-EXT= that names a special
+operator, macro, function, constant, variable or class (1198 on SBCL 2.6.8: 934 +
+264), the package in the detail (=function · sb-ext=) so =gc= is still an exact match.
+A row opens what the registry's rows would — a generic's GF view, a class's class
+view, else the builtin reference with SBCL's source when the tree is on the disk. A
+name the registry has (=print-object=, which we add methods to) is left to the
+definitions band, as your code. Building the whole candidate list costs ~1.2 ms on
+the host.
 *It reads paths, too.* A query that starts with =/=, =~=, =./=, =../= or =file://= is
 not a fuzzy search: its rows are the folder's entries completing the last component,
 =Tab= completes like a shell, and =↵= opens the file manager there — on a file, at its
