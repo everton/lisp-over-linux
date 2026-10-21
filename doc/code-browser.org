@@ -1156,7 +1156,13 @@ shell heads with a count:
   image and forty rows would bury its API.
 
 =(present (p package))= in [[file:../initramfs/present.lisp][=present.lisp=]]; =definition-items= takes the
-section as an optional =group-of=, so the module view is unchanged.
+section as =:group-of=.
+
+The module view groups by file, not by visibility, so there the API is a mark
+instead: a row whose name the package it was read in exports ends its detail in
+=· exported= (=definition-items='s =:mark-exported=). "Exported" means by /that/
+package — a method on =print-object= names a symbol CL exports and is not marked,
+nor is a =defpackage='s keyword name, which is external in =KEYWORD=.
 
 Drill a few levels and the parents collapse into stacked breadcrumb bars. The
 matrix shot in §3 shows three of them stacked above the expanded pane —

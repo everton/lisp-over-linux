@@ -409,7 +409,16 @@
 
 ;;; ---- packages and modules: lists of definitions --------------------------
 
-(defun definition-items (keep-p &optional group-of)
+(defun exported-name-p (name d)
+  "True when NAME is exported by the package DEFN D was read in — that package's API.
+   Not merely \"external somewhere\": a method on PRINT-OBJECT names a symbol CL
+   exports, and a DEFPACKAGE's keyword name is external in KEYWORD; neither is part
+   of what the file's own package offers."
+  (let ((home (and (symbolp name) (find-package (defn-package d)))))
+    (and home (eq (symbol-package name) home)
+         (eq (nth-value 1 (find-symbol (symbol-name name) home)) :external))))
+
+(defun definition-items (keep-p &key group-of mark-exported)
   "Items for every recorded definition KEEP-P accepts — it is called with
    (NAME DEFN) and returns true to include that record. A generic function
    collapses to ONE row that drills into its own view (matrix + methods), so its
@@ -417,24 +426,29 @@
    Shared by the package view and the module view so the two look, sort and tint
    identically — the only difference between them is this predicate. GROUP-OF, when
    given, is called with NAME and returns the row's section (the package view's
-   \"exported\" / \"internal\"). Every probe is guarded: this runs in PID 1, and one
-   malformed entry must not break a list."
+   \"exported\" / \"internal\"). MARK-EXPORTED appends \" · exported\" to the detail of
+   a row whose name the package it was read in exports — the module view's way of showing the API,
+   since its rows are grouped by file, not by visibility. Every probe is guarded: this
+   runs in PID 1, and one malformed entry must not break a list."
   (let ((items '()) (seen-gfs '()))
     (maphash
      (lambda (name defns)
        (dolist (d defns)
          (when (ignore-errors (funcall keep-p name d))
-           (let ((group (and group-of (ignore-errors (funcall group-of name)))))
+           (let ((group (and group-of (ignore-errors (funcall group-of name))))
+                 (mark  (and mark-exported (ignore-errors (exported-name-p name d))
+                             " · exported")))
              (if (and (ignore-errors (fboundp name))
                       (ignore-errors (typep (fdefinition name) 'generic-function)))
                  (unless (member name seen-gfs :test #'equal)
                    (push name seen-gfs)
                    (push (make-item :label (string-downcase (princ-to-string name))
-                                    :detail "generic function" :kind :generic-function
+                                    :detail (format nil "generic function~@[~a~]" mark)
+                                    :kind :generic-function
                                     :group group :subject (fdefinition name))
                          items))
                  (push (make-item :label  (string-downcase (princ-to-string name))
-                                  :detail (string-downcase (princ-to-string (defn-kind d)))
+                                  :detail (format nil "~(~a~)~@[~a~]" (defn-kind d) mark)
                                   :kind (defn-kind d) :group group
                                   :subject (subj-defn name (defn-kind d)))
                        items))))))
@@ -518,7 +532,8 @@
                            (declare (ignore d))
                            (and (symbolp name)
                                 (or (eq (symbol-package name) p) (exported-p name))))
-                         (lambda (name) (if (exported-p name) "exported" "internal"))))
+                         :group-of (lambda (name)
+                                     (if (exported-p name) "exported" "internal"))))
            (named (make-hash-table :test #'equal))
            (unrecorded '()))
       (dolist (i recorded) (setf (gethash (item-label i) named) t))
@@ -588,7 +603,8 @@
                :items (definition-items
                           (lambda (name d)
                             (declare (ignore name))
-                            (eql (ignore-errors (category-of d :file)) cat))))))
+                            (eql (ignore-errors (category-of d :file)) cat))
+                          :mark-exported t))))
 
 ;;; ---- a definition: its source (or reference, for a builtin) --------------
 
