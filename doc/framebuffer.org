@@ -620,6 +620,15 @@ That works if the canvas never contains the arrow:
   re-sending that small rectangle (=lol.fb:present-fb-rect=); then =put-cursor= at
   the new position. Two writes of 20 short rows each.
 
+Since 2026-10-20 the pointer has three shapes, not one: the arrow, a pointing hand
+and an I-beam (=*cursor-shapes*=, each a bitmap and its /hotspot/ — the pixel that is
+the point: the arrow's tip, the forefinger's tip, the I-beam's middle). A web page
+chooses among them ([[file:web-browser.org][web-browser.org]] §4.10); everything else shows the arrow. The
+patch is now a fixed /box/ every shape fits in, placed by [[file:../initramfs/fb-browser.lisp::defun cursor-box][=cursor-box=]] so that each
+shape's hotspot lands on the point (17 x 27 pixels, its corner 5 left of and 7 above
+the point), so drawing, moving and hiding work the same whatever the shape, and
+[[file:../initramfs/fb-browser.lisp::defun set-cursor-shape][=set-cursor-shape=]] redraws the box in place when only the shape changes.
+
 Every event loop in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]] — the browser, the source viewer, the value
 prompt, the debugger, the cheatsheet, the Spotter — followed one pattern (until
 Morphic step 4 made them all one loop, below): a =dirty=

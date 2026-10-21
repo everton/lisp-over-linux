@@ -948,7 +948,7 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 | press-and-drag selection                 | [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], =*button-down*= in =read-mouse=                   |
 | notches -> lines                         | [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]], [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]]                                      |
 | the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                                    |
-| the cursor bitmap we draw ourselves      | =*cursor-bits*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]                              |
+| the cursor bitmaps we draw ourselves     | =*cursor-shapes*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (arrow, hand, I-beam)      |
 
 The cursor deserves the last word: there isn't one. No hardware sprite, no
 overlay plane — =*cursor-x*= and =*cursor-y*= are two integers, and we paint a

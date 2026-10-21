@@ -104,6 +104,26 @@
       (values (round (+ px (* *web-zoom* (+ (jget r "x") (/ (jget r "width") 2)))))
               (round (+ py (* *web-zoom* (+ (jget r "y") (/ (jget r "height") 2)))))))))
 
+(defvar *shown-shape* nil "What the pointer was last drawn as (the stand-in below).")
+(defun set-cursor-shape (shape)
+  "fb-browser.lisp's, which the host does not load: record what the pointer would be."
+  (setf *shown-shape* shape))
+
+(defun hover-shape (x y)
+  "Move the pointer to the screen point X,Y over the page as the loop does, and
+   wait for the shape the page answers with. -> the shape drawn."
+  (web-hover x y)
+  (pump-until (lambda () nil) 0.4)
+  *shown-shape*)
+
+(defun text-point (id)
+  "A screen point ON the first characters of element ID's text (its box may be wider
+   than its text: a heading spans the line)."
+  (let ((r (read-json (coerce (js (format nil "(function(){var r=document.createRange();r.selectNodeContents(document.getElementById('~a').firstChild);var q=r.getClientRects()[0];return JSON.stringify({x:q.left+8,y:q.top+q.height/2})})()" id)) 'simple-string))))
+    (destructuring-bind (px py pw ph) (web-tab-page-rect (tab))
+      (declare (ignore pw ph))
+      (values (round (+ px (* *web-zoom* (jget r "x")))) (round (+ py (* *web-zoom* (jget r "y"))))))))
+
 (defun type-string (s) (loop for c across s do (browser-key c 0) (frame)))
 
 ;;; ---- the test pages ----------------------------------------------------------
@@ -122,7 +142,7 @@
   (ensure-directories-exist *site*)
   (page "index.html" "<!doctype html><title>LoL test index</title>
 <body style='font:20px sans-serif;margin:30px'>
-<h1>The web pane</h1>
+<h1 id=h>The web pane</h1>
 <p><a id=go href='two.html' style='font-size:28px'>go to page two</a></p>
 <p><a id=pop href='three.html' target=_blank>open page three in a new tab</a></p>
 <p><input id=q style='font-size:20px;width:300px'></p>
@@ -518,6 +538,21 @@ function pixel(x, y){
                 (eq (js "screen.width >= outerWidth && outerWidth >= innerWidth
                          && screen.height >= outerHeight && outerHeight >= innerHeight
                          && screen.width > 800") t))
+         ;; the pointer's shape follows the page's CSS cursor (doc/web-browser.org §4.10)
+         (check "over a link the pointer is the hand"
+                (eq (multiple-value-call #'hover-shape (element-center "go")) :hand))
+         (check "over a text input it is the I-beam"
+                (eq (multiple-value-call #'hover-shape (element-center "q")) :text))
+         (check "over a heading's text the I-beam, over its blank end the arrow"
+                (and (eq (multiple-value-call #'hover-shape (text-point "h")) :text)
+                     (destructuring-bind (px py pw ph) (web-tab-page-rect (tab))
+                       (declare (ignore px ph))
+                       (multiple-value-bind (x y) (element-center "h")
+                         (declare (ignore x))
+                         (eq (hover-shape (+ (first (web-tab-page-rect (tab))) (- pw 40)) y) :arrow)))
+                     (eq (multiple-value-call #'hover-shape (text-point "h")) :text)))
+         (check "off the page (the toolbar) the arrow again"
+                (eq (hover-shape (+ (first (web-tab-page-rect (tab))) 5) (car (web-tab-bar-y (tab)))) :arrow))
          (frame) (write-ppm (format nil "~a/web-index.ppm" *out*))
          ;; a click on a link, through the shell
          (multiple-value-bind (x y) (element-center "go")

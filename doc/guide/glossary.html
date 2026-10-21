@@ -72,7 +72,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     <a href="../input.org">input.org</a>.</dd>
   <dt>poll(2), inotify</dt>
   <dd><code>poll</code> sleeps until one of several fds is readable. <code>inotify</code> makes a directory change readable as an fd.
-    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1115</span></a>).</dd>
+    Together they let one loop wait for keys, mice and new devices (<a class="ref" data-ref="initramfs/fb-browser.lisp#poll-input-once" href="../../initramfs/fb-browser.lisp"><code>poll-input-once</code><span class="loc">initramfs/fb-browser.lisp:1171</span></a>).</dd>
   <dt>raw mode (termios)</dt>
   <dd>A tty normally buffers a line and turns Ctrl-C into a signal. Raw mode delivers each byte as it arrives, which is needed
     for <kbd>C-c C-c</kbd> to reach us (<a class="ref" data-ref="initramfs/line-editor.lisp#with-raw-mode" href="../../initramfs/line-editor.lisp"><code>with-raw-mode</code><span class="loc">initramfs/line-editor.lisp:53</span></a>).</dd>
@@ -183,7 +183,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
     (<a class="ref" data-ref="poc/shell.lisp#halo-entries" href="../../poc/shell.lisp"><code>halo-entries</code><span class="loc">poc/shell.lisp:3859</span></a>).</dd>
   <dt>stage</dt>
   <dd>A live simulation of <code>COLLIDE</code>'s objects, where a missing method opens the debugger
-    (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:671</span></a>).</dd>
+    (<a class="ref" data-ref="initramfs/stage.lisp#present@subj-stage" href="../../initramfs/stage.lisp"><code>(present subj-stage)</code><span class="loc">initramfs/stage.lisp:704</span></a>).</dd>
   <dt>PRIMARY, CLIPBOARD</dt>
   <dd>X11's two selections: PRIMARY is "what you last selected" (middle-click pastes it), CLIPBOARD is what you copied. Kept as plain
     data (<a class="ref" data-ref="poc/clipboard.lisp#primary" href="../../poc/clipboard.lisp"><code>primary</code><span class="loc">poc/clipboard.lisp:267</span></a>; <a href="../clipboard.org">clipboard.org</a>).</dd>

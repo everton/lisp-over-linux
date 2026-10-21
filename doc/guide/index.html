@@ -193,10 +193,10 @@ it still has to do). Without a disk, steps 3 to 5 are skipped and the Lisp runs 
   <li><span class="where"><a class="ref" data-ref="initramfs/supervisor.lisp#supervisor-main" href="../../initramfs/supervisor.lisp"><code>supervisor-main</code><span class="loc">initramfs/supervisor.lisp:90</span></a></span>
     It prints diagnostics, runs DHCP (<a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:480</span></a>),
     starts the network REPL only if the boot asked for it, and then calls
-    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1638</span></a>. That function catches every
+    <a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1719</span></a>. That function catches every
     error, so a broken environment drops you at the menu instead of killing PID 1. A kernel panics if PID 1
     exits, so every path here either loops or powers off.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1638</span></a></span>
+  <li><span class="where"><a class="ref" data-ref="initramfs/fb-browser.lisp#run-browser-fb" href="../../initramfs/fb-browser.lisp"><code>run-browser-fb</code><span class="loc">initramfs/fb-browser.lisp:1719</span></a></span>
     The environment: one loop that redraws when something changed, then blocks in <code>poll(2)</code> on the
     keyboard and mouse. It opens on the Workspace. Everything from here on is the subject of
     <a href="present.html">present and the shell</a> and <a href="pixels.html">Pixels and input</a>.</li>

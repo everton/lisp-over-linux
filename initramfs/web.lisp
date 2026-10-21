@@ -689,6 +689,8 @@
     (web-picker-setup tab)
     ;; the microphone, the camera and the screen, for calls (WEB-MEDIA-SETUP, "calls")
     (web-media-setup tab)
+    ;; the pointer's shape over the page (WEB-CURSOR-SETUP, §4.10)
+    (web-cursor-setup tab)
     (setf (web-tab-sent-w tab) 0 (web-tab-screencasting tab) nil)
     ;; an ADOPTED page (a popup) was already loading before we attached, so its
     ;; load events are gone: ask for what they would have told us
@@ -827,6 +829,9 @@
    WEB-EVENT is still inside the dispatch loop of CDP-PUMP.")
 (defparameter +web-picker-binding+ "__lolPicker"
   "The name of the binding the page script reports through.")
+(defparameter +web-cursor-binding+ "__lolCursor"
+  "The binding a page reports the cursor its element under the pointer asks for
+   through (WEB-CURSOR-SETUP, §4.10).")
 (defparameter +web-media-binding+ "__lolMedia"
   "The binding the calls' page script reports through (\"calls\" below, §4.8).")
 (defvar *web-media-asks* '()
@@ -929,7 +934,10 @@
                 (setf *web-picks* (append *web-picks* (list entry))))
                ;; a call asked for the microphone, the camera or the screen (WEB-ASK-MEDIA)
                ((equal (jget params "name") +web-media-binding+)
-                (setf *web-media-asks* (append *web-media-asks* (list entry))))))))))
+                (setf *web-media-asks* (append *web-media-asks* (list entry))))
+               ;; the cursor under the pointer changed (WEB-CURSOR): drawn at once
+               ((equal (jget params "name") +web-cursor-binding+)
+                (web-cursor tab (jget params "payload")))))))))
 
 (defun web-browser-event (method params)
   "Events that belong to the browser rather than to a tab: downloads."
@@ -1650,6 +1658,85 @@ window.__lolPickerApply = function(id, v){
     (cdp-send c "Runtime.addBinding" (jobj "name" +web-picker-binding+) :session s)
     (cdp-send c "Page.addScriptToEvaluateOnNewDocument" (jobj "source" +web-picker-js+) :session s)
     (cdp-send c "Runtime.evaluate" (jobj "expression" +web-picker-js+) :session s)))
+
+
+;;; ---- the pointer's shape (doc/web-browser.org §4.10) ------------------------------
+;;; A page says how the pointer should look over each of its parts — CSS cursor:
+;;; pointer over a link or a button, text over what a click would select — and a
+;;; desktop browser draws it. Headless Chrome works it out and draws nothing (it has
+;;; no pointer), and the DevTools protocol has no event that tells. So the page does:
+;;; on every mousemove (ours, WEB-HOVER's Input.dispatchMouseEvent) a capture-phase
+;;; listener reads the cursor of the element under the pointer and, when it differs
+;;; from the last, reports it through a binding. CSS "auto" — most of a page — is
+;;; resolved as Chrome resolves it: the I-beam over an editable field or over a
+;;; text node, the arrow elsewhere. We draw three shapes (fb-browser.lisp's
+;;; *CURSOR-SHAPES*): the arrow, the hand, the I-beam; the rest of CSS's cursors
+;;; (move, wait, resize ...) are the arrow. A cross-site frame inside the page has
+;;; no script of ours (we do not attach to it): over it the shape stays as it was.
+
+(defparameter +web-cursor-js+
+  "(function(){
+if (window.__lolCursorInstalled) return;
+window.__lolCursorInstalled = true;
+var last = 'default';
+function overText(ev){
+  var r = document.caretRangeFromPoint && document.caretRangeFromPoint(ev.clientX, ev.clientY);
+  if (!r || r.startContainer.nodeType !== 3) return false;
+  /* the caret lands in the nearest text even from blank space: is the point ON it? */
+  var whole = document.createRange();
+  whole.selectNodeContents(r.startContainer);
+  var rs = whole.getClientRects();
+  for (var i = 0; i < rs.length; i++) {
+    var q = rs[i];
+    if (ev.clientX >= q.left && ev.clientX <= q.right && ev.clientY >= q.top && ev.clientY <= q.bottom)
+      return true;
+  }
+  return false;
+}
+function cursorAt(ev){
+  var el = ev.target;
+  if (!el || el.nodeType !== 1) return 'default';
+  var c = getComputedStyle(el).cursor;
+  if (c && c !== 'auto') return c;
+  if (el.isContentEditable || el.tagName === 'TEXTAREA') return 'text';
+  if (el.tagName === 'INPUT' && /^(text|search|email|url|tel|password|number)$/.test(el.type)) return 'text';
+  return overText(ev) ? 'text' : 'default';
+}
+document.addEventListener('mousemove', function(ev){
+  var c = cursorAt(ev);
+  if (c !== last) { last = c; try { window.__lolCursor(c); } catch (e) {} }
+}, true);
+})();"
+  "The page script that reports the CSS cursor under the pointer (see above).")
+
+(defvar *web-cursor* :arrow
+  "The shape the page under the pointer last asked for: :arrow :hand or :text.")
+(defvar *web-pointer-on-page* nil "Was the pointer over a web page at the last move?")
+
+(defun web-cursor-setup (tab)
+  "Give TAB's page the cursor binding and script, as the pickers' (Runtime is
+   enabled by WEB-PICKER-SETUP, which runs first)."
+  (let ((s (web-tab-session tab)) (c *web-chrome*))
+    (cdp-send c "Runtime.addBinding" (jobj "name" +web-cursor-binding+) :session s)
+    (cdp-send c "Page.addScriptToEvaluateOnNewDocument" (jobj "source" +web-cursor-js+) :session s)
+    (cdp-send c "Runtime.evaluate" (jobj "expression" +web-cursor-js+) :session s)))
+
+(defun web-cursor-shape (css)
+  "Our pointer shape for the CSS cursor CSS."
+  (cond ((equal css "pointer") :hand)
+        ((member css '("text" "vertical-text") :test #'equal) :text)
+        (t :arrow)))
+
+(defun web-show-cursor (shape)
+  "Draw the pointer as SHAPE (fb-browser.lisp's SET-CURSOR-SHAPE; absent on the host)."
+  (when (fboundp 'set-cursor-shape) (funcall 'set-cursor-shape shape)))
+
+(defun web-cursor (tab css)
+  "TAB's page reports CSS as the cursor under the pointer: draw it, if that page is
+   the one under the pointer."
+  (when (and (eq tab (web-visible-tab)) (stringp css))
+    (setf *web-cursor* (web-cursor-shape css))
+    (when *web-pointer-on-page* (web-show-cursor *web-cursor*))))
 
 (defun web-pick-anchor (tab msg)
   "The rectangle of the control MSG reports in TAB -> (values x y w h), from its
@@ -2425,12 +2512,21 @@ function share(a){
 (defun web-hover (x y)
   "A bare pointer move to the screen point X,Y: over the page, Chrome needs it for
    hover menus, tooltips and cursors-that-highlight — wherever the pane is, a window
-   included. The frame that may follow redraws; we do not."
-  (let ((tab (web-visible-tab)))
-    (when (and tab (null (web-press)))
-      (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
-                                     (screen-to-pane (current-pane) x y))
-        (when cx (web-mouse tab "mouseMoved" cx cy))))))
+   included. The frame that may follow redraws; we do not. It also gives the pointer
+   back its arrow when it leaves the page (§4.10)."
+  ;; a press in progress (a drag selecting text) is the press's: no hover, and the
+  ;; shape stays the I-beam or hand it began on
+  (when (and (web-visible-tab) (web-press)) (return-from web-hover nil))
+  (let* ((tab (web-visible-tab))
+         (on (and tab
+                  (multiple-value-bind (cx cy) (multiple-value-call #'web-page-point tab
+                                                 (screen-to-pane (current-pane) x y))
+                    (when cx (web-mouse tab "mouseMoved" cx cy) t)))))
+    ;; the pointer's shape: the page's while over it (its answer to this move comes
+    ;; later, WEB-CURSOR), the arrow anywhere else
+    (unless (eq on *web-pointer-on-page*)
+      (setf *web-pointer-on-page* on)
+      (web-show-cursor (if on *web-cursor* :arrow)))))
 
 (defun web-wheel (lines)
   "The wheel over a web pane: LINES as the shell counts them (+ = down), sent as a

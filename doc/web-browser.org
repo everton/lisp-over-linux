@@ -18,7 +18,7 @@ host), started headless inside a container whose root is the host's Debian, driv
 over the DevTools protocol, and drawn by our Lisp. Code:
 [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
 [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (84 checks, about a
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (88 checks, about a
 minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
 Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
 environment itself, because headless Chrome draws their popups where the screencast
@@ -863,6 +863,38 @@ on Google's pages. Pages like that draw their own spinner.
 =web-test= drives a real slow server. The strip is still when loaded, lit within
 200 ms of the click, moving while the server has not answered, and still again
 once the page has loaded.
+
+** 4.10 The pointer's shape follows the page
+
+/Asked for 2026-10-20: "adapt the mouse cursor based on browser events: there is no
+pointer, so it is not obvious when things are clickable."/ A page says how the
+pointer should look over each of its parts with CSS =cursor= (=pointer= over a link
+or a button, =text= over text), and a desktop browser draws that. Headless Chrome
+works it out but has no pointer to draw, and the DevTools protocol has nothing that
+reports it: Chrome 148's own description of it (=/json/protocol=, 56 domains) has no
+command or event whose definition mentions a cursor.
+
+So the page reports it. [[file:../initramfs/web.lisp::defparameter +web-cursor-js+][=+web-cursor-js+=]], installed in every document as the
+pickers' script is (§4.4), listens to =mousemove= in the capture phase. The moves are
+ours: [[file:../initramfs/web.lisp::defun web-hover][=web-hover=]] sends an =Input.dispatchMouseEvent= for every pointer move over
+the page. On each one the script reads =getComputedStyle(el).cursor= of the element
+under the pointer and, when it differs from the last, calls the =__lolCursor=
+binding. CSS =auto=, most of a page, is resolved as Chrome resolves it: the I-beam
+over an editable field or over the characters of a text (=caretRangeFromPoint=, and
+the point must lie on that text's boxes, since the caret lands in the nearest text
+even from blank space), the arrow elsewhere.
+
+[[file:../initramfs/web.lisp::defun web-cursor][=web-cursor=]] maps it to one of our three shapes (=pointer= is the hand; =text=
+and =vertical-text= the I-beam; the rest of CSS's cursors, such as =move=, =wait=
+or the resize arrows, are the arrow) and draws it at once
+([[file:framebuffer.org][framebuffer.org]], the pointer's shapes). Off the page, on its toolbar or
+another pane, =web-hover= gives the arrow back; during a press (a drag selecting
+text) nothing changes. A cross-site frame inside a page has no script of ours (we
+do not attach to it), so over one the shape stays as it was.
+
+=web-test= checks: the hand over a link, the I-beam over a text field and over a
+heading's characters, the arrow over the blank end of that heading's line and on the
+toolbar.
 
 * 5. The event loop: services
 

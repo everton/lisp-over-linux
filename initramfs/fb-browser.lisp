@@ -853,15 +853,71 @@
    and to the left a vertical tail reads as bent — the base of the arrow looked
    twisted to the left. Drawn along the axis, head and tail are one straight object.")
 
-(defun draw-cursor (canvas x y)
-  "Blit *cursor-bits* with its tip (the top-left K) at X,Y — one pixel per cell."
-  (let ((white (lol.canvas:rgb #xff #xff #xff))
-        (black (lol.canvas:rgb 0 0 0)))
-    (loop for row across *cursor-bits* for dy from 0 do
-      (loop for ch across row for dx from 0 do
-        (case ch
-          (#\K (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 black))
-          (#\W (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 white)))))))
+(defparameter *cursor-hand-bits*
+  #("     KK"
+    "    KWWK"
+    "    KWWK"
+    "    KWWK"
+    "    KWWKKK"
+    "    KWWKWWKKK"
+    "    KWWKWWKWWKK"
+    " KK KWWKWWKWWKWK"
+    "KWWKKWWWWWWWWWWK"
+    "KWWWKWWWWWWWWWWK"
+    " KWWWWWWWWWWWWWK"
+    "  KWWWWWWWWWWWWK"
+    "  KWWWWWWWWWWWK"
+    "   KWWWWWWWWWWK"
+    "   KWWWWWWWWWK"
+    "    KWWWWWWWWK"
+    "    KWWWWWWWWK"
+    "    KKKKKKKKKK")
+  "The pointing hand, over a link or a button: the forefinger's tip is the point.")
+
+(defparameter *cursor-text-bits*
+  #("KKK KKK"
+    "KWWKWWK"
+    "KKKWKKK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "  KWK"
+    "KKKWKKK"
+    "KWWKWWK"
+    "KKK KKK")
+  "The I-beam, over text a click would put a caret in or select: its middle is the
+   point.")
+
+;;; Which pointer is drawn. The environment itself only ever shows the arrow; a web
+;;; page says what its element under the pointer asks for (CSS cursor), because
+;;; headless Chrome works it out but draws no pointer of its own
+;;; (doc/web-browser.org §4.10, WEB-CURSOR in web.lisp). Each shape is its bitmap and
+;;; its HOTSPOT, the pixel that is the point: the arrow's tip, the forefinger's tip,
+;;; the I-beam's middle.
+(defparameter *cursor-shapes*
+  (list :arrow (list *cursor-bits* 0 0)
+        :hand (list *cursor-hand-bits* 5 0)
+        :text (list *cursor-text-bits* 3 7))
+  "Shape name -> (bits hotspot-x hotspot-y).")
+
+(defvar *cursor-shape* :arrow "The shape the pointer is drawn as (a key of *CURSOR-SHAPES*).")
+
+(defun draw-cursor (canvas x y &optional (shape *cursor-shape*))
+  "Blit SHAPE's bits with its hotspot at X,Y — one pixel per cell, clipped."
+  (destructuring-bind (bits hx hy) (or (getf *cursor-shapes* shape) (getf *cursor-shapes* :arrow))
+    (let ((white (lol.canvas:rgb #xff #xff #xff))
+          (black (lol.canvas:rgb 0 0 0))
+          (x (- x hx)) (y (- y hy)))
+      (loop for row across bits for dy from 0 do
+        (loop for ch across row for dx from 0 do
+          (case ch
+            (#\K (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 black))
+            (#\W (lol.canvas:fill-rect canvas (+ x dx) (+ y dy) 1 1 white))))))))
 
 ;;; ---- the loop -----------------------------------------------------------
 
@@ -1212,8 +1268,22 @@
 ;;; 0.13 ms (doc/framebuffer.org §9.5). (Nothing the browser DRAWS depends on where
 ;;; the pointer is — no hover effects — which is what makes skipping the redraw correct.)
 
-(defparameter +cursor-w+ (reduce #'max *cursor-bits* :key #'length))
-(defparameter +cursor-h+ (length *cursor-bits*))
+;; The BOX every shape fits in, placed with each shape's hotspot at (+CURSOR-OX+,
+;; +CURSOR-OY+) inside it: what is copied from the canvas and sent when the pointer
+;; is drawn, moved or hidden, whatever shape it has (CURSOR-BOX).
+(defparameter +cursor-ox+ (loop for (nil (nil hx)) on *cursor-shapes* by #'cddr maximize hx))
+(defparameter +cursor-oy+ (loop for (nil (nil nil hy)) on *cursor-shapes* by #'cddr maximize hy))
+(defparameter +cursor-w+
+  (loop for (nil (bits hx)) on *cursor-shapes* by #'cddr
+        maximize (+ (- +cursor-ox+ hx) (reduce #'max bits :key #'length))))
+(defparameter +cursor-h+
+  (loop for (nil (bits nil hy)) on *cursor-shapes* by #'cddr
+        maximize (+ (- +cursor-oy+ hy) (length bits))))
+
+(defun cursor-box (x y)
+  "The top-left of the pointer's box for the point X,Y (never off the canvas's
+   top-left: a shape near that corner is drawn clipped inside it). -> (values bx by)"
+  (values (max 0 (- x +cursor-ox+)) (max 0 (- y +cursor-oy+))))
 
 (defvar *cursor-patch* nil "Scratch canvas the pointer is composited into.")
 
@@ -1250,20 +1320,28 @@
 (defvar *cursor-shown-y* 0)
 
 (defun put-cursor (canvas x y)
-  "Show the pointer at X,Y over CANVAS's pixels, sending only the arrow's patch."
+  "Show the pointer at X,Y over CANVAS's pixels, sending only its box's patch."
   (when *screen-lent* (return-from put-cursor nil))
-  (let* ((patch (or *cursor-patch*
-                    (setf *cursor-patch* (lol.canvas:make-canvas +cursor-w+ +cursor-h+))))
-         (dst (lol.canvas:canvas-pixels patch))
-         (src (lol.canvas:canvas-pixels canvas))
-         (cw (lol.canvas:canvas-w canvas))
-         (n (max 0 (min +cursor-w+ (- cw x)))))    ; columns that are on screen
-    (dotimes (row (max 0 (min +cursor-h+ (- (lol.canvas:canvas-h canvas) y))))
-      (replace dst src :start1 (* row +cursor-w+) :end1 (+ (* row +cursor-w+) n)
-                       :start2 (+ (* (+ y row) cw) x)))
-    (draw-cursor patch 0 0)
-    (lol.fb:present-fb patch :x0 x :y0 y)
-    (setf *cursor-shown-x* x *cursor-shown-y* y)))
+  (multiple-value-bind (bx by) (cursor-box x y)
+    (let* ((patch (or *cursor-patch*
+                      (setf *cursor-patch* (lol.canvas:make-canvas +cursor-w+ +cursor-h+))))
+           (dst (lol.canvas:canvas-pixels patch))
+           (src (lol.canvas:canvas-pixels canvas))
+           (cw (lol.canvas:canvas-w canvas))
+           (n (max 0 (min +cursor-w+ (- cw bx)))))    ; columns that are on screen
+      (dotimes (row (max 0 (min +cursor-h+ (- (lol.canvas:canvas-h canvas) by))))
+        (replace dst src :start1 (* row +cursor-w+) :end1 (+ (* row +cursor-w+) n)
+                         :start2 (+ (* (+ by row) cw) bx)))
+      (draw-cursor patch (- x bx) (- y by))
+      (lol.fb:present-fb patch :x0 bx :y0 by)
+      (setf *cursor-shown-x* x *cursor-shown-y* y))))
+
+(defun set-cursor-shape (shape)
+  "Draw the pointer as SHAPE from now on (:arrow :hand :text), at once if it shows."
+  (unless (eq shape *cursor-shape*)
+    (setf *cursor-shape* shape)
+    (when (and *fb-canvas* *fb-mouse* (not *cursor-hidden*))
+      (put-cursor *fb-canvas* *cursor-x* *cursor-y*))))
 
 (defun present-frame (canvas)
   "Send a freshly drawn CANVAS to the screen, then the pointer over it (unless it is
@@ -1276,8 +1354,9 @@
 (defun cursor-over-rect-p (r)
   "Does the arrow, drawn at the cursor, overlap rect R (x y w h)?"
   (destructuring-bind (x y w h) r
-    (and (< (- x +cursor-w+) *cursor-x* (+ x w))
-         (< (- y +cursor-h+) *cursor-y* (+ y h)))))
+    (multiple-value-bind (bx by) (cursor-box *cursor-x* *cursor-y*)
+      (and (< (- x +cursor-w+) bx (+ x w))
+           (< (- y +cursor-h+) by (+ y h))))))
 
 (defun present-repair (canvas &optional rects full)
   "Send what LOL.MORPH:WORLD-REPAIR just redrew: the whole frame when FULL (then
@@ -1301,7 +1380,8 @@
    A hidden pointer has nothing to put back; it just reappears."
   (when *screen-lent* (return-from move-cursor nil))
   (unless *cursor-hidden*
-    (lol.fb:present-fb-rect canvas old-x old-y +cursor-w+ +cursor-h+))
+    (multiple-value-bind (bx by) (cursor-box old-x old-y)
+      (lol.fb:present-fb-rect canvas bx by +cursor-w+ +cursor-h+)))
   (setf *cursor-hidden* nil)
   (put-cursor canvas *cursor-x* *cursor-y*))
 
@@ -1315,7 +1395,8 @@
   "Take the pointer off the screen: re-send the canvas pixels under it."
   (when *screen-lent* (return-from hide-cursor nil))
   (unless *cursor-hidden*
-    (lol.fb:present-fb-rect canvas *cursor-x* *cursor-y* +cursor-w+ +cursor-h+)
+    (multiple-value-bind (bx by) (cursor-box *cursor-x* *cursor-y*)
+      (lol.fb:present-fb-rect canvas bx by +cursor-w+ +cursor-h+))
     (setf *cursor-hidden* t)))
 
 (defun cursor-idle-timeout ()
