@@ -724,9 +724,9 @@ for =*standard-output*= during a Do-it.
 form per verb (Do it, define with =C-c C-c=, Print it, Debug it on
 =lol.examples:launch=, Inspect it on the stage (§3b — a subject opens as its view), on
 a worker's view and on a closure), plus one line pointing at the Spotter and =SuperL-?=
-for everything else. It was sized to fit one 1280x800 screen; at today's default font
-it is 36 lines against 28 visible rows, so the closure examples need a scroll. The
-verbs also sit in the status bar:
+for everything else. It fits one 1280x800 screen without scrolling — 28 rows at
+today's default font, which is why the closure and its =COMPILE=-d twin share one
+comment line and sit one form to a line. The verbs also sit in the status bar:
 
 [[file:../media/screenshots/workspace-2026-10-17.png]]
 

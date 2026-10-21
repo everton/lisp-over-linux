@@ -681,7 +681,9 @@ as a =COMPILE= of the maker; §5.6 is why it became a call to the build-time
 =make-counter=, with the =COMPILE= version kept beside it as a comment. Since the §5.6
 fix both are live, the =COMPILE= one last, in the Workspace primer in
 [[file:../initramfs/present.lisp][present.lisp]]: open the Workspace, put point after either form and =C-c C-i= — the
-same two captures either way.
+same two captures either way. (Since 2026-10-20 they share one comment line and each
+fits on one line — =bump= renamed =n= — so the primer stays on one 1280x800 screen
+with the stage's entry added.)
 
 ** 5.6 The bug the example found: runtime arithmetic did not compile in the guest (fixed)
 
