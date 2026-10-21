@@ -1266,7 +1266,7 @@
   (let* ((p (body-pane b)) (host (and p (expanded-of p))) (tv (and p (pane-tv p))))
     (when (and tv (editor-pane-p p)
                (or (eq host p) (eq (pane-side host) p)))     ; not a nav-split preview
-      (let ((text (drop-reference (getf payload :subject))))
+      (let ((text (drop-reference (getf payload :subject) (pane-package p))))
         (if (null text)
             (format nil "~a has no readable form to insert — drop it on the tabs to inspect it, or on a field to store it"
                     (getf payload :label))

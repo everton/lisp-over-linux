@@ -276,6 +276,14 @@
   "True when PANE is the Workspace scratch buffer — editable, with eval verbs."
   (and (pane-tv pane) (eq (view-kind (pane-view pane)) :workspace)))
 
+(defun pane-package (pane)
+  "The package PANE's text is read, evaluated and printed in: its view's PACKAGE when
+   it names one that exists (the stage's Workspace says LOL.STAGE), else *PACKAGE*.
+   Bound as *PACKAGE* around a key (BROWSER-KEY), so every verb that reads the buffer
+   — Do it, Print it, Accept, Tab, M-. — agrees about what a bare word means."
+  (let ((name (and pane (pane-view pane) (view-package (pane-view pane)))))
+    (or (and name (find-package name)) *package*)))
+
 (defun terminal-pane-p (pane)
   "True when PANE is a TERMINAL (poc/terminal-pane.lisp): a program on a pty, which
    takes every key but the SuperL layer. Defined here, with its siblings, because the
@@ -2912,7 +2920,10 @@
          (meta (or (lol.canvas:meta-p state) *pending-meta*))
          ;; Fold the sticky-Esc Meta into STATE so downstream (tv-key's M-f / M-b)
          ;; sees it too, not just the M-. branch here.
-         (state (if meta (logior state 8) state)))
+         (state (if meta (logior state 8) state))
+         ;; the focused text's package: a bare word typed in the stage's Workspace
+         ;; reads in LOL.STAGE (PANE-PACKAGE)
+         (*package* (pane-package (if (and (pane-editing-side p) (pane-side p)) (pane-side p) p))))
     (setf *pending-meta* nil)
     ;; a C-s / C-r search running here takes its keys first; one that ends it (any
     ;; key that is not a search key) then carries on below and does what it does
@@ -3154,8 +3165,8 @@
 
 (defun resolve-symbol (token)
   "TOKEN (a raw source word) -> an EXISTING symbol, or NIL. Understands =pkg:name=
-   and =pkg::name=; otherwise tries CL-USER then CL. Never interns (so clicking a
-   typo can't pollute a package)."
+   and =pkg::name=; otherwise tries *PACKAGE* (the pane's, PANE-PACKAGE), CL-USER, then
+   CL. Never interns (so clicking a typo can't pollute a package)."
   (when (and token (plusp (length token)))
     (let* ((tok (string-trim "#'`,@" token))
            (c (position #\: tok)))
@@ -3165,7 +3176,8 @@
                    (pkg (find-package (string-upcase (subseq tok 0 c))))
                    (nm  (subseq tok (+ c (if dbl 2 1)))))
               (and pkg (plusp (length nm)) (find-symbol (string-upcase nm) pkg)))
-            (or (find-symbol (string-upcase tok) :cl-user)
+            (or (find-symbol (string-upcase tok) *package*)
+                (find-symbol (string-upcase tok) :cl-user)
                 (find-symbol (string-upcase tok) :cl)))))))
 
 (defun jumpable-p (sym)
@@ -3441,7 +3453,7 @@
   (declare (ignore super))
   (setf (pane-editing-side p) nil)
   (cond
-    (ctrl (jump-to-definition (pane-tv p) x y))
+    (ctrl (let ((*package* (pane-package p))) (jump-to-definition (pane-tv p) x y)))
     ((lol.textview:tv-hit-p (pane-tv p) x y)
      (text-press (pane-tv p) x y))))
 
@@ -3481,7 +3493,7 @@
        (cond
          ((and tv (lol.textview:tv-hit-p tv x y))
           (if ctrl
-              (jump-to-definition tv x y)
+              (let ((*package* (pane-package side))) (jump-to-definition tv x y))
               (text-press tv x y)))
          ;; a list in the right column: select the row that was drawn there, read
          ;; back from its OWN hit map (the side pane's list body)
@@ -3679,7 +3691,7 @@
          (list (menu-entry (if sel "Do it: the selection" "Do it: the form here")
                            (lambda ()
                              (unless sel (lol.textview:tv-move-point tv (getf target :line) (getf target :col)))
-                             (workspace-do-it p t))
+                             (let ((*package* (pane-package p))) (workspace-do-it p t)))
                            :key "C-c C-e" :group "eval"))))
      (when (and sym (symbolp sym))
        (let ((gs (format nil "~(~a~)" sym)))
@@ -4248,15 +4260,16 @@
      (values nil nil))
     (t (values subject t))))
 
-(defun drop-reference (subject)
+(defun drop-reference (subject &optional (package (find-package :cl-user)))
   "Text that reads back as SUBJECT's value (DROP-VALUE) — what a drop on a text you can
    edit inserts — or NIL when there is none: a symbol quoted, a class as (find-class
    'name), a named function as #'name, a package as (find-package \"NAME\"), a path as
    a string, a number or a string as itself; anything else only if it prints readably.
-   Printed from CL-USER, so a symbol of another package comes out qualified."
+   Printed from PACKAGE — CL-USER, or the text's own (PANE-PACKAGE) — so a symbol of
+   another package comes out qualified, and reads back where it lands."
   (multiple-value-bind (v ok) (drop-value subject)
     (when ok
-      (let ((*package* (find-package :cl-user)) (*print-pretty* nil)
+      (let ((*package* package) (*print-pretty* nil)
             (*print-length* nil) (*print-level* nil))
         (flet ((named (thing) (let ((n (ignore-errors (sb-kernel:%fun-name thing))))
                                 (and n (or (symbolp n) (and (consp n) (eq (first n) 'setf))) n))))

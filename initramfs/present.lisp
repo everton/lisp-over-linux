@@ -51,6 +51,9 @@
                          ; Lisp, and a README lexed as Lisp lights every apostrophe.
   tint                   ; NIL or (line) -> colour/NIL: lines drawn whole in a colour
                          ; over the syntax (a conversation's error block, agent-ui.lisp)
+  package                ; NIL, or the NAME of the package an editable view's text is
+                         ; read, evaluated and printed in (the stage's Workspace reads
+                         ; in LOL.STAGE); NIL is *PACKAGE*, which is CL-USER
   subject)               ; back-reference to the presented subject
 
 (defstruct command

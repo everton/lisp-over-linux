@@ -645,35 +645,33 @@
 ;;   C-c C-c   Accept      compile a definition below into the image
 ;;   SuperL-o  back to the stage          w  hide this pane
 
-;; The Workspace reads in CL-USER, so the stage's own functions are written
-;; lol.stage:…, as the specimen's are lol.examples:…
+;; This Workspace reads in LOL.STAGE, so the stage's own functions are
+;; bare words here; the specimen's are lol.examples:…
 
 ;; Every sprite is an ordinary instance. Reach one by kind:
 
-(lol.stage:stage-any (lol.stage:collide-stage) :ship)
+(stage-any (collide-stage) :ship)
 
 ;; or by the name printed beside it (NIL once it has left the stage):
 
-(lol.stage:stage-find (lol.stage:collide-stage) \"Genera\")
+(stage-find (collide-stage) \"Genera\")
 
 ;; Ask what WOULD dispatch, without calling. This is the question the
 ;; heads-up line at the foot of the stage answers on every tick:
 
-(compute-applicable-methods
- #'lol.examples:collide
- (list (lol.stage:stage-any (lol.stage:collide-stage) :missile)
-       (lol.stage:stage-any (lol.stage:collide-stage) :ship)))
+(compute-applicable-methods #'lol.examples:collide
+                            (list (stage-any (collide-stage) :missile)
+                                  (stage-any (collide-stage) :ship)))
 
 ;; Make the call yourself. It returns data and enacts NOTHING — only the
 ;; stage's own tick feeds a value to stage-enact, so poking here is safe:
 
-(lol.examples:collide
- (lol.stage:stage-any (lol.stage:collide-stage) :missile)
- (lol.stage:stage-any (lol.stage:collide-stage) :ship))
+(lol.examples:collide (stage-any (collide-stage) :missile)
+                      (stage-any (collide-stage) :ship))
 
 ;; Put something else out there to watch:
 
-(lol.stage:stage-spawn (lol.stage:collide-stage) :asteroid)
+(stage-spawn (collide-stage) :asteroid)
 
 ;; Two ships have no method, and that hole is what opens the debugger.
 ;; Accept this with C-c C-c, press s for a second ship, and watch the
@@ -689,7 +687,7 @@
 
 (defmethod present ((s subj-stage-workspace))
   (make-view :title "workspace" :kind :workspace :subject s
-             :text *stage-workspace-text*))
+             :text *stage-workspace-text* :package "LOL.STAGE"))
 
 (defvar *the-collide-stage* nil
   "The one live stage. A stage is a running world, not a query — reopening the pane

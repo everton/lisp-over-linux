@@ -770,9 +770,13 @@ not part of the specimen, so it lives in its own package, =lol.stage= (since
 2026-10-20; before that it sat in =CL-USER=). =lol.examples='s package view lists the
 specimen and nothing else, and the stage's =body= accessors (=body-x=, =body-p= …) no
 longer share =CL-USER= with every other module. The shell, which paints the stage,
-writes =lol.stage:stage-bodies= the way it writes =lol.examples:name=; the Workspace
-reads in =CL-USER=, so the forms in its primer are qualified too, and a new rule for
-a collision's value is =(defmethod lol.stage:stage-enact ((tag (eql :near-miss)) …))=.
+writes =lol.stage:stage-bodies= the way it writes =lol.examples:name=. The Workspace
+/beside the stage/ reads in =lol.stage= (its view says so: =view-package=, which the
+shell binds as =*package*= around a key — =pane-package=), so its primer is bare
+words, a new rule for a collision's value is just =(defmethod stage-enact ((tag (eql
+:near-miss)) stage a b) …)=, and Do it, Print it, Accept, =Tab=, =M-.= and a drop all
+agree about what a bare word means; every other Workspace still reads in =CL-USER=.
+Host test: [[file:../poc/stage-workspace-test.lisp][=poc/stage-workspace-test.lisp=]] (17 checks, through the real keys).
 The "stage" row in =collide='s view still comes through present.lisp's
 =*stage-subject-fn*= hook, which =lol.stage= imports and sets.
 
