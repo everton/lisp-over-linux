@@ -473,7 +473,7 @@ byte-identical: every =render-frame.lisp= subject renders as before.
 | drag the title bar              | move (opaque); drop it on the tab strip: re-tile                        |
 | drag the corner grip            | resize                                                                  |
 | click =×= / =SuperL-w=          | close the window's trail                                                |
-| =SuperL-Tab=, =SuperL-1..9=     | reach windows too, raising each                                         |
+| =SuperL-Tab=, =SuperL-1..9=, =SuperL-t= | reach windows too, raising each (=SuperL-t='s tab list marks them =(window)=) |
 
 Grab mode is not a nested loop: it is a slot of the desk (=desk-grab=), and the desk
 sees every key before the focus does ([[file:../poc/morphic.lisp::defun grab-key][=grab-key=]]). Nothing else stops while it is on.

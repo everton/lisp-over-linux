@@ -52,6 +52,13 @@
 ;;;;    repaired and sent: a key in a text view beside a list, a key in a window, a full
 ;;;;    repair, a stage step (doc/morphic.org §13.10).
 ;;;;
+;;;; I. More tabs than fit (doc/code-browser.org §4¾): sixteen more tabs, and the
+;;;;    focused one still has its tab with a … button before the run; SuperL-Tab wraps
+;;;;    to the first and the run slides back, the button now after it; QEMU's pointer
+;;;;    pressing … opens every tab as a menu, whose 3 picks tab 3; SuperL-t opens it
+;;;;    too, on the current tab, Up and Return pick the one before; SuperL-t is in the
+;;;;    cheatsheet.
+;;;;
 ;;;; Evidence is read back over the net REPL — the world's own counters (each morph's
 ;;;; MORPH-DRAWS, the world's LAST-REPAIR) — and input is real: QMP keys and pointer
 ;;;; motion, through evdev, as a hand would make them.
@@ -695,6 +702,48 @@
   (measure "a stage step (its body)" "(zz-time (let ((p (current-pane))) (lambda () (lol.stage:step-stage (view-data (pane-view p))) (lol.morph:invalidate (pane-body p)))))")
   (qmp-hold "meta_l" "w") (sleep 1.0))
 
+(defun strip-probe (form)
+  "FORM evaluated in the guest with S bound to the tab strip."
+  (probe (format nil "(let ((s (shell-strip (desk-shell *world*)))) ~a)" form)))
+
+(defun section-i ()
+  (format t "~&~%== I. more tabs than fit ==~%")
+  (let ((n0 (probe-int "(length *trails*)")) (bar (probe-int "+bar-h+")))
+    (probe "(progn (dolist (w (desk-windows)) (close-window-trail w)) (dotimes (i 16) (new-trail (subj-workspace))) t)" 10.0)
+    (sleep 1.5)
+    (format t "~&  ~a trails; tabs drawn ~a; … buttons ~a~%" (probe "(length *trails*)")
+            (strip-probe "(mapcar #'car (strip-tabs s))") (strip-probe "(strip-more s)"))
+    (check "sixteen more tabs: the focused (newest) one has its tab, a … button before the run"
+           (string= (strip-probe "(list (and (assoc *active* (strip-tabs s)) t) (length (strip-more s)) (< (car (first (strip-more s))) (reduce #'min (mapcar #'cadr (strip-tabs s)))))")
+                    "(T 1 T)"))
+    (check "... fewer tabs drawn than there are"
+           (string= (strip-probe "(< (length (strip-tabs s)) (length *trails*))") "T"))
+    (qmp-hold "meta_l" "tab") (sleep 1.0)                      ; wraps round to tab 1
+    (check "SuperL-Tab wraps to tab 1: it has its tab, the … button now after the run"
+           (string= (strip-probe "(list *active* (and (assoc 0 (strip-tabs s)) t) (length (strip-more s)) (> (car (first (strip-more s))) (reduce #'max (mapcar #'cddr (strip-tabs s)))))")
+                    "(0 T 1 T)"))
+    (let ((more (first (read-list (strip-probe "(strip-more s)")))))
+      (when more (click-at (floor (+ (car more) (cdr more)) 2) (floor bar 2)))
+      (sleep 0.8)
+      (check "pressing … with the pointer lists every tab as a menu"
+             (string= (probe "(let ((o (top-overlay))) (and o (list (type-of o) (= (length (chooser-entries o)) (length *trails*)))))")
+                      "(CHOOSER-OVERLAY T)"))
+      (qmp-type "3") (sleep 1.0)
+      (check "... its 3 picks tab 3, and the menu is gone"
+             (string= (probe "(list *active* (null (top-overlay)))") "(2 T)")))
+    (qmp-hold "meta_l" "t") (sleep 1.0)
+    (check "SuperL-t opens the same menu, on the current tab"
+           (string= (probe "(let ((o (top-overlay))) (and o (list (length (chooser-entries o)) (chooser-sel o))))")
+                    (format nil "(~d 2)" (probe-int "(length *trails*)"))))
+    (qmp-key "up") (sleep 0.4) (qmp-key "ret") (sleep 1.0)
+    (check "... Up and Return pick the tab before it"
+           (string= (probe "(list *active* (null (top-overlay)))") "(1 T)"))
+    (check "SuperL-t is in the SuperL-? cheatsheet"
+           (string= (probe "(and (search \"Super-t\" (format nil \"~s\" *cheatsheet*)) t)") "T"))
+    (probe (format nil "(progn (loop while (> (length *trails*) ~d) do (setf *active* (1- (length *trails*))) (close-trail)) t)" (or n0 1)) 10.0)
+    (sleep 1.0)
+    (check "closed again: no … buttons" (string= (strip-probe "(strip-more s)") "NIL"))))
+
 (defun checks ()
   (quiet-kernel-console)
   (wait-for-browser)
@@ -706,6 +755,7 @@
   (section-f)
   (section-g)
   (section-h)
+  (section-i)
   t)
 
 (run-guest-checks "check-morphic" #'checks)
