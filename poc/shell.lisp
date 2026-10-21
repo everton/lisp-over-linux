@@ -524,14 +524,6 @@
   "The open minibuffer (an MB — see \"the minibuffer\" below), or NIL. Declared up here
    because the status line, drawn earlier in this file, has to know.")
 
-;;; ---- the font: which file, and its size at run time (doc/fonts.org) -------------
-
-(defun open-browser-font (ttf-paths bitmap-path &key size)
-  "Load the browser font: the first TrueType file in TTF-PATHS that parses, at SIZE
-   pixels (default lol.canvas:*default-font-size*); failing all of them, the bitmap
-   .lolf at BITMAP-PATH — the fallback that always ships. A missing or broken TTF
-   (build.sh leaves an EMPTY file when the build host had none) is not an error,
-   only a reason to fall back; what was tried and why it failed goes to *ERROR-OUTPUT*
 ;; what an open minibuffer holds; its keys and drawing are under "the minibuffer" below
 (defstruct mb
   prompt                 ; "Rename to: " — drawn in amber before the text
@@ -550,6 +542,14 @@
   (sel nil)              ; the chosen candidate's index, or NIL: Enter answers the TEXT
   (top 0))               ; the panel's first visible slot (DRAW-LIST keeps it)
 
+;;; ---- the font: which file, and its size at run time (doc/fonts.org) -------------
+
+(defun open-browser-font (ttf-paths bitmap-path &key size)
+  "Load the browser font: the first TrueType file in TTF-PATHS that parses, at SIZE
+   pixels (default lol.canvas:*default-font-size*); failing all of them, the bitmap
+   .lolf at BITMAP-PATH — the fallback that always ships. A missing or broken TTF
+   (build.sh leaves an EMPTY file when the build host had none) is not an error,
+   only a reason to fall back; what was tried and why it failed goes to *ERROR-OUTPUT*
    so a boot log says why the text looks old."
   (or (loop for p in ttf-paths
             when (and p (probe-file p))
