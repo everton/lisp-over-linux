@@ -86,7 +86,7 @@ window.LOL_DEPS = {
     {file: "poc/run-guest.lisp", layer: 9, role: "the SAME scene, on the LoL machine's /dev/fb0", lines: 44, defs: 1, packages: [], load: null},
     {file: "poc/run-host.lisp", layer: 9, role: "run the POC on the HOST, in a real X11 window", lines: 61, defs: 1, packages: [], load: null},
     {file: "poc/scene.lisp", layer: 9, role: "the thing we draw. A mock-up of the code browser itself", lines: 184, defs: 25, packages: ["lol.scene"], load: null},
-    {file: "poc/shell.lisp", layer: 5, role: "the drill-down accordion shell: render PRESENT into pixels", lines: 4566, defs: 328, packages: [], load: 31},
+    {file: "poc/shell.lisp", layer: 5, role: "the drill-down accordion shell: render PRESENT into pixels", lines: 4571, defs: 328, packages: [], load: 31},
     {file: "poc/terminal-pane.lisp", layer: -1, role: "the terminal as a pane in the browser: SUBJ-TERMINAL", lines: 836, defs: 71, packages: [], load: 42},
     {file: "poc/terminal.lisp", layer: -1, role: "a VT engine: bytes from a program in, a grid of cells out", lines: 1283, defs: 115, packages: ["lol.terminal"], load: 29},
     {file: "poc/textview.lisp", layer: 4, role: "an editable text view: caret, selection, syntax, scrolling", lines: 1372, defs: 122, packages: ["lol.textview"], load: 14},

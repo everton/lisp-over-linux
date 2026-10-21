@@ -639,16 +639,21 @@
     ((eq key :return)
      (let ((it (selected-item side)))
        (when (and it (item-subject it))
-         (setf (pane-editing-side pane) nil)     ; the trail moves; focus comes home
+         (unfocus-side pane)                     ; the trail moves; focus comes home
          (trail-push (item-subject it)))))
     (t nil))
   nil)
 
 (defun toggle-side-focus ()
-  "SuperL-o: move keyboard focus between the list and its editable side pane."
+  "SuperL-o: move keyboard focus between the list and its editable side pane.
+   Leaving goes through UNFOCUS-SIDE, as C-g and <- do: a side pane that was only
+   FOCUSED (by -> or a click on the preview) must go, or it stays over the nav split's
+   preview showing what you opened first while the list moves on underneath."
   (let ((p (current-pane)))
     (when (pane-side p)
-      (setf (pane-editing-side p) (not (pane-editing-side p))))))
+      (if (pane-editing-side p)
+          (unfocus-side p)
+          (setf (pane-editing-side p) t)))))
 
 ;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
 

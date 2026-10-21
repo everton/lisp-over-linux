@@ -319,6 +319,24 @@
               (not (drew-p (strip))) (not (drew-p (status)))))
   (check "the screen is right" (screen-right-p)))
 
+(format t "~&== SuperL-o out of a focused preview: the preview follows the list again ==~%")
+(new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
+(keys "down right")
+(let ((p (tiled-pane)))
+  (check "-> focuses the selection beside the list, unpinned"
+         (and (pane-side p) (pane-editing-side p) (not (pane-side-pinned p))))
+  (let ((opened (pane-subject (pane-side p))))
+    (keys "s-o")
+    (check "SuperL-o back: the focused side goes, as with C-g"
+           (and (null (pane-side p)) (not (pane-editing-side p))))
+    (keys "down")
+    (check "a move in the list shows the NEW selection, not the one opened before"
+           (and (pane-preview p)
+                (eq (pane-preview-subject p) (item-subject (selected-item p)))
+                (not (eq (pane-preview-subject p) opened))))
+    (check "the screen is right" (screen-right-p))))
+(close-trail) (desk-sync *world*) (repair)
+
 (format t "~&== a pane's body is a morph: a key in a text view beside a list ==~%")
 (new-trail (parse-subject "package:CL-USER")) (desk-sync *world*) (repair)
 (keys "down S-ret")

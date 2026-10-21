@@ -1649,7 +1649,12 @@ trail. So coming back — =C-g=, or =←= when the right column is a list — la
 on the identical frame you left, same pane, same selection, same preview, verified
 pixel-for-pixel. A side merely FOCUSED by =→= disappears again when it loses focus;
 one deliberately PINNED with =⇧↵= stays, because pinning is a decision and =C-g=
-should not quietly undo one (=pane-side-pinned= is the difference).
+should not quietly undo one (=pane-side-pinned= is the difference). Every way back
+follows that rule through one function, =unfocus-side=: =C-g=, =←=, a click on the
+list, =↵= in a side list, and =SuperL-o=. Until 2026-10-20 =SuperL-o= only flipped the
+focus, so a focused side pane stayed in place of the preview. The list then moved
+while the right column kept showing what you first opened (=poc/morphic-test.lisp=
+now checks this).
 
 Note =→= and =←= are *not* a pair here. =←= remains "back" — it leaves the frame
 you are looking at, while =→= goes deeper into it. And in a *text* right column =←=
