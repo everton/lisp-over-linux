@@ -81,6 +81,9 @@
 (check "a block is one write: title, then indented lines"
        (search (format nil "[main] a block:~%    first~%    second") (slurp (log-path "session"))))
 
+(check "clip-one-line shows an ASCII question's newlines as ⏎ (PRINC-TO-STRING gives a BASE-STRING)"
+       (equal (clip-one-line (format nil "two~%lines")) "two⏎lines"))
+
 ;;; ---- the last session, set aside -----------------------------------------------
 
 (format t "~&== boot: setting the last session aside ==~%")

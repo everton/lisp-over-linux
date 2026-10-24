@@ -1759,13 +1759,17 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
     (with-conversation-lock (conv)
       (vector-push-extend turn (conversation-turns conv))
       (setf (conversation-state conv) :working (conversation-cancel conv) nil))
-    (session-log "agent: conversation ~d, turn begins: ~a" (conversation-id conv) (clip-one-line question 160))
     (let ((turn-usage (list :input 0 :output 0 :cache-read 0 :cache-write 0)) (turn-cost 0))
       (unwind-protect
            (let ((outcome
                    (catch 'agent-cancel
                      (handler-case
                          (progn
+                           ;; Inside the handler and the UNWIND-PROTECT: anything that
+                           ;; fails after the state became :WORKING must reach the
+                           ;; cleanup below, or the conversation stays busy for good.
+                           (session-log "agent: conversation ~d, turn begins: ~a"
+                                        (conversation-id conv) (clip-one-line question 160))
                            (when (equal (conversation-title conv) (format nil "conversation ~d" (conversation-id conv)))
                              (setf (conversation-title conv) (lol.widgets:clip-text (first-line question) 40)))
                            (let ((ms (conversation-messages conv)))

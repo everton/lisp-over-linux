@@ -146,8 +146,11 @@
 
 (defun clip-one-line (s &optional (n 160))
   "S on one line (newlines shown as ⏎), clipped to N characters — for quoting an
-   agent's question or a tool's input in a log line."
-  (clip-line (substitute #\⏎ #\Newline (princ-to-string s)) n))
+   agent's question or a tool's input in a log line. PRINC-TO-STRING answers a
+   BASE-STRING when every character is ASCII, and SUBSTITUTE keeps that type, so the
+   string is made a CHARACTER string first or ⏎ (not a BASE-CHAR) cannot go in."
+  (clip-line (substitute #\⏎ #\Newline (coerce (princ-to-string s) '(simple-array character (*))))
+             n))
 
 (defun session-log-close (fmt &rest args)
   "Write the session's LAST line — \"shutdown: …\", which tells the next boot this one
