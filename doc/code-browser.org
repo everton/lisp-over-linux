@@ -295,6 +295,19 @@ accessor generic functions). The registry must model =:derived= entries that
 point back at the parent form — you browse an accessor and it shows you the
 =defclass= it came from. Getting this right is most of the work in §2.
 
+*How it landed (2026-10-24):* no =:derived= entries; the registry asks SBCL
+instead. A defstruct-made function's =(info :function :source-transform name)= is
+=(dd . dsd)= for an accessor and =(dd . :constructor/:predicate/:copier)= for the
+others, which =structure-defining= ([[file:../initramfs/registry.lisp::defun structure-defining][registry.lisp]]) turns into the struct's name.
+=present= on a =subj-defn= then shows that struct's recorded =defstruct=, so
+=M-.= on =view-kind= opens =struct view=. A =defclass= accessor needs nothing: it is
+a generic function, and its methods are recorded. *The bug this fixed:* the
+reference fallback read our own =present.lisp= and took the first top-level form
+whose text names =view-kind=. That was its first caller, =show-view=, shown under
+the title =VIEW-KIND=. A defstruct spells =kind=, never =view-kind=, so a text
+search cannot find it. =sbcl-definition-source= now looks for the struct by
+name before that last-resort search, for SBCL's own structs too.
+
 ** Two kinds of subject: your code vs. the builtins (SBCL source read from the disk)
 
 Decided (with the user) and *implemented in [[file:../initramfs/registry.lisp][registry.lisp]]*. There are two

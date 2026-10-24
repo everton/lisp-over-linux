@@ -610,15 +610,26 @@
 
 (defmethod present ((d subj-defn))
   (let ((src (source-of (subj-defn-name d) (subj-defn-kind d))))
-    (if src
-        (make-view :title (format nil "~(~a~) ~(~a~)"
-                                  (or (subj-defn-kind d) "definition") (subj-defn-name d))
-                   :kind :source :subject d
-                   :text (if (listp src) (format nil "~{~a~^~%~%~}" src) src))
-        (make-view :title (format nil "~a" (subj-defn-name d))
-                   :kind :reference :subject d
-                   :text (with-output-to-string (*standard-output*)
-                           (show-reference (subj-defn-name d)))))))
+    (multiple-value-bind (struct role)
+        (and (null src) (null (subj-defn-kind d)) (structure-defining (subj-defn-name d)))
+      (cond
+        (src
+         (make-view :title (format nil "~(~a~) ~(~a~)"
+                                   (or (subj-defn-kind d) "definition") (subj-defn-name d))
+                    :kind :source :subject d
+                    :text (if (listp src) (format nil "~{~a~^~%~%~}" src) src)))
+        ;; a function our own DEFSTRUCT made (VIEW-KIND, MAKE-VIEW…): its definition
+        ;; IS the defstruct, so show that — editable, Accept recompiles the struct
+        ((and struct (source-of struct :struct))
+         (present (subj-defn struct :struct)))
+        (t
+         (make-view :title (format nil "~a" (subj-defn-name d))
+                    :kind :reference :subject d
+                    :text (with-output-to-string (*standard-output*)
+                            (when struct
+                              (format t "~&; ~(~a~) is ~:[the accessor of slot~;the~] ~(~a~) of structure ~(~a~)~%"
+                                      (subj-defn-name d) (keywordp role) role struct))
+                            (show-reference (subj-defn-name d)))))))))
 
 (defmethod commands-for ((d subj-defn))
   (let ((name (subj-defn-name d)))

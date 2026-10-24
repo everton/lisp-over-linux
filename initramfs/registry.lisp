@@ -307,6 +307,20 @@
     (let ((srcs (sb-introspect:find-definition-sources-by-name name kind)))
       (and srcs (sb-introspect:definition-source-pathname (first srcs))))))
 
+(defun structure-defining (name)
+  "When NAME is a function a DEFSTRUCT made — a slot accessor, the constructor, the
+   predicate or the copier — return (values STRUCT-NAME ROLE), ROLE being the slot's
+   name or :CONSTRUCTOR / :PREDICATE / :COPIER. Else NIL. SBCL keeps this as the
+   function's source transform, (dd . dsd-or-role). The registry needs it because
+   such a function has no form of its own: (defstruct view kind) never spells
+   VIEW-KIND, so searching the text for the name finds the first CALLER instead."
+  (let ((info (ignore-errors (sb-int:info :function :source-transform name))))
+    (when (and (consp info) (typep (car info) 'sb-kernel:defstruct-description))
+      (values (sb-kernel:dd-name (car info))
+              (if (typep (cdr info) 'sb-kernel:defstruct-slot-description)
+                  (sb-kernel:dsd-name (cdr info))
+                  (cdr info))))))
+
 (defun show-reference (name)
   "The fallback for a symbol NOT in our registry — a CL/SBCL builtin, or anything
    compiled into the core. The core is machine code, so print what the image CAN

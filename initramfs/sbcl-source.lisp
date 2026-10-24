@@ -216,7 +216,9 @@
 (defun first-form-mentioning (text name)
   "Fallback of the fallback: the start of the first top-level form whose text names
    NAME at all. Finds what is defined INSIDE another definition — a condition's slot
-   reader lives in its DEFINE-CONDITION, a structure's accessor in its DEFSTRUCT."
+   reader lives in its DEFINE-CONDITION. Not a structure's accessor: a defstruct
+   spells only the slot, never CONC-NAME + slot, so this found the first CALLER of
+   VIEW-KIND (SHOW-VIEW) — STRUCTURE-DEFINING is asked first for that."
   (let ((i 0) (n (length text)))
     (loop
       (let ((start (skip-blank text i)))
@@ -258,8 +260,14 @@
                    (multiple-value-bind (form at) (and start (form-at text start))
                      (if (and form (mentions-name-p form name))
                          (values form path (line-of text at))
+                         ;; a DEFSTRUCT's accessor/constructor/predicate/copier is
+                         ;; never spelled in its defstruct: look for the struct by
+                         ;; name before the first form that merely mentions NAME
                          (let ((p (or (find-def-by-name text name)
-                                        (first-form-mentioning text name))))
+                                      (let ((struct (and (fboundp 'structure-defining) ; registry.lisp
+                                                         (funcall 'structure-defining name))))
+                                        (and struct (find-def-by-name text struct)))
+                                      (first-form-mentioning text name))))
                            (multiple-value-bind (form2 at2) (and p (form-at text p))
                              (if form2
                                  (values form2 path (line-of text at2))

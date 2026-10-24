@@ -84,9 +84,9 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     an alist of the screen y of each painted row and its index. A click is resolved against that map
     (<a class="ref" data-ref="poc/widgets.lisp#hit-row" href="../../poc/widgets.lisp"><code>hit-row</code><span class="loc">poc/widgets.lisp:362</span></a>). The map is needed because section headers make "row N
     on screen" differ from "item N".</li>
-  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:1114</span></a> colours Lisp with a small line lexer
-    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:1007</span></a>). The editing keys are in
-    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:1302</span></a>. The buffer is a vector of line strings that is
+  <li><a class="ref" data-ref="poc/textview.lisp#tv-draw" href="../../poc/textview.lisp"><code>tv-draw</code><span class="loc">poc/textview.lisp:1126</span></a> colours Lisp with a small line lexer
+    (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:1019</span></a>). The editing keys are in
+    <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:1314</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
     (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the

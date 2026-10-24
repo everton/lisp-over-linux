@@ -65,14 +65,14 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#present@subj-defn" href="../../initramfs/present.lisp"><code>(present subj-defn)</code><span class="loc">initramfs/present.lisp:611</span></a></span>
     Two outcomes. If the registry has the source (<a class="ref" data-ref="initramfs/registry.lisp#source-of" href="../../initramfs/registry.lisp"><code>source-of</code><span class="loc">initramfs/registry.lisp:293</span></a>), the view
     is <code>:source</code> and editable. If not, it is a builtin, and
-    <a class="ref" data-ref="initramfs/registry.lisp#show-reference" href="../../initramfs/registry.lisp"><code>show-reference</code><span class="loc">initramfs/registry.lisp:310</span></a> prints what the image knows: kind, lambda list,
+    <a class="ref" data-ref="initramfs/registry.lisp#show-reference" href="../../initramfs/registry.lisp"><code>show-reference</code><span class="loc">initramfs/registry.lisp:324</span></a> prints what the image knows: kind, lambda list,
     docstring. When SBCL's source tree is on the mounted disk, it also appends the real source text
-    (<a class="ref" data-ref="initramfs/sbcl-source.lisp#sbcl-definition-source" href="../../initramfs/sbcl-source.lisp"><code>sbcl-definition-source</code><span class="loc">initramfs/sbcl-source.lisp:234</span></a>), cut out of the file with a textual
+    (<a class="ref" data-ref="initramfs/sbcl-source.lisp#sbcl-definition-source" href="../../initramfs/sbcl-source.lisp"><code>sbcl-definition-source</code><span class="loc">initramfs/sbcl-source.lisp:236</span></a>), cut out of the file with a textual
     scanner that never <code>READ</code>s SBCL's code.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#open-pane" href="../../poc/shell.lisp"><code>open-pane</code><span class="loc">poc/shell.lisp:243</span></a></span>
     Wraps the text in a textview, focused only for <code>:source</code>. The loop redraws. <kbd>M-,</kbd> is the same path
     ending in <code>(subj-xref :senders sym)</code> (<a class="ref" data-ref="poc/shell.lisp#senders-at-point" href="../../poc/shell.lisp"><code>senders-at-point</code><span class="loc">poc/shell.lisp:3288</span></a>), answered by
-    <code>sb-introspect:who-calls</code> (<a class="ref" data-ref="initramfs/registry.lisp#senders" href="../../initramfs/registry.lisp"><code>senders</code><span class="loc">initramfs/registry.lisp:414</span></a>).</li>
+    <code>sb-introspect:who-calls</code> (<a class="ref" data-ref="initramfs/registry.lisp#senders" href="../../initramfs/registry.lisp"><code>senders</code><span class="loc">initramfs/registry.lisp:428</span></a>).</li>
 </ol>
 
 <h2 id="doit">2 · How does the Workspace evaluate a form (<kbd>C-x C-e</kbd>)?</h2>
@@ -101,7 +101,7 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
     <kbd>C-c</kbd> then <kbd>C-c</kbd> in an editable pane calls <code>accept-pane</code>.</li>
   <li><span class="where"><a class="ref" data-ref="poc/shell.lisp#accept-pane" href="../../poc/shell.lisp"><code>accept-pane</code><span class="loc">poc/shell.lisp:2747</span></a></span>
     A source pane gives the whole buffer, plus the name, kind and method label from
-    <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:977</span></a>. The Workspace gives only the form before point,
+    <a class="ref" data-ref="initramfs/present.lisp#accept-target" href="../../initramfs/present.lisp"><code>accept-target</code><span class="loc">initramfs/present.lisp:988</span></a>. The Workspace gives only the form before point,
     and that form names itself.</li>
   <li><span class="where"><a class="ref" data-ref="initramfs/registry.lisp#accept-package" href="../../initramfs/registry.lisp"><code>accept-package</code><span class="loc">initramfs/registry.lisp:203</span></a></span>
     The text is read in the package its original was read in. Without this, an edit of a <code>lol.textview</code> function would
@@ -109,8 +109,8 @@ in a source pane and press <kbd>M-.</kbd> (walk 1 explains how that works). <kbd
   <li><span class="where"><a class="ref" data-ref="initramfs/registry.lisp#accept-source" href="../../initramfs/registry.lisp"><code>accept-source</code><span class="loc">initramfs/registry.lisp:238</span></a></span>
     <code>(eval form)</code> compiles the form and replaces the function object, so the next call runs the new code. Then the
     bookkeeping: the old text goes onto <code>defn-versions</code>, or a new DEFN is made with <code>born t</code>.</li>
-  <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#present@subj-change-set" href="../../initramfs/present.lisp"><code>(present subj-change-set)</code><span class="loc">initramfs/present.lisp:1056</span></a></span>
-    The change set is <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:395</span></a>: every DEFN with versions or
+  <li><span class="where"><a class="ref" data-ref="initramfs/present.lisp#present@subj-change-set" href="../../initramfs/present.lisp"><code>(present subj-change-set)</code><span class="loc">initramfs/present.lisp:1067</span></a></span>
+    The change set is <a class="ref" data-ref="initramfs/registry.lisp#changed-definitions" href="../../initramfs/registry.lisp"><code>changed-definitions</code><span class="loc">initramfs/registry.lisp:409</span></a>: every DEFN with versions or
     born. Find it with <kbd>SuperL</kbd>-<kbd>Space</kbd> "change set", or the supervisor menu's <code>c</code>.</li>
 </ol>
 
