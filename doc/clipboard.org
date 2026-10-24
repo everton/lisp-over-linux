@@ -256,6 +256,12 @@ Where each key comes from, since the console delivers them unevenly:
   with Shift-arrows does not (the request named only the mouse — Emacs would, with
   =select-active-regions=). Drag-selecting works in *read-only* text too: copying is
   reading.
+- *Down on the last line goes to its end, Up on the first to its start* (2026-10-24,
+  [[file:../poc/textview.lisp::defun move (tv where extend)][=move=]]), as Emacs's =C-n= / =C-p= do at the buffer's edges — so =S-<down>=
+  there selects the rest of a last line that has no newline, where it used to do
+  nothing. =Ctrl-Down= is the same key here (no paragraph motion), and PageDown /
+  PageUp past an end land the same way ([[file:../poc/textview.lisp::defun move-page][=move-page=]]). Host test:
+  [[file:../poc/motion-test.lisp][poc/motion-test.lisp]] (10).
 - *Middle click already meant something* — the *halo* ([[file:code-browser.org][code-browser.org]]). The
   resolution in [[file:../poc/shell.lisp::defun pane-middle-click][=pane-middle-click=]] is by place: in /editable/ text with a
   PRIMARY to paste, the button pastes; anywhere else, or with =SuperL= held, it

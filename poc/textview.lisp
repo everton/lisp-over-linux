@@ -475,10 +475,17 @@
                 (let ((l (next-visible-line tv (tv-point-line tv))))
                   (when l (setf (tv-point-line tv) l (tv-point-col tv) 0)))))
     ;; up and down step over a fold: by ROW, which is the line itself when nothing is
-    ;; hidden
-    (:up    (setf (tv-point-line tv) (row-line tv (1- (line-row tv (tv-point-line tv))))))
+    ;; hidden. With no row left to go to they go to the buffer's edge instead, as
+    ;; Emacs's C-p / C-n do: Up on the first row to its start, Down on the last row
+    ;; to its end — so Shift-Down there still selects the rest of the last line.
+    (:up    (let ((r (1- (line-row tv (tv-point-line tv)))))
+              (if (>= r 0)
+                  (setf (tv-point-line tv) (row-line tv r))
+                  (setf (tv-point-col tv) 0))))
     (:down  (let ((r (1+ (line-row tv (tv-point-line tv)))))
-              (when (< r (row-count tv)) (setf (tv-point-line tv) (row-line tv r)))))
+              (if (< r (row-count tv))
+                  (setf (tv-point-line tv) (row-line tv r))
+                  (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv)))))))
     (:home  (setf (tv-point-col tv) 0))
     (:end   (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv))))))
   (clamp-point tv)
@@ -548,12 +555,17 @@
 
 (defun move-page (tv dir extend)
   "Move point one screenful (visible-lines) in DIR (:up / :down) — PageUp/PageDown.
-   The column is preserved where the target line allows (clamp-point trims it), and
+   The column is preserved where the target line allows (clamp-point trims it); a
+   page past either end of the buffer lands on its edge (start / end of line), and
    ensure-visible scrolls the view to follow. EXTEND keeps the anchor (grows the
    selection), exactly as the arrows do."
-  (let ((n (visible-lines tv)) (r (line-row tv (tv-point-line tv))))
-    (setf (tv-point-line tv)
-          (row-line tv (min (1- (row-count tv)) (max 0 (if (eq dir :up) (- r n) (+ r n)))))))
+  (let* ((n (visible-lines tv)) (r (line-row tv (tv-point-line tv)))
+         (to (if (eq dir :up) (- r n) (+ r n))))
+    (setf (tv-point-line tv) (row-line tv (min (1- (row-count tv)) (max 0 to))))
+    ;; past either end of the buffer: its edge, as MOVE's Up / Down do there
+    (cond ((< to 0) (setf (tv-point-col tv) 0))
+          ((>= to (row-count tv))
+           (setf (tv-point-col tv) (length (line-at tv (tv-point-line tv)))))))
   (clamp-point tv)
   (unless extend (collapse tv))
   (ensure-visible tv))
