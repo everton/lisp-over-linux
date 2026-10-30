@@ -1,15 +1,15 @@
 #+TITLE: A guided tour of the code — index of the HTML guide and the in-image tour
 #+STARTUP: showall
 
-This is the org-mode entry point to two teaching resources that cover the same ground:
+Two teaching resources cover the same ground, and this file is the Org entry point to both:
 
-- *The HTML guide*, [[file:guide/index.html][doc/guide/index.html]]. It works offline from =file://= and has light and
-  dark themes. It contains diagrams of the boot, the build, the module graph, the =present= protocol and a keypress,
-  the rendering and input pipelines, live editing, privilege and networking. It also has six guided reading paths, a
-  glossary and exercises. Open it with =xdg-open doc/guide/index.html=, or =M-x eww-open-file= for a text-only look.
-- *The in-image tour*, =subj-tour= in [[file:../initramfs/tour.lisp][initramfs/tour.lisp]]. In the running environment:
-  =SuperL-Space=, type =tour=, =Enter=. Each row is one of the image's own live definitions, in reading order. The
-  right-hand column previews its source as you move down. =Enter= opens it (editable, and Acceptable), and =C-g= comes back.
+- *The HTML guide*, [[file:guide/index.html][doc/guide/index.html]]. Works offline from =file://=, light and dark themes. Diagrams of
+  the boot, the build, the module graph, the =present= protocol and a keypress, the rendering and input pipelines,
+  live editing, privilege and networking; six guided reading paths, a glossary and exercises. Open it with
+  =xdg-open doc/guide/index.html=, or =M-x eww-open-file= for a text-only look.
+- *The in-image tour*, =subj-tour= in [[file:../initramfs/tour.lisp][initramfs/tour.lisp]]. In the running environment: =SuperL-Space=, type
+  =tour=, =Enter=. Each row is one of the image's own live definitions, in reading order, and the right-hand
+  column previews its source. =Enter= opens it (editable, and Acceptable); =C-g= comes back.
 
 * How the guide stays true
 
@@ -18,7 +18,7 @@ Every =file:line= in the HTML is generated. [[file:guide/regen.lisp][doc/guide/r
 1. It indexes every top-level definition in the Lisp sources.
 2. It rewrites each =<a class="ref" data-ref="FILE#NAME">= in the pages from that index, and exits non-zero on any
    reference that no longer resolves.
-3. It re-derives the module dependency graph into =guide/deps-data.js= from which names each file mentions, and
+3. It re-derives the module dependency graph into =guide/deps-data.js= from the names each file mentions, and
    stamps the sidebar into every page.
 
 Run it after changing code the guide talks about, as you run =./check-links.sh= after changing docs:
@@ -27,16 +27,17 @@ Run it after changing code the guide talks about, as you run =./check-links.sh= 
   sbcl --script doc/guide/regen.lisp    # "refs: N checked, 0 unresolved; 0 errors in all"
 #+end_src
 
-The in-image tour has its own guard. Its stops name symbols as strings and resolve when shown, so a rename
-degrades a stop to a polite "not in this image" row instead of failing the build. [[file:../check-tour.lisp][check-tour.lisp]] boots
-the image and asserts that every stop resolves and presents.
+The in-image tour has its own guard. Its stops name symbols as strings, resolved when shown, so a rename degrades a
+stop to a polite "not in this image" row instead of failing the build. [[file:../check-tour.lisp][check-tour.lisp]] boots the image and
+asserts that every stop resolves and presents.
 
-What writing the guide turned up (each is recorded where it belongs):
-- =registry.lisp= was the one module missing from its own registry, so =accept-source= opened as "SBCL's own"
-  reference. It now records itself (=record-source=, the last form in [[file:../initramfs/registry.lisp::when *load-truename* (record-source][registry.lisp]]).
-- Comments and two docs said the debugger is entered through =*debugger-hook*=. Nothing sets that variable: both
-  entry points use =handler-bind= ([[file:../poc/shell.lisp::defun workspace-debug-it][workspace-debug-it]], [[file:../poc/morphic.lisp::defun step-stage-pane][step-stage-pane]], once =tick-live-stage=).
-- [[file:sbcl-init.org][sbcl-init.org]] said =shell.lisp= expands =with-raw-mode=. It does not. =fb-browser.lisp= and =repl.lisp= do.
+* Pitfalls the guide corrected
+
+- *The registry records itself.* =registry.lisp= used to be missing from its own registry, so =accept-source= opened
+  as "SBCL's own" reference. The last form in [[file:../initramfs/registry.lisp::when *load-truename* (record-source][registry.lisp]] (=record-source=) fixes that.
+- *No =*debugger-hook*=.* Nothing sets that variable. Both debugger entry points use =handler-bind=
+  ([[file:../poc/shell.lisp::defun workspace-debug-it][workspace-debug-it]], [[file:../poc/morphic.lisp::defun step-stage-pane][step-stage-pane]]).
+- *=with-raw-mode= isn't in the shell.* =fb-browser.lisp= and =repl.lisp= expand it; =shell.lisp= doesn't.
 
 * The guide's pages
 
@@ -70,8 +71,8 @@ The same walk as =*tour-stops*= in [[file:../initramfs/tour.lisp::defparameter *
 
 * Regenerating, and extending
 
-- Derived data: =doc/guide/deps-data.js= (module graph) and every =file:line= in =doc/guide/*.html=. Both come from
-  =sbcl --script doc/guide/regen.lisp=. Do not edit them by hand.
-- Hand-written: the pages' prose and diagrams (inline SVG), =guide.css= and =guide.js= (the theme button), and the
+- *Derived data.* =doc/guide/deps-data.js= (the module graph) and every =file:line= in =doc/guide/*.html= come
+  from =sbcl --script doc/guide/regen.lisp=. Don't edit them by hand.
+- *Hand-written.* The pages' prose and diagrams (inline SVG), =guide.css=, =guide.js= (the theme button), and the
   layer of each module (=+layers+= in =regen.lisp=).
-- Adding a subsystem: see [[file:guide/in-progress.html][in-progress.html]], "How to add a section".
+- *Adding a subsystem.* See [[file:guide/in-progress.html][in-progress.html]], "How to add a section".

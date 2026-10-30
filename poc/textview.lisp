@@ -1,6 +1,6 @@
 ;;;; textview.lisp — an editable text view: caret, selection, syntax, scrolling.
 ;;;;
-;;;; This is the piece doc/code-browser.org §9 flags as the riskiest, because a
+;;;; This is the piece doc/code-browser.org §9 flags as the hardest, because a
 ;;;; character grid gives you all of it for free and pixels give you none of it.
 ;;;; So it is worth being precise about what is actually hard here:
 ;;;;

@@ -4,62 +4,54 @@
 Sibling docs: [[file:code-browser.org][code-browser.org]] (the =present= protocol and the accordion an outline is shown in) ·
 [[file:file-manager.org][file-manager.org]] (how a file becomes a subject and opens in an editor) ·
 [[file:clipboard.org][clipboard.org]] §6½ (the editor's undo, which this design leans on) ·
-[[file:morphic.org][morphic.org]] §13 (per-row damage in a text view, which folding must keep true).
+[[file:morphic.org][morphic.org]] §4.5 (per-row damage in a text view, which folding must keep true).
 
-Question that prompted this: /how much effort would it take to port a working
-version of the .org engine we have in Emacs, at least the basic structure and
-navigation?/
-
-*Status (2026-10-18):* *BUILT — all six steps of §7*, the same day the user said to
-go ahead without waiting for a review. §10 is what shipped: where it differs from
-this design, what was measured, and the tests. Sections 1–9 are the design as
-written on 2026-10-17. Where checking against Emacs proved them wrong, the
-correction is made in place and marked "/corrected 2026-10-18/" (§3.1, §6.2). §9's
-decisions are all kept (§10.4).
+*Status: built.* =.org= files are coloured, folded, navigated by heading, edited by
+subtree, have their links followed, and show as a drillable outline. It's a stated
+subset of Org, re-implemented in Lisp, with every fold, motion and structure edit
+checked against Emacs 30.2 / Org 9.7.11 in batch mode (§9).
 
 * The one-sentence essence
 
 An Org file is *plain text whose structure is in the first characters of its
 lines*, so "Org mode" is three things on top of an editor that already exists: a
 reader that turns lines into an outline, a *view* of that outline (which the
-browser already knows how to draw — it is a drill-down), and an editor that can
-*hide* lines — the only part that asks the text view to change how it thinks.
+browser already draws — it's a drill-down), and an editor that can *hide* lines —
+the only part that changes how the text view thinks.
 
-* 1. What Org is, and which part of it we want
+* 1. What Org is, and which part of it we implement
 
 ** 1.1 Structure as text
 
-Org's whole trick is that it has no file format beyond text. A line that starts
-with one or more stars and a space is a /headline/; the number of stars is its
-/level/; everything up to the next headline of the same or a higher level is its
-/subtree/. Nothing marks where a section ends — the next headline does. So the
-outline is a function of the lines, recomputable at any moment, and the file on
-disk is always exactly what you see when everything is shown.
+Org has no file format beyond text. A line starting with one or more stars and a
+space is a /headline/; the number of stars is its /level/; everything up to the
+next headline of the same or a higher level is its /subtree/. Nothing marks where a
+section ends — the next headline does. So the outline is a function of the lines,
+recomputable at any moment, and the file on disk is always what you see with
+everything shown.
 
-On a headline, after the stars: an optional /TODO keyword/ (=TODO=, =DONE=, or
-whatever =#+TODO:= declares), an optional /priority/ (=[#A]=), the title, and
-optional /tags/ at the end (=:lisp:ui:=). Below it, optionally, a /drawer/ — lines
-between =:PROPERTIES:= and =:END:= — holding key/value pairs.
+- *A headline* holds, after the stars: an optional /TODO keyword/ (=TODO=, =DONE=,
+  or whatever =#+TODO:= declares), an optional /priority/ (=[#A]=), the title, and
+  optional /tags/ (=:lisp:ui:=). Below it may sit a /drawer/ — lines between
+  =:PROPERTIES:= and =:END:=.
+- *Elements* fill a section, each recognised by how its lines start: a /list item/
+  (=- =, =+ =, =1. =), a /table/ row (=|=), a /block/ (=#+begin_src lisp= …
+  =#+end_src=), a /keyword/ line (=#+TITLE:=), a /comment/ (=# =), a /fixed-width/
+  line (=: =), a rule (=-----=).
+- *Objects* sit within the text: links (=[[target][description]]=), emphasis
+  (=*bold*=, =/italic/=, =~code~=, ==verbatim==), timestamps.
 
-Inside a section the rest is /elements/, each again recognised by how its lines
-start: a /list item/ (=- =, =+ =, =1. =), a /table/ row (=|=), a /block/
-(=#+begin_src lisp= … =#+end_src=), a /keyword/ line (=#+TITLE:=), a /comment/
-(=# =), a /fixed-width/ line (=: =), a horizontal rule (=-----=). Within the text,
-/objects/: links (=[[target][description]]=), emphasis (=*bold*=, =/italic/=,
-=~code~=, ==verbatim==), timestamps.
+Emacs's implementation is =org-element.el=, a full parser into a tree of typed
+elements; the grammar's authority is Worg's "Org Syntax". We port neither: Emacs
+Lisp has a different buffer model, and the full grammar (affiliated keywords, inline
+tasks, footnotes, babel headers, LaTeX fragments) is far more than reading and
+writing docs needs. Instead we *re-implement a stated subset*, line at a time, pure,
+host-tested.
 
-Emacs's real implementation is =org-element.el=, a full parser into a tree of
-typed elements, and the authority on the grammar is Worg's "Org Syntax" document.
-We do not port either: Emacs Lisp is a different language with a different buffer
-model, and Org's full grammar (affiliated keywords, inline tasks, footnotes,
-babel headers, LaTeX fragments) is far more than this asks for. We *re-implement
-a stated subset*, written to read like this project's other parsers — line at a
-time, pure, host-tested.
+** 1.2 Sizing the subset
 
-** 1.2 What our own docs use — measured, so the subset is not a guess
-
-This project is the first user, and it writes Org daily: 31 files under =doc/=
-plus =README.org=, about 20 200 lines. Counted with =grep= on 2026-10-17:
+The subset was sized by counting what this project's own docs use (31 files under
+=doc/= plus =README.org=, ~20 200 lines, counted with =grep=):
 
 | Feature                         | Count | So                                          |
 |---------------------------------+-------+---------------------------------------------|
@@ -71,76 +63,60 @@ plus =README.org=, about 20 200 lines. Counted with =grep= on 2026-10-17:
 | internal =[[*Heading]]= links   | a few | must work                                   |
 | =#+begin_src= blocks            |   116 | colour Lisp inside them                     |
 | table rows                      |  1588 | display them; aligning them is out (§8)     |
-| TODO/DONE headlines             |     0 | the keywords: cheap, but nobody needs them  |
+| TODO/DONE headlines             |     0 | the keywords: cheap, but rarely needed      |
 | =:PROPERTIES:= drawers          |     0 | recognise and fold; nothing more            |
 | =#+STARTUP:=                    |    31 | =showall= 28, =overview= 1, =showall content= 2 |
 
-One more measurement decides a question before it is asked. 2 048 lines in
-=doc/*.org= are longer than 100 columns, which would argue for soft wrap — but
-1 179 of them are table rows, which Emacs does not wrap either. The rest are prose
-lines and links; the text view already scrolls sideways to follow the caret
-(=tv-hscroll=, [[file:fonts.org][fonts.org]] §5). So soft wrap is *not* in this
-design (§8): it shares the display-line map folding needs (§5), and would be a
-small step later if reading prose that way turns out to hurt.
+*No soft wrap.* 2 048 lines were longer than 100 columns, but 1 179 of those are
+table rows, which Emacs doesn't wrap either. The rest are prose and links, and the
+text view already scrolls sideways to follow the caret (=tv-hscroll=,
+[[file:fonts.org][fonts.org]] §5).
 
 ** 1.3 The scope
 
-*In:* reading the outline (headlines, levels, keywords, tags, drawers, blocks,
-lists, tables as lines), colouring it, showing it as a drillable subject,
-following links, folding (TAB / S-TAB and =#+STARTUP=), moving between headings,
-and editing the structure (new heading, promote/demote, move a subtree, TODO
-cycling).
+- *In.* Reading the outline (headlines, levels, keywords, tags, drawers, blocks,
+  lists, tables as lines), colouring it, showing it as a drillable subject,
+  following links, folding (TAB / S-TAB and =#+STARTUP=), moving between headings,
+  and editing the structure (new heading, promote/demote, move a subtree, TODO
+  cycling).
+- *Out* (§8). Table alignment and formulas, the agenda, export, Babel, timestamps
+  as dates, capture, clocking, footnotes, inline images, soft wrap.
 
-*Out* (§8): table alignment and formulas, the agenda, export, Babel (evaluation
-of source blocks — though §8 notes the cheap version), timestamps as dates,
-capture, clocking, footnotes, inline images, soft wrap.
+* 2. What it builds on
 
-* 2. What exists already (checked 2026-10-17)
+Each of these existed before Org and kept the work small:
 
-Each of these is a reason the estimate is small, and each was read in the code,
-not recalled.
-
-- *The text view takes a colouring function.* =textview='s =syntax= slot
-  ([[file:../poc/textview.lisp::(syntax :lisp)][poc/textview.lisp]]) is =:lisp=, =:plain=, or a function
-  =(line-index line) → runs=; =tv-draw= and =tv-row-keys= both call it. Run panes
-  already colour ANSI output this way ([[file:../initramfs/runs.lisp:::syntax (lambda (li line)][initramfs/runs.lisp]]). An Org colourer
-  is one more such function — no change to the text view.
+- *The text view takes a colouring syntax.* =textview='s =syntax= slot
+  ([[file:../poc/textview.lisp::(syntax :lisp)][poc/textview.lisp]]) is =:lisp=, =:plain=, a function =(line-index line) → runs=
+  (run panes colour ANSI output this way, [[file:../initramfs/runs.lisp:::syntax (lambda (li line)][initramfs/runs.lisp]]), or a keyword
+  registered in =*syntaxes*= (§4.1).
 - *The Lisp lexer is reusable inside a block.* =lex-line= takes and returns the
-  paren depth and an open-string flag, so a =#+begin_src lisp= block can be
-  coloured by threading that state from the =#+begin_src= line down.
+  paren depth and an open-string flag, so a =#+begin_src lisp= block is coloured by
+  threading that state down from its first line.
 - *Unchanged lines are shared.* Every edit builds a new line vector but keeps the
-  untouched strings =EQ= (=replace-line=, =insert-newline=); =tv-prefix-same-p=
-  already relies on it for damage. Folding uses the same fact to find where an
-  edit happened (§5.3).
-- *Undo is free.* The buffer is persistent, so a structural command (move a
-  subtree) is a new vector like any keystroke, and =C-_= takes it back
-  ([[file:clipboard.org][clipboard.org]] §6½).
-- *A file is a subject.* =subj-file= presents as an editable =:file= view when it is
-  text under =+edit-cap+= (2 MiB) ([[file:../initramfs/file-views.lisp::defun file-view][initramfs/file-views.lisp]]); its syntax is
-  chosen by =lisp-file-p= on the extension. Choosing =:org= for =.org= is one line
-  there.
+  untouched strings =EQ= (=replace-line=, =insert-newline=). Damage
+  (=tv-prefix-same-p=) and folding (§5.3) both rely on it.
+- *Undo is free.* The buffer is persistent, so a structural command is a new vector
+  like any keystroke, and =C-_= takes it back ([[file:clipboard.org][clipboard.org]] §6½).
+- *A file is a subject.* =subj-file= presents as an editable =:file= view when it's
+  text under =+edit-cap+= (2 MiB) ([[file:../initramfs/file-views.lisp::defun file-view][initramfs/file-views.lisp]]); =.org= files get
+  =:syntax :org=.
 - *The browser is a drill-down.* =present= returns a =view= of items, each carrying
   the subject to present next; =present-preview= is what the nav split shows on
-  selection ([[file:../initramfs/present.lisp::defgeneric present-preview][initramfs/present.lisp]]). An outline is exactly that shape: a heading's
-  items are its children.
+  selection ([[file:../initramfs/present.lisp::defgeneric present-preview][initramfs/present.lisp]]). An outline is exactly that shape.
 - *The desk and the Spotter are open.* =desk-ref= / =desk-subject=
   ([[file:../initramfs/desk.lisp::defun desk-subject][initramfs/desk.lisp]]) save tabs as references and rebuild them through a
-  whitelist; =*spotter-sources*= lets a module add candidates without
-  =present.lisp= naming it.
-- *Our links are already checked.* [[file:../check-links.sh][check-links.sh]] resolves every =[[file:…]]= and
-  its =::search= anchor (as a substring of the target). The link resolver in §4.3
+  whitelist; =*spotter-sources*= lets a module add candidates.
+- *Links are already checked.* [[file:../check-links.sh][check-links.sh]] resolves every =[[file:…]]= and its
+  =::search= anchor (as a substring of the target). The link resolver (§4.3)
   follows the same rule, so a link that passes the check also opens.
-- *Where the keys go.* An editable pane's keys go through =edit-pane-command=
-  ([[file:../poc/shell.lisp::defun edit-pane-command][poc/shell.lisp]]): prefixes (=C-c=, =C-x=, =C-x r=), then the clipboard keys, Tab
-  as completion, and the rest to =tv-key=. There is *no per-mode keymap*: Org keys
-  need a hook here (§6.1).
-
-And what does not exist: the text view has *no notion of hidden lines*. Screen
-row = buffer line − =tv-scroll=, everywhere. §5 is about changing that.
+- *One place for an editor's keys.* =edit-pane-command= ([[file:../poc/shell.lisp::defun edit-pane-command][poc/shell.lisp]]) handles
+  prefixes (=C-c=, =C-x=, =C-x r=), the clipboard keys, Tab as completion, and the
+  rest goes to =tv-key=. There's no per-mode keymap, so Org gets a hook there (§6.1).
 
 * 3. The reader — =lol.org=
 
-A new pure package, =poc/org.lisp=, in the shape of =poc/clipboard.lisp=: no
+A pure package, [[file:../poc/org.lisp][poc/org.lisp]], in the shape of =poc/clipboard.lisp=: no
 dependency on the shell, host-tested by =sbcl --script poc/org-test.lisp=.
 
 ** 3.1 Lines first
@@ -151,86 +127,85 @@ rule, blank, paragraph. Only blocks need state across lines: inside one, a line
 starting with =#+= or =:= is code, not a keyword or a drawer. So the reader is one
 pass carrying one variable: "inside which block, if any".
 
-/Corrected 2026-10-18./ This design first said a =* = line inside a block is *not*
-a headline. Org says the opposite. Emacs 30.2's Org 9.7.11 lists =* not-a-heading?=
-inside a =#+begin_src= as a headline (=org-map-entries=, in batch mode), and that is
-why Org asks you to escape such lines with a comma (=,* x=). A headline ends any
-block it falls in. [[file:../poc/org.lisp::defun analyze-uncached][=analyze-uncached=]] does the same, and
-[[file:../poc/org-test.lisp][poc/org-test.lisp]] asserts it.
+*A =* = line inside a block IS a headline*, and ends the block. That's Org's rule
+(Org 9.7.11 lists =* not-a-heading?= inside a =#+begin_src= as a headline), and why
+Org asks you to escape such lines with a comma (=,* x=).
+[[file:../poc/org.lisp::defun analyze-uncached][=analyze-uncached=]] does the same, and [[file:../poc/org-test.lisp][poc/org-test.lisp]] asserts it.
 
 ** 3.2 The outline is an index, never a copy
 
-The reader returns, for a line vector, a vector of =headline= structs:
+=analyze= returns, for a line vector, a vector of =headline= structs:
 
-| slot      | meaning                                                 |
-|-----------+---------------------------------------------------------|
-| =line=    | its line index                                          |
-| =level=   | the number of stars                                     |
-| =keyword= | =TODO=/=DONE=/… or NIL                                  |
-| =priority=| a character or NIL                                      |
-| =title=   | the text, without stars, keyword, priority or tags     |
-| =tags=    | a list of strings                                       |
-| =end=     | the first line *after* its subtree                      |
+| slot          | meaning                                                 |
+|---------------+---------------------------------------------------------|
+| =line=        | its line index                                          |
+| =level=       | the number of stars                                     |
+| =keyword=     | =TODO=/=DONE=/… or NIL                                  |
+| =priority=    | a character or NIL                                      |
+| =title=       | the text, without stars, keyword, priority or tags     |
+| =title-start= | the column the title starts at                          |
+| =tags=        | a list of strings                                       |
+| =end=         | the first line *after* its subtree                      |
 
 The buffer stays the line vector the text view already edits. The outline is
 *derived*, recomputed when the vector changes, so it can never disagree with the
-text — the Org property we most want to keep. Recomputing is a single pass over
-lines checking their first characters; =code-browser.org= at 2 578 lines is our
-largest file. The design assumes this is well under a millisecond per pass and
-*caches the result on the vector* (=EQ=), so the many reads per frame cost
-nothing; the host test measures it, and if it is not cheap the reader splices
-like §5.3 does.
+text. The result is *cached on the vector* (=EQ=): one pass per edit, shared by
+every read in a frame.
+
+*Measured* (host): a pass over =code-browser.org= (2 592 lines) takes 0.9 ms; the
+slowest over 32 =.org= files is 4 ms (=poc/org-test.lisp= prints it).
 
 ** 3.3 Objects within a line
 
-Links, emphasis and inline code are found by a scanner per line, used by the
-colourer (§4.1) and by "what link is at the caret" (§4.3). Emphasis follows Org's
-boundary rule loosely: a marker counts when the character before it is space or
-punctuation and the one after it is not space. Where it differs from Org the test
-says so.
+=line-objects= scans a line for links, emphasis and inline code, for the colourer
+(§4.1) and for "what link is at the caret" (§4.3).
+
+- *Emphasis boundaries.* A marker counts when the character before it is space or
+  punctuation and the one after isn't space — Org's rule, loosely; the test notes
+  where it differs.
+- *The object that opens first wins*, reading left to right as Org does. So
+  verbatim text that opens before a =[[= hides the link — what lets a doc show a
+  link's /syntax/ inside =verbatim= markers without it being listed as a link.
+- *No nesting.* A link inside bold isn't seen (Org would nest them; this flat list
+  doesn't).
 
 * 4. Seeing an Org file
 
 ** 4.1 Colour — =:syntax :org=
 
-=file-view= gives =.org= files =:syntax :org=, which the shell turns into a
-colouring function over =lol.org=: headlines by level (three palette colours, the
-stars dimmed), keywords, tags, links (description in the link colour, the
-brackets dimmed), =~code~= and ==verbatim==, keyword lines and comments in the
-gutter colour, blocks — and Lisp inside =#+begin_src lisp= by =lex-line=. The
-palette is the semantic one ([[file:code-browser.org][code-browser.org]]); nothing is highlighted in the
-accent.
+=file-view= gives =.org= files =:syntax :org=. The colouring =org-runs=
+([[file:../poc/org-mode.lisp][poc/org-mode.lisp]]) colours headlines by level (three palette colours, the stars
+dimmed), keywords, tags, links (description in the link colour, brackets dimmed),
+=~code~= and ==verbatim==, keyword lines and comments in the gutter colour, blocks
+— and Lisp inside =#+begin_src lisp= by =lex-line=. The palette is the semantic one
+([[file:code-browser.org][code-browser.org]]); nothing is highlighted in the accent.
 
-The colourer is a function of =(line-index line)=, but a src block's colour
-depends on the lines above it. The function therefore closes over the cached
-outline (§3.2), which knows which lines are inside which block, and over a cache
-of lexer states per block line — the "real editor caches this per line" that
-=tv-draw='s comment anticipates.
+*Why a registered keyword, not a function.* A line's colour depends on other lines
+(the block it's in), so a function of =(line-index line)= isn't enough. A syntax
+can be a keyword registered in =lol.textview:*syntaxes*=, whose function is called
+with the whole line vector; it reads the cached analysis (§3.2). The view's syntax
+stays the printable =:org=.
 
 ** 4.2 The outline as a subject — =subj-org=
 
-The browser's native gesture is the drill-down, and an outline /is/ a drill-down.
-So before any editing, an Org file gets a second face:
+The browser's native gesture is the drill-down, and an outline /is/ one. So an Org
+file has a second face beside its editor:
 
-- =(subj-org path)= presents the file's top-level headings as a list, each row
-  showing its level-1 title with a detail (children count, tags).
-- =(subj-org-heading path line)= presents a heading's children; its
-  =present-preview= is the section's own text, read-only, coloured — so moving the
-  selection down an outline *reads* the document in the nav split, and drilling
-  goes deeper.
-- A heading's commands (=commands-for=): /Edit here/ (opens the file in the editor
-  with the caret on that line), /Open as outline/ from a file pane, /Links/ (the
-  section's links as rows that drill).
-- =desk-ref= gives =(:org path)= and =(:org-heading path title-path)= — the heading
-  saved by its *chain of titles*, not its line number, so a desk saved before the
-  file was edited still finds it (and falls back to the file when it does not).
-  =desk-subject= gets the two cases added to its whitelist.
-- A Spotter source, "headings": every heading of the Org files open in a tab, so
-  =code-browser.org's §4¾= is a few keystrokes away. Indexing every =.org= on the
-  disk is left out (§9).
-
-This needs no change to the editor, and it is the step that would let you read all
-of =doc/= from inside the environment. That is why it is step 2 in §7.
+- *=(subj-org path)=* presents the file's top-level headings as rows (child count,
+  tags, line), plus "Edit the file".
+- *=(subj-org path titles)=* is one heading, named by its *chain of titles* from the
+  top. It lists "Edit here" (the editor at that line), its child sections, and its
+  links as rows that open them.
+- *Previews read the document.* A heading's =present-preview= is the section's own
+  text (up to 400 lines), read-only and coloured — so moving down an outline reads
+  the document in the nav split, and drilling goes deeper.
+- *Commands.* A heading offers "Open the file" and "The whole outline"; an =.org=
+  file pane or row offers "Outline" (=C-c C-j=).
+- *The desk* saves =(:org path)= or =(:org path titles)=. Saving by titles, not
+  line number, means a desk saved before the file was edited still finds the
+  heading; one that's gone says so and offers the whole outline.
+- *The Spotter's "headings"* lists every heading of the Org files open in a tab
+  (not every =.org= on the disk).
 
 ** 4.3 Links
 
@@ -241,90 +216,101 @@ for the forms we write:
 |------------------------------+----------------------------------------------------------|
 | =file:path=                  | =subj-file= of the path, resolved from the file's folder |
 | =file:path::*Heading=        | that file, at the heading with that title                |
-| =file:path::text=            | that file, at the first line containing /text/ — the rule =check-links.sh= checks; a =.lisp= target opens as the definition when /text/ is =defun name= and the registry knows it |
+| =file:path::text=            | that file, at the first line containing /text/ — the rule =check-links.sh= checks |
+| =file:x.lisp::defun NAME=    | the *live definition* (source, Accept, Senders), when the registry has exactly one named NAME; else as above |
 | =file:path::NNN=             | that file, at line NNN                                   |
 | =*Heading=                   | the heading in this file                                 |
 | =https:= / =http:=           | a web tab ([[file:web-browser.org][web-browser.org]]) |
 
-A target into =./linux= or =./sbcl= works when the tree is mounted (on the laptop,
-through =/home=; [[file:storage.org][storage.org]]). A link that does not resolve says so in the
-status line, as =check-links.sh= would.
+A target into =./linux= or =./sbcl= works when the tree is reachable (e.g. under the
+mounted =/home=; [[file:storage.org][storage.org]]). A link that doesn't resolve says so in the
+status line. Implementation: =org-follow-link=.
 
 * 5. Folding — the one change to the text view
 
-** 5.1 What has to change
+** 5.1 What had to change
 
-Today a screen row shows buffer line =tv-scroll + row=. Folding breaks that: some
-lines are hidden, so row → line goes through a *display map*. Inside
-=poc/textview.lisp= that touches =tv-draw=, =visible-lines= users, =ensure-visible=,
-=move= (up/down), =move-page=, =tv-wheel=, =line-at-y=, =tv-pos-at=, =tv-row-keys=,
-=tv-row-rect= and =scroll-thumb=. Outside it, eight places read =tv-scroll= or
-=visible-lines= directly (counted with =grep=): =poc/morphic.lisp= (one),
-=poc/shell.lisp= (two — the completion popup and the halo's caret), and
-=initramfs/runs.lisp= (the follow-the-tail logic, four lines in two places). A run
-pane never folds, so its arithmetic stays right; the other three must ask the
-text view where a line is instead of computing it.
+Without folding a screen row shows buffer line =tv-scroll + row=. With hidden lines,
+row ↔ line goes through a *display map*. Inside [[file:../poc/textview.lisp][poc/textview.lisp]] that touches
+drawing, motion, paging, the wheel, hit testing (=line-at-y=, =tv-pos-at=),
+=tv-row-keys=, =tv-row-rect= and the scroll thumb. Outside it, callers that computed
+a row from =tv-scroll= themselves (in =poc/morphic.lisp= and =poc/shell.lisp=) now
+ask the text view. A run pane never folds, so =initramfs/runs.lisp='s arithmetic
+stays right.
 
 ** 5.2 The display map
 
-The text view gets one new slot, =hidden=: NIL (nothing folded — every existing
-view, at no cost), or a bit vector over the buffer's lines. From it, on demand, a
-=rows= vector of the visible line indices, cached against the =(lines, hidden)= pair.
-=tv-scroll= becomes a *row* index into it. Two functions answer every question the
-callers above ask: =tv-line-row= (buffer line → screen row, or NIL if hidden or
-off screen) and =tv-row-line=. When =hidden= is NIL both are the identity, which is
-how the change stays invisible to everything that does not fold.
-
-A folded heading is drawn with Org's ellipsis, =...=, after its title, and that
-ellipsis is part of the row's key, so §13's per-row damage repairs a heading when
-it folds or opens. Folding a subtree changes which lines every row below it shows,
-which =tv-row-keys= already detects (each row's key carries its line index and
-text); no new damage rule is needed. =poc/morphic-test.lisp='s invariant — the
-incremental repair equals a fresh paint — is the test.
+- *One new slot, =hidden=*: NIL (nothing folded — every existing view, at no cost)
+  or a bit vector over the buffer's lines.
+- *A =rows= vector* of visible line indices is built on demand and cached against
+  the =(lines, hidden)= pair. =tv-scroll= counts *rows*.
+- *Two functions answer every caller*: =line-row= (buffer line → row) and
+  =row-line=. A hidden line maps to the row of the visible line above it. With
+  =hidden= NIL both are the identity, so nothing that doesn't fold notices.
+- *Damage needs no new rule.* A folded heading is drawn with Org's ellipsis, =...=,
+  and the ellipsis is part of the row's key, so per-row damage repairs a heading
+  when it folds or opens. Rows below a fold show different lines, which
+  =tv-row-keys= already detects (each key carries its line index and text).
+  =poc/morphic-test.lisp='s invariant — the incremental repair equals a fresh paint
+  — is the test.
 
 ** 5.3 Folds through edits
 
 Fold state is per heading, but headings move when lines are inserted above them.
-The bit vector is kept aligned with the buffer by the same fact §2 relies on:
-after an edit, the old and new line vectors share an =EQ= prefix and suffix, so
-the bits are spliced at that point (a pure O(n) comparison, with n ≈ 2 600 at
-worst here). This keeps the text view from needing to know which command edited
-it.
+The bits follow the text *lazily*: they're spliced when the view next looks at them
+after an edit, not by each edit, so the text view needn't know which command
+edited it.
+
+- *Prefix and suffix.* The old and new line vectors share an =EQ= prefix and
+  suffix; the bits are spliced between them (an O(n) comparison).
+- *Moved lines keep their bit.* A line in between keeps the bit of the identical
+  (=EQ=) string it was, so a folded subtree moved by =M-<down>= stays folded.
 
 ** 5.4 The rules, taken from Org
 
 - *The caret never sits in hidden text.* Motion skips hidden lines. A command that
-  lands inside a fold — a link, the outline view's "Edit here", a search — opens
-  the folds on the way, as Emacs's =org-reveal= does. The parallel isearch work
-  (=C-s=/=C-r=) needs this hook: a match inside a fold opens it.
-- *An edit never changes hidden text by accident.* Org's
-  =org-fold-catch-invisible-edits= defaults to =smart= (read in Org 9.7.11, the one
-  in the host's Emacs 30.2): the fold is opened, and the edit goes through only
-  when it is next to visible text — typing or backspacing just before the =...= —
-  never deleting a hidden character. We follow =smart=, and a refused edit says why
-  in the status line.
-- *TAB on a headline* cycles that subtree: FOLDED → CHILDREN → SUBTREE → FOLDED.
-  Elsewhere TAB keeps doing what it does now (completion).
+  lands inside a fold — a link, the outline view's "Edit here", an isearch match —
+  opens the folds on the way, as Emacs's =org-reveal= does (=reveal-line=).
+- *TAB on a headline* cycles that subtree: FOLDED → CHILDREN → SUBTREE → FOLDED
+  (=cycle-subtree=). Elsewhere TAB keeps doing what it does (completion).
 - *S-TAB* cycles the buffer: OVERVIEW (level 1 only) → CONTENTS (all headlines) →
-  SHOW ALL.
+  SHOW ALL (=cycle-global=).
 - *=#+STARTUP:=* chooses the state on open: =overview=, =content=, =showall=,
-  =showeverything=; with none, Org's default =org-startup-folded=, which is
-  =showeverything= in Org 9.7.11 — so our 28 =showall= docs open as they do in Emacs.
-- Drawers and blocks fold on TAB on their first line, as in Org.
-- Fold state is per pane, not saved by the desk (§9).
+  =showeverything=. With none, Org's default =org-startup-folded= is
+  =showeverything=. Applied as the pane opens, through =*pane-opened-hooks*=
+  (=org-prepare-pane=), not at the first key.
+- *Drawers and blocks* fold on TAB on their first line.
+- *Fold state is per pane*, not saved by the desk; =#+STARTUP= decides on each
+  open.
+
+*Edits near hidden text* follow Org's =org-fold-catch-invisible-edits= default,
+=smart=: the fold is opened, and the edit goes through only when it's next to
+visible text, never deleting a hidden character. =org-guard-hidden= implements it:
+
+- *Delete, =C-d= or =C-k= at the end of a folded line* opens the fold and is
+  refused once.
+- *Backspace at the start of the line after a fold* does the same.
+- *Enter at the end of a folded headline* opens the fold first.
+- *Typing on the folded line itself* goes through.
+
+A refused edit says why in the status line.
 
 * 6. Moving and editing
 
-** 6.1 A keymap hook
+** 6.1 A key hook
 
-=edit-pane-command= gets one step before its catch-all: when the pane's file is Org (its
-view's syntax is =:org=), =org-key= — in a new =poc/org-edit.lisp= — is offered the
-key first and returns true if it took it. This is the smallest hook that works;
-a general per-mode keymap would be better but is a separate refactor (§9).
+=edit-pane-command= offers every key to =org-key= ([[file:../poc/org-mode.lisp][poc/org-mode.lisp]]) first when
+the pane's syntax is =:org=; it returns true if it took the key. A general per-mode
+keymap would be cleaner, but this single hook is enough.
+
+Every structural command is a line-vector function in =lol.org= (=promote-subtree=,
+=move-subtree-up=, =insert-heading=, =cycle-todo=, …) that returns a new vector —
+pure and host-tested — and the shell only installs the result. Undo comes free
+(§2).
 
 ** 6.2 The keys
 
-Org's own bindings, because your fingers have them:
+Org's own bindings:
 
 | key                  | Org command               | does                                          |
 |----------------------+---------------------------+-----------------------------------------------|
@@ -333,7 +319,7 @@ Org's own bindings, because your fingers have them:
 | =C-c C-n= / =C-c C-p=| next / previous heading   | any level, visible ones                      |
 | =C-c C-f= / =C-c C-b=| forward / backward, same level |                                         |
 | =C-c C-u=            | up to the parent heading  |                                              |
-| =C-c C-j=            | =org-goto=                | the outline in the Spotter, jump on Enter    |
+| =C-c C-j=            | =org-goto=                | "Goto heading:" in the minibuffer, Tab completes titles |
 | =M-RET=              | =org-meta-return=         | new heading (or list item) at this level     |
 | =M-←= / =M-→=        | promote / demote          | the heading alone                             |
 | =M-S-←= / =M-S-→=    | promote / demote subtree  |                                               |
@@ -342,158 +328,67 @@ Org's own bindings, because your fingers have them:
 | =C-c C-o=            | =org-open-at-point=       | follow the link (§4.3)                        |
 | =C-c C-l=            | =org-insert-link=         | minibuffer for target, then description       |
 
-Two key facts to check on the laptop before trusting this table, both from
-[[file:input.org][input.org]]: =M-←= / =M-→= are taken by the console keymap for VT switching (the
-web pane hit this and moved page back/forward to =SuperL-Left/Right=,
-[[file:web-browser.org][web-browser.org]]) — they must be read from the evdev, or rebound; and =S-TAB=
-arrives as =ESC [ Z= on the tty, which the key decoder must map. The cheatsheet
-(=SuperL-?=) gets an "Org" group.
+- *=C-c C-j=* is Org's =org-goto= minus its outline buffer, which the outline subject
+  already is.
+- *=M-RET='s blank line* follows one case of Org's =auto= rule: a blank line before
+  the new heading when the headline whose level it copies has one before it. Org's
+  full heuristic isn't reproduced.
+- *The cheatsheet* (=SuperL-?=) has an "Org files" group.
 
-/Corrected 2026-10-18/ (§10.2 has the whole story):
+** 6.3 The keys on the console
 
-- =M-←= / =M-→= are *rebound*, not read from the evdev. Reading them from the evdev
-  made Alt-Shift-Right act twice.
-- The console sends =S-TAB= as a *plain Tab*, not =ESC [ Z=; its Shift comes from
-  the evdev, folded in as for every key.
-- =M-RET= is =ESC CR=, which the decoder used to drop.
+On the bare framebuffer the keys come through the Linux console's keymap
+([[file:input.org][input.org]] §1), which needed three fixes in [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]:
 
-Every structural command is a line-vector function in =lol.org= (=promote-subtree=,
-=move-subtree=, …) returning a new vector — pure and host-tested — and
-=org-edit.lisp= only installs the result with =tv-replace=. Undo comes free (§2).
+- *Alt-arrows.* Kernel 7.2's console already sends a cursor key with its modifiers,
+  xterm's way (=ESC [ 1 ; 3 A= for Alt-Up), and falls back to the plain map when a
+  modifier has no table (so Alt-Shift-arrows arrive as =ESC [ 1 ; 4 x=). Only
+  Alt-Left/Right needed work: the default keymap gives them to VT switching, so
+  =unbind-console-alt-arrows= rebinds them to the cursor keys.
+- *=S-TAB=* arrives as a plain Tab; its Shift comes from the keyboard's evdev,
+  folded in as for every key. (Under X it's =ISO_Left_Tab=.)
+- *=M-RET=* is =ESC CR=, which the key decoder now keeps.
 
-* 7. The plan, step by step, with estimates
+*Ruled out:*
 
-Line counts are estimates for code plus host tests; each step ends demoable.
+- *Reading Alt-Left/Right from the evdev.* Alt-Shift-Right then acted twice.
+- *=K_HOLE= instead of =K_LEFT= in the keymap.* The kernel's fallback never matches
+  a hole set by ioctl, because entries are stored as =val ^ 0xf000=; Alt-Left then
+  sent nothing.
 
-| step | what                                                                 | lines   | shows                                      |
-|------+----------------------------------------------------------------------+---------+--------------------------------------------|
-| 1    | =lol.org= reader (§3) + =poc/org-test.lisp= over every doc here      | 400–600 | =(outline "doc/morphic.org")= at the REPL |
-| 2    | =:syntax :org= colouring (§4.1); =subj-org= + preview + desk + Spotter (§4.2); links (§4.3) | 400–500 | read =doc/= in the environment |
-| 3    | the keymap hook + heading motion + =C-c C-o= (§6.1, part of §6.2)   | 100–150 | navigate an open file                      |
-| 4    | folding (§5): the display map, TAB / S-TAB, =#+STARTUP=, reveal      | 300–500 | the riskiest step                          |
-| 5    | structure editing (the rest of §6.2)                                 | 200–300 | outline editing                            |
-| 6    | =check-org.lisp= in the guest; this doc's status; AGENTS.md; guide regen | —   | proof                                      |
-
-About 1 400–2 000 lines in all. Steps 1–2 alone (no editor change) are about one
-session; the whole is two to three. Step 4 is where the risk is: it is the only
-step that changes code every pane depends on, and the gate is that every existing
-host test (=morphic-test=, =clip-test=, =undo-test=, =clipboard-test=) passes
-unchanged before folding is turned on for anything.
-
-* 8. Deliberately out, and what it would cost
-
-- *Tables*: aligning on TAB and =C-c C-c=, column motion, formulas. Alignment
-  alone is about 300 lines (width of each cell, rewrite the rows — the narrow part
-  of =org-table.el=); formulas are a calculator and are not on the table at all.
-- *Soft wrap* (§1.2): the display map of §5 is the hard half; wrapping a line into
-  several rows is the other.
-- *Babel*: evaluating a =#+begin_src lisp= block. The cheap version already exists
-  in spirit — =C-x C-e= / =C-c C-e= in a file pane evaluates Lisp — and making it
-  work inside a src block is small. Results blocks, other languages, sessions: no.
-- *Agenda, capture, clocking, timestamps as dates, export, footnotes, inline
-  images.* Each is an application on top of the outline; none is needed to read
-  and write this project's docs. Inline images would be cheaper than most, because
-  =lol.image= already decodes the formats.
-
-* 9. Decisions taken by default — for the review
-
-1. A *stated subset* of Org re-implemented, not =org-element.el= ported (§1.1).
-2. The reader is pure, line-based, and the *outline is derived* from the line
-   vector, never stored (§3.2).
-3. Navigation ships *first, as a subject* (§4.2), before the editor changes.
-4. A heading in the desk is saved by its *chain of titles*, not its line (§4.2).
-5. The Spotter's "headings" covers *open* Org files, not every =.org= on the disk.
-6. Folding is a *bit vector + display map* in the text view, NIL for every view
-   that does not fold, kept through edits by the =EQ= splice (§5.2–5.3).
-7. Fold state is *not saved* by the desk; =#+STARTUP= decides on each open.
-8. Edits into hidden text follow Org's =smart= default (§5.4).
-9. The Org keys use a *single hook* in =edit-pane-command=, not a general keymap (§6.1).
-10. Soft wrap, table alignment and Babel are *out* (§8).
-
-* 10. What shipped (2026-10-18)
-
-** 10.1 The files
+* 7. The files
 
 | file | what | lines |
 |------+------+-------|
 | [[file:../poc/org.lisp][poc/org.lisp]] | =lol.org=, pure: the reader (§3), objects and links, folding as bits, the structure edits | 760 |
-| [[file:../poc/org-mode.lisp][poc/org-mode.lisp]] | the shell's side: the =:org= colourer, =subj-org=, links, =org-key= | 627 |
-| [[file:../poc/textview.lisp][poc/textview.lisp]] | hidden lines (§5): the bits, the rows, motion and drawing through them; =*syntaxes*= | +170 |
-| [[file:../initramfs/fb-browser.lisp][initramfs/fb-browser.lisp]] | =ESC CR= / =ESC TAB=, =unbind-console-alt-arrows=, the cheatsheet's "Org files" group | +50 |
-| [[file:../poc/shell.lisp][poc/shell.lisp]], [[file:../poc/morphic.lisp][poc/morphic.lisp]], [[file:../initramfs/file-views.lisp][file-views.lisp]], [[file:../initramfs/desk.lisp][desk.lisp]], [[file:../poc/x11.lisp][x11.lisp]] | the hooks: =org-key= first in =edit-pane-command=, =*pane-opened-hooks*=, three row computations through =line-row=, =text-syntax=, the desk's =(:org …)=, X's =ISO_Left_Tab= | ~40 |
+| [[file:../poc/org-mode.lisp][poc/org-mode.lisp]] | the shell's side: the =:org= colourer, =subj-org=, links, folding in a pane, =org-key= | 627 |
+| [[file:../poc/textview.lisp][poc/textview.lisp]] | hidden lines (§5): the bits, the rows, motion and drawing through them; =*syntaxes*= | ~170 of it |
+| [[file:../initramfs/fb-browser.lisp][initramfs/fb-browser.lisp]] | =ESC CR= / =ESC TAB=, =unbind-console-alt-arrows=, the cheatsheet's "Org files" group | ~50 of it |
+| [[file:../poc/shell.lisp][poc/shell.lisp]], [[file:../poc/morphic.lisp][poc/morphic.lisp]], [[file:../initramfs/file-views.lisp][file-views.lisp]], [[file:../initramfs/desk.lisp][desk.lisp]], [[file:../poc/x11.lisp][x11.lisp]] | the hooks: =org-key= first in =edit-pane-command=, =*pane-opened-hooks*=, row computations through =line-row=, =text-syntax=, the desk's =(:org …)=, X's =ISO_Left_Tab= | ~40 |
 
-About 1 650 lines of code, inside §7's estimate of 1 400–2 000; the tests are another
-636 (§10.5).
+* 8. Out of scope, and what it would cost
 
-** 10.2 Where it differs from the design
+- *Tables*: aligning on TAB and =C-c C-c=, column motion, formulas. Alignment alone
+  is about 300 lines (width of each cell, rewrite the rows — the narrow part of
+  =org-table.el=); formulas are a calculator.
+- *Soft wrap* (§1.2): the display map of §5 is the hard half; wrapping a line into
+  several rows is the other.
+- *Babel*: evaluating a =#+begin_src lisp= block. =C-x C-e= / =C-c C-e= in a file
+  pane already evaluate Lisp, so making that work inside a src block is small.
+  Results blocks, other languages, sessions: no.
+- *Agenda, capture, clocking, timestamps as dates, export, footnotes, inline
+  images.* Each is an application on top of the outline. Inline images would be
+  cheaper than most, since =lol.image= already decodes the formats.
 
-- *A headline inside a block is a headline* (§3.1, corrected): Org's rule, not the
-  one the design guessed.
-- *The object that opens first wins.* =line-objects= first let links claim their
-  text before emphasis. Our docs write =​=[[file:…]]=​= to show a link's /syntax/,
-  and the outline listed those as links. Now, as Org reads left to right, verbatim
-  text that opens before the =[[= wins. A side effect: a link nested inside bold
-  is not seen (Org would nest them; this flat list does not).
-- *=tv-scroll= counts rows*, and the two functions are =line-row= / =row-line=
-  (§5.2 called them =tv-line-row= / =tv-row-line=). A hidden line maps to the row of
-  the visible line above it rather than to NIL, which is what every caller wanted.
-- *How the text view learns Org's colours.* The design meant to pass a function of
-  =(line-index line)=, but Org's colour depends on other lines (the block a line is
-  in). So a syntax can now be a *keyword registered in =*syntaxes*=*, called with the
-  whole line vector. The view's syntax stays the printable =:org=.
-- *The fold bits follow the text lazily.* They are spliced when the view next looks
-  at them after an edit, not by each edit, using the EQ prefix and suffix as
-  designed, plus one thing the design did not have: a line in between keeps the bit
-  of the identical (=EQ=) string it was. So a folded subtree moved by =M-<down>=
-  stays folded.
-- *Folding from the first frame.* A new =*pane-opened-hooks*= in =open-pane= lets an
-  Org pane apply =#+STARTUP= and Org's reveal as soon as it opens, not at the first
-  key.
-- *The keys on the console* (§6.2, corrected; [[file:input.org][input.org]] §1). Kernel 7.2's console
-  already sends a cursor key with its modifiers, xterm's way (=ESC [ 1 ; 3 A= for
-  Alt-Up), and falls back to the plain map when a modifier has no table (so
-  Alt-Shift-arrows arrive as =ESC [ 1 ; 4 x=). Only Alt-Left/Right needed work: they
-  switched VTs, and are now bound to the cursor keys. Ruled out on the way: reading
-  them from the evdev (Alt-Shift-Right acted twice), and =K_HOLE= in place of
-  =K_LEFT= (the kernel's fallback never matches a hole set by ioctl, because
-  entries are stored as =val ^ 0xf000=; Alt-Left then sent nothing).
-- *=C-c C-j= is the minibuffer*, not the Spotter: "Goto heading:" with Tab completing
-  titles. It is Org's own =org-goto= interface, minus its outline buffer, which the
-  outline subject already is.
-- *A link to Lisp opens the live definition.* For a =file:x.lisp::defun NAME= link,
-  if the registry has exactly one definition named NAME, the link opens that
-  definition (source, Accept, Senders), not a line of the file. Otherwise it opens the
-  file at the first line containing the text, the rule [[file:../check-links.sh][check-links.sh]] checks.
-- *=M-RET='s blank line* follows one observed case of Org's =auto= rule: a blank
-  before the new heading when the headline whose level it copies has one before
-  it. Org's full heuristic is not reproduced.
-- *The outline is of the file on disk.* An open editor's unsaved edits are not in
-  the outline view until =C-x C-s= (a design decision, stated in the code).
-- *A section preview numbers its lines from 1*, not from where the section starts:
-  the text view's gutter has no offset. The preview's title says the real line.
+*Known limits:*
 
-** 10.3 Measured
+- *The outline is of the file on disk.* An open editor's unsaved edits aren't in
+  the outline view until =C-x C-s=.
+- *A section preview numbers its lines from 1*, not from where the section starts
+  (the gutter has no offset); the preview's title says the real line.
+- *Nested objects* (a link inside bold) aren't seen (§3.3).
 
-- The reader's pass over =code-browser.org= (2 592 lines, our largest doc) takes
-  0.9 ms on the host. Over all 32 project =.org= files the slowest pass is 4 ms
-  (=poc/org-test.lisp= prints it). One pass is made per edit and shared by every
-  read, because the analysis is cached on the line vector.
-- Our docs, as the reader sees them: 797 headlines, 1 705 links (1 693 =file:=) on
-  2026-10-18. That is 26 more headlines than §1.2's =grep=, which this doc and the
-  isearch section added.
-
-** 10.4 §9's decisions
-
-All ten are kept as written. Number 8 ("edits into hidden text follow Org's =smart=
-default") is the rule =org-guard-hidden= implements:
-
-- Delete, =C-d= or =C-k= at the end of a folded line opens the fold and is refused
-  once.
-- Backspace at the start of the line after a fold does the same.
-- Enter at the end of a folded headline opens the fold first.
-- Typing on the folded line itself goes through.
-
-** 10.5 Tests
+* 9. Tests
 
 | test | checks | what |
 |------+--------+------|
@@ -502,7 +397,6 @@ default") is the rule =org-guard-hidden= implements:
 | [[file:../poc/journal-test.lisp][poc/journal-test.lisp]] | +4 | an outline tab and a heading tab through the desk; a vanished file refused |
 | [[file:../check-org.lisp][check-org.lisp]] | 22 | in the guest, by QMP keys: S-TAB, TAB, =C-c C-n= / =C-u=, =M-RET=, =M-<up>= / =<down>=, =M-S-<right>= once, Alt-Left / Right promote and demote with the VT unchanged, =C-c C-o=, the outline drilled |
 
-The Emacs answers were taken with =emacs -Q --batch= on the host's Emacs 30.2 /
-Org 9.7.11. The probes read a fixture, run one command and print the lines left
+*Emacs as the oracle.* The expected answers come from =emacs -Q --batch= with
+Org 9.7.11: each probe reads a fixture, runs one command and prints the lines left
 hidden (=invisible-p= at each line's start), or the buffer and the caret.
-

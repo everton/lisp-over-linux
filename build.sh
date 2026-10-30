@@ -458,7 +458,7 @@ printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
 # efi_load_initrd). `cmp` first, so an unchanged file needs no sudo at all.
 if [ "$DO_INSTALL_HOST" -eq 1 ] && [ -n "${LOL_CONTAINER:-}" ]; then
   # In the environment's terminal there is no sudo to be had (setuid is off in a
-  # container, doc/containers.org §3.4) and the host's /boot is read-only. lol-rootd installs the pair instead,
+  # container, doc/containers.org §4) and the host's /boot is read-only. lol-rootd installs the pair instead,
   # asked by the environment itself — so the step is a menu entry, not a command.
   say "Inside the environment (container '$LOL_CONTAINER'): nothing to copy from here"
   echo "  SuperL-q -> \"Install the new build and restart\" installs it into /boot/lisp"

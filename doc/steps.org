@@ -6,10 +6,10 @@ hardest objection) · [[file:background/learn-clos.org][learn-clos.org]] (the ob
 of building one) · [[file:processes.org][processes.org]] (the composition question STEPS left open) ·
 [[file:web-browser.org][web-browser.org]] (where we stopped on purpose).
 
-LoL is not an attempt to reproduce STEPS, and nothing here was designed from
-it. But the two share a premise, and this file writes the link down: what the
-paper says, which of its ideas LoL ends up using, where we differ, and a
-measurement STEPS never published that =loc.sh= now makes.
+LoL isn't an attempt to reproduce STEPS, and nothing here was designed from it.
+The two share a premise, though. This file records the link: what the paper says,
+which of its ideas LoL uses, where we differ, and a measurement STEPS never
+published that =loc.sh= makes.
 
 * 1. The paper
 
@@ -73,8 +73,7 @@ LoL *reads* the MOP but does not *change* it.
 [[file:../initramfs/model.lisp][model.lisp]] calls =sb-mop:compute-applicable-methods-using-classes= and its
 neighbours to *show* dispatch, and no file in the tree defines its own
 generic-function class or redefines =compute-discriminating-function=. The
-openness the paper argues for is present in our image, and so far nothing uses
-it.
+openness the paper argues for is present in our image, and nothing uses it yet.
 
 ** The strongest link: making an open model understandable
 
@@ -96,7 +95,7 @@ that let you see the bindings.
 
 STEPS's best-known numbers are of this kind: TCP/IP in about 200 lines, because
 it implemented the part of the spec it needed. LoL makes the same move in
-[[file:../poc/x11.lisp][x11.lisp]]: an X11 client in 309 lines, because "X is a protocol on a
+[[file:../poc/x11.lisp][x11.lisp]]: an X11 client in about 310 lines, because "X is a protocol on a
 socket" ([[file:x11.org][x11.org]]). Ours has the same limits theirs did. It is a development
 backend that speaks only the messages we send, and it never ships in the image.
 
@@ -115,10 +114,10 @@ The =present= protocol is the contract that lets the parts compose.
 STEPS's demos ran on a host operating system, while its 20k-line goal implied
 a whole stack. LoL says what it reuses. Linux supplies the drivers and SBCL
 supplies the compiler: both are the long tail of conformance to the outside
-world (hardware, instruction sets). When we needed a web engine,
-[[file:web-browser.org][web-browser.org]] chose WPE WebKit and did not write one. You cannot make an
-implementation smaller than the spec it must obey, and HTML/CSS/JS is a very
-large spec.
+world (hardware, instruction sets). The web pane ([[file:web-browser.org][web-browser.org]]) drives the
+host's headless Chrome rather than containing an engine, and HTTPS calls the
+host's OpenSSL at run time. You can't make an implementation smaller than the
+spec it must obey, and HTML/CSS/JS is a very large spec.
 
 * 3. Where LoL differs
 
@@ -128,7 +127,7 @@ large spec.
 | Rewrote its foundations (COLA compiles itself)                                         | Trusts SBCL and Linux. The one exception, [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]], is a patch, not a rewrite           |
 | Measured by the line count                                                             | Measured by readability: the =.org= docs come with the code (see the prose subtotal in =loc.sh=) |
 | A research demo that was never released as a buildable system                          | =build.sh= produces a bootable image from the repo                                               |
-| The reader of the system is a human                                                    | [[file:agent.org][agent.org]] plans a second reader: an LLM using the same introspection layer as its tools          |
+| The reader of the system is a human                                                    | A second reader: the agent ([[file:agent.org][agent.org]]), an LLM using the same introspection layer as its tools       |
 
 * 4. The measurement: ours vs conformance
 
@@ -141,27 +140,28 @@ the rule list is at the top of the script:
 | origin      | what goes there                                                                                                                                                   |
 |-------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | ours        | the system we designed: supervisor, toolkit, browser, model, file manager, …                                                                                      |
-| conformance | protocol and format implementations: DEFLATE, the image decoders, X11, DHCP, BDF, ANSI SGR, PNG writing, QMP, the stb_image shim, and the SBCL machine-code patch |
+| conformance | protocol and format implementations: DEFLATE, the image decoders, TrueType, X11, DHCP, DNS, SNTP, HTTP, JSON, SSE, DevTools, the VT engine, Org's syntax, BDF, ANSI SGR, PNG writing, QMP, the stb_image shim, and the SBCL machine-code patch |
 | tests       | =check-*.lisp=, =*-test.lisp=, the guest harness                                                                                                                  |
 | tooling     | shell scripts, =host-client/=, the headless frame renderer                                                                                                        |
 | vendored    | =poc/vendor/= (=stb_image.h=), which we did not write                                                                                                             |
 
-Snapshot taken *2026-10-12*:
+Two snapshots: 2026-10-12 (kernel tag #26) and 2026-10-30 (tag #32):
 
 #+begin_example
-  code by origin     files     lines
-  ----------------   ----- ---------
-  ours                  31     15613
-  conformance           10      3407
-                        41     19020   <- the system we wrote
-  tests                 13      2424
-  tooling               13      2051
-  vendored               1      7988
+  code by origin     files     lines        files     lines
+                     (tag #26)              (tag #32)
+  ----------------   ----- ---------        ----- ---------
+  ours                  31     15613           65     40793
+  conformance           10      3407           20      8586
+                        41     19020           85     49379   <- the system we wrote
+  tests                 13      2424           62     14053
+  tooling               13      2051           14      3159
+  vendored               1      7988            1      7988
 #+end_example
 
-So the system we wrote is about 19k lines, on the same scale as STEPS's target.
-The difference is that it counts what it stands on and does not try to replace
-it.
+At #26 the system we wrote was about 19k lines, on the scale of STEPS's target.
+At #32 it's about 49k. Either way it doesn't reimplement what it stands on
+(Linux, SBCL, Chrome, OpenSSL); it counts that as calls, not lines.
 
 *A known blur.* [[file:../initramfs/file-views.lisp][file-views.lisp]] contains tar, zip and ELF readers, which are
 conformance code inside a file that is mostly views. It is counted as "ours",
@@ -170,15 +170,17 @@ trend.
 
 ** What to watch
 
-A prediction, written down now so that it can be checked later:
+The prediction made at #26:
 
 - *ours* grows slowly and stays near 20k, because each new piece reuses
   =present=, the toolkit and the registry;
-- *conformance* has no ceiling. TLS 1.3 ([[file:agent.org][agent.org]]), more storage formats and
-  anything on the web will each cost more than the closed-world code did.
+- *conformance* has no ceiling: each new protocol or format costs more than the
+  closed-world code did.
 
-If "ours" grows as fast as "conformance", the premise that the code we design
-can stay small is failing here, and this file should say so.
+*It hasn't held.* From #26 to #32 "ours" grew 2.6× and "conformance" 2.5× —
+"ours" grew as fast as "conformance", the failure this file promised to report.
+Whether that's lost reuse or simply more subsystems (each with its own design) is
+the next thing to measure: count "ours" per subsystem, not in total.
 
 * 5. Further reading
 

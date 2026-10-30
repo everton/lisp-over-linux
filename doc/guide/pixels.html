@@ -68,7 +68,7 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 <code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
 </figure>
 <ul>
-  <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §12): an object with bounds that
+  <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §5): an object with bounds that
     draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a> redraws only what is damaged, and in each damaged rect only the
     morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
     (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1704</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1875</span></a>), or the

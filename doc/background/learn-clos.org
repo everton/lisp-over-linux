@@ -6,11 +6,10 @@ This is a *from-scratch* tutorial: it assumes you can read basic Common Lisp
 code browser is made of — *CLOS*, Lisp's object system, and the *MOP*, the
 protocol that lets a program ask CLOS about itself.
 
-Why it earns a place here: [[file:../../initramfs/model.lisp][=model.lisp=]] is 476 lines with *35 distinct
-=sb-mop:= calls*, and the whole browser is built on generic-function dispatch.
-Every other doc in this project explains a piece of Linux; this one explains the
-piece of *Lisp* the project leans on hardest, and which C and Python readers have
-no prior for — CLOS is genuinely unlike the objects in either.
+Why it earns a place here: [[file:../../initramfs/model.lisp][=model.lisp=]] calls about two dozen distinct
+=sb-mop:= functions, and the whole browser is built on generic-function dispatch.
+Most docs here explain a piece of Linux; this one explains the piece of *Lisp* the
+project leans on hardest, which C and Python readers have no prior for.
 
 Each section ends with:
 - *In the code* — links to the exact spot in our sources that uses the idea.
@@ -49,8 +48,8 @@ So you never write =ship.collide(asteroid)=. You write =(collide ship asteroid)=
 — an ordinary function call — and CLOS looks at the classes of *both* arguments
 to decide which method body runs.
 
-The consequence that matters most: **you can add methods to classes you did not
-write, without modifying them.** Our =present= generic function has methods for
+The consequence that matters most: *you can add methods to classes you did not
+write, without modifying them.* Our =present= generic function has methods for
 =package=, =class=, =generic-function= — SBCL's own built-in classes — and we did
 not touch SBCL to do it. That single property is what makes the browser's
 "everything is browsable" claim cheap instead of impossible.
@@ -105,8 +104,8 @@ A generic function declares the name; methods fill it in.
 Those =(a asteroid)= parameter forms are *specializers*: "this method applies when
 the first argument is an =asteroid= and the second is a =ship=."
 
-Because *every* required parameter can be specialized, CLOS has **multiple
-dispatch**. This is the feature single-dispatch languages lack, and the reason
+Because *every* required parameter can be specialized, CLOS has *multiple
+dispatch*. This is the feature single-dispatch languages lack, and the reason
 they need visitor patterns and double-dispatch tricks: in Java,
 =asteroid.collide(ship)= can only pick a method by the type of =asteroid=, and
 the =ship= half has to be recovered by hand.
@@ -130,7 +129,7 @@ Several methods can apply at once. =(collide missile ship)= matches the
 =(space-object space-object)= one. CLOS picks the *most specific*, by a rule with
 no ambiguity in it:
 
-1. Each class has a **class precedence list** (CPL) — its own linearization of
+1. Each class has a *class precedence list* (CPL) — its own linearization of
    itself plus all its ancestors, most specific first. Ask SBCL for =ship='s and
    you get =(SHIP SPACE-OBJECT STANDARD-OBJECT SLOT-OBJECT T)= — note that the
    tail past your own classes is implementation detail (=SLOT-OBJECT= is SBCL's,
@@ -152,15 +151,15 @@ a tie — =missile='s CPL or =ship='s?
 
 * 5. Method combination: =:before=, =:after=, =:around=
 
-CLOS does not only pick *one* method. By default it builds an **effective
-method** out of all applicable ones, using their *qualifiers*:
+CLOS does not only pick *one* method. By default it builds an *effective
+method* out of all applicable ones, using their *qualifiers*:
 
 | qualifier | when it runs                                            |
 |-----------+---------------------------------------------------------|
 | =:around= | outermost; wraps everything, may decline to call inward |
 | =:before= | before the primary, most specific first                 |
 | /(none)/  | the *primary* method — the actual result                |
-| =:after=  | after the primary, most specific **last**               |
+| =:after=  | after the primary, most specific *last*                 |
 
 The order is an onion:
 
@@ -196,15 +195,15 @@ decisive way.
 
 In most languages, catching an error *unwinds the stack first* — by the time your
 handler runs, the frames where the problem happened are gone. In Lisp,
-=handler-bind= runs your handler **before the unwind**, with the erroring stack
+=handler-bind= runs your handler *before the unwind*, with the erroring stack
 still standing. From there you can inspect it, and you can invoke a *restart* — a
 recovery path the erroring code published by name — and *resume*, rather than
 abort.
 
-That is not a detail; it is the entire reason our debugger works. Because
-=fb-browser.lisp= uses =handler-bind= and not =handler-case=, when =(/ 1 0)=
-signals we can show live restarts, walk real frames, read their locals, and let
-you choose to continue.
+That's the entire reason our debugger works. The Workspace's Debug it
+(=workspace-debug-it= in [[file:../../poc/shell.lisp][=shell.lisp=]]) catches with =handler-bind=, not
+=handler-case=, so when =(/ 1 0)= signals we can show live restarts, walk real
+frames, read and set their locals, and let you choose to continue.
 
 *In the code:* [[file:../../initramfs/model.lisp::defun restart-list][=restart-list=]] and [[file:../../initramfs/model.lisp::defun backtrace-frames][=backtrace-frames=]] in [[file:../../initramfs/model.lisp][=model.lisp=]]; the
 live debugger is =run-debugger-fb= in [[file:../../initramfs/fb-browser.lisp][=fb-browser.lisp=]]. Design notes:
@@ -214,7 +213,7 @@ live debugger is =run-debugger-fb= in [[file:../../initramfs/fb-browser.lisp][=f
 
 * 7. What "the MOP" means
 
-Everything so far is CLOS as a *user*. The **Metaobject Protocol** is CLOS
+Everything so far is CLOS as a *user*. The *Metaobject Protocol* is CLOS
 described in terms of itself: classes, generic functions and methods are
 themselves *objects*, of classes like =standard-class= and =standard-method=, and
 there are generic functions for interrogating them.
@@ -254,7 +253,7 @@ The class questions, and the accessors that answer them:
 | …including inherited ones?     | =class-slots=                                 |
 | a slot's name / type / readers | =slot-definition-name= / =-type= / =-readers= |
 
-One trap, and it is a real one: a class must be **finalized** before
+One trap, and it is a real one: a class must be *finalized* before
 =class-precedence-list= or =class-slots= will answer. A class that has never been
 instantiated may not be. Hence the guard in our code:
 
@@ -328,4 +327,5 @@ socket. What is the minimum you must write?
 - *The Art of the Metaobject Protocol* (Kiczales, des Rivières, Bobrow) — the
   book the MOP comes from. Chapters 1–2 are the readable part.
 - =(show-class 'ship)=, =(show-gf 'collide)=, =(applicable-methods 'collide
-  'missile 'ship)= — run them in the guest's REPL, or just press =b= and browse.
+  'missile 'ship)= — evaluate them in the Workspace or the guest's REPL, or find
+  =collide= with the Spotter and browse.

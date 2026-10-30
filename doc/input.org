@@ -1,39 +1,38 @@
 #+TITLE: Input devices — evdev, the mouse, the wheel, and the modifiers the tty hides
 #+STARTUP: showall
 
-Sibling docs: [[file:line-editing.org][line-editing.org]] (the *other* half of input — raw-mode termios and
-the cooked tty) · [[file:framebuffer.org][framebuffer.org]] (the output half — =/dev/fb0=) ·
-[[file:kernel-config.org][kernel-config.org]] (the options that create these device nodes) ·
-[[file:code-browser.org][code-browser.org]] §6.3 (what the browser does with them).
+How does the machine know the mouse moved, or the wheel turned? There's no X server,
+no libinput, no udev and no mouse daemon. The answer is one character device, one
+24-byte struct, and =poll(2)=.
 
-Question that prompted this: /how does the machine know the mouse moved, or that
-the wheel turned?/ There is no X server, no libinput, no udev, and no mouse
-daemon. The answer is one character device, one 24-byte struct, and =poll(2)=.
+Related: [[file:line-editing.org][line-editing.org]] (the other half of input — raw-mode termios and the
+tty) · [[file:framebuffer.org][framebuffer.org]] (the output half, =/dev/fb0=) · [[file:kernel-config.org][kernel-config.org]] (the
+options that create these device nodes) · [[file:code-browser.org][code-browser.org]] §6.3 (what the browser
+does with them).
 
 * The one-sentence essence
 
 The kernel turns every input device into a file at =/dev/input/eventN= that emits
-*fixed 24-byte records* saying "this type of thing, this code, this value" — and
-our entire mouse driver is a loop that reads 24 bytes at a time and adds the
-numbers up.
+*fixed 24-byte records* saying "this type of thing, this code, this value" — and the
+whole mouse driver is a loop that reads 24 bytes at a time and adds the numbers up.
 
 * 1. Why the tty is not enough
 
-We already read the keyboard, and we read it through the *terminal*: fd 0, put
-into raw mode with termios, one byte per keystroke ([[file:line-editing.org][line-editing.org]]). That path
-is excellent for *text* and useless for two things:
+The keyboard's text comes through the *terminal*: fd 0 in raw mode, one byte per
+keystroke ([[file:line-editing.org][line-editing.org]]). That's right for text and useless for two things:
 
-1. *The mouse.* The tty carries characters. A pointer has no character.
-2. *A bare modifier.* Hold Ctrl on its own and the tty delivers *nothing at all* —
-   there is no byte for "Ctrl is currently down". The tty only ever tells you
-   about a modifier once it has already been *combined* with a key: =C-g= arrives
-   as byte 7, and the Ctrl-ness is gone by the time you see it.
+1. *The mouse.* The tty carries characters; a pointer has none.
+2. *A bare modifier.* Hold Ctrl alone and the tty delivers *nothing* — there's no byte
+   for "Ctrl is down". A modifier only shows up already *combined* with a key: =C-g=
+   arrives as byte 7, and the Ctrl-ness is gone.
 
-The browser needs both — a pointer to click with, and =Ctrl-click= /
-=SuperL-click= as distinct gestures ([[file:code-browser.org][code-browser.org]] §4¾). So it opens a second
-and third door onto the hardware, underneath the terminal: the raw input devices.
+The browser needs both — a pointer, and =Ctrl-click= / =SuperL-click= as distinct
+gestures ([[file:code-browser.org][code-browser.org]] §4¾). So it opens more doors onto the hardware,
+underneath the terminal: the raw input devices.
 
-*Three kinds of fd, three jobs*, and they are deliberately not interchangeable:
+** A bare modifier needs the keyboard's own evdev
+
+Three kinds of fd, three jobs, deliberately not interchangeable:
 
 | fd                            | carries                                      | why not one of the others                                                            |
 |-------------------------------+----------------------------------------------+--------------------------------------------------------------------------------------|
@@ -41,116 +40,135 @@ and third door onto the hardware, underneath the terminal: the raw input devices
 | every pointer's =eventN=      | motion, buttons, the wheel                   | the tty has no notion of a pointer                                                   |
 | every keyboard's own =eventN= | *only* Ctrl / Shift / Super / Alt held state | the tty cannot report a bare modifier                                                |
 
-"Every": a laptop with an external mouse and keyboard has two of each kind, and
-all of them are open at once — §4¾ is how, and why it used to be one of each.
+"Every": a laptop with an external mouse and keyboard has two of each, all open at once
+(§4¾).
 
-That third one is worth restating because it looks redundant: we read the
-keyboard *twice*, through two different doors, on purpose. Text comes from the
-cooked-ish tty because that is where the keymap lives (evdev would hand us
-"keycode 30", not =a=). The modifier *state* comes from evdev because that is the
-only place it exists. The main loop then =logior=s the evdev modifier bits into
-the state word before dispatching the tty's key — see [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]'s
-=run-browser-fb=.
+The keyboard is read *twice*, on purpose. Text comes from the tty because that's where
+the keymap lives (evdev would say "keycode 30", not =a=). Modifier *state* comes from
+evdev because that's the only place it exists. The main loop =logior=s the evdev
+modifier bits into the state word before dispatching the tty's key
+([[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]]'s =run-browser-fb=).
 
-** Alt with the arrows, Return and Tab: what the console sends (2026-10-18)
+** Keys the console sends no byte for
 
-Org's keys ([[file:org.org][org.org]] §6.2) need Meta on four keys the console treats
-specially, and each turned out differently. All three findings come from
-[[file:../check-org.lisp][check-org.lisp]], which presses them over QMP in the guest.
+Some chords never reach the tty, so =note-modifier-key= reports them from the
+keyboard's evdev instead:
 
-- *Alt-Up / Alt-Down already arrive with their Alt.* In kernel 7.2 =k_cur= (the
-  handler for cursor keys, [[file:../linux/drivers/tty/vt/keyboard.c::static void k_cur][drivers/tty/vt/keyboard.c]]) encodes the held
-  modifiers the way xterm does: Alt-Up is =ESC [ 1 ; 3 A=, Shift-Alt-Up =ESC [ 1 ; 4 A=.
-  =fb-read-csi= already decoded that parameter into the state bits.
-- *Alt-Left / Alt-Right switched the VT* (=alt_map[105]= / =[106]= are
-  =K_DECRCONSOLE= / =K_INCRCONSOLE=; [[file:web-browser.org][web-browser.org]] §2 found it first).
-  [[file:../initramfs/fb-browser.lisp::defun unbind-console-alt-arrows][=unbind-console-alt-arrows=]] now binds them, in every keymap table with the
-  Alt bit, to the plain cursor keys =K_LEFT= / =K_RIGHT=, which is what alt_map
-  already holds for Up and Down. Then they arrive as =ESC [ 1 ; 3 D= / =C= like the
-  rest. =Ctrl-Alt-F1…= still switch VTs. In a text view they move by word, as =M-b= / =M-f=
-  (=tv-key=, [[file:../poc/textview.lisp][poc/textview.lisp]]); an Org pane keeps them for promote / demote.
-- *Shift-Alt-arrows needed nothing.* The default keymap has no Shift+Alt table, and
-  7.2's =keyboard.c= falls back to the plain map for a cursor key when the modifier's
-  table is missing. =k_cur= then adds the modifiers.
-- *Alt-Return and Alt-Tab* come as =ESC CR= and =ESC TAB= (alt_map's Meta entries
-  =0xf80d= / =0xf809=); =fb-read-key= used to drop the first and now returns
-  =:return= / =:tab= with the Meta bit. *Shift-Tab* is a plain Tab byte; its Shift is
-  the evdev's, folded in as for every key.
+- *Menu key* (=KEY_COMPOSE=, 127). No byte at all; it opens the context menu (§4½).
+- *Ctrl-= and Ctrl-0* (the text-size chord =C-x C-= / C-x C-0=, [[file:fonts.org][fonts.org]] §6). The
+  default keymap (=drivers/tty/vt/defkeymap.map=) gives keycodes 11 and 13 no =control=
+  column. Reported as =#\== / =#\+= / =#\0= and handed to =browser-key= with the Ctrl
+  bit. (=Ctrl--= needs no help: =Control_underscore=, byte 31.)
+- *Ctrl-, and Ctrl-.* (so also =C-<= / =C->=, start / end of buffer). Keycode 51 has no
+  =control= column, and the default keymap says =control keycode 52 = Compose=, so
+  Ctrl-. starts a compose sequence that eats the next keys. Both are reported as =#\<= /
+  =#\>=, and [[file:../initramfs/fb-browser.lisp::defun unbind-console-ctrl-dot][=unbind-console-ctrl-dot=]] takes Compose off that key once at startup:
+  one =KDSKBENT= ioctl (=0x4B47=, =include/uapi/linux/kd.h=) — table 4 (Ctrl), index 52,
+  value =K_HOLE= (=K(KT_SPEC,0)= = =0x0200=, a key that sends nothing).
+- *Ctrl-;* (comment line or region, [[file:code-browser.org][code-browser.org]] Phase 3a). Keycode 39 has no
+  =control= column; reported as =#\;=.
+- *Shift-PageUp / Shift-PageDown.* The default keymap binds them to the console's own
+  scrollback (=shift_map[104]= = Scroll_Backward) and sends nothing. The terminal pane
+  scrolls its history with them ([[file:terminal.org][terminal.org]] §8); elsewhere they reach =browser-key=.
 
-Two things were *ruled out* on the way, and are recorded so nobody tries them again:
+Before binding any new Ctrl-digit or Ctrl-punctuation chord, check =defkeymap.map= for a
+=control= line.
 
-- *Reading Alt-arrows from the evdev as well* (as Shift-PageUp is). Alt-Shift-Right
-  then demoted a heading *twice*, once for the evdev's event and once for the tty's
-  =ESC [ 1 ; 4 C=, because that combination reached both.
-- *K_HOLE instead of K_LEFT* for Alt-Left. The fallback above compares the table
-  entry with =K_HOLE=, but entries are stored as =U(val)= = =val ^ 0xf000=
-  (=vt_kdskbent=, =kbd_kern.h=). A hole set by =KDSKBENT= reads =0xf200= there and
-  never matches, so Alt-Left sent nothing at all. =KDGKBENT= hands entries back
-  without the =0xf0= (=0x0210=, not the =0xf210= that =defkeymap.c_shipped= prints).
+** Alt with the arrows, Return and Tab: what the console sends
 
-** Two layouts: pt-BR under Right Alt, Caps Lock to switch (2026-10-19)
+Org's keys ([[file:org.org][org.org]] §6.3) need Meta on keys the console treats specially.
+[[file:../check-org.lisp][check-org.lisp]] presses each over QMP in the guest.
 
-The user writes Portuguese, and on the laptop's Debian X has two layouts for it
-(=/etc/default/keyboard=: =XKBLAYOUT="us,br"=, =XKBOPTIONS="…,grp:switch,grp:caps_toggle,grp_led:caps"=):
-Right Alt *held* types the second layout, Caps Lock *switches* to it and back (it is
-no longer a caps lock), and the Caps light says which is on. The environment does the
-same, in [[file:../initramfs/keyboard-layout.lisp][keyboard-layout.lisp]], and only when the host's file lists =br=.
+- *Alt-Up / Alt-Down arrive with their Alt.* In kernel 7.2, =k_cur= (the cursor-key
+  handler, [[file:../linux/drivers/tty/vt/keyboard.c::static void k_cur][drivers/tty/vt/keyboard.c]]) encodes held modifiers as xterm does: Alt-Up
+  is =ESC [ 1 ; 3 A=, Shift-Alt-Up =ESC [ 1 ; 4 A=. =fb-read-csi= decodes the parameter
+  into the state bits.
+- *Alt-Left / Alt-Right are rebound from VT switching.* By default =alt_map[105]= /
+  =[106]= are =K_DECRCONSOLE= / =K_INCRCONSOLE= ([[file:web-browser.org][web-browser.org]] §2).
+  [[file:../initramfs/fb-browser.lisp::defun unbind-console-alt-arrows][=unbind-console-alt-arrows=]] binds them, in every keymap table with the Alt bit, to
+  plain =K_LEFT= / =K_RIGHT= (what alt_map already holds for Up and Down), so they
+  arrive as =ESC [ 1 ; 3 D= / =C=. =Ctrl-Alt-F1…= still switch VTs. In a text view they
+  move by word, as =M-b= / =M-f= (=tv-key=, [[file:../poc/textview.lisp][poc/textview.lisp]]); an Org pane uses them to
+  promote / demote.
+- *Shift-Alt-arrows need nothing.* The default keymap has no Shift+Alt table, and 7.2's
+  =keyboard.c= falls back to the plain map for a cursor key when the modifier's table
+  is missing; =k_cur= then adds the modifiers.
+- *Alt-Return and Alt-Tab* arrive as =ESC CR= and =ESC TAB= (alt_map's Meta entries
+  =0xf80d= / =0xf809=); =fb-read-key= returns =:return= / =:tab= with the Meta bit.
+- *Shift-Tab* is a plain Tab byte; its Shift is the evdev's, folded in as for every key.
 
-The text we read comes from the console, translated by the *kernel's keymap*: one
-table per combination of modifiers, keycode → keysym, which =KDSKBENT= changes one
-entry at a time (=console-kbent=, the same call that took Hold off Scroll Lock). The
-kernel already had what was needed:
+Ruled out:
 
-- *Right Alt is the console's AltGr* (keycode 100, =K_ALTGR=), a modifier with tables
-  of its own: 2 (AltGr) and 3 (AltGr+Shift). Filled with pt-BR, Right Alt held types
-  pt-BR — X's =grp:switch=.
-- *Dead keys* (=KT_DEAD=: ´ ` ~ ^ ¨) and a composition table that already holds
-  Portuguese: defkeymap's =accent_table= has =' a= → á, =~ a= → ã, =^ a= → â, =, c= →
-  ç and the rest of Latin-1.
-- *Unicode mode*: =vt.c='s =default_utf8= is true, so =ç= arrives as UTF-8, two bytes.
-  =fb-read-key= used to make each byte a character ("ç" came out "Ã§"); it decodes
-  UTF-8 now.
+- *Reading Alt-arrows from the evdev too* (as Shift-PageUp is). Alt-Shift-Right then
+  demoted a heading *twice*: once for the evdev event, once for the tty's
+  =ESC [ 1 ; 4 C=.
+- *=K_HOLE= instead of =K_LEFT= for Alt-Left.* The fallback compares the entry with
+  =K_HOLE=, but entries are stored as =U(val)= = =val ^ 0xf000= (=vt_kdskbent=,
+  =kbd_kern.h=). A hole set by =KDSKBENT= reads =0xf200= there and never matches, so
+  Alt-Left sent nothing. =KDGKBENT= hands entries back without the =0xf0= (=0x0210=, not
+  the =0xf210= that =defkeymap.c_shipped= prints).
 
-What pt-BR is, key by key, comes from the host's own XKB file
-(=/usr/share/X11/xkb/symbols/br=, its default "abnt2"): "latin" plus ten keys, which
-on the laptop's US keyboard are =`= → ='= / ="=, =6= → 6 / dead ¨, =[= → dead ´ / dead
-`, =]= → =[= / ={=, =\= → =]= / =}=, =;= → =ç= / =Ç=, ='= → dead ~ / dead ^, =/= → =;= / =:=,
-plus the two keys only ISO/ABNT2 keyboards have. Only levels 1 and 2: with
-=grp:switch= Right Alt is a group switch, so =br='s third and fourth levels are out of
-reach in X too.
+** Two layouts: pt-BR under Right Alt, Caps Lock to switch
 
-A keysym value for =KDSKBENT=: a dead key is =K(KT_DEAD, n)= (=#x400= + n); an ASCII
-letter =K(KT_LETTER, c)=; a character past ASCII is Unicode, stored by the kernel XORed
-with =#xF000= (keyboard.c's =U()=) — so =ç= (U+00E7) is passed as =#xF0E7=.
+When the host's =/etc/default/keyboard= lists =br= alongside =us= (e.g.
+=XKBLAYOUT="us,br"=, =XKBOPTIONS="…,grp:switch,grp:caps_toggle,grp_led:caps"=), the
+environment mirrors X ([[file:../initramfs/keyboard-layout.lisp][keyboard-layout.lisp]]): Right Alt *held* types the second
+layout, Caps Lock *switches* to it and back (it's no longer a caps lock), and the Caps
+light says which is on.
 
-*Caps Lock is done in Lisp*, not by the kernel's =AltGr_Lock=: no ioctl READS a lock's
-state, and the light and the tray must tell the truth. Its keymap entries become
-VoidSymbol, its press is seen on the keyboard's evdev (=:layout-toggle=), and
-=toggle-layout= swaps the plain tables to pt-BR and the AltGr tables to US — Right Alt
-held while pt-BR is on gives US back, as in X. The light is set with =KDSETLED= (caps =
-4); the tray says =BR= while pt-BR is the plain layout. Neither changes while Right
-Alt is merely held, as in X.
+The text we read is translated by the *kernel's keymap*: one table per combination of
+modifiers, keycode → keysym, changed one entry at a time with =KDSKBENT=
+(=console-kbent=). The kernel already has what's needed:
 
-Tested by [[file:../check-keyboard.lisp][check-keyboard.lisp]] (17 checks, =LOL_GUEST_HOSTROOT=1=, so the guest reads
-the laptop's own =/etc/default/keyboard=): Right Alt + =;= → ç, the three dead keys
+- *Right Alt is the console's AltGr* (keycode 100, =K_ALTGR=), a modifier with its own
+  tables: 2 (AltGr) and 3 (AltGr+Shift). Filled with pt-BR, Right Alt held types pt-BR
+  — X's =grp:switch=.
+- *Dead keys* (=KT_DEAD=: ´ ` ~ ^ ¨) and a composition table that already covers
+  Portuguese: defkeymap's =accent_table= has =' a= → á, =~ a= → ã, =^ a= → â, =, c= → ç
+  and the rest of Latin-1.
+- *Unicode mode.* =vt.c='s =default_utf8= is true, so =ç= arrives as two UTF-8 bytes,
+  which =fb-read-key= decodes.
+
+*The layout's keys* come from the host's XKB file (=/usr/share/X11/xkb/symbols/br=, its
+default "abnt2"): "latin" plus ten keys, which on a US keyboard are =`= → ='= / ="=,
+=6= → 6 / dead ¨, =[= → dead ´ / dead `, =]= → =[= / ={=, =\= → =]= / =}=, =;= → =ç= /
+=Ç=, ='= → dead ~ / dead ^, =/= → =;= / =:=, plus two keys only ISO/ABNT2 keyboards
+have. Only levels 1 and 2: with =grp:switch= Right Alt is a group switch, so =br='s
+third and fourth levels are out of reach in X too.
+
+*Keysym values for =KDSKBENT=:* a dead key is =K(KT_DEAD, n)= (=#x400= + n); an ASCII
+letter =K(KT_LETTER, c)=; a character past ASCII is Unicode, stored XORed with =#xF000=
+(keyboard.c's =U()=) — so =ç= (U+00E7) is passed as =#xF0E7=.
+
+*Caps Lock is handled in Lisp,* not by the kernel's =AltGr_Lock=, because no ioctl
+READS a lock's state and the light and tray must tell the truth.
+
+- *Its keymap entries become VoidSymbol;* its press is seen on the keyboard's evdev
+  (=:layout-toggle=).
+- *=toggle-layout=* swaps the plain tables to pt-BR and the AltGr tables to US, so Right
+  Alt held while pt-BR is on gives US back, as in X.
+- *Feedback.* The light is set with =KDSETLED= (caps = 4); the tray says =BR= while
+  pt-BR is the plain layout. Neither changes while Right Alt is merely held.
+
+*Tested* by [[file:../check-keyboard.lisp][check-keyboard.lisp]] (17 checks, =LOL_GUEST_HOSTROOT=1=, so the guest
+reads the host's =/etc/default/keyboard=): Right Alt + =;= → ç, the three dead keys
 (ã é ô), Caps Lock on (=;= → ç, ='= a → ã, =BR=, the light =4=, Right Alt giving =;=
-back) and off, and =ç= reaching a program in a terminal (=echo= prints it back).
+back) and off, and =ç= reaching a program in a terminal.
 
 * 2. What evdev is
 
 =CONFIG_INPUT_EVDEV=y= builds [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], a *generic* handler that
-attaches to every input device the kernel has and exposes each as a character
-device =/dev/input/eventN=.
+attaches to every input device and exposes each as a character device
+=/dev/input/eventN=.
 
-It is generic in the strong sense: it does not know what a mouse is. It publishes
-the input subsystem's internal event stream verbatim, and userland decides that a
-device emitting relative-X and relative-Y is a pointer. The keyboard, the mouse,
-the touchpad and the ACPI power button all arrive through the identical
-interface, distinguished only by *which kinds of event they are capable of*.
+It doesn't know what a mouse is. It publishes the input subsystem's event stream
+verbatim, and userland decides that a device emitting relative X and Y is a pointer.
+Keyboard, mouse, touchpad and the ACPI power button all arrive through the same
+interface, told apart only by *which kinds of event they can emit*.
 
 ** The record
 
-Reading the device gives back a whole number of =struct input_event= records
+Reading the device returns a whole number of =struct input_event= records
 ([[file:../linux/include/uapi/linux/input.h::struct input_event][=include/uapi/linux/input.h=]]). On 64-bit x86 one record is *24 bytes*:
 
 | offset | size | field     | meaning                                            |
@@ -161,21 +179,16 @@ Reading the device gives back a whole number of =struct input_event= records
 |     18 |    2 | =code=    | *which* one (which key, which axis)                |
 |     20 |    4 | =value=   | signed 32-bit: how much / pressed?                 |
 
-The 16-byte =struct timeval= at the front is why the record is 24 and not 8, and
-it is the single most common source of "my offsets are wrong" — on a 32-bit
-machine that timeval is 8 bytes and the record is 16.
-
-There is no framing, no length prefix, and no escaping: records simply abut. The
-driver enforces this — [[file:../linux/drivers/input/evdev.c][=evdev.c=]] returns =-EINVAL= rather than a partial record
-if you hand it a buffer smaller than one event, and otherwise fills as many whole
-records as fit. So "read 24 bytes, decode, repeat" is not a convention we adopted;
-it is the contract.
+- *The timeval is the usual offset trap.* It's 16 bytes on 64-bit, which makes the
+  record 24; on a 32-bit machine it's 8 and the record is 16.
+- *No framing.* No length prefix, no escaping: records abut. [[file:../linux/drivers/input/evdev.c][=evdev.c=]] returns
+  =-EINVAL= for a buffer smaller than one event and otherwise fills as many whole
+  records as fit. "Read 24 bytes, decode, repeat" is the contract.
 
 ** Reading it in Lisp
 
-No new dependency: the same =sb-alien= FFI style as [[file:../initramfs/net.lisp][net.lisp]], on the =libc= we
-already ship. Open the node non-blocking ([[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]) and drain it
-([[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]):
+The same =sb-alien= FFI style as [[file:../initramfs/net.lisp][net.lisp]], on the shipped =libc=. Open the node
+non-blocking ([[file:../initramfs/fb-browser.lisp::defun open-evdev][=open-evdev=]]) and drain it ([[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]]):
 
 #+begin_src lisp
   (let ((n (%fbb-read fd buf 24)))
@@ -188,20 +201,15 @@ already ship. Open the node non-blocking ([[file:../initramfs/fb-browser.lisp::d
       …))
 #+end_src
 
-Two details that matter:
-
-- *Little-endian reassembly by hand.* We read bytes and shift, rather than casting
-  a struct, because that is honest about the wire format and costs nothing.
-- *Sign extension.* =value= is =__s32=. Moving the mouse left gives =-1=, which
-  arrives as =#xFFFFFFFF=; the last line turns it back into =-1=. Skip it and the
-  cursor teleports right by four billion pixels on the first leftward twitch —
-  a very memorable bug.
-
-*The non-blocking read is the loop's terminator.* With =O_NONBLOCK= a read on an
-empty queue returns =-1= (=EAGAIN=) rather than waiting, so =(< n 24)= means
-"nothing more right now" and we stop. Draining in a loop rather than one record
-per frame is what makes a fast mouse flick feel smooth: several records collapse
-into one cursor move and one redraw.
+- *Little-endian reassembly by hand.* Bytes and shifts rather than a struct cast:
+  honest about the wire format, and free.
+- *Sign extension.* =value= is =__s32=. Moving left gives =-1=, which arrives as
+  =#xFFFFFFFF=; the last line turns it back. Skip it and the cursor jumps four billion
+  pixels right on the first leftward twitch.
+- *The non-blocking read ends the drain.* With =O_NONBLOCK= an empty queue returns =-1=
+  (=EAGAIN=), so =(< n 24)= means "nothing more now". Draining in a loop, not one record
+  per frame, makes a fast flick smooth: several records become one cursor move and one
+  redraw.
 
 * 3. The events we actually decode
 
@@ -220,36 +228,28 @@ Of the ~30 event types, the browser needs four. Constants from
 | =1= =EV_KEY= | =115= / =114= =KEY_VOLUMEUP= / =DOWN=, =113= =KEY_MUTE=, =248= =KEY_MICMUTE= | =1= press, =2= repeat (volume only) | =mixer.lisp='s =audio-key= (tag #29): no tty byte exists for these keys |
 | =0= =EV_SYN= | =0= =SYN_REPORT=                                      | —                                     | end of packet: apply the gathered position                                        |
 
-Relative *and* absolute are both handled because the three ways we run differ:
-QEMU's default PS/2 mouse is relative; =-device usb-tablet= is absolute and maps
-onto the screen (which is what makes a scripted click land predictably, and so
-matters for the QMP screenshot harness — [[file:code-browser.org][code-browser.org]] §8); and a real
-laptop has a *touchpad*, which is absolute but is emphatically not a screen.
-That third case is §4½, and it is the one that took a rewrite.
-
-Note that =EV_SYN= earns a row now. A packet is several records — =ABS_X=, then
-=ABS_Y=, then perhaps =BTN_TOUCH= — and =SYN_REPORT= is the kernel saying "that
-was one coherent report". Acting record by record moves an absolute pointer in an
-L instead of a straight line, so we gather and act at the =SYN=.
-
-Note =EV_KEY= covers *both* buttons and keys — a mouse button is just a key whose
-code happens to be =0x110=. That is the input subsystem's view, not a quirk.
+- *Relative and absolute both matter.* QEMU's default PS/2 mouse is relative;
+  =-device usb-tablet= is absolute and maps onto the screen (so a scripted click lands
+  predictably — the QMP harness relies on it, [[file:code-browser.org][code-browser.org]] §8); a laptop
+  *touchpad* is absolute but is not a screen (§4½).
+- *=EV_SYN= ends a packet.* A packet is several records — =ABS_X=, =ABS_Y=, perhaps
+  =BTN_TOUCH= — and =SYN_REPORT= says "that was one report". Acting record by record
+  moves an absolute pointer in an L instead of a line, so we gather and act at the
+  =SYN=.
+- *=EV_KEY= covers buttons and keys.* A mouse button is a key whose code is =0x110=.
 
 * 4. Finding the device without udev
 
-This is the part that surprised us, and it is the reason [[file:../initramfs/fb-browser.lisp::defun scan-input-device][=scan-input-device=]]
-exists at all.
+[[file:../initramfs/fb-browser.lisp::defun scan-input-devices][=scan-input-devices=]] exists because of two non-obvious facts:
 
-Two non-obvious facts:
-
-1. *=eventN= is not stable.* The number depends on probe order. Hardcoding
+1. *=eventN= isn't stable.* The number depends on probe order; hardcoding
    =/dev/input/event2= works until it doesn't.
-2. *There is no =/dev/input/mouse0=.* That node comes from =mousedev=, and
-   =CONFIG_INPUT_MOUSEDEV is not set= in our config. So the obvious trick —
-   scan =/proc/bus/input/devices= for a =Handlers== line containing =mouse= —
-   finds nothing. Our PS/2 mouse advertises only =Handlers=event2=.
+2. *There's no =/dev/input/mouse0=.* That node comes from =mousedev=, and
+   =CONFIG_INPUT_MOUSEDEV= is off. So scanning =/proc/bus/input/devices= for a
+   =Handlers== line containing =mouse= finds nothing; a PS/2 mouse shows only
+   =Handlers=event2=.
 
-So we classify by *capability* instead. [[file:../linux/drivers/input/input.c][=drivers/input/input.c=]]'s
+So devices are classified by *capability*. [[file:../linux/drivers/input/input.c][=drivers/input/input.c=]]'s
 =input_devices_seq_show= prints one block per device, blank-line separated:
 
 #+begin_example
@@ -265,26 +265,30 @@ So we classify by *capability* instead. [[file:../linux/drivers/input/input.c][=
   B: REL=103
 #+end_example
 
-The =B: EV== line is a *bitmask of the event types this device can emit*, in hex —
-one bit per =EV_*= constant. =EV=7= is bits 0,1,2 = =EV_SYN= + =EV_KEY= + =EV_REL=:
-it has buttons and it moves relatively. That is a pointer, and no other kind of
-device says so.
+=B: EV== is a *bitmask of the event types the device can emit*, in hex, one bit per
+=EV_*= constant. =EV=7= is bits 0, 1, 2 = =EV_SYN= + =EV_KEY= + =EV_REL=: buttons and
+relative motion — a pointer.
 
-So the rules are one line each — [[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]]:
+The rules, one line each ([[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]]):
 
-- *pointer* — EV_REL (bit 2) with =REL_X=, or EV_ABS (bit 3) with =ABS_X=. The
-  axis matters, not just the event type: a USB keyboard's /Consumer Control/ node
-  says =EV=1f= — it has =EV_REL= (for =REL_HWHEEL=, a horizontal-scroll key) and
-  =EV_ABS= (for volume) and no X axis at all. =REL_X= / =ABS_X= are bit 0 of the
-  =B: REL== / =B: ABS== bitmaps, whose low word is the *last* token on the line
-  (see "one parsing subtlety" below).
-- *keyboard* — EV_KEY (bit 1) *and* EV_REP (bit =0x14= = 20, autorepeat).
+- *Pointer.* EV_REL (bit 2) with =REL_X=, or EV_ABS (bit 3) with =ABS_X=. The axis
+  matters, not just the type: a USB keyboard's /Consumer Control/ node says =EV=1f= —
+  =EV_REL= for =REL_HWHEEL= (a horizontal-scroll key), =EV_ABS= for volume — and has no
+  X axis. =REL_X= / =ABS_X= are bit 0 of the =B: REL== / =B: ABS== bitmaps, whose low
+  word is the *last* token on the line.
+- *Keyboard.* EV_KEY (bit 1) *and* EV_REP (bit =0x14= = 20, autorepeat). The EV_REP half
+  matters: the ACPI *power button* emits =KEY_POWER= and gets a =kbd= handler, but can't
+  autorepeat. Without that bit we'd open the power button and wonder why Ctrl never
+  seemed held.
+
+Within the pointers, the kind decides how positions are read: a =:mouse= adds deltas, a
+=:tablet= maps positions onto the screen, a =:pad= differences them (§4½). Every
+pointer is opened, each read as its own kind (§4¾).
 
 ** The other bitmask on the line above: =B: PROP=
 
-=EV= says *what kinds of event* a device emits. It does not say what they mean,
-and for an absolute device that is the entire question. =B: PROP=- answers it, and
-we spent a while ignoring it:
+=EV= says *what kinds of event* a device emits, not what they mean — and for an
+absolute device, meaning is the whole question. =B: PROP== answers it:
 
 | bit | property               | what the positions mean                           |
 |-----+------------------------+---------------------------------------------------|
@@ -292,312 +296,211 @@ we spent a while ignoring it:
 |   1 | =INPUT_PROP_DIRECT=    | the surface *is* the screen — touchscreen, tablet |
 |   2 | =INPUT_PROP_BUTTONPAD= | the whole pad is the button (a clickpad)          |
 
-=usb-tablet= prints =PROP=0=. A PS/2 Synaptics pad prints =PROP=9=, the I2C one
-=PROP=5= — both have bit 0. Same =EV=, opposite meaning.
+=usb-tablet= prints =PROP=0=. A PS/2 Synaptics pad prints =PROP=9=, an I2C one =PROP=5=
+— both have bit 0. Same =EV=, opposite meaning.
 
-** Ranking was the bug
+** Parsing the bitmaps
 
-There is usually more than one pointer, and until 2026-10-12 the answer to that
-was a *ranking*: =find-mouse-device= asked for a tablet, then a relative mouse,
-then a touchpad, and opened the first kind it found — one pointer, chosen once.
-Its comment said "on a laptop there is no mouse, so rule 3 [the touchpad] is the
-only rule that fires". That stopped being true the day an external mouse was
-plugged in: the mouse rule fired, and the touchpad was never opened. §4¾ is the
-whole story and the fix — every pointer is now open, each read as its own kind.
-
-The kinds still matter, per device: a =:mouse= adds deltas, a =:tablet= maps
-positions onto the screen, a =:pad= differences them (§4½).
-
-The =EV_REP= half of the keyboard rule is not decoration. The ACPI *power button*
-also registers as a keyboard-ish device (it emits =KEY_POWER=), and it also gets a
-=kbd= handler — but it cannot autorepeat. Without the EV_REP bit we would happily
-open the power button and wonder why Ctrl never seemed to be held.
-
-*One parsing subtlety, and why it is safe.* =input_seq_print_bitmap= prints a
-bitmap as space-separated 64-bit words, most significant first — see =B: KEY=
-above. Our parser reads hex up to the first space, i.e. only the first word. For
-=EV= that is exactly right and always will be: =EV_MAX= is =0x1f=, so the whole
-mask is a single word and there is never a second one to miss. (Do not copy the
-same parse for =B: KEY=, where it would silently read the wrong end.) The parser
-now takes the *last* word instead, which is the same thing for =EV= and =PROP= and
-the right thing for =REL= and =ABS=: =ABS=2e0800000000003= (the laptop's I2C pad,
-on the host) is two words, and =ABS_X= lives in the second.
+=input_seq_print_bitmap= prints a bitmap as space-separated 64-bit words, most
+significant first (see =B: KEY= above). The parser takes the *last* word. For =EV= and
+=PROP= that's the whole mask (=EV_MAX= is =0x1f=, one word). For =REL= and =ABS= it's
+the low word, where the X axis lives: =ABS=2e0800000000003= (an I2C touchpad) is two
+words, and =ABS_X= is in the second. Taking the first word would silently read the
+wrong end.
 
 * 4½. The touchpad: absolute, but not a position
 
-A laptop has no mouse. It has a pad about 90mm wide under your palm, and the
-kernel describes that pad the way it describes a drawing tablet: =EV_ABS=,
-=ABS_X=, =ABS_Y=, one position per packet. Read it the way we read a
-=usb-tablet= and you get the most baffling-looking bug this project has had — the
-cursor sits in the *top-left corner*, moves coherently inside a box a couple of
-hundred pixels wide, barely moves vertically at all, and jumps whenever you lift
-a finger. Every one of those symptoms has a cause, and there are two causes.
+A laptop pad is described the way a drawing tablet is: =EV_ABS=, =ABS_X=, =ABS_Y=, one
+position per packet. Read it like a =usb-tablet= and the cursor sits in the *top-left
+corner*, moves inside a box a couple of hundred pixels wide, barely moves vertically,
+and jumps whenever you lift a finger. There are two causes.
 
 ** Cause one: 0..32767 is not a range, it is one device's range
 
-=usb-tablet= reports 0..32767 on both axes. That is *its* choice, not a property
-of the protocol — and we had it written into the scaling as if it were. A PS/2
-Synaptics pad reports roughly 1472..5472 across by 1408..4448 down. Scale those
-as though they ran to 32767 and a full sweep of the pad reaches
+=usb-tablet= reports 0..32767 on both axes — *its* choice, not the protocol's. A PS/2
+Synaptics pad reports roughly 1472..5472 across by 1408..4448 down. Scaled as though
+they ran to 32767, a full sweep reaches:
 
 : 5472 * 1920 / 32768 =  320 px   of 1920 across
 : 4448 * 1080 / 32768 =  146 px   of 1080 down
 
-— a box in the top-left corner, more than twice as wide as it is tall. That is
-the bug report, arithmetic included: /it never goes down significantly/.
-
-The fix is to stop assuming and *ask*. =EVIOCGABS(axis)= fills a
-=struct input_absinfo= — six =__s32=: value, minimum, maximum, fuzz, flat,
-resolution — and the middle two are the answer. One ioctl per axis, once, at open
-time ([[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]). The request number is =_IOR('E', 0x40+axis, 24)= =
-=#x80184540 + axis=.
+So *ask*. =EVIOCGABS(axis)= fills a =struct input_absinfo= — six =__s32=: value,
+minimum, maximum, fuzz, flat, resolution — and the middle two are the range. One ioctl
+per axis, at open time ([[file:../initramfs/fb-browser.lisp::defun evdev-abs-range][=evdev-abs-range=]]). The request number is
+=_IOR('E', 0x40+axis, 24)= = =#x80184540 + axis=.
 
 ** Cause two: a pad is not a small screen
 
-Fixing the range alone would map the pad onto the display one-to-one, and that is
-still wrong — in a way that is harder to see, because it *looks* like it works.
-On a directly-mapped pad the cursor is wherever your finger is: lift it, put it
-down 3cm left, and the cursor teleports. There is no way to reach a far corner
-with a short motion, and no way to nudge the cursor by two pixels at all.
+Fixing the range alone maps the pad onto the display one-to-one, which *looks* like it
+works. But then the cursor is wherever your finger is: lift it, put it down 3 cm left,
+and the cursor teleports. A far corner can't be reached with a short motion, and the
+cursor can't be nudged by two pixels.
 
-A tablet genuinely wants that behaviour; a pad never does. =B: PROP=- is what
-tells the two apart (§4 above), and bit 0 or bit 2 — POINTER or BUTTONPAD — means
-*difference the positions, do not map them*.
+A tablet wants that; a pad never does. =B: PROP= tells them apart (§4): bit 0 or bit 2
+— POINTER or BUTTONPAD — means *difference the positions, don't map them*.
 
 ** Differencing without the jumps
 
-[[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] remembers the last position and moves the cursor by the change,
-scaled so that one full sweep of the pad crosses =*pad-speed*= screens (=3/2= by
-default). Each axis is scaled by its own range, which quietly fixes the aspect
-too: pads are wider than they are tall in device units in roughly the same
-proportion as screens are, so the two factors come out nearly equal and motion
-stays isotropic without a second constant.
+[[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] remembers the last position and moves the cursor by the change, scaled
+so one full sweep of the pad crosses =*pad-speed*= screens (=3/2= by default). Each axis
+is scaled by its own range, which also fixes the aspect: pads and screens have roughly
+the same proportions, so motion stays isotropic without a second constant.
 
-Three details carry the whole thing:
-
-1. *Per packet, not per record.* =ABS_X= and =ABS_Y= arrive as two records.
-   Applying each as it lands moves the cursor in an L rather than along the line
-   your finger drew. We gather them and act on =SYN_REPORT=, which is exactly
-   what that event is for.
-
-2. *Forget the last position whenever the contact changes.* =BTN_TOUCH= and
-   =BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP}= change value only when a finger lands,
-   lifts, or is joined by another — and all three of those move the point the pad
-   reports. Each clears the remembered position, so the first packet of a new
-   contact yields *no* delta instead of a jump across the screen. A
-   quarter-of-the-pad sanity limit backs it up for hardware that never bothers to
-   report =BTN_TOUCH=.
-
-3. *Carry the fraction.* At around 0.7px per pad unit, a slow drag is a run of
-   deltas that each round to zero. Truncate them and the cursor simply refuses to
-   move slowly; we keep the remainder as an exact rational and pay it out on
-   later packets.
-
-The first two are why the old code jumped, and the third is why differencing done
-carelessly feels worse than the bug it replaces.
+1. *Per packet, not per record.* =ABS_X= and =ABS_Y= are two records; applying each as it
+   lands draws an L. Gather them and act on =SYN_REPORT=.
+2. *Forget the last position when the contact changes.* =BTN_TOUCH= and
+   =BTN_TOOL_{FINGER,DOUBLETAP,TRIPLETAP}= change only when a finger lands, lifts or is
+   joined by another — all of which move the reported point. Each clears the
+   remembered position, so a new contact's first packet yields *no* delta instead of a
+   jump. A quarter-of-the-pad sanity limit covers hardware that never reports
+   =BTN_TOUCH=.
+3. *Carry the fraction.* At about 0.7 px per pad unit, a slow drag is a run of deltas
+   that each round to zero. The remainder is kept as an exact rational and paid out on
+   later packets; truncating makes slow motion impossible.
 
 ** The click that sends no button
 
-A clickpad's physical press is a =BTN_LEFT= like any mouse button's, and that half
-always worked. A *tap* sends no button at all: the finger lands, lifts, and the only
-trace is =BTN_TOUCH= going =1= and then =0=. Everywhere else, =libinput= is the
-thing that decides those two events were a click. There is no =libinput= here.
+A clickpad's physical press is a =BTN_LEFT= like any mouse button's. A *tap* sends no
+button: the finger lands and lifts, and the only trace is =BTN_TOUCH= going =1= then
+=0=. Elsewhere libinput decides that was a click; there's no libinput here.
 
-*Tap-to-click is OFF by default* (2026-10-16, the user's choice: click only when
-you really click). =*tap-to-click*= is =NIL=, so a contact never opens a tap
-candidate and only a physical press clicks. Put =(:tap-to-click t)= in
-=~/.lol/settings= (read when the browser starts), or =(setf *tap-to-click* t)=
-in the Workspace, to bring back the rule below. (The settings line only works since
-2026-10-18: the file is read with bare words as keywords, so =t= came back as =:T=,
-which =(eq … t)= refused — =settings.lisp=, proved by =poc/settings-test.lisp=.)
+*Tap-to-click is off by default:* a click happens only when you press. =*tap-to-click*=
+is =NIL=, so only a physical press clicks. Put =(:tap-to-click t)= in =~/.lol/settings=
+(read when the browser starts), or =(setf *tap-to-click* t)= in the Workspace.
 
-When it is on, =read-mouse= decides. A contact becomes a click when four things hold:
+When it's on, =read-mouse= decides. A contact is a click when all four hold:
 
-1. *It was brief, but not fleeting* — under =*tap-max-us*=, 180ms, which is the
-   figure libinput settled on (longer and you were resting a finger, not tapping),
-   and at least =*tap-min-us*=, 30ms. A Synaptics pad sends a packet every 12.5ms,
-   so a finger brushing past on its way somewhere is over in one or two of them.
-2. *It did not travel* — no further from where it landed than =*tap-travel*=, a
-   fortieth of the pad (about 2mm on a Synaptics pad), which forgives the roll of a
-   finger lifting without admitting a drag.
-3. *It was one finger, and pressed nothing.* A second finger means scroll — or a
-   right-click we have no second button for — and either way the contact stops being
-   a tap. A real =BTN_LEFT= disarms it too, so a press and the finger resting on the
-   pad cannot fire twice.
-4. *It pressed like a tap* — its peak =ABS_PRESSURE= reached =*tap-min-pressure*=,
-   60. The pad reports pressure on every packet (0..255, Synaptics' "Z"), and the
-   kernel already turns anything over 30 into =BTN_TOUCH= — that is the hysteresis
-   at =if (hw.z > 30)= / =if (hw.z < 25)= in =linux/drivers/input/mouse/synaptics.c=.
-   Synaptics' interfacing guide puts a very light finger near 30 and a normal one
-   near 80; a graze lives between the two. A pad that reports no pressure skips this
-   test rather than never tapping.
+1. *Brief, but not fleeting.* Under =*tap-max-us*= (180 ms, libinput's figure — longer
+   is a resting finger) and at least =*tap-min-us*= (30 ms). A Synaptics pad sends a
+   packet every 12.5 ms, so a passing brush is over in one or two.
+2. *It didn't travel.* No further from where it landed than =*tap-travel*=, a fortieth
+   of the pad (about 2 mm on a Synaptics pad) — forgives a lifting finger's roll, not a
+   drag.
+3. *One finger, nothing pressed.* A second finger means scroll (or a right-click), so
+   the contact stops being a tap. A real =BTN_LEFT= disarms it too, so a press with a
+   resting finger can't fire twice.
+4. *It pressed like a tap.* Peak =ABS_PRESSURE= reached =*tap-min-pressure*= (60). The
+   pad reports pressure on every packet (0..255, Synaptics' "Z"), and the kernel turns
+   anything over 30 into =BTN_TOUCH= (the hysteresis at =if (hw.z > 30)= /
+   =if (hw.z < 25)= in =linux/drivers/input/mouse/synaptics.c=). Synaptics' interfacing
+   guide puts a very light finger near 30 and a normal one near 80; a graze sits
+   between. A pad that reports no pressure skips this test.
 
-Rules 1's floor and 4 came later (2026-10-02), from use: with only the first three,
-the lightest touch on the laptop's pad was a click, and an accidental one looks
-exactly like a bug — something opened that you did not ask for. A *physical*
-press is untouched by all of this: it is =BTN_LEFT=, and it always clicks.
+Rule 1's floor and rule 4 exist because without them the lightest touch clicks — and
+an accidental click looks exactly like a bug.
 
-*Tuning it.* The numbers are guesses about one person's fingers on one pad, so
-the last contact is kept, as the rule saw it, in =*last-touch*= — =(:ms 75 :peak
-80 :tap t)=. Print it in the Workspace right after a tap that misbehaved, and set
-=*tap-min-pressure*= or =*tap-min-us*= there; both are ordinary special variables,
-read on every contact.
+- *Tuning.* The last contact is kept as the rule saw it in =*last-touch*= — =(:ms 75
+  :peak 80 :tap t)=. Print it after a tap that misbehaved, and set =*tap-min-pressure*=
+  or =*tap-min-us*=; both are read on every contact.
+- *Timestamps.* [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]] reads the record's 16-byte timeval. The gesture only
+  takes a *difference* of two, so the clock behind it (evdev's default is
+  =CLOCK_REALTIME=) never has to mean anything absolute.
+- *Tested without a touchpad* (QEMU emulates none). =read-mouse= takes an fd, and a
+  regular file is one, so a file of synthetic Synaptics-shaped records — =BTN_TOUCH=,
+  =ABS_X/Y=, =ABS_PRESSURE= every 12.5 ms — replays a contact exactly. A firm 80 ms tap
+  (peak 80) clicked; a graze of the same length (peak 45), a one-packet brush, a 300 ms
+  rest and a sliding contact didn't; a physical press did.
 
-*How it was verified* without a touchpad (QEMU emulates none): =read-mouse= takes an
-fd, and a regular file is one, so a file of synthetic Synaptics-shaped records —
-=BTN_TOUCH=, =ABS_X/Y=, =ABS_PRESSURE= every 12.5ms — replays a contact exactly. A
-firm 80ms tap (peak 80) clicked; a graze of the same length (peak 45), a one-packet
-brush, a 300ms rest and a sliding contact did not; a physical press did.
+Limits:
 
-*This is what the timestamps were for.* Every record has carried a =struct timeval=
-since §2 and we had never read one — the rule above is the first thing that needs
-to know /how long/ rather than /what/. [[file:../initramfs/fb-browser.lisp::defun evdev-time-us][=evdev-time-us=]] reads the 16 bytes; the
-gesture only ever takes a *difference* of two of them, so the clock behind it
-(evdev's default is =CLOCK_REALTIME=) never has to mean anything absolute.
-
-Two honest limits. *There is no tap-and-drag* — tap, then touch-and-hold to drag —
-because a tap is decided only when the finger /lifts/, so there is nothing still
-held to drag with; the pressed drag (next section) is the way to select. And
-because =read-mouse= returns a click as a boolean, *two clicks inside one drain
-collapse into one*; a drain is one =poll(2)= wake, so two taps that fast are not reachable by
-hand, and a double-click gesture would need a real press/release pair rather than
-this flag.
+- *No tap-and-drag.* A tap is decided when the finger /lifts/, so nothing is still held
+  to drag with; the pressed drag (next section) is the way to select.
+- *Two taps in one drain are one click.* =read-mouse= returns a click as a boolean, and
+  a drain is one =poll(2)= wake — unreachable by hand. A double-click gesture would need
+  a real press/release pair.
 
 ** Press and drag: selecting with the pointer
 
-A press that lands in a text view places the caret there, and while the button stays
-down, motion extends the selection from that caret to the pointer — [[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]],
-over the =tv-drag= the X11 editor prototype always had. On a clickpad that is: press
-the pad down, and slide.
+A press in a text view places the caret; while the button stays down, motion extends
+the selection from that caret to the pointer ([[file:../poc/shell.lisp::defun browser-drag][=browser-drag=]], over =tv-drag=). On a
+clickpad: press the pad down, and slide.
 
-- *The button's state, not just its press.* =read-mouse= used to report =BTN_LEFT=
-  only as "a click happened". It now also keeps =*button-down*= — value 1 sets it,
-  0 clears it — and the loop treats any pointer motion while it is set as a drag.
-- *Which view.* The press goes to the morph under the pointer — the text view's own
-  body morph — and the *hand* remembers what it placed the caret in (its press,
-  =(:text :tv … :origin …)=, [[file:../poc/morph.lisp::defclass hand (morph)][the hand]]'s =press= slot); the world sends the drag to
-  that same morph (the hand's capture), so a drag extends that view even if the
-  pointer wanders over another pane ([[file:morphic.org][morphic.org]] §12.5, §13.2). The release
-  clears the press.
-- *A press on a row waits for its release.* A press on a list row that opens
-  something acts when the button comes up; a press that moves first (8 px,
-  =+pick-up-travel+=) is not a click but a *pick-up*: the hand carries the row's
-  subject to be dropped on another morph ([[file:morphic.org][morphic.org]] §13.3). A *tap* has no
-  release of its own, so the loop marks its press =:tap= and it acts at once.
-- *A slop of 3 pixels* (=+drag-slop+=) before the first extension. Pressing a
-  clickpad rolls the fingertip, which nudges the pointer a pixel or two; without the
-  slop, every press would select a character instead of placing the caret.
-- *Two fingers do not scroll while the pad is pressed.* On a clickpad the press is
-  often a thumb, and the finger that moves is a second one — which is otherwise the
-  two-finger scroll (§6). So =pad-motion= scrolls only when the button is up.
-  /Untested on the laptop's pad:/ which finger =ABS_X/Y= follows while two are
-  down is the pad's choice, not ours, so pressing with one finger and sliding the
-  same one is the sure way.
+- *The button's state, not just its press.* =read-mouse= keeps =*button-down*= (value 1
+  sets it, 0 clears it), and the loop treats pointer motion while it's set as a drag.
+- *The hand keeps the press.* The press goes to the morph under the pointer — the text
+  view's body morph — and the *hand* remembers what it placed the caret in (its press,
+  =(:text :tv … :origin …)=, [[file:../poc/morph.lisp::defclass hand (morph)][the hand]]'s =press= slot). The world sends the drag to
+  that morph (the hand's capture), so a drag extends that view even when the pointer
+  wanders over another pane ([[file:morphic.org][morphic.org]] §5.5, §9.1). Release clears it.
+- *A press on a row waits for its release.* A list row acts when the button comes up.
+  A press that moves 8 px first (=+pick-up-travel+=) is a *pick-up*: the hand carries
+  the row's subject to drop on another morph ([[file:morphic.org][morphic.org]] §9.2). A *tap* has no
+  release of its own, so its press is marked =:tap= and acts at once.
+- *A 3-pixel slop* (=+drag-slop+=) before the first extension. Pressing a clickpad rolls
+  the fingertip a pixel or two; without the slop every press would select a character.
+- *No two-finger scroll while pressed.* On a clickpad the press is often a thumb and the
+  moving finger a second one — otherwise the two-finger scroll (§6). So =pad-motion=
+  scrolls only with the button up. Which finger =ABS_X/Y= follows while two are down is
+  the pad's choice; pressing and sliding the same finger is the sure way.
 
-Verified in the guest by =check-pointer.lisp=, with QEMU's left button genuinely held
-across real =EV_REL= motion: the press alone selects nothing, the drag selects and
-follows the pointer down, the release is seen, and a still click clears it.
+*Tested* by =check-pointer.lisp=, with QEMU's left button held across real =EV_REL=
+motion: the press alone selects nothing, the drag selects and follows the pointer, the
+release is seen, a still click clears it.
 
 ** Three buttons on a pad with one
 
-The right button opens a context menu and the middle one a halo or X's paste
-([[file:code-browser.org][code-browser.org]], "The right button and the halo"). A mouse has those buttons —
-=BTN_RIGHT= =#x111= and =BTN_MIDDLE= =#x112=, decoded beside =BTN_LEFT=. A clickpad
-has exactly one physical button, so *which button a press means* is read off the
-pad at the moment it goes down ([[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]):
+The right button opens a context menu, the middle one a halo or X's paste
+([[file:code-browser.org][code-browser.org]], "The right button and the halo"). A mouse has them — =BTN_RIGHT=
+=#x111= and =BTN_MIDDLE= =#x112=, decoded beside =BTN_LEFT=. A clickpad has one
+physical button, so *which button a press means* is read off the pad when it goes down
+([[file:../initramfs/fb-browser.lisp::defun pad-press-button][=pad-press-button=]]):
 
 | on the pad                             | means  | why                                                   |
 |----------------------------------------+--------+-------------------------------------------------------|
 | one finger, bottom-right corner, press | right  | the software-button zone every buttonless laptop uses |
-| two fingers down, press                | middle | what was asked for; libinput's "clickfinger" pattern  |
+| two fingers down, press                | middle | libinput's "clickfinger" pattern                      |
 | three fingers down, press              | right  | a second route to the menu that needs no aiming       |
 | one finger anywhere else, press        | left   | the ordinary click (and the only one that drags)      |
 
-The finger count is known by then: =synaptics_process_packet= reports
-=BTN_TOOL_*= before =synaptics_report_buttons=, so =*pad-fingers*= is current when
-=BTN_LEFT= arrives. The corner is =*pad-right-zone*= — right of 3/5 of the width,
-below 4/5 of the height; =ABS_Y= grows /downwards/ on this pad (the driver inverts
-the hardware's y in =synaptics_invert_y=).
+- *The finger count is current.* =synaptics_process_packet= reports =BTN_TOOL_*= before
+  =synaptics_report_buttons=, so =*pad-fingers*= is up to date when =BTN_LEFT= arrives.
+- *The corner* is =*pad-right-zone*=: right of 3/5 of the width, below 4/5 of the
+  height. =ABS_Y= grows /downwards/ on a Synaptics pad (the driver inverts the hardware's
+  y in =synaptics_invert_y=).
 
-Two keyboard routes for a pointer that has no middle button and a hand that is on
-the keys anyway:
+Keyboard routes, for a pointer without a middle button and a hand already on the keys:
 
 - *Alt-click* is the middle button. Alt is tracked from the keyboard's evdev
-  (=KEY_LEFTALT= 56 / =KEY_RIGHTALT= 100), the same way Ctrl, Shift and Super are.
-  (Ctrl-click was the other candidate, but it already jumps to a definition —
-  which is the halo's most-used handle anyway.)
-- The *Menu key* (=KEY_COMPOSE=, 127) and *Shift-F10* open the context menu at the
-  caret or the selected row. The console sends no byte for the Menu key, so it too
-  is read from evdev; Shift-F10 arrives as =ESC [ 34 ~= (the keymap calls it F20).
-- *Ctrl-= and Ctrl-0* (the text-size chord =C-x C-= / C-x C-0=, [[file:fonts.org][fonts.org]] §6) are
-  silent on the console too: the default keymap (=drivers/tty/vt/defkeymap.map=)
-  gives keycodes 11 and 13 no =control= column, so no byte arrives.
-  =note-modifier-key= reports them from evdev as =#\== / =#\+= / =#\0=, and the
-  browser's loop hands them to =browser-key= with the Ctrl bit. (=Ctrl--= needs no
-  help: =Control_underscore=, byte 31.)
-- *Ctrl-, and Ctrl-.* (so also =C-<= / =C->=, start / end of the buffer in every text
-  and in the minibuffer) are worse than silent. Keycode 51 has no =control= column,
-  so Ctrl-, sends nothing, but the default keymap says =control keycode 52 = Compose=:
-  Ctrl-. starts a compose sequence that eats the next keys. Two fixes:
-  =note-modifier-key= reports both from evdev as =#\<= / =#\>= (Shift or not, since
-  =<= and =>= are shifted keys anyway), and [[file:../initramfs/fb-browser.lisp::defun unbind-console-ctrl-dot][=unbind-console-ctrl-dot=]] takes Compose off
-  that key once, when the environment starts. It does this with one =KDSKBENT= ioctl
-  (=0x4B47=, =include/uapi/linux/kd.h=): table 4 (the Ctrl map), index 52, value
-  =K_HOLE= (=K(KT_SPEC,0)= = =0x0200=, a key that sends nothing).
-- *Ctrl-;* (comment the line or region, [[file:code-browser.org][code-browser.org]] Phase 3a) is silent for the
-  same reason as Ctrl-,: keycode 39 has no =control= column. =note-modifier-key=
-  reports it from evdev as =#\;=.
-- *Ctrl + wheel* resizes the text, one step per notch, three at most per event, as in
-  every web browser ([[file:fonts.org][fonts.org]] §6). The wheel handler in =poc/shell.lisp= reads the held
-  Ctrl from =fb-browser.lisp='s =*ctrl-down*= by name, because =shell.lisp= loads first.
-- *Shift-PageUp / Shift-PageDown* are the same story: the default keymap binds them
-  to the console's own scrollback (=shift_map[104]= = Scroll_Backward) and sends no
-  byte, so =note-modifier-key= reports them from evdev too. The terminal pane scrolls
-  its history with them ([[file:terminal.org][terminal.org]] §8); elsewhere they reach =browser-key= as
-  Shift-PageUp/Down.
+  (=KEY_LEFTALT= 56 / =KEY_RIGHTALT= 100), like Ctrl, Shift and Super. (Ctrl-click
+  already jumps to a definition.)
+- *Menu key* (=KEY_COMPOSE=, 127, read from evdev — §1) and *Shift-F10* (=ESC [ 34 ~=,
+  the keymap's F20) open the context menu at the caret or selected row.
+- *Ctrl + wheel* resizes the text, one step per notch, three at most per event
+  ([[file:fonts.org][fonts.org]] §6). The wheel handler in =poc/shell.lisp= reads =fb-browser.lisp='s
+  =*ctrl-down*= by name, because =shell.lisp= loads first.
 
-A right or middle press is *not* a click to the overlays (the Spotter, the
-debugger, the cheatsheet): =read-mouse= reports it in a third value, and only the
-browser's own loop reads that one. Verified in the guest by
-[[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle buttons; the pad's
+A right or middle press isn't a click to the overlays (Spotter, debugger, cheatsheet):
+=read-mouse= reports it in a third value that only the browser's own loop reads.
+*Tested* by [[file:../check-clipboard.lisp][check-clipboard.lisp]] with QEMU's real right and middle buttons; the pad's
 emulated ones, like the tap, by replaying synthetic Synaptics packets.
 
 * 4¾. Every device at once, and the ones plugged in later
 
-The report, from the real laptop (2026-10-12): /"I was not able to use an
-external mouse and the trackpad at the same time."/ The user normally works with
-an external USB mouse *and* an external USB keyboard, so this is the everyday
-case, not an edge.
+A laptop used with an external USB mouse and keyboard has several pointers and several
+keyboards, and any of them may come and go. The environment opens every keyboard and
+every pointer at once, and watches =/dev/input= for more.
 
-** What was wrong
+** Why one of each isn't enough
 
-The environment opened *one* pointer and *one* keyboard, chosen *once*, when it
-started. Three separate failures follow from that sentence:
+Opening one pointer and one keyboard, chosen once at startup, fails three ways:
 
-1. *One pointer.* =find-mouse-device= ranked the candidates (tablet, then a
-   relative mouse, then a touchpad) and returned the best. With a USB mouse
-   present, the mouse rule fires and the touchpad is never opened. Plug the mouse
-   in /after/ the environment started and it is the other way round: the pad was
-   opened, the mouse never is.
-2. *One keyboard.* =find-keyboard-device= returned the /first/ device with
-   =EV_KEY= + =EV_REP=. On a laptop that is the built-in keyboard — the i8042
-   controller is probed long before USB — so the external keyboard's evdev was
-   never read. Typing still worked, which is what hid this: *text* comes through
-   the console (fd 0), and the console merges every keyboard. But Ctrl, Shift,
-   Super and Alt are read from evdev (§1), so on the external keyboard Ctrl-click,
-   Shift-arrow selection and every =SuperL-= binding were dead.
-3. *Once.* Nothing ever looked again, so anything plugged in later did not exist.
-   "Later" includes devices plugged in /before/ boot: USB enumerates
-   asynchronously, after PID 1 is already running — the supervisor's two-second
-   wait exists for exactly this ([[file:sbcl-init.org][sbcl-init.org]], "Why the startup =(sleep 2)=
-   exists") — so a slow hub could leave the external mouse out of the one scan
-   there was, and the touchpad would be what got opened.
+1. *One pointer.* A ranking (tablet, then mouse, then touchpad) opens the external mouse
+   and never the touchpad — or, if the mouse arrives later, the reverse.
+2. *One keyboard.* The first device with =EV_KEY= + =EV_REP= is the built-in keyboard
+   (the i8042 is probed long before USB), so an external keyboard's evdev is never read.
+   Typing still works — the console merges every keyboard into fd 0 — which hides it,
+   but Ctrl, Shift, Super and Alt come from evdev (§1), so Ctrl-click, Shift-arrow
+   selection and every =SuperL-= binding die on the external keyboard.
+3. *Once.* Anything plugged in later doesn't exist. That includes devices present at
+   boot: USB enumerates asynchronously, after PID 1 is running (hence the supervisor's
+   wait — [[file:sbcl-init.org][sbcl-init.org]], "Why the startup =(sleep 2)= exists"), so a slow hub can
+   miss the one scan.
 
-What the laptop actually exposes, read on the build host — which /is/ the laptop,
-with the external mouse and keyboard attached (=cat /proc/bus/input/devices=,
-abridged; host Debian kernel, so the touchpad's node differs under ours — see §8):
+*An example* (=cat /proc/bus/input/devices= on a Dell XPS 13 9300 under Debian, with an
+external USB mouse and gaming keyboard; abridged — the touchpad's node differs under our
+kernel, §8):
 
-| node    | name                                   | =EV=     | what the old rules made of it                 |
+| node    | name                                   | =EV=     | what a one-of-each ranking makes of it        |
 |---------+----------------------------------------+----------+-----------------------------------------------|
 | event0  | AT Translated Set 2 keyboard           | =120013= | *the* keyboard — first with =EV_REP=          |
 | event16 | PS/2 Synaptics TouchPad                | (pad)    | rule 3 — never reached while a mouse exists   |
@@ -607,62 +510,51 @@ abridged; host Debian kernel, so the touchpad's node differs under ours — see 
 | event21 | SINO WEALTH Gaming KB Keyboard         | =100013= | a keyboard — never opened                     |
 | event22 | SINO WEALTH Gaming KB Mouse            | =17=     | rule 2, a mouse                               |
 
-Two things in that table go beyond the report. The keyboard's /Consumer Control/
-node counted as a mouse under the old "any =EV_REL=" rule, so on a boot where USB
-enumerated it before the real mouse, the one pointer the environment chose was a
-volume knob — and /nothing/ moved the cursor. And a gaming keyboard like this one
-exposes a second keyboard node (=Keyboard=, the N-key-rollover interface): which of
-the two carries the modifiers is the keyboard's business, so both must be read.
-Which node the guest really picked on the laptop was not observed (it cannot be
-from here); the table is what the code /would/ do with this list.
+- *Consumer Control as a mouse.* Under an "any =EV_REL=" rule the keyboard's volume knob
+  counts as a pointer; if it's the one chosen, nothing moves the cursor. Hence §4's X
+  axis requirement.
+- *Two keyboard nodes.* Gaming keyboards expose a second one (the N-key-rollover
+  interface); which carries the modifiers is the keyboard's business, so both are read.
 
 ** The fix
 
-Every keyboard and every pointer is open at the same time, each an =input-dev=
-in =*input-devices*= ([[file:../initramfs/fb-browser.lisp::defun rescan-input-devices][=rescan-input-devices=]]):
+Every keyboard and every pointer is open at once, each an =input-dev= in
+=*input-devices*= ([[file:../initramfs/fb-browser.lisp::defun rescan-input-devices][=rescan-input-devices=]]):
 
-- *Classification by capability, per device* ([[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]]): =:mouse=,
-  =:pad=, =:tablet= or =:keyboard= — with the pointer rule asking for an X axis
-  (§4), which keeps Consumer Control out. A device that can do none of these (the
-  power button, the lid switch, the PC speaker) is listed but not opened.
-- *One poll over all of them.* [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]] lays out one =pollfd= per
-  device, after the tty's and the hotplug watch's (§5); it marks each device that
-  has records, and [[file:../initramfs/fb-browser.lisp::defun read-pointers][=read-pointers=]] / [[file:../initramfs/fb-browser.lisp::defun read-keyboards][=read-keyboards=]] drain exactly those.
-  Every loop in the browser — the main one, the debugger, the menus, the Spotter —
-  still calls =(fbb-wait 0 *fb-mouse* *fb-kbd*)= and =(read-mouse *fb-mouse* w h)=:
-  =*fb-mouse*= is now =:pointers= rather than an fd, and =read-mouse= given a
-  non-fd reads every ready pointer. So none of those loops changed.
-- *Per-device state without rewriting the decoder.* =read-mouse= and =pad-motion=
-  keep their state in special variables — the pad's remembered finger, the tap in
-  progress, the held button. Right for one device, wrong for two: a touchpad's last
-  finger position must not be differenced against a mouse's packet.
-  [[file:../initramfs/fb-browser.lisp::defmacro with-device-state][=with-device-state=]] rebinds those variables with =progv= to the device's
-  own saved values for the length of one drain, and saves them back. The decoder
-  does not know there is more than one device — which is also why replaying a
-  file of records through it still works unchanged.
+- *Classified per device* ([[file:../initramfs/fb-browser.lisp::defun input-device-kind][=input-device-kind=]]): =:mouse=, =:pad=, =:tablet= or
+  =:keyboard=. A device that's none of these (power button, lid switch, PC speaker) is
+  listed but not opened.
+- *One poll over all.* [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]] lays out one =pollfd= per device after the
+  tty's and the hotplug watch's (§5), marks each device with records, and
+  [[file:../initramfs/fb-browser.lisp::defun read-pointers][=read-pointers=]] / [[file:../initramfs/fb-browser.lisp::defun read-keyboards][=read-keyboards=]] drain exactly those. Loops still call
+  =(fbb-wait 0 *fb-mouse* *fb-kbd*)= and =(read-mouse *fb-mouse* w h)=: =*fb-mouse*= is
+  =:pointers=, and =read-mouse= given a non-fd reads every ready pointer.
+- *Per-device state without rewriting the decoder.* =read-mouse= and =pad-motion= keep
+  state in special variables — the pad's last finger, the tap in progress, the held
+  button. A touchpad's last position must not be differenced against a mouse's packet.
+  [[file:../initramfs/fb-browser.lisp::defmacro with-device-state][=with-device-state=]] rebinds those variables with =progv= to the device's own saved
+  values for one drain, and saves them back. The decoder doesn't know there's more than
+  one device, so replaying a file of records through it still works.
 
 ** What is shared, and what is not
 
-One *cursor*: every pointer moves the same arrow, as under X. Held *buttons and
-modifiers* are each device's own, and what the browser reads is their OR
-([[file:../initramfs/fb-browser.lisp::defun sync-input-globals][=sync-input-globals=]]). So Ctrl held on the external keyboard makes a click on the
-touchpad a Ctrl-click (jump to definition), and a press held on the pad while the
-mouse moves is a drag.
+- *One cursor.* Every pointer moves the same arrow, as under X.
+- *Buttons and modifiers are per device;* the browser reads their OR
+  ([[file:../initramfs/fb-browser.lisp::defun sync-input-globals][=sync-input-globals=]]). Ctrl on the external keyboard makes a touchpad click a
+  Ctrl-click; a press held on the pad while the mouse moves is a drag.
 
-The OR is not really a choice. The console's keyboard handler keeps a single
-=shift_state= for all keyboards ([[file:../linux/drivers/tty/vt/keyboard.c::static int shift_state = 0;][=drivers/tty/vt/keyboard.c=]]), so Ctrl on one
-keyboard and =a= on another already reach the tty as =C-a=; any other rule for
-the evdev side would disagree with the text we receive. What per-device state
-buys is *release*: a device that goes away takes its held keys with it, so
-unplugging a keyboard with Ctrl down cannot leave Ctrl stuck.
+The OR isn't really a choice: the console keeps one =shift_state= for all keyboards
+([[file:../linux/drivers/tty/vt/keyboard.c::static int shift_state = 0;][=drivers/tty/vt/keyboard.c=]]), so Ctrl on one keyboard and =a= on another already
+reach the tty as =C-a=. What per-device state buys is *release*: a device that goes
+away takes its held keys with it, so unplugging a keyboard with Ctrl down can't leave
+Ctrl stuck.
 
 ** Hotplug: arriving, and leaving
 
-*Arriving.* =CONFIG_INOTIFY_USER= (tag #26) lets us watch =/dev/input=;
-devtmpfs creates a node through =vfs_mknod=, which notifies like any other create.
-The watch fd sits in the poll set, and any event on it means "rescan" —
-=/proc/bus/input/devices= is the source of truth, and reading it is cheap. Three
-events matter:
+*Arriving.* =CONFIG_INOTIFY_USER= (tag #26) lets us watch =/dev/input=; devtmpfs creates
+a node through =vfs_mknod=, which notifies like any create. The watch fd sits in the
+poll set, and any event on it means "rescan" — =/proc/bus/input/devices= is the source
+of truth, and cheap to read.
 
 | inotify     | means                                   |
 |-------------+-----------------------------------------|
@@ -670,215 +562,189 @@ events matter:
 | =IN_ATTRIB= | its owner changed — see below           |
 | =IN_DELETE= | a node went                             |
 
-=IN_ATTRIB= is there because of who we are. With the laptop's disk found, PID 1
-runs as the *user* ([[file:storage.org][storage.org]]), and devtmpfs creates every input node as
-=root:root 0600= — the input class asks for no mode
-([[file:../linux/drivers/input/input.c::static char *input_devnode][=input_devnode=]]). So at =IN_CREATE= the open fails with =EACCES=.
-=lol-rootd= already handled this before any of the above existed: once a second
-it chowns any =/dev/input/event*= not yet the user's ([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]), and only
-those, so it causes one =IN_ATTRIB= per new node rather than one a second. That
-event wakes us, the rescan retries, the open succeeds. *No change to preinit or
-=lol-rootd= was needed.* A rescan is also re-run 400ms after any hotplug event, in
-case the node, its =/proc= line and its owner did not all land at once; and
-without inotify (an older kernel) the environment rescans every two seconds.
+- *Why =IN_ATTRIB=.* With a disk found, PID 1 runs as the *user* ([[file:storage.org][storage.org]]), and
+  devtmpfs creates input nodes as =root:root 0600= (the input class asks for no mode,
+  [[file:../linux/drivers/input/input.c::static char *input_devnode][=input_devnode=]]). So the open at =IN_CREATE= fails with =EACCES=. =lol-rootd= chowns
+  any =/dev/input/event*= not yet the user's once a second ([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]), causing
+  one =IN_ATTRIB= per new node; that wakes us, and the rescan's open succeeds.
+- *A retry.* A rescan is re-run 400 ms after any hotplug event, in case the node, its
+  =/proc= line and its owner didn't all land at once.
+- *No inotify* (an older kernel): the environment rescans every two seconds.
 
-*Leaving.* An unplugged device does not just go quiet. =evdev_poll= answers
-=EPOLLHUP | EPOLLERR= for it ([[file:../linux/drivers/input/evdev.c::static __poll_t evdev_poll][=drivers/input/evdev.c=]]), on /every/ call, at
-once, and =read= says =ENODEV=. Ignore that and the loop spins at 100% CPU on a
-corpse. So =POLLHUP= / =POLLERR= / =POLLNVAL= closes the fd and forgets the device
-right there, before anything tries to read it.
+*Leaving.* An unplugged device doesn't go quiet. =evdev_poll= answers
+=EPOLLHUP | EPOLLERR= for it ([[file:../linux/drivers/input/evdev.c::static __poll_t evdev_poll][=drivers/input/evdev.c=]]) on /every/ call, and =read=
+says =ENODEV=; ignore that and the loop spins at 100 % CPU. So =POLLHUP= / =POLLERR= /
+=POLLNVAL= closes the fd and forgets the device before anything reads it.
 
-*eventN numbers are reused.* Unplug a mouse and plug a keyboard, and the keyboard
-may well be =event6= again. A device is therefore identified by its node /and/ its
-=Sysfs== path, and a rescan closes anything the kernel no longer lists before it
-opens anything new. (=check-input.lisp= hits exactly this: its hotplugged keyboard
-and, after it, its hotplugged mouse both arrive as =event6=.)
-
-*Housekeeping never returns from* =fbb-wait=. A hotplug wake is nothing the caller
-asked about, and returning "nothing ready" would read to the main loop as "a
-deadline fired"; so =fbb-wait= handles it and polls again for whatever is left of
-the caller's timeout.
+- *eventN numbers are reused.* Unplug a mouse, plug a keyboard, and it may be =event6=
+  again. A device is identified by its node /and/ its =Sysfs== path, and a rescan closes
+  what the kernel no longer lists before opening anything new. (=check-input.lisp='s
+  hotplugged keyboard and mouse both arrive as =event6=.)
+- *Housekeeping never returns from =fbb-wait=.* A hotplug wake isn't what the caller
+  asked about, and "nothing ready" would read as "a deadline fired"; so =fbb-wait=
+  handles it and polls again for the rest of the caller's timeout.
 
 ** Pointer speed
 
-Two knobs, both ordinary special variables you can set in the Workspace:
-=*pad-speed*= (screens per full sweep of the touchpad, =3/2=, §4½) and
-=*mouse-speed*= (pixels per mouse count, =1= — what the console and X's flat profile
-do; a 1000-dpi mouse crosses a 1920px screen in about 5cm). Both carry the
-fraction, so any rational works. There is no acceleration curve.
+Two special variables, settable in the Workspace: =*pad-speed*= (screens per full sweep
+of the touchpad, =3/2=, §4½) and =*mouse-speed*= (pixels per mouse count, =1= — what the
+console and X's flat profile do; a 1000-dpi mouse crosses a 1920 px screen in about
+5 cm). Both carry the fraction, so any rational works. There's no acceleration curve.
 
 ** Seeing what the environment sees
 
-=SuperL-Space=, type =input devices=: one row per open device (node, kind, name,
-records read, clicks, what it is holding right now, where it hangs), then any it
-wanted and could not open (with the errno — =EACCES= is "not yours yet"), then
-every device it saw and did not want, and the recent arrivals and departures. Enter
-on a device opens its =input-dev= in the inspector. At a REPL:
-=(show-input-view)= (not =show-input-devices=, which is the supervisor's
-boot-time list of what the kernel sees). It is the subject =subj-input-devices=, at the end of
+=SuperL-Space=, type =input devices=: one row per open device (node, kind, name, records
+read, clicks, what it holds now, where it hangs), then any it wanted and couldn't open
+(with the errno — =EACCES= is "not yours yet"), every device it saw and didn't want, and
+recent arrivals and departures. Enter on a device opens its =input-dev= in the
+inspector. At a REPL: =(show-input-view)= (not =show-input-devices=, the supervisor's
+boot-time list). The subject is =subj-input-devices=, at the end of
 [[file:../initramfs/fb-browser.lisp::defstruct (subj-input-devices][=fb-browser.lisp=]].
 
-** How it was verified
+** Tests
 
-[[file:../check-input.lisp][=check-input.lisp=]] boots with a PS/2 mouse, a USB mouse, a USB tablet, the PS/2
-keyboard and a USB keyboard, as uid 1000 (=test-disk.img=), and drives each device
-/on its own/ — =mouse_set= picks which mouse QEMU feeds; the USB keyboard is bound
-to the VGA console (=display=vga0=) so key events sent with ="device":"vga0"= reach
-it and the rest reach the PS/2 one. It asserts: all five open at once; each pointer
-moves the cursor and its own record count grows; each one's click is seen; the
-tablet lands where aimed; Ctrl through each keyboard's own node, held across the
-two and released; Super on the USB keyboard; a synthetic touchpad replayed through
-=with-device-state= moves by the difference (58px, as computed) with its finger
-remembered per device; a hotplugged USB keyboard is opened and forgotten; a
-hotplugged USB mouse is opened, moves, clicks, and on =device_del= is closed, the
-environment survives, the PS/2 mouse still works, and the loop woke 5 times in 4
-idle seconds afterwards (the clock and the pointer's hide; a spin would be tens of
-thousands). 38 assertions, all pass; [[file:../check-pointer.lisp][=check-pointer=]], [[file:../check-scroll.lisp][=check-scroll=]] and
-[[file:../check-clipboard.lisp][=check-clipboard=]] still pass.
+[[file:../check-input.lisp][=check-input.lisp=]] (38 assertions) boots with a PS/2 mouse, a USB mouse, a USB
+tablet, the PS/2 keyboard and a USB keyboard, as uid 1000 (=test-disk.img=), and drives
+each device /on its own/: =mouse_set= picks which mouse QEMU feeds, and the USB keyboard
+is bound to =display=vga0= so keys sent with ="device":"vga0"= reach it and the rest
+reach the PS/2 one. It asserts:
+
+- *All five open at once;* each pointer moves the cursor and its own record count grows;
+  each one's click is seen; the tablet lands where aimed.
+- *Modifiers per keyboard:* Ctrl through each keyboard's own node, held across the two
+  and released; Super on the USB keyboard.
+- *A synthetic touchpad* replayed through =with-device-state= moves by the difference
+  (58 px, as computed), its finger remembered per device.
+- *Hotplug:* a USB keyboard is opened and forgotten; a USB mouse is opened, moves,
+  clicks, and on =device_del= is closed, the environment survives, the PS/2 mouse still
+  works, and the loop wakes 5 times in 4 idle seconds afterwards (the clock and the
+  pointer's hide; a spin would be tens of thousands).
+
+[[file:../check-pointer.lisp][=check-pointer=]], [[file:../check-scroll.lisp][=check-scroll=]] and [[file:../check-clipboard.lisp][=check-clipboard=]] also pass with all devices open.
 
 ** Ruled out (so nobody searches again)
 
-- *A missing driver.* =USB_HID=, =HID_GENERIC=, xHCI and =MOUSE_PS2_SYNAPTICS= are
-  all built (tag #26); every device is in =/proc/bus/input/devices=. Each pointer
-  worked whenever it happened to be the one chosen.
-- *Permissions.* Boot-time and hotplugged nodes are both handed to the user
-  (=give_devices=, at boot and from =lol-rootd=); the hotplugged mouse in
-  =check-input= opened as uid 1000.
-- *inotify on devtmpfs.* It does fire for nodes the kernel creates; the hotplug was
-  seen within about half a second.
-- *virtio-input* (=virtio-mouse-pci= etc.) would be a third bus to test on, but
-  =CONFIG_VIRTIO_INPUT= is off and the laptop has none; USB and PS/2 are its buses.
-- *QEMU routing, a trap for the next test.* With no =device= argument QEMU sends
-  keys to whichever keyboard it last activated, which after boot was the USB one —
-  the PS/2 keyboard then sees nothing. A test that means "the PS/2 keyboard" must
-  bind the other one to a console, as =check-input= does.
+- *A missing driver.* =USB_HID=, =HID_GENERIC=, xHCI and =MOUSE_PS2_SYNAPTICS= are all
+  built (tag #26); every device is in =/proc/bus/input/devices=. Each pointer worked
+  whenever it was the one chosen.
+- *Permissions.* Boot-time and hotplugged nodes both go to the user (=give_devices=, at
+  boot and from =lol-rootd=); the hotplugged mouse in =check-input= opened as uid 1000.
+- *inotify on devtmpfs.* It fires for nodes the kernel creates; hotplug was seen within
+  about half a second.
+- *virtio-input* (=virtio-mouse-pci= etc.) would be a third bus to test, but
+  =CONFIG_VIRTIO_INPUT= is off and laptops have none; USB and PS/2 are the buses.
+- *QEMU routing, a trap for tests.* With no =device= argument QEMU sends keys to the
+  keyboard it last activated — after boot, the USB one — so the PS/2 keyboard sees
+  nothing. A test that means "the PS/2 keyboard" must bind the other to a console, as
+  =check-input= does.
 
-** Limits, honestly
+** Limits
 
-- A device that is both a pointer and a keyboard is read as a pointer: its
-  modifiers count, its Menu key does not.
-- A key already held when a keyboard is plugged in is not seen until it is pressed
-  again (=EVIOCGKEY= at open would fix it; not worth it yet).
-- If the /last/ pointer is unplugged, its arrow stays on screen until the next
-  redraw.
-- Two presses from two devices in the same poll wake count as one click.
+- *A device that's both pointer and keyboard* is read as a pointer: its modifiers count,
+  its Menu key doesn't.
+- *A key held when a keyboard is plugged in* isn't seen until pressed again (=EVIOCGKEY=
+  at open would fix it).
+- *Unplugging the /last/ pointer* leaves its arrow on screen until the next redraw.
+- *Two presses from two devices in one poll wake* count as one click.
 
-** Checklist on the real laptop
+** Checklist on real hardware
 
-Boot the image with the external mouse and keyboard attached, then:
+Boot with the external mouse and keyboard attached, then:
 
-1. =SuperL-Space=, =input devices=, Enter. Expect *open*: the built-in keyboard,
-   the USB keyboard (perhaps two nodes), the touchpad (=pad= — or =mouse= if the
-   kernel gave it a relative node), the USB mouse. Nothing under /could not open/.
-   Note what is under /seen, not read/ — that is the list to send if anything is
-   missing.
-2. Move the touchpad, then the mouse, then the touchpad again; Refresh the view
-   (its only command) — both counts grew, one arrow followed both.
-3. Click with each (the touchpad: a firm tap, or a press); hold Ctrl on the
-   *external* keyboard and click a symbol in the Workspace with the touchpad —
-   it should jump to the definition.
-4. =SuperL-m= typed on the external keyboard opens the module index (Super read
-   from its own node).
-5. Unplug the mouse, keep using the touchpad; plug it back in — it works within a
-   second and appears under /recent changes/. Same with the keyboard.
-6. If the mouse feels slow or fast, set =*mouse-speed*= in the Workspace (=3/2=,
-   =2/3=); the pad has =*pad-speed*=.
+1. =SuperL-Space=, =input devices=, Enter. Expect *open*: the built-in keyboard, the
+   USB keyboard (perhaps two nodes), the touchpad (=pad= — or =mouse= if the kernel gave
+   it a relative node), the USB mouse. Nothing under /could not open/. What's under
+   /seen, not read/ is the list to send if anything is missing.
+2. Move the touchpad, the mouse, the touchpad again; Refresh the view (its only
+   command). Both counts grew; one arrow followed both.
+3. Click with each (touchpad: a press, or a firm tap if tap-to-click is on). Hold Ctrl
+   on the *external* keyboard and click a symbol in the Workspace with the touchpad —
+   it jumps to the definition.
+4. =SuperL-m= on the external keyboard opens the module index (Super read from its own
+   node).
+5. Unplug the mouse, keep using the touchpad, plug it back — it works within a second
+   and appears under /recent changes/. Same with the keyboard.
+6. If the mouse feels slow or fast, set =*mouse-speed*= (=3/2=, =2/3=); the pad has
+   =*pad-speed*=.
 
 * 5. Waiting on many things at once: =poll(2)=
 
-Several input sources — the tty, every device of §4¾, the hotplug watch — all of
-which may be idle. Busy-polling would spin PID 1 at 100% CPU; blocking on any one
-would ignore the others. =poll(2)= is the answer, and [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]] (under
-[[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]) builds its argument array by hand:
+The tty, every device of §4¾ and the hotplug watch may all be idle. Busy-polling would
+spin PID 1 at 100 % CPU; blocking on one would ignore the rest. [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]]
+(under [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]) builds =poll(2)='s argument array by hand:
 
 #+begin_src c
   struct pollfd { int fd; short events; short revents; };   /* 8 bytes */
 #+end_src
 
-N of those is an =8N=-byte array: =fd= at offset =n*8=, =events= at =n*8+4=,
-=revents= at =n*8+6=. Slot 0 is the tty, slot 1 the =/dev/input= watch, then one
-per open device. We fill it in and pass timeout =-1= (wait forever) unless
-something has a deadline. The loop therefore *sleeps* until something actually
-happens, and the browser costs nothing when you are not touching it.
+- *Layout.* N slots are an =8N=-byte array: =fd= at =n*8=, =events= at =n*8+4=, =revents=
+  at =n*8+6=. Slot 0 is the tty, slot 1 the =/dev/input= watch, then one per open
+  device, then the fds of other services (the web pane, workers) — 40 slots in all.
+- *Sleeping.* Timeout =-1= (forever) unless something has a deadline, so the loop sleeps
+  until something happens and the browser costs nothing while untouched.
+- *=revents=.* Bit 0 (=POLLIN=) is records waiting; =POLLHUP= (=0x10=) and =POLLERR=
+  (=0x8=) are an unplugged device, which must be closed at once or poll reports it
+  forever (§4¾).
+- *An absent fd* (no inotify, say) still gets its slot, holding =fd -1=: poll ignores a
+  negative fd, so the offsets stay put and there's no separate code path.
 
-=revents= says more than "readable". Bit 0 (=POLLIN=) is records waiting; =POLLHUP=
-(=0x10=) and =POLLERR= (=0x8=) are an unplugged device, which must be closed at once
-or poll reports it again forever (§4¾).
+=sb-posix= has no =poll= (nor =select= nor =epoll= — [[file:processes.org][processes.org]] §6), so the array is
+ours, and =%put-pollfd= writes the one field that's easy to get wrong, for every caller.
 
-Hand-laying-out a C struct is the price of there being no =poll= in =sb-posix= —
-checked, and there is none, nor =select= nor =epoll= ([[file:processes.org][processes.org]] §6). So this
-array stays ours, and it is worth writing the one field that is easy to get wrong
-exactly once, which is what =%put-pollfd= now does for both callers.
-
-*A bug this hid until 2026-09-20.* The =fd= field is a full 32-bit =int=, and we
-were writing only its low byte. That is correct for as long as every descriptor is
-a single digit — which, with a console and two evdev nodes, it always had been.
-Force a descriptor above 255 and it silently polls a *different* fd: with a pipe's
-read end at fd 300 and data waiting, the old code polled fd 44 (=300 & 0xff=) and
-got =POLLNVAL= back, reporting "nothing to read" while the real descriptor had
-data. It now writes all four bytes little-endian. This matters ahead of any fourth
-slot holding a *socket* rather than a device node — see [[file:processes.org][processes.org]] §2.
-
-A small robustness trick worth naming: an *absent* fd (no inotify, say) still gets
-its slot, holding =fd -1= — poll ignores a negative fd and reports nothing for it —
-so the revents offsets stay put and the "no watch" case needs no separate code
-path. (With three fixed slots this used to be a zeroed slot, =fd 0= with
-=events = 0=; -1 is the documented way to say "skip this one".)
+*Pitfall: =fd= is a full 32-bit =int=.* Writing only its low byte works while every
+descriptor is small, then silently polls a *different* fd: a pipe at fd 300 was polled
+as fd 44 (=300 & 0xff=), which returned =POLLNVAL= — "nothing to read" while data
+waited. All four bytes are written, little-endian. That matters for any slot holding a
+socket or pipe ([[file:processes.org][processes.org]] §2).
 
 * 6. The wheel, end to end
 
-There is no scroll *axis* and no scroll *position* — the wheel is a relative
-motion device that moves in detents. One notch is one record:
+There's no scroll *axis* and no scroll *position*: the wheel is a relative device that
+moves in detents. One notch is one record:
 
 #+begin_example
   type=2 (EV_REL)  code=8 (REL_WHEEL)  value=+1   ; rolled away from you
   type=2 (EV_REL)  code=8 (REL_WHEEL)  value=-1   ; rolled toward you
 #+end_example
 
-[[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]] sums these across one drain and returns them beside the click, so a
-fast flick becomes a single =wheel= of =+3= rather than three separate frames.
-Then the main loop turns notches into lines:
+[[file:../initramfs/fb-browser.lisp::defun read-mouse][=read-mouse=]] sums these across one drain and returns them beside the click, so a fast
+flick is one =wheel= of =+3=, not three frames. The main loop turns notches into lines:
 
 #+begin_src lisp
   (unless (zerop wheel)
     (browser-scroll (* (- wheel) +wheel-lines+)))     ; +wheel-lines+ = 3
 #+end_src
 
-*The negation is a real sign-convention flip, not a fudge.* evdev's =+1= means
-"the wheel rolled away from the user". [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]]'s argument means "move
-this many lines further *down* the document". Rolling away conventionally moves
-you *up* the document, so the two disagree and one =-= reconciles them.
+*The negation is a real sign-convention flip.* evdev's =+1= means "rolled away from the
+user"; [[file:../poc/shell.lisp::defun browser-scroll][=browser-scroll=]]'s argument means "this many lines further *down*". Rolling
+away moves you *up* the document, so one =-= reconciles them.
 
-=browser-scroll= then splits by pane kind:
+=browser-scroll= then dispatches on the pane. Every kind scrolls its *view* and leaves
+the caret or selection alone — scrolling is looking, not moving:
 
-- a *text* pane scrolls its viewport via [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]], leaving the caret where it
-  is — scrolling is looking, not moving;
-- a *list* pane moves the *selection* instead, because =draw-list-body= anchors
-  the visible window to the selection and has no viewport of its own.
-
-That second case is a known wart: scrolling a list drags the selection with it,
-which is not what a scroll should do. Fixing it properly means giving lists a
-viewport independent of the selection — i.e. a real scrollbar widget, which is
-what phase 3's remaining toolkit work is for ([[file:code-browser.org][code-browser.org]] §8).
+- *Ctrl held:* resizes the text instead ([[file:fonts.org][fonts.org]] §6).
+- *A web page* gets the wheel sent to Chrome (=web-wheel=).
+- *A terminal* scrolls its history, or passes the wheel to the program (=terminal-wheel=).
+- *A text pane* scrolls its viewport via [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]], the caret staying put.
+- *A list pane* moves =pane-top= with =pane-follow= off for that frame, so the widget
+  doesn't drag the view straight back to the selection. The widget clamps at both ends.
 
 ** The wheel a laptop does not have
 
-A touchpad has no wheel. What it has is a second finger, and it says so:
-=BTN_TOOL_DOUBLETAP=. While that is down, [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] stops moving the cursor
-and turns vertical motion into notches instead — one per 1/24th of the pad's
-height, about 2mm of travel.
+A touchpad has no wheel; it has a second finger, and says so: =BTN_TOOL_DOUBLETAP=.
+While that's down, [[file:../initramfs/fb-browser.lisp::defun pad-motion][=pad-motion=]] stops moving the cursor and turns vertical motion
+into notches — one per 1/24 of the pad's height, about 2 mm.
 
-The sign falls out of the convention above rather than needing a second one.
-Dragging two fingers *toward* you is the same gesture as rolling a wheel toward
-you, so it produces the same negative notch, and the same =(- wheel)= in the
-caller turns it into "further down the document". Nothing downstream of
-=read-mouse= can tell that there was no wheel.
+The sign follows the same convention: two fingers dragged *toward* you is the gesture
+of rolling a wheel toward you, so it produces the same negative notch, and the same
+=(- wheel)= makes it "further down". Nothing after =read-mouse= can tell there was no
+wheel.
 
 * 7. The same gesture on the host: X11 buttons 4 and 5
 
-On the dev host there is no evdev in play at all. The X server owns the devices
-and hands us protocol events instead ([[file:x11.org][x11.org]]), and X has its own answer to the
-wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
+On the dev host the X server owns the devices and sends protocol events
+([[file:x11.org][x11.org]]). X's answer to the wheel predates scroll axes: *the wheel is a pair of
+buttons*.
 
 | gesture    | guest (evdev)                   | host (X11)                                             |
 |------------+---------------------------------+--------------------------------------------------------|
@@ -889,14 +755,12 @@ wheel, from long before scroll axes existed: *the wheel is a pair of buttons*.
 | wheel down | =EV_REL= =REL_WHEEL= value =-1= | =ButtonPress= detail =5=                               |
 | Ctrl held  | =EV_KEY= =KEY_LEFTCTRL= value 1 | the event's =state= bitmask                            |
 
-[[file:../poc/x11.lisp][=x11.lisp=]] already decodes all of these — =:button-press= carries the button in
-=event-detail=. The Ctrl row is the neat part: X *gives* you the modifier state on
-every event, so the host needs no equivalent of the second keyboard fd. That
-asymmetry is exactly why the guest has one.
+[[file:../poc/x11.lisp][=x11.lisp=]] decodes all of these (=:button-press= carries the button in
+=event-detail=). X *gives* the modifier state on every event, so the host needs no
+second keyboard fd — that asymmetry is why the guest has one.
 
-[[file:../poc/run-browser.lisp][=run-browser.lisp=]] dispatches on the button: 1 clicks, 4 and 5 call =browser-scroll=
-(this paragraph used to record them as silently dropped — closed since), and a
-=:motion= whose state carries =Button1Mask= calls =browser-drag=.
+[[file:../poc/run-browser.lisp][=run-browser.lisp=]] dispatches on the button: 1 clicks, 4 and 5 call =browser-scroll=,
+and a =:motion= whose state carries =Button1Mask= calls =browser-drag=.
 
 * 8. What makes it work (kernel side)
 
@@ -912,23 +776,20 @@ asymmetry is exactly why the guest has one.
 | =CONFIG_I2C_DESIGNWARE_PLATFORM=  | *n*   | not built, which is *why* we get it that way               |
 | =CONFIG_RMI4_CORE=                | *n*   | not built either, so there is no SMBus hand-off            |
 
-*Why the laptop's touchpad arrives over PS/2.* =CONFIG_I2C_HID=y= is there and
-looks sufficient, but I2C-HID needs an I2C *bus*, and on an Intel laptop that
-controller wants =CONFIG_I2C_DESIGNWARE_PLATFORM=. Only the Designware *core* is
-built (=i2c-designware-common.o= and =-master.o= exist under
-=linux/drivers/i2c/busses/=; =i2c-designware-platdrv.o= does not), so the bus
-never appears and neither does the I2C touchpad. =psmouse= picks the pad up over
-the legacy i8042 port instead — and with =CONFIG_RMI4_CORE= off it cannot hand
-over to SMBus either, so it stays in the *absolute* Synaptics PS/2 protocol. That
-is the device §4½ is about.
+*Why a laptop touchpad arrives over PS/2.* =CONFIG_I2C_HID=y= looks sufficient, but
+I2C-HID needs an I2C *bus*, and on an Intel laptop that controller wants
+=CONFIG_I2C_DESIGNWARE_PLATFORM=. Only the Designware *core* is built
+(=i2c-designware-common.o= and =-master.o= exist under =linux/drivers/i2c/busses/=;
+=i2c-designware-platdrv.o= doesn't), so the bus never appears and neither does the I2C
+touchpad. =psmouse= picks the pad up over the legacy i8042 port instead, and with
+=CONFIG_RMI4_CORE= off it can't hand over to SMBus, so it stays in the *absolute*
+Synaptics PS/2 protocol — the device §4½ is about.
 
-Enabling the platform driver would additionally give the pad a relative node and
-is a fair thing to do later, but it would not make §4½ optional: the PS/2 absolute
-fallback is what every machine without that driver gets, and it has to be right.
+Enabling the platform driver would give the pad a relative node, but wouldn't make §4½
+optional: the PS/2 absolute fallback is what every machine without that driver gets.
 
-Full table and the reasoning: [[file:kernel-config.org][kernel-config.org]]. Device nodes appear without us
-listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initramfs/preinit.c][=preinit.c=]]
-([[file:sbcl-init.org][sbcl-init.org]]).
+Full table and reasoning: [[file:kernel-config.org][kernel-config.org]]. Device nodes appear without being listed
+in the cpio because =/dev= is devtmpfs, mounted by [[file:../initramfs/preinit.c][=preinit.c=]] ([[file:sbcl-init.org][sbcl-init.org]]).
 
 * 9. Where the code lives
 
@@ -950,9 +811,6 @@ listing them in the cpio because =/dev= is devtmpfs, mounted by [[file:../initra
 | the X11 equivalents                      | [[file:../poc/x11.lisp][=x11.lisp=]], [[file:../poc/run-browser.lisp][=run-browser.lisp=]]                                    |
 | the cursor bitmaps we draw ourselves     | =*cursor-shapes*= in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] (arrow, hand, I-beam)      |
 
-The cursor deserves the last word: there isn't one. No hardware sprite, no
-overlay plane — =*cursor-x*= and =*cursor-y*= are two integers, and we paint a
-little arrow from a string-art bitmap ourselves — into a patch composited over the
-frame on its way to the screen, never into the frame itself ([[file:framebuffer.org][framebuffer.org]] §9.5). The
-mouse pointer on this machine is drawn by the same =fill-rect= that draws the
-tab strip.
+There's no hardware cursor. No sprite, no overlay plane: =*cursor-x*= and =*cursor-y*=
+are two integers, and a small bitmap is painted into a patch composited over the frame
+on its way to the screen, never into the frame itself ([[file:framebuffer.org][framebuffer.org]] §9.5).

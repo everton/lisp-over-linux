@@ -8,68 +8,102 @@ Chrome runs in) · [[file:framebuffer.org][framebuffer.org]] (why the image has 
 [[file:code-browser.org][code-browser.org]] (the shell the web pane lives in) ·
 [[file:networking.org][networking.org]] (the network under it).
 
-Question that prompted this: /a significant part of my work is web based, so I need a
-browser in the environment./ The first version of this document explored WPE WebKit
-and Nyxt; that exploration is kept, unchanged, as the appendix (§A1–§A6).
+Much everyday work happens in web apps, so the environment needs a real browser.
+=SuperL-b= opens a web page in a tab of the environment. The engine is the host's
+own Google Chrome, started headless inside a container whose root is the host's
+distribution, driven over the DevTools protocol, and drawn by our Lisp.
 
-*STATUS (2026-10-12, kernel tag #26): BUILT.* =SuperL-b= opens a web page in a tab of
-the environment. The engine is the host's own Google Chrome (148.0.7778.215 on the dev
-host), started headless inside a container whose root is the host's Debian, driven
-over the DevTools protocol, and drawn by our Lisp. Code:
-[[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
-[[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane). Tests:
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (89 checks, about a
-minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (25 checks). Both pass.
-Since 2026-10-13 a =<select>='s options, a colour and a date are asked for by the
-environment itself, because headless Chrome draws their popups where the screencast
-cannot see them (§4.4).
-Since 2026-10-20 a page can have the microphone, the camera (tag #32) and the screen,
-for a video call (§4.8), and pages are no longer told they are automated, which had
-Google refusing sign-in and asking for captchas (§4.5).
+*Status: built* (kernel tag #26 or later; the camera needs #32). Pickers for
+=<select>=, colour and date (§4.4), video calls with camera, microphone and a shared
+screen (§4.8). Tested against Chrome 148.
 
-A shorter, illustrated walk through this pane and the terminal, written for reading
-in the web pane itself (it is its own page, offline), is
-[[file:design/browser-and-terminal.html][design/browser-and-terminal.html]].
+- *Code.* [[file:../initramfs/web-cdp.lisp][initramfs/web-cdp.lisp]] (the wire),
+  [[file:../initramfs/web.lisp][initramfs/web.lisp]] (the pane).
+- *Tests.* [[file:../poc/web-test.lisp][poc/web-test.lisp]] on the host (89 checks, about a
+  minute), [[file:../check-web.lisp][check-web.lisp]] in the guest (§8.1).
+- *Illustrated walk.* [[file:design/browser-and-terminal.html][design/browser-and-terminal.html]] covers this
+  pane and the terminal, and reads well in the web pane itself.
 
 * 1. The decision: Chrome, headless, over the DevTools protocol
 
-The appendix chose an architecture before it chose an engine: *headless + our own
-blit*. The engine renders into memory and shows nothing. Our Lisp puts its pixels
-on the screen, as one more pane. The Lisp stays the only process on =/dev/fb0=,
-which [[file:processes.org][processes.org]] §1 requires. No GPU driver is needed and
-no compositor.
+The architecture comes before the engine: *headless + our own blit*. The engine
+renders into memory and shows nothing; our Lisp puts its pixels on the screen as one
+more pane. The Lisp stays the only process on =/dev/fb0=, which
+[[file:processes.org][processes.org]] §1 requires. No GPU driver, no compositor.
 
-It picked WPE WebKit to fill that shape. We use the same shape with a different
-engine: *Google Chrome*, which is already installed on the laptop, at
-=/usr/bin/google-chrome=, and which is the browser the user's web work is done in.
-Chrome has a headless mode (=--headless=new=) that is the real browser with no
-window. It also has a control protocol that already does everything the shape
-needs. WPE would have needed C code against an API nobody here has read yet
-(§A6, last paragraph).
+Chrome fills that shape with no C code of ours. It has a headless mode
+(=--headless=new=) that is the real browser with no window, and a control protocol
+that already covers frames, input, tabs, downloads and dialogs. It's usually
+installed already (=/usr/bin/google-chrome=).
 
 ** 1.1 Chrome or WPE: the comparison that decided it
 
-| What matters                              | Chrome (built)                                                                                                   | WPE WebKit (explored, §A)                                                                                  |
-|-------------------------------------------+------------------------------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------|
-| Site compatibility                        | Chrome itself: Google Workspace, GitHub and most SaaS are *built against* it                                     | WebKit, the Safari engine. Supported by the big sites, but some sniff the user agent and refuse or degrade |
-| The user's habits                         | the browser already in use; a profile can even be shared (§7.3)                                                  | a new browser                                                                                              |
-| How frames reach us                       | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3)                                       | the new platform API's headless buffers; *not investigated* (§A6)                                          |
-| How input reaches it                      | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4)                                            | an embedder API in C                                                                                       |
-| Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=)                                                          | to be written against the API                                                                              |
-| Code we wrote                             | 2,049 lines of Lisp (with an embedded page script), *no C* (=web-cdp.lisp= 480, =web.lisp= 1,569, at 2026-10-13) | a C shim plus Lisp; not estimated                                                                          |
-| Memory, one simple page                   | 240–280 MB PSS on the host (§8.2), 436 MB in the guest                                                           | ~570 MB RSS for one heavy site (§A5; RSS, an upper bound)                                                  |
-| Disk                                      | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image                                               | ~270 MB of libraries (§A2)                                                                                 |
-| Licence                                   | proprietary binary, used as installed                                                                            | LGPL                                                                                                       |
+| What matters                              | Chrome (built)                                                                     | WPE WebKit (explored, §1.2)                                                                                 |
+|-------------------------------------------+------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------|
+| Site compatibility                        | Chrome itself: Google Workspace, GitHub and most SaaS are *built against* it       | WebKit, the Safari engine. Supported by the big sites, but some sniff the user agent and refuse or degrade |
+| Habits                                    | the browser most people already use; a profile can even be shared (§7.3)           | a new browser                                                                                               |
+| How frames reach us                       | =Page.startScreencast=: a JPEG per repaint, flow-controlled by acks (§3.3)         | the new platform API's headless buffers; *not investigated*                                                 |
+| How input reaches it                      | =Input.dispatchKeyEvent= / =dispatchMouseEvent= / =insertText= (§3.4)              | an embedder API in C                                                                                        |
+| Tabs, history, titles, downloads, dialogs | all in the protocol (=Target.*=, =Page.*=, =Browser.*=)                            | to be written against the API                                                                               |
+| Code we wrote                             | Lisp only, *no C* (=web-cdp.lisp= 527 lines, =web.lisp= 2,882, with page scripts)  | a C shim plus Lisp; not estimated                                                                           |
+| Memory, one simple page                   | 240–280 MB PSS on the host (§8.2), 436 MB in the guest                             | ~570 MB RSS for one heavy site (RSS, an upper bound)                                                        |
+| Disk                                      | 405 MB (=/opt/google/chrome=) on the host's disk, not in the image                 | ~270 MB of libraries                                                                                        |
+| Licence                                   | proprietary binary, used as installed                                              | LGPL                                                                                                        |
 
-The licence row is the honest cost. Chrome is not free software. We do not ship
-it: the image *calls* the copy the user installed, from the host's own disk. That is
-the same stance [[file:previews.org][previews.org]] takes for =libstbi.so=, one step
-further: a host program, used at runtime, because writing our own is not
-realistic (see =loc.sh=, which counts only what we wrote).
+The licence row is the honest cost. We don't ship Chrome: the image *calls* the copy
+installed on the host's disk. That's the stance [[file:previews.org][previews.org]] takes for
+=libstbi.so=, one step further — a host program used at runtime, because writing our
+own isn't realistic (=loc.sh= counts only what we wrote).
 
-The appendix's checklists T1–T7 are still the right way to judge WPE, if that is
-ever wanted. Nothing in §2–§6 below is Chrome-specific except the protocol, so
-replacing the engine would replace =web-cdp.lisp= and keep the pane.
+Nothing in §2–§6 is Chrome-specific except the protocol. Replacing the engine would
+replace =web-cdp.lisp= and keep the pane.
+
+** 1.2 Alternatives considered
+
+A browser is mostly its *engine* (HTML/CSS layout, JavaScript VM, painting). Writing
+one is out of scope, so the question is which engine, and how much desktop it drags in.
+
+| Option                     | Engine / JavaScript                              | How it draws                   | Verdict                                       |
+|----------------------------+--------------------------------------------------+--------------------------------+-----------------------------------------------|
+| Links2 =-g=, w3m           | own; HTML 4, basic CSS; no JS                    | framebuffer / terminal         | tiny, but the modern web is out of reach      |
+| NetSurf (framebuffer)      | own; CSS 2.1, partial CSS 3; minimal JS          | =libnsfb=                      | best of the small ones; single-page apps break |
+| WPE WebKit                 | full WebKit + JavaScriptCore                     | DRM/KMS, or headless           | the real web without a desktop; the runner-up |
+| WebKitGTK / Nyxt 3         | full WebKit                                      | GTK → X or Wayland             | needs a whole desktop                         |
+| Electron / Nyxt 4          | Chromium                                         | its own stack                  | heavier than Chrome itself                    |
+| Remote (VNC into the host) | any                                              | a Lisp RFB client in the guest | a thin client, not a browser                  |
+| Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era                    | McCLIM                         | a historical toy                              |
+
+- *DRM/KMS* is the kernel's modern display API (=/dev/dri/card0=), what a GPU driver
+  such as =i915= exposes. The image doesn't have it: only the firmware framebuffer
+  =efifb= ([[file:framebuffer.org][framebuffer.org]]). So only *headless* fits.
+- *Why not Nyxt.* It's a Lisp shell around someone else's engine. Nyxt 3 renders
+  through WebKitGTK; =ldd= on the host gives 166 shared libraries (~187 MB) for
+  =libwebkit2gtk-4.1=, against 143 (~137 MB) for =libWPEWebKit-2.0=. The totals are
+  close; the difference is that GTK needs a display server and wants the main thread.
+
+*WPE dead ends* (on a Debian host with =libwpewebkit-2.0-1=, kept so nobody repeats
+them):
+
+- *=cog= under X fails.* =libwpe [FATAL]: could not load the impl library ...
+  libWPEBackend-default.so=. Debian builds cog with only the =drm=, =headless= and
+  =wl= platforms; =-P x11= falls through to a backend that doesn't exist.
+- *=cog -P wl= under =cage= with =LIBGL_ALWAYS_SOFTWARE=1= crash-loops.* The web
+  process dies on an assertion in =dmabuf_feedback_check_main_device= inside
+  WPEBackend-fdo, the legacy backend. =WEBKIT_DISABLE_DMABUF_RENDERER=,
+  =WEBKIT_DISABLE_COMPOSITING_MODE= and =WEBKIT_SKIA_ENABLE_CPU_RENDERING= don't
+  help; =GALLIUM_DRIVER=softpipe= avoids it but is unusably slow. WebKit's own
+  =MiniBrowser= doesn't crash (it uses the newer built-in platform layer) unless given
+  =--use-legacy-api=.
+- *DRM on a bare VT needs the VT's owner.* Run from an X session,
+  =WPE_DISPLAY=drm MiniBrowser= fails with =Failed to become DRM master=: logind
+  hands the display only to the user owning that VT.
+- *Web Inspector needs the sandbox off.* =WEBKIT_INSPECTOR_HTTP_SERVER= works only
+  with =WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1=; =WEBKIT_SHOW_FPS=1= printed
+  nothing on 2.54.
+
+WPE in software rendering under =cage= worked. Benchmarks
+(Speedometer/JetStream/MotionMark) and PSS measurements were never taken, since
+Chrome was chosen first.
 
 * 2. What the user sees
 
@@ -79,164 +113,150 @@ web rows too: "open URL" when the query looks like an address, "search the web" 
 any other text, the open web tabs whose title or URL match, and pages from your
 history (§4.6).
 
-A web tab is an ordinary tab of the environment. Its label is the page's title, and
-=SuperL-1…9=, =SuperL-Tab= and =SuperL-w= work on it like on any other. Inside it,
-a toolbar shows back =<=, forward =>=, reload (or stop while loading) and the
-address; clicking the address edits it. Below is the page.
+A web tab is an ordinary tab: its label is the page's title, and =SuperL-1…9=,
+=SuperL-Tab= and =SuperL-w= work on it. A toolbar shows back =<=, forward =>=,
+reload (stop while loading) and the address; clicking the address edits it.
 
-| Key                                              | Does                                                    |
-|--------------------------------------------------+---------------------------------------------------------|
+| Key                                              | Does                                                                                                                  |
+|--------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------|
 | =C-l=                                            | the address prompt: an address, a path, or words to search for; the panel above it lists files or your history (§4.6) |
-| =SuperL-Left= / =SuperL-Right=                   | back / forward in the page's history                    |
-| =C-r=                                            | reload                                                  |
-| =Esc= while loading                              | stop (otherwise =Esc= goes to the page)                 |
-| =C-f=                                            | find in the page as you type; Enter finds the next      |
-| =C-c= / =C-x= / =C-v=                            | copy / cut / paste through *our* clipboard (§4.2)       |
-| =C-Insert= / =S-Insert=                          | copy / paste, X style                                   |
-| =C-+= / =C--= / =C-0=                            | zoom in, out, back to 100% (§4.7)                       |
-| =Shift-F10=, the Menu key, right click           | the environment's menu for the page                     |
-| =SuperL-click= on a link                         | open it in a new tab (Ctrl-click opens it behind)       |
-| a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4)                          |
-| a click on a colour input, Alt-Down on a date    | the minibuffer asks for the value (§4.4)                |
-| anything else                                    | the page's                                              |
+| =SuperL-Left= / =SuperL-Right=                   | back / forward in the page's history                                                                                  |
+| =C-r=                                            | reload                                                                                                                |
+| =Esc= while loading                              | stop (otherwise =Esc= goes to the page)                                                                               |
+| =C-f=                                            | find in the page as you type; Enter finds the next                                                                    |
+| =C-c= / =C-x= / =C-v=                            | copy / cut / paste through *our* clipboard (§4.2)                                                                     |
+| =C-Insert= / =S-Insert=                          | copy / paste, X style                                                                                                 |
+| =C-+= / =C--= / =C-0=                            | zoom in, out, back to 100% (§4.7)                                                                                     |
+| =Shift-F10=, the Menu key, right click           | the environment's menu for the page                                                                                   |
+| =SuperL-click= on a link                         | open it in a new tab (Ctrl-click opens it behind)                                                                     |
+| a click (or Space, Alt-Down, F4) on a =<select>= | our list of its options (§4.4)                                                                                        |
+| a click on a colour input, Alt-Down on a date    | the minibuffer asks for the value (§4.4)                                                                              |
+| anything else                                    | the page's                                                                                                            |
 
-Every =SuperL= key stays the environment's. Every other key belongs to the page,
-=Tab=, =Esc=, =C-g=, =C-c= included, because the page is what you are typing into.
-The exceptions in the table are the chords a desktop browser also keeps for itself.
+Every =SuperL= key stays the environment's. Every other key belongs to the page —
+=Tab=, =Esc=, =C-g=, =C-c= included — because that's what you're typing into. The
+exceptions in the table are the chords a desktop browser also keeps for itself.
 
-*Alt-Left is not "back".* Every desktop browser uses it, so it was the first choice.
-In the guest, check-web.lisp's back check failed and every check after it failed too.
-The reason: the console keymap gives Alt-Left and Alt-Right to switching virtual
-terminals. /Verified/ in =./linux/drivers/tty/vt/defkeymap.c_shipped=: =alt_map[105]=
-and =alt_map[106]= (=KEY_LEFT=, =KEY_RIGHT=) are =0xf210= and =0xf211=, which are
-=K_DECRCONSOLE= and =K_INCRCONSOLE= in =include/uapi/linux/keyboard.h=. The kernel
-acts on them before any program sees a byte. So the guest had switched to another
-VT, and the later keys went there. =SuperL-Left/Right= are back and forward instead;
-=M-Left/Right= still work wherever they arrive. Since 2026-10-18 that includes the
-guest: the environment rebinds Alt-Left/Right to the plain cursor keys for Org's
-promote / demote, so they arrive as =ESC [ 1 ; 3 D= / =C= and no longer switch VTs
-([[file:input.org][input.org]] §1, "Alt with the arrows").
+*Alt-Left isn't "back".* The console keymap gives Alt-Left/Right to switching
+virtual terminals: in =./linux/drivers/tty/vt/defkeymap.c_shipped=, =alt_map[105]=
+and =alt_map[106]= (=KEY_LEFT=, =KEY_RIGHT=) are =0xf210= / =0xf211=,
+=K_DECRCONSOLE= / =K_INCRCONSOLE= in =include/uapi/linux/keyboard.h=. The kernel acts
+on them before any program sees a byte, so a test pressing Alt-Left ended up on
+another VT. Back/forward are =SuperL-Left/Right= instead. The environment now rebinds
+Alt-Left/Right to plain cursor keys (for Org), so =M-Left/Right= arrive as
+=ESC [ 1 ; 3 D= / =C= and no longer switch VTs ([[file:input.org][input.org]] §1, "Alt with the
+arrows").
 
 * 3. How it works
 
 ** 3.1 The DevTools protocol
 
-Chrome's developer tools (the panel you open with F12) control the browser through
-a protocol of their own: the *Chrome DevTools Protocol*, CDP. It is plain JSON. We
-send a *command*:
+Chrome's developer tools (the F12 panel) control the browser through the *Chrome
+DevTools Protocol*, CDP. It's plain JSON. We send a *command*:
 
 #+begin_src js
 {"id": 7, "method": "Page.navigate", "params": {"url": "https://example.com"}}
 #+end_src
 
 Chrome answers with a *response* carrying the same id, ={"id":7,"result":{...}}= or
-={"id":7,"error":{...}}=. It also sends *events* whenever it likes, with no id:
-={"method":"Page.frameNavigated","params":{...}}=. That is the whole grammar. The
-vocabulary is a few hundred methods grouped into domains (=Page=, =Input=,
-=Target=, =Runtime=, =Emulation=, =Browser=), documented at
-https://chromedevtools.github.io/devtools-protocol/. Puppeteer and Playwright, the
-usual browser-automation libraries, are built on it. =web-cdp.lisp= is our much
-smaller equivalent, with a JSON reader and writer limited to what this traffic uses.
+={"id":7,"error":{...}}=, and sends *events* whenever it likes, with no id:
+={"method":"Page.frameNavigated","params":{...}}=. That's the whole grammar.
+
+The vocabulary is a few hundred methods in domains (=Page=, =Input=, =Target=,
+=Runtime=, =Emulation=, =Browser=), documented at
+https://chromedevtools.github.io/devtools-protocol/. Puppeteer and Playwright are
+built on it; =web-cdp.lisp= is our much smaller equivalent, with a JSON reader and
+writer limited to what this traffic uses.
 
 ** 3.2 The pipe, not a socket
 
-Chrome usually serves CDP on a TCP port, over a WebSocket. Started with
-=--remote-debugging-pipe=, it uses two inherited *file descriptors* instead. A file
-descriptor is a small integer naming an open file or pipe in a process: 0 is
-stdin, 1 is stdout, 2 is stderr. Chrome reads commands from fd 3 and writes replies
-and events to fd 4. Each message ends with a NUL byte, which can never occur inside
-JSON text, so it marks message boundaries unambiguously.
+Started with =--remote-debugging-pipe=, Chrome speaks CDP on two inherited *file
+descriptors* instead of a WebSocket port. (A file descriptor is a small integer
+naming an open file or pipe: 0 is stdin, 1 stdout, 2 stderr.) Chrome reads commands
+from fd 3 and writes replies and events to fd 4. Each message ends with a NUL byte,
+which can't occur inside JSON text.
 
-This needs no HTTP, no WebSocket framing, and opens no port another program could
-connect to. The one difficulty is getting the pipes onto fds 3 and 4.
-=sb-ext:run-program= gives a child fresh pipes on its stdin and stdout only. So we
-start a shell that moves them before it becomes Chrome
+No HTTP, no WebSocket framing, no port another program could connect to. The one
+difficulty: =sb-ext:run-program= gives a child fresh pipes on stdin and stdout only.
+So a shell moves them before it becomes Chrome
 ([[file:../initramfs/web-cdp.lisp::defun pipe-wrapper][=pipe-wrapper=]]):
 
 #+begin_src sh
 exec 3<&0 4>&1 >>/tmp/lol-chrome-1.log 2>&1 </dev/null; exec google-chrome --headless=new --remote-debugging-pipe ...
 #+end_src
 
-=3<&0= makes fd 3 a copy of stdin, our command pipe. =4>&1= makes fd 4 a copy of
-stdout, our reply pipe. Chrome's own messages then go to a log file, so they can
-never interleave with the protocol. Our end of the reply pipe is non-blocking:
-=web-cdp.lisp= reads whatever is there and never waits on it.
+=3<&0= makes fd 3 a copy of stdin (our command pipe), =4>&1= fd 4 a copy of stdout
+(our reply pipe). Chrome's own messages go to a log file, so they never interleave
+with the protocol.
 
-Since 2026-10-17 the *command* pipe is non-blocking too. A Chrome that stops
-reading (hung, or stopped) fills its 64 KB, and the writer is the environment's
-thread, so a blocking write froze the screen. [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]] now waits at most
-=+cdp-write-seconds+= (5) with /no progress/ (every octet Chrome takes starts the wait
-again; until 2026-10-20 it was a deadline for the whole message, which a busy Chrome
-missed on a big one, §4.8). After that it closes the pipe, since half a message has
-corrupted the stream anyway, and sends Chrome =SIGTERM=. Closing alone was thought to
-make Chrome exit; on the laptop it did not, and a Chrome without its command pipe
-answered nothing. The reader then sees EOF, the pane reports "Chrome exited" and =r=
-restarts it. =poc/web-test.lisp= asserts both: a child process that never reads its
-stdin is given up on, and one that reads slowly but steadily is not.
+*Both ends are non-blocking.* The reply pipe is read for whatever is there. The
+command pipe matters because the writer is the environment's thread: a Chrome that
+stops reading fills its 64 KB, and a blocking write would freeze the screen.
+
+- *A wait without progress.* [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]] gives up after
+  =+cdp-write-seconds+= (5) with /no progress/; every octet Chrome takes restarts the
+  wait. A deadline for the whole message is wrong: a Chrome busy in a call reads a
+  multi-megabyte message slower than that while reading steadily (§4.8).
+- *Giving up kills Chrome.* It closes the pipe (half a message has corrupted the
+  stream anyway) and sends Chrome =SIGTERM=. Closing alone isn't enough: Chrome runs
+  on without its command pipe and answers nothing. After =SIGTERM= the reader sees
+  EOF, the pane reports "Chrome exited", and =r= restarts it.
+
+=poc/web-test.lisp= asserts both: a child that never reads its stdin is given up on;
+one that reads slowly but steadily (64 KB every 0.2 s, 1 MB against a 1 s wait) is
+not.
 
 ** 3.3 Tabs, sessions, and frames
 
-One Chrome process holds many tabs. In CDP a tab is a *target*. =Target.createTarget=
-makes one, and =Target.attachToTarget= with =flatten: true= returns a *session id*.
-After that, a command meant for that tab carries ="sessionId"= beside ="method"=, and
-every event from that tab carries it too. One pipe, many tabs, told apart by one
-string.
+One Chrome process holds many tabs; in CDP a tab is a *target*.
+=Target.createTarget= makes one, and =Target.attachToTarget= with =flatten: true=
+returns a *session id*. A command for that tab carries ="sessionId"= beside
+="method"=, and so does every event from it. One pipe, many tabs.
 
-Pixels come from *screencasting*. =Page.startScreencast= asks Chrome to send a
-=Page.screencastFrame= event whenever the page repaints. The event holds the frame
-as a JPEG, base64-encoded (JSON strings cannot carry raw bytes; base64 spells every
-3 bytes as 4 letters). We answer each frame with =Page.screencastFrameAck=, and
-Chrome does not send the next frame until it gets that ack. This is the protocol's
-*flow control*: a slow reader (us, under QEMU) gets fewer frames, not a growing
-backlog. A page that does not change sends nothing, so an idle tab costs no CPU.
+*Frames come by screencasting.* =Page.startScreencast= makes Chrome send a
+=Page.screencastFrame= event whenever the page repaints: a JPEG, base64-encoded (JSON
+strings can't carry raw bytes; base64 spells every 3 bytes as 4 letters).
 
-Each frame is decoded the way an image preview is: base64, then the JPEG through
-stb_image ([[file:previews.org][previews.org]]), into the canvas's own =#x00RRGGBB=
-pixels. Only the newest frame is decoded. A frame replaced before we drew it is
-dropped undecoded.
+- *Flow control.* We answer each frame with =Page.screencastFrameAck=, and Chrome
+  doesn't send the next until it gets it. A slow reader gets fewer frames, not a
+  backlog. An unchanged page sends nothing, so an idle tab costs no CPU.
+- *Decoding.* Base64, then the JPEG through stb_image ([[file:previews.org][previews.org]]), into the
+  canvas's =#x00RRGGBB= pixels. Only the newest frame is decoded; one replaced before
+  we drew it is dropped.
+- *The pane's size is the page's.* =Emulation.setDeviceMetricsOverride= lays the page
+  out as if the window were exactly the pane, and the screencast restarts at that
+  size. When the pane changes size (font, screen), the next turn resends both.
+- *Zoom* is the =deviceScaleFactor= of that same call: =C-+= re-lays-out and
+  re-rasterises the text larger. The screencast ignores the factor, which needs a
+  step of its own (§4.7).
+- *Only the tab on screen streams.* Switching tabs sends =Page.stopScreencast= to
+  the one you left.
 
-The pane's size becomes the page's: =Emulation.setDeviceMetricsOverride= lays the
-page out as if the window were exactly the pane, and the screencast is restarted at
-that size. When the pane changes size (another font, a different screen), the next
-draw records the new size and the next turn resends both. Zoom is the
-=deviceScaleFactor= of the same call, so =C-+= re-lays-out and re-rasterises the
-text larger. It does not enlarge a picture. The screencast does not follow that
-factor, though, which needs a step of its own (§4.7).
-
-Only the tab on screen streams. When you switch to another tab, =Page.stopScreencast=
-stops the one you left.
-
-*The tab on screen is also Chrome's foreground page* (2026-10-16). With no window,
-headless Chrome still keeps one page "in front", the newest unless told otherwise,
-and only that one runs its compositor. A page behind it takes clicks and keys,
-because the main thread handles those, but a =mouseWheel= sent to it never
-completes, so the page never scrolls. Its frames also come back seconds late. So a
-tab that starts streaming is first made the front page with =Target.activateTarget=
-([[file:../initramfs/web.lisp::defun web-activate][=web-activate=]]). Found by =check-web.lisp=. Since 2026-10-13 it opened a second
-tab, the guide, and left it in front. Reproduced against the host's Chrome 148 with
-a pipe-driven script: after a second =createTarget=, the wheel on the first page
-hung; after =activateTarget=, it scrolled 100 px. In the guest the latency from
-input to the next frame fell from 2.4–43 s to 20–96 ms.
+*The tab on screen is also Chrome's foreground page.* Headless Chrome still keeps one
+page "in front" (the newest, unless told otherwise), and only that one runs its
+compositor. A page behind it takes clicks and keys, but a =mouseWheel= sent to it
+never completes, so it never scrolls, and its frames arrive seconds late. So a tab
+that starts streaming is first made the front page with =Target.activateTarget=
+([[file:../initramfs/web.lisp::defun web-activate][=web-activate=]]). Measured in the guest: input-to-frame latency fell from 2.4–43 s
+to 20–96 ms.
 
 ** 3.4 Input
 
-A click becomes =Input.dispatchMouseEvent=: a =mousePressed=, then a =mouseReleased=
-when the button comes up, with the point converted to the page's CSS pixels. A drag
-sends =mouseMoved= with the button held, so text selection and sliders work. A bare
-pointer move is sent too, for hover menus. A touchpad tap has no release of its own,
-so it is sent as press and release together. The wheel becomes a =mouseWheel= of
-100 CSS pixels per notch, Chrome's own step on Linux, at the pointer's position, so
-the page scrolls whatever is under it.
-
-A key becomes =Input.dispatchKeyEvent=, a =keyDown= and a =keyUp=, filled in the way
-the page's =KeyboardEvent= expects. =key= is what the key means (="a"=, ="Enter"=).
-=code= is which physical key it is (="KeyA"=). =windowsVirtualKeyCode= is the old
-numeric code many sites still read. =text= is present only when the key inserts
-something: a keyDown with text types a character; one without (=C-a=, an arrow) is a
-command. The modifiers map Shift, Ctrl and Alt to CDP's bits 8, 2 and 1.
-
-Paste uses =Input.insertText=, which inserts a whole string the way an input method
-commits text.
+- *Clicks.* =Input.dispatchMouseEvent=: =mousePressed=, then =mouseReleased= when the
+  button comes up, the point converted to the page's CSS pixels. A drag sends
+  =mouseMoved= with the button held (text selection, sliders). Bare moves are sent
+  too, for hover menus. A touchpad tap has no release of its own, so it goes as press
+  and release together.
+- *The wheel.* A =mouseWheel= of 100 CSS pixels per notch (Chrome's own step on
+  Linux) at the pointer, so the page scrolls whatever is under it.
+- *Keys.* =Input.dispatchKeyEvent=, a =keyDown= and a =keyUp=, filled in as a page's
+  =KeyboardEvent= expects: =key= is the meaning (="a"=, ="Enter"=), =code= the
+  physical key (="KeyA"=), =windowsVirtualKeyCode= the old numeric code many sites
+  still read. =text= is present only when the key inserts something; a keyDown
+  without it (=C-a=, an arrow) is a command. Shift, Ctrl and Alt map to CDP's bits 8,
+  2 and 1.
+- *Paste.* =Input.insertText= inserts a whole string, the way an input method commits
+  text.
 
 * 4. The pane in the shell
 
@@ -244,304 +264,254 @@ commits text.
 
 =SUBJ-WEB= is a subject like a folder or a definition. =present= gives a view of kind
 =:web= whose data is the =WEB-TAB=, so the tab strip, the right-button menu (from
-=commands-for=), the halo and the Spotter's recents all work without knowing what a
-web page is.
+=commands-for=), the halo and the Spotter's recents work without knowing what a web
+page is.
 
-Each web tab is its own trail, so it gets its own tab in the strip. Closing it needs
-no hook in the shell. On every turn, =WEB-COLLECT-TABS= closes the Chrome page of any
-web tab that no trail holds any more. A link that opens a new window
-(=target=_blank=, =window.open=, Ctrl-click) arrives as a =Target.targetCreated= event
-with an /opener/, and becomes a new trail. The opener test matters: Chrome also
-reports pages that already exist, its own startup =about:blank= among them, and those
-must not become tabs.
-
-The page title comes from =Target.targetInfoChanged=, and also directly from
-=document.title= whenever a load finishes. The second source exists because for a
-=file://= page Chrome 148 kept reporting the file name as the title (found by
-poc/web-test.lisp).
-
-*The home page is the project's guide* (2026-10-13). A tab opened without a URL
-loads =doc/guide/index.html= ([[file:../initramfs/web.lisp::defun web-home-url][=web-home-url=]]). The build freezes the guide's path into the
-image the way [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] freezes =./sbcl='s: =web.lisp= is loaded from
-=<repo>/initramfs/=. On the laptop the repo is at the same path under the mounted
-=/home=, and Chrome's container sees that =/home= too. A diskless boot has no
-=/home=, so the file is missing there and the tab gets =about:blank=. Setting
-=*web-home*= to a URL overrides both. The address prompt opens empty on the home
-page, as on =about:blank=. Before this fix it was pre-filled with the guide's URL,
-so a typed address was appended to it — which is how =check-web.lisp= caught it.
+- *Each web tab is its own trail.* Closing one needs no hook in the shell: every
+  turn, =WEB-COLLECT-TABS= closes the Chrome page of any web tab no trail holds.
+- *New windows become trails.* A link that opens one (=target=_blank=,
+  =window.open=, Ctrl-click) arrives as =Target.targetCreated= with an /opener/. The
+  opener test matters: Chrome also reports pages that already exist, its startup
+  =about:blank= among them, and those mustn't become tabs.
+- *Two sources for the title.* =Target.targetInfoChanged=, and =document.title=
+  whenever a load finishes — for a =file://= page Chrome 148 keeps reporting the file
+  name as the title.
+- *The home page is the project's guide.* A tab opened without a URL loads
+  =doc/guide/index.html= ([[file:../initramfs/web.lisp::defun web-home-url][=web-home-url=]]). The build freezes the repo's path into
+  the image, as [[file:../initramfs/sbcl-source.lisp][=sbcl-source.lisp=]] does for =./sbcl=; on real hardware the repo is
+  at the same path under the mounted =/home=, which Chrome's container sees too. A
+  diskless boot has no =/home=, so it gets =about:blank=. Setting =*web-home*= to a
+  URL overrides both. The address prompt opens empty on the home page.
 
 ** 4.2 Copy and paste go through our clipboard
 
 Headless Chrome keeps its clipboard inside its own process, where nothing else can
-paste from it. So =C-c= asks the page for its selection (the selection inside a
-focused text field, which =getSelection()= alone does not see, else the document's)
-and puts it in =lol.clipboard='s history ([[file:clipboard.org][clipboard.org]]). The
-key is also sent on to the page, so a site with its own copy handler still sees it.
-=C-v= types our newest clipboard entry. Selecting text with a drag puts it in
-PRIMARY when the button comes up, as everywhere else in the environment, so a middle
-click can paste it into the Workspace.
+paste from it.
 
-The address prompt (=C-l=) is our minibuffer, not the page, so it pastes from our
-clipboard too: =C-y=, =C-v= or Shift-Insert insert the newest entry with newlines and
-tabs made spaces (=minibuffer-paste-text=, so a URL copied with its line break pastes
-clean). =C-u=, or the =✕ clear= button drawn at the prompt's right while it holds
-text, empties it.
+- *=C-c=* asks the page for its selection (inside a focused text field, which
+  =getSelection()= alone misses, else the document's) and puts it in
+  =lol.clipboard='s history ([[file:clipboard.org][clipboard.org]]). The key is also sent on, so a site's
+  own copy handler still sees it.
+- *=C-v=* types our newest clipboard entry.
+- *A drag selection* goes to PRIMARY when the button comes up, as everywhere in the
+  environment, so a middle click pastes it into the Workspace.
+- *The address prompt* (=C-l=) is our minibuffer: =C-y=, =C-v= or Shift-Insert insert
+  the newest entry with newlines and tabs made spaces (=minibuffer-paste-text=, so a
+  URL copied with its line break pastes clean). =C-u=, or the =✕ clear= button at
+  the prompt's right, empties it.
 
 ** 4.3 Downloads, dialogs, find
 
 - *Downloads* go to =~/Downloads= under their own names
-  (=Browser.setDownloadBehavior=), and the status line reports progress and the
-  result. =/home= is the laptop's own, so a download is a real file on the disk.
-- *alert(), confirm(), prompt()* freeze the page until they are answered. They are
-  answered in the minibuffer at once: Enter is OK (with the typed text, for a
-  prompt), =C-g= is Cancel.
+  (=Browser.setDownloadBehavior=); the status line reports progress and the result.
+  =/home= is the host's own, so a download is a real file on the disk.
+- *alert(), confirm(), prompt()* freeze the page until answered. They're answered in
+  the minibuffer at once: Enter is OK (with the typed text, for a prompt), =C-g= is
+  Cancel.
 - *Find* is the page's own =window.find=, re-run as you type.
 
 ** 4.4 Pickers: the popups the screencast cannot see
 
-*The symptom* (on the laptop, 2026-10-13): click a =<select>= in a web page and no
-list of options appears. The page does not seem to react at all.
+*The problem.* Click a =<select>= and, without help, no list appears. A select's list
+isn't drawn by the page: a desktop browser shows it in a borderless *popup widget*,
+so it can hang past the page's edge. In Chrome that widget has its own *compositor
+frame* (one finished picture of one surface; the compositor stacks them into what a
+window shows). =Page.startScreencast= sends only the *page's* frames (§3.3), and
+headless has no window to stack the popup onto. The popup opens, takes the keyboard,
+and is never in any frame we receive.
 
-*Why.* A =<select>='s list is not drawn by the page. On a desktop the browser shows
-it in a little borderless window of its own, a *popup widget*, so that it can hang
-below the bottom of the page or past the window's edge. Inside Chrome a popup widget
-is a separate renderer widget with its own *compositor frame*. (A compositor frame is
-one finished picture of one surface; Chrome's compositor stacks them to make what a
-window shows.) =Page.startScreencast= sends us the *page's* compositor frames only
-(§3.3). Headless, nothing stacks the popup's frame on top, because there is no
-window. So the popup opens, takes the keyboard, and is never in any frame we
-receive.
+/Verified/ in the guest (Chrome 148, tag #27, no pickers): after a real QMP click,
+=select.matches(':open')= was =true=; the newest screencast frame held *0* pixels of
+the popup's highlight blue, while a =Page.captureScreenshot= at the same moment held
+*2809* (that command composites popups). Down and Enter still changed the value,
+blind.
 
-/Verified/ in the guest (Chrome 148.0.7778.215, tag #27, before the fix): after a
-real QMP click on a select, =select.matches(':open')= was =true=; the newest
-screencast frame held *0* pixels of the popup's highlight blue; a
-=Page.captureScreenshot= taken at the same moment held *2809*, because that command
-does composite popups. Arrow keys then still worked, but blind: Down and Enter
-changed the value through a list nobody could see. The host's Chrome behaves the
-same.
-
-The same probe looked at the other controls that use browser UI:
-
-| Control                                                        | Headless Chrome 148                                                                                | What we do                                                                                                                                    |
-|----------------------------------------------------------------+----------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------|
-| =<select>= (single, size ≤ 1)                                  | an invisible popup that takes the keys                                                             | our chooser (below)                                                                                                                           |
-| =<input type=color>=                                           | an invisible colour chooser, opened on /click/; it took every following key                        | the minibuffer asks for =#rrggbb=                                                                                                             |
-| =<input type=date>=, =time=, =datetime-local=, =month=, =week= | no picker at all: the calendar icon does nothing                                                   | the minibuffer asks for the value (=yyyy-mm-dd= …); typing digits into the field also works, and is visible, because the field itself is page |
-| =<input list=…>= with a =<datalist>=                           | no visible suggestions; once typing opened them, they swallowed the arrow keys (=Esc= closed them) | our chooser, on Down / Alt-Down / a click on the field's arrow                                                                                |
+| Control                                                        | Headless Chrome 148                                                                         | What we do                                                                                     |
+|----------------------------------------------------------------+---------------------------------------------------------------------------------------------+------------------------------------------------------------------------------------------------|
+| =<select>= (single, size ≤ 1)                                  | an invisible popup that takes the keys                                                      | our chooser (below)                                                                            |
+| =<input type=color>=                                           | an invisible colour chooser, opened on /click/; it took every following key                 | the minibuffer asks for =#rrggbb=                                                              |
+| =<input type=date>=, =time=, =datetime-local=, =month=, =week= | no picker at all: the calendar icon does nothing                                            | the minibuffer asks (=yyyy-mm-dd= …); typing digits into the field also works, and is visible  |
+| =<input list=…>= with a =<datalist>=                           | no visible suggestions; once open, they swallowed the arrow keys (=Esc= closed them)       | our chooser, on Down / Alt-Down / a click on the field's arrow                                 |
 
 *How we draw them.* Three pieces, all in [[file:../initramfs/web.lisp::defparameter +web-picker-js+][=web.lisp='s "pickers" section]]:
 
-1. *A page script* (=+WEB-PICKER-JS+=) is installed into every document the tab
-   will load (=Page.addScriptToEvaluateOnNewDocument=) and, once, into the one it
-   already has. It listens on =window= in the *capture phase*. DOM events travel
-   from the window down to the target (capture), then back up (bubble); a capture
-   listener on =window= runs before any of the page's own handlers and before the
-   browser's default action. On a =mousedown= on a select (or Space, Enter, Alt-Down
-   or F4 on a focused one) it calls =preventDefault()=, so Chrome never opens its
-   popup, and reports the control: an id (a counter kept in a =WeakMap=, so the
-   page's elements are not marked), its box in CSS pixels, and its options (label,
-   value, disabled, the =<optgroup>= label, which one is selected). A colour input
-   also has its =click= cancelled, because that is when its chooser opens. A
-   datalist input loses its =list= attribute while it has focus (it is put back on
-   blur): Chrome offers suggestions only to a focused input that has one, so its
-   invisible list can never open.
-2. *A binding* carries the report. =Runtime.addBinding= puts a function on the
-   page's =window=; each call of it becomes a =Runtime.bindingCalled= event on our
-   pipe, with one string (here, JSON) and the *execution context* it came from
-   (each frame of a page has its own JavaScript world, its own context). The event
-   is sent only while the Runtime domain is enabled. The first host run forgot
-   =Runtime.enable=: the script cancelled the click and its report went nowhere.
+1. *A page script* (=+WEB-PICKER-JS+=) is installed into every document the tab will
+   load (=Page.addScriptToEvaluateOnNewDocument=) and once into the current one. It
+   listens on =window= in the *capture phase*: DOM events travel from the window down
+   to the target (capture), then back up (bubble), so a capture listener on =window=
+   runs before the page's handlers and the browser's default action.
+   - On a =mousedown= on a select (or Space, Enter, Alt-Down, F4 on a focused one) it
+     calls =preventDefault()=, so Chrome never opens its popup, and reports the
+     control: an id (a counter in a =WeakMap=, so elements aren't marked), its box in
+     CSS pixels, and its options (label, value, disabled, =<optgroup>= label,
+     selected).
+   - A colour input also has its =click= cancelled, since that's when its chooser
+     opens.
+   - A datalist input loses its =list= attribute while focused (restored on blur):
+     Chrome offers suggestions only to a focused input with one, so its invisible
+     list never opens.
+2. *A binding carries the report.* =Runtime.addBinding= puts a function on the page's
+   =window=; each call becomes a =Runtime.bindingCalled= event on our pipe, with one
+   string (here JSON) and the *execution context* it came from (each frame has its own
+   JavaScript world). Events come only while the Runtime domain is enabled — forget
+   =Runtime.enable= and the script cancels the click while its report goes nowhere.
 3. *Our chooser.* The event is queued and, after the pipe has been read, shown by
-   =WEB-PICK=. A list goes to the *right-button menu's card*, the same
-   =RUN-CHOOSER= ([[file:../poc/overlays.lisp::defun run-chooser][poc/overlays.lisp]]; =RUN-CHOOSER-FB= until Morphic step 4)
-   with a kind of its own, =:select=: placed under the control (CSS pixels times
-   =*web-zoom*= plus the page's origin on screen, the mapping =WEB-PAGE-POINT=
-   inverts), at least as wide as it, opening on the current option, the optgroups as
-   section headers, disabled options dim and never landed on. Up/Down, Home/End,
-   PageUp/PageDown move; typing jumps to the next option starting with what was typed
-   (letters typed within a second accumulate); Enter, Space or a click picks; Esc,
-   =C-g= or a click outside leaves it unchanged. The answer goes back with
-   =Runtime.evaluate= *in the reporting frame's context*: the script's
-   =__lolPickerApply= sets =selectedIndex= (checked against the option's value, in
-   case the list changed meanwhile) and fires =input= and =change= with
-   =bubbles: true=, which is what a real choice fires. Colour and date go to the
-   minibuffer instead, pre-filled with the current value, and the page refuses a
-   malformed one (we say so in the status line).
+   =WEB-PICK=. A list goes to the right-button menu's card,
+   [[file:../poc/overlays.lisp::defun run-chooser][=RUN-CHOOSER=]], with a kind of its own, =:select=:
+   - placed under the control (CSS pixels times =*web-zoom*= plus the page's origin on
+     screen, the mapping =WEB-PAGE-POINT= inverts), at least as wide as it, opening on
+     the current option, optgroups as section headers, disabled options dim and never
+     landed on;
+   - Up/Down, Home/End, PageUp/PageDown move; typing jumps to the next option starting
+     with what was typed (letters within a second accumulate); Enter, Space or a click
+     picks; Esc, =C-g= or a click outside leaves it unchanged;
+   - the answer goes back with =Runtime.evaluate= *in the reporting frame's context*:
+     =__lolPickerApply= sets =selectedIndex= (checked against the option's value, in
+     case the list changed) and fires =input= and =change= with =bubbles: true=, as a
+     real choice does.
 
-Why queue rather than open the chooser inside =WEB-EVENT=: the chooser is *modal*.
-It runs its own input loop until you choose. =WEB-EVENT= is called from inside
-=CDP-PUMP='s loop over the messages just read, so a modal loop there would leave
-the rest of that batch undelivered until you chose. While the chooser is up the
-pipe is not read at all. That is harmless: Chrome sends the next frame only after
-the last one is acked (§3.3).
+   Colour and date go to the minibuffer instead, pre-filled with the current value;
+   the page refuses a malformed one, and the status line says so.
 
-The press that opened the select is released to the page (=WEB-FINISH-PRESS=)
-before the chooser comes up, because the chooser's own loop will eat the real
-release.
+- *Why queue.* The chooser waits for an answer. =WEB-EVENT= runs inside =CDP-PUMP='s
+  loop over a batch of messages just read, so waiting there would leave the rest of
+  the batch undelivered. While the chooser is up the pipe isn't read at all, which is
+  harmless: Chrome sends the next frame only after the last is acked (§3.3).
+- *The press is released first.* =WEB-FINISH-PRESS= releases the opening press to the
+  page before the chooser comes up, since the chooser will eat the real release.
 
-*What is still not covered:*
+*Not covered:*
 
-- A =<select>= inside a *cross-site iframe*. Chrome runs such a frame in a process of
-  its own, as a separate target we never attach to, so our script is not in it and its
-  popup is still invisible. Same-site iframes work: the box is shifted by each
-  enclosing frame's position.
-- =<select multiple>= and =size= > 1 are drawn by the page itself as a list box,
-  so they need nothing and are left alone.
-- The page's own JavaScript sees =input.list= as =null= while a datalist input has
-  focus.
-- =<input type=file>= is a different mechanism (a file chooser dialog, §9).
+- *Cross-site iframes.* Chrome runs such a frame in its own process, a target we
+  never attach to, so our script isn't in it and its popup stays invisible.
+  Same-site iframes work (the box is shifted by each enclosing frame).
+- *List boxes.* =<select multiple>= and =size= > 1 are drawn by the page itself and
+  left alone.
+- *=input.list=* reads =null= to the page's own JavaScript while a datalist input
+  has focus.
+- *=<input type=file>=* is a different mechanism (a file chooser dialog, §9).
 
-Tests: =poc/web-test.lisp= (18 picker checks: the chooser's entries, groups, disabled
-and current option, its position, the select not =:open=, Daikon chosen and the
-=onchange= run, Esc changing nothing, Space opening it, the datalist filtered and
-chosen, colour and date through the minibuffer, the anchor maths) and
-=check-web.lisp= in the guest (§8.1).
+Tests: =poc/web-test.lisp= (18 picker checks: entries, groups, disabled and current
+option, position, the select not =:open=, a choice running =onchange=, Esc changing
+nothing, Space opening it, the datalist filtered and chosen, colour and date through
+the minibuffer, the anchor maths) and =check-web.lisp= in the guest (§8.1).
 
 ** 4.5 Saying we are Chrome: the user agent and its client hints
 
-Headless Chrome's user agent contains =HeadlessChrome=, and some sites refuse or
-degrade a browser that says so. Since the first version, =web-chrome-ready= removes
-the "Headless" and sends the result with =Emulation.setUserAgentOverride=.
+Some sites refuse or degrade a browser that looks automated. Google's sign-in says
+"This browser or app may not be secure", and its search answers with captchas. Four
+things give a headless, pipe-driven Chrome away:
 
-That was half the job. Google's sign-in still refused us with "This browser or app
-may not be secure". A modern Chrome describes itself twice: the =User-Agent= string,
-and the /User-Agent Client Hints/ (the =Sec-CH-UA*= request headers, and
-=navigator.userAgentData= for scripts). Overriding the string *alone* leaves the
-hints empty: no brands and no =Sec-CH-UA= header. A Chrome with no client hints is a
-known sign of an automated browser. This was found in a session run inside the
-environment, against Chrome 148.
+- *=HeadlessChrome= in the user agent.* =web-chrome-ready= removes the "Headless" and
+  sends the result with =Emulation.setUserAgentOverride=.
+- *Empty client hints.* A modern Chrome describes itself twice: the =User-Agent=
+  string and the /User-Agent Client Hints/ (the =Sec-CH-UA*= headers,
+  =navigator.userAgentData= for scripts). Overriding the string alone leaves the hints
+  empty, a known sign of automation. [[file:../initramfs/web.lisp::defun web-ua-metadata][=web-ua-metadata=]] builds the matching
+  =userAgentMetadata=: the brands =Chromium=, =Google Chrome= and the "GREASE" brand
+  =Not/A)Brand= (a deliberately odd name that keeps servers from hard-coding the
+  list); the full version from =Browser.getVersion='s =product= into
+  =*web-chrome-version*=; Linux, x86, 64-bit, not mobile. Every new tab gets string
+  and hints together.
+- *=navigator.webdriver= is true.* That W3C flag marks a browser driven by automation,
+  and =--remote-debugging-pipe= sets it. =--disable-blink-features=AutomationControlled=
+  in [[file:../initramfs/web.lisp::defun web-chrome-argv][=web-chrome-argv=]] clears it.
+- *An impossible screen.* Headless reports an 800 x 600 screen whatever the window,
+  and its window (=--window-size=) was smaller than the page inside it.
+  =Emulation.setDeviceMetricsOverride= now also sends =screenWidth= / =screenHeight=,
+  the world's size from [[file:../initramfs/web.lisp::defun web-screen-size][=web-screen-size=]] (divided by the zoom, as Chrome's own zoom
+  does), and Chrome's window starts at that size.
 
-So [[file:../initramfs/web.lisp::defun web-ua-metadata][=web-ua-metadata=]] builds the =userAgentMetadata= that goes with the string,
-as a desktop Chrome on Linux sends it:
-- the brands =Chromium=, =Google Chrome= and the "GREASE" brand =Not/A)Brand= (a
-  deliberately odd name that keeps servers from hard-coding the list);
-- the full version, taken from =Browser.getVersion='s =product=
-  (="HeadlessChrome/148.0.7778.215"=) into =*web-chrome-version*=;
-- the platform: Linux, x86, 64-bit, not mobile.
+Measured against Chrome 148 inside the environment:
 
-Every new tab gets the string and its hints together.
+| What the page reads                        | Before        | Now                |
+|--------------------------------------------+---------------+--------------------|
+| =navigator.webdriver= (page and iframes)   | *=true=*      | =false=            |
+| =screen.width= x =screen.height=           | *800 x 600*   | the world's size   |
+| =outerWidth= x =outerHeight=               | *1024 x 700*  | the world's size   |
+| =innerWidth= x =innerHeight=               | 1256 x 701    | 1256 x 701         |
+| UA string, client hints, in a Worker too   | Chrome, full  | Chrome, full       |
 
-That was still not enough. /Reported 2026-10-20: Google search kept asking for a
-captcha ("Our systems have detected unusual traffic from your computer network"),
-and sign-in still said "Esse navegador ou app pode não ser seguro" (this browser or
-app may not be secure)./ A page that reports what it sees settled it. Measured
-against Chrome 148 inside the environment:
-
-| What the page reads                        | Chrome, no pipe | Ours, before  | Ours, now          |
-|--------------------------------------------+-----------------+---------------+--------------------|
-| =navigator.webdriver= (page and iframes)   | =false=         | *=true=*      | =false=            |
-| =screen.width= x =screen.height=           | 800 x 600       | *800 x 600*   | the world's size   |
-| =outerWidth= x =outerHeight=               |                 | *1024 x 700*  | the world's size   |
-| =innerWidth= x =innerHeight=               |                 | 1256 x 701    | 1256 x 701         |
-| UA string, client hints, in a Worker too   |                 | Chrome, full  | Chrome, full       |
-
-- =navigator.webdriver= is the W3C flag that a browser sets when it is being driven
-  by automation, and =--remote-debugging-pipe= sets it, though nothing but your keys
-  drives this browser. Google's sign-in refuses a browser that sets it, and its
-  search answers one with captchas. The switch
-  =--disable-blink-features=AutomationControlled= in [[file:../initramfs/web.lisp::defun web-chrome-argv][=web-chrome-argv=]] clears it.
-- Headless reports an 800 x 600 screen whatever the window, and the window
-  (=--window-size=) was smaller than the page inside it. No real browser looks like
-  that. =Emulation.setDeviceMetricsOverride= now also sends =screenWidth= and
-  =screenHeight=, the world's size from [[file:../initramfs/web.lisp::defun web-screen-size][=web-screen-size=]] (divided by the zoom, as
-  Chrome's own zoom does), and Chrome's window is started at that size too.
-
-Already right, so not touched: the UA string and its hints (and a Worker sees them
-too: the override reaches it), =window.chrome=, five plugins, the languages.
-Left as it is: WebGL is absent (measured: no context), because there is no GPU
-(=--disable-gpu=). A site that insists on WebGL will still see that. Google also remembers a
-network that sent "unusual traffic" for a while, so one more captcha may be
-asked before it trusts the browser again.
-
-=web-test= checks the first two rows.
+Already right: =window.chrome=, five plugins, the languages. *Known limit:* WebGL is
+absent (=--disable-gpu=, no GPU), and a site that insists on it will see that. Google
+also remembers a network that sent "unusual traffic" for a while. =web-test= checks
+the first two rows.
 
 ** 4.6 The address prompt knows paths and your history
 
-/Asked for 2026-10-20: "if I start typing / or ~/ it can infer I'm looking for a file
-and allow me to use TAB to complete, and/or open a file-manager experience at the
-bottom of the window. A similar approach for navigation history."/
+=C-l= opens the one-line minibuffer with a *candidate panel* on top of it, over the
+bottom of the screen. What the panel lists depends on the first characters typed:
 
-=C-l= opens the same one-line minibuffer as before, and a *candidate panel* now sits
-on top of it, over the bottom of the screen. What the panel lists depends on the
-first characters typed:
+| You type                            | The panel lists                                                                                                                       | Enter on the line           |
+|-------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+-----------------------------|
+| =/=, =~/=, =./=, =../= or =file://= | the folder you're in, like a small file manager: folders first, then files with size and date; what you typed of the name lights up | opens it as a =file://= URL |
+| anything else                       | your history: pages whose address or title contain every word typed                                                                   | an address, or a search     |
+| nothing (a new tab)                 | the most recent pages                                                                                                                 | the home page               |
 
-| You type                              | The panel lists                                                              | Enter on the line          |
-|---------------------------------------+------------------------------------------------------------------------------+----------------------------|
-| =/=, =~/=, =./=, =../= or =file://=   | the folder you are in, like a small file manager: folders first, then files with size and date; what you typed of the name lights up | opens it as a =file://= URL |
-| anything else                         | your history: pages whose address or title contain every word typed           | an address, or a search    |
-| nothing (a new tab)                   | the most recent pages                                                         | the home page              |
+Nothing is chosen until you move into the list, so Enter opens what you typed.
 
-Nothing is chosen until you move into the list, so Enter keeps doing what it did:
-it opens what you typed. The keys:
-
-| Key                        | Does                                                                         |
-|----------------------------+------------------------------------------------------------------------------|
-| =Down= / =C-n=             | choose a row (the first, from the line)                                       |
-| =Up= / =C-p=               | the row above; above the first, back to the typed text                        |
-| =Enter=                    | open the chosen row, else the typed text                                      |
-| =Tab=                      | the chosen row into the line, to keep typing; with no row, complete like a shell (common prefix, a folder gets its =/=) |
-| =M-Backspace=              | delete the last word, i.e. go back up one folder                              |
-| =Shift-Delete=             | forget the chosen page (history rows only)                                    |
-| a click / the wheel        | open a row / move the choice                                                  |
+| Key                 | Does                                                                                                                    |
+|---------------------+-------------------------------------------------------------------------------------------------------------------------|
+| =Down= / =C-n=      | choose a row (the first, from the line)                                                                                 |
+| =Up= / =C-p=        | the row above; above the first, back to the typed text                                                                  |
+| =Enter=             | open the chosen row, else the typed text                                                                                |
+| =Tab=               | the chosen row into the line, to keep typing; with no row, complete like a shell (common prefix, a folder gets its =/=) |
+| =M-Backspace=       | delete the last word, i.e. go up one folder                                                                             |
+| =Shift-Delete=      | forget the chosen page (history rows only)                                                                              |
+| a click / the wheel | open a row / move the choice                                                                                            |
 
 So a folder is browsed with Tab: =~/= lists your home, =Doc= =Tab= gives
-=~/Documents/= and the panel lists inside it, =Down= =Tab= enters the chosen
-sub-folder, and =Enter= on a file opens it. =Enter= on a folder opens Chrome's own
-listing of it. A typed path is now always a file: before this, =/etc/hosts=
-became a web search.
+=~/Documents/= and lists inside it, =Down= =Tab= enters the chosen sub-folder,
+=Enter= on a file opens it. =Enter= on a folder opens Chrome's own listing. A typed
+path is always a file, never a web search.
 
-*The panel is generic.* Any prompt can have one: [[file:../poc/shell.lisp::defun minibuffer-read][=minibuffer-read=]] takes
-=:candidates=, a function from the text to a list of plists (label, detail, the text
-the row stands for, a section, a "forget" function) and a title. The panel is a
-morph of the desk, [[file:../poc/morphic.lisp::defclass minibuffer-panel][=minibuffer-panel=]], and not of the shell. That way the panes under
-it keep their size: a web page is not resized because you typed into its address
-bar. =desk-sync= adds it, sizes it and removes it with the list. It is not an
-overlay, because the keys stay the minibuffer's. The web pane's candidates come
-from [[file:../initramfs/web.lisp::defun web-address-candidates][=web-address-candidates=]].
+*The panel is generic.* [[file:../poc/shell.lisp::defun minibuffer-read][=minibuffer-read=]] takes =:candidates=, a function from the
+text to a list of plists (label, detail, the text the row stands for, a section, a
+"forget" function), and a title. The panel is a morph of the desk,
+[[file:../poc/morphic.lisp::defclass minibuffer-panel][=minibuffer-panel=]], not of the shell, so the panes under it keep their size: a page
+isn't resized because you typed into its address bar. =desk-sync= adds, sizes and
+removes it. It isn't an overlay, because the keys stay the minibuffer's. The web
+pane's candidates come from [[file:../initramfs/web.lisp::defun web-address-candidates][=web-address-candidates=]].
 
-*The history is ours, not Chrome's.* Chrome keeps one in an SQLite file inside the
-profile, and reading it would need an SQLite reader. [[file:../initramfs/web.lisp::defun web-history-note][=web-history-note=]] keeps
-one plist per URL (=:url :title :visits :last=, newest first, at most 2000) in
-=~/.lol/web/history.lisp=, mode 0600. A visit is counted on Chrome's
-=Page.frameNavigated= for the main frame and on =Page.navigatedWithinDocument= (a
-single-page app's =pushState=, e.g. the next YouTube video); the title is filled in
-when the page says it. =about:=, =data:=, =chrome:= and =javascript:= URLs and the
-home page are not kept. The file is written atomically and fsync'd, at most every
-10 s and when Chrome is shut down at power-off. A crash can lose the last few seconds
-of history and nothing else. A diskless boot keeps it in memory.
+*The history is ours, not Chrome's.* Chrome's is an SQLite file in the profile, which
+would need an SQLite reader. [[file:../initramfs/web.lisp::defun web-history-note][=web-history-note=]] keeps one plist per URL
+(=:url :title :visits :last=, newest first, at most 2000) in
+=~/.lol/web/history.lisp=, mode 0600.
 
-How matches are ranked, in [[file:../initramfs/web.lisp::defun web-history-matches][=web-history-matches=]]: every word must occur in the URL or
-the title, ignoring case. Then a blend of recency and frequency (Firefox calls this
-"frecency"): each visit counts as a day more recent, up to a month's worth, and a
-page whose address /starts/ with the first word (=git= for =github.com=) comes before
-the rest. The Spotter uses the same function: its web rows now include up to five
-history pages that no open tab shows.
+- *What counts as a visit.* =Page.frameNavigated= for the main frame, and
+  =Page.navigatedWithinDocument= (a single-page app's =pushState=). The title is
+  filled in when the page says it. =about:=, =data:=, =chrome:=, =javascript:= URLs
+  and the home page aren't kept.
+- *Writes.* Atomic and fsync'd, at most every 10 s and at power-off. A crash loses at
+  most the last few seconds. A diskless boot keeps it in memory.
+- *Ranking* ([[file:../initramfs/web.lisp::defun web-history-matches][=web-history-matches=]]). Every word must occur in the URL or title,
+  ignoring case. Then a blend of recency and frequency ("frecency"): each visit
+  counts as a day more recent, up to a month's worth, and a page whose address
+  /starts/ with the first word (=git= for =github.com=) comes first. The Spotter uses
+  the same function, adding up to five history pages no open tab shows.
 
-*Where a file is, depends on who looks.* The panel lists files as the environment
-sees them, but Chrome opens them inside its container ([[file:containers.org][containers.org]]), whose root
-is the host's Debian. The two agree only under the folders =lol-ct.c= binds in:
-=/home=, =/tmp=, =/dev=, =/sys=. Without care, =/usr/= would list the initramfs's
-few files while Chrome opened the host's. So in the guest, an absolute path outside
-those folders is listed from =/mnt/host=, our mount of the host's root
-([[file:../initramfs/web.lisp::defun web-chrome-root][=web-chrome-root=]]). The rows still read =/usr/share/=, as Chrome names them. The
-container's overlays can add files that =/mnt/host= does not show; for a listing that
-is close enough. On the host, both run in the same root and nothing is mapped.
+*Where a file is depends on who looks.* The panel lists files as the environment sees
+them, but Chrome opens them inside its container ([[file:containers.org][containers.org]]), whose root is the
+host's distribution. The two agree only under the folders =lol-ct.c= binds in:
+=/home=, =/tmp=, =/dev=, =/sys=. So in the guest an absolute path outside those is
+listed from =/mnt/host=, our mount of the host's root
+([[file:../initramfs/web.lisp::defun web-chrome-root][=web-chrome-root=]]); the rows still read =/usr/share/=, as Chrome names them. The
+container's overlays can add files =/mnt/host= doesn't show — close enough for a
+listing. On the host both run in the same root and nothing is mapped.
 
-Tests: [[file:../poc/url-prompt-test.lisp][poc/url-prompt-test.lisp]] (host, no Chrome, 44 checks: the URL rules, the
-history's file, ranking and 0600 mode, the panel by keys, by click and by
-Shift-Delete, the =/mnt/host= mapping, and after every step the incrementally
-repaired screen equal to a fresh paint; =LOL_SHOTS=DIR= keeps two screenshots).
-=check-web.lisp= drives it in the guest with real keys (§8.1; written, not yet run).
-/Tried on the laptop 2026-10-20: loaded as a live patch into the running image
-(built from =2060c7d=), the panel came up and worked./
+Tests: [[file:../poc/url-prompt-test.lisp][poc/url-prompt-test.lisp]] (host, no Chrome, 44 checks: URL rules, the
+history's file, ranking and 0600 mode, the panel by keys, click and Shift-Delete, the
+=/mnt/host= mapping, and after every step the incrementally repaired screen equal to
+a fresh paint; =LOL_SHOTS=DIR= keeps two screenshots). =check-web.lisp= drives it in
+the guest with real keys (§8.1).
 
 ** 4.7 Page zoom fills the pane: upscale, then sharpen
 
-/Reported 2026-10-20: "when I zoom, the web browser reduces the visible area of the
-page and leaves a lot of white space around it."/ The environment's own scale
-(=SuperL-==) was never the cause: a bigger font only shortens the page by the toolbar's
-growth, and the frame follows. The page zoom was. Measured against the host's
-Chrome 148, with a 1256 x 677 pane:
+=C-+= zooms the way Chrome's own =Ctrl-+= does (§3.3): the page is laid out in fewer
+CSS pixels drawn at 1.5 device pixels each, so =window.innerWidth= shrinks and a
+narrow layout can kick in. But a /screencast/ frame comes at CSS-pixel size —
+Chrome ignores the scale factor there. Blitted 1:1, a zoomed page fills only part of
+the pane, and clicks land off. Measured against Chrome 148 with a 1256 x 677 pane:
 
 | Page zoom | Chrome's CSS viewport | Screencast frame | Screenshot   |
 |-----------+-----------------------+------------------+--------------|
@@ -549,363 +519,277 @@ Chrome 148, with a 1256 x 677 pane:
 | 125%      | 1004 x 541            | *1004 x 541*     |              |
 | 150%      | 837 x 451             | *837 x 451*      | 1256 x 677   |
 
-=C-+= zooms the way Chrome's own =Ctrl-+= does (§3.3): the page is laid out in fewer
-CSS pixels and drawn at 1.5 device pixels each, so =window.innerWidth= shrinks and a
-narrow layout can kick in. But a /screencast/ frame comes at CSS-pixel size, because
-Chrome ignores the scale factor there, and the frame was blitted 1:1. So the page
-filled two thirds of the pane, and the rest was the blit's white. Clicks were
-off too: input was mapped through the zoom, the picture was not. A /screenshot/
-(=Page.captureScreenshot=) does come at device size, but took 46–55 ms per frame on
-the dev laptop. Too slow to take for every frame while you scroll.
-
-So each zoomed frame is scaled up at once, and replaced once the page is still
+A /screenshot/ (=Page.captureScreenshot=) does come at device size, but takes
+46–55 ms — too slow for every frame while you scroll. So each zoomed frame is scaled
+up at once and replaced once the page is still
 ([[file:../initramfs/web.lisp::defun web-sharpen][=web-sharpen=]]):
 
-1. *Upscale.* [[file:../initramfs/web.lisp::defun web-upscale][=web-upscale=]] stretches a CSS-sized frame to the pane, bilinear: each
-   output pixel is a weighted mix of the four source pixels around where it falls,
-   in 16.16 fixed point. 13 ms for 837 x 451 -> 1256 x 677 on the host. The pane is
-   full at once, slightly soft.
+1. *Upscale.* [[file:../initramfs/web.lisp::defun web-upscale][=web-upscale=]] stretches a CSS-sized frame to the pane, bilinear (each
+   output pixel a weighted mix of the four source pixels around it, in 16.16 fixed
+   point). 13 ms for 837 x 451 -> 1256 x 677 on the host. Full at once, slightly soft.
 2. *Sharpen.* When no frame has come for 150 ms, one screenshot replaces it, crisp.
-   It is dropped if a newer frame arrived while it was being taken: a page that moved
-   on keeps its newer frame and is sharpened when it stops again. The poll loop's
-   timeout ([[file:../initramfs/web.lisp::defun web-timeout][=web-timeout=]]) wakes us when one is due, so nothing spins.
+   It's dropped if a newer frame arrived meanwhile. The poll loop's timeout
+   ([[file:../initramfs/web.lisp::defun web-timeout][=web-timeout=]]) wakes us when one is due, so nothing spins.
 
 Chrome renders =floor(1256 / 1.5)= = 837 CSS pixels, so a 150% screenshot is
 1255 x 676, one pixel short each way. [[file:../initramfs/web.lisp::defun web-pad][=web-pad=]] repeats the last column and row
-rather than resampling, which would blur the crisp picture the screenshot was taken
-for.
+rather than resampling, which would blur the crisp picture.
 
-/Ruled out, measured the same day:/ =setDeviceMetricsOverride='s =scale= parameter
-changes nothing in the frames. CSS =zoom= on the page's root element gives full,
-crisp frames at no cost, but it is not Chrome's zoom: the page still sees the
-full-width viewport, so a narrow layout never kicks in. It was declined for that.
+*Ruled out:* =setDeviceMetricsOverride='s =scale= parameter changes nothing in the
+frames. CSS =zoom= on the root element gives full, crisp frames for free, but the page
+still sees the full-width viewport, so a narrow layout never kicks in. The
+environment's own scale (=SuperL-==) was never the issue: the frame follows it.
+
 Tests: =poc/web-test.lisp= (=C-+ C-+= gives =devicePixelRatio= 1.5 and a narrower
-viewport; the pane is full at once and soft, then full and sharp; =C-0= back; the
+viewport; the pane full at once and soft, then full and sharp; =C-0= back; the
 upscaler's edges exact).
 
 ** 4.8 Video calls: Google Meet, with screen sharing
 
-/Asked 2026-10-20: "what would be necessary to run google meeting, including sharing
-the screen?", then "write it up first, then go after all this"./ The section was
-written as a plan first; each part now says what was measured and what was built.
-
-*STATUS (2026-10-20): BUILT, host-tested, and tried in Meet on the laptop (camera, microphone, a shared screen); not yet with another person.* Sound,
-the microphone, the permission prompts and the shared screen are tested against
-Chrome 148 on the laptop, from inside the environment (=poc/web-test.lisp=, 18
-"calls:" checks). The camera needs kernel tag #32, booted on the laptop the same day (camera
-and microphone worked in Meet, below). A call with another person is still to be done.
+*Status: built and host-tested* (=poc/web-test.lisp=, 18 "calls:" checks, Chrome 148).
+Camera, microphone and a shared screen have worked in a Meet test meeting on real
+hardware; a call with another person is still to be tried (see "Still open").
 
 *** What a call needs, against what our Chrome had
 
-A Meet call is a web page plus four things a desktop gives a browser for free:
-speakers, a microphone, a camera, and a screen to share. Our Chrome runs headless in
-a container (§6), so each one has to be handed to it on purpose.
+A call is a web page plus four things a desktop gives a browser for free: speakers, a
+microphone, a camera, and a screen to share. Our Chrome runs headless in a container
+(§6), so each has to be handed to it on purpose.
 
-| Need          | What the page calls      | What our Chrome lacked                                                          | Now                          |
-|---------------+--------------------------+---------------------------------------------------------------------------------+------------------------------|
-| Hear the call | an =<audio>= element     | a sound device: ALSA's =default= is the host's PipeWire, not running here       | =--alsa-*-device= (M1)       |
-| Speak         | =getUserMedia({audio})=  | the same, plus a permission nobody can click (no bubble without a window)       | M1 + our prompt (M2)         |
-| Be seen       | =getUserMedia({video})=  | =/dev/video0=: no V4L2 in the kernel until tag #32                              | tag #32 + our prompt (M4)    |
-| Share         | =getDisplayMedia()=      | anything to capture: headless has no display, and the picker is never shown     | our canvas (M5)              |
-| Sign in       | Google's login           | nothing since §4.5, which sends the client hints with the user agent            | to be confirmed in a call    |
+| Need          | What the page calls     | What headless Chrome lacks                                                  | Provided by                  |
+|---------------+-------------------------+-----------------------------------------------------------------------------+------------------------------|
+| Hear the call | an =<audio>= element    | a sound device: ALSA's =default= is the host's PipeWire, not running here   | =--alsa-*-device= (M1)       |
+| Speak         | =getUserMedia({audio})= | the same, plus a permission nobody can click (no bubble without a window)   | M1 + our prompt (M2)         |
+| Be seen       | =getUserMedia({video})= | =/dev/video0=: no V4L2 in the kernel before tag #32                         | tag #32 + our prompt (M4)    |
+| Share         | =getDisplayMedia()=     | anything to capture: no display, and the picker is never shown              | our canvas (M5)              |
+| Sign in       | Google's login          | nothing since §4.5                                                          | —                            |
 
 *** M1. Sound and the microphone — measured, then two switches
 
-Measured with a page on =https://example.com= and Chrome's switches varied
-(2026-10-20, Chrome 148, the laptop's ALC289):
+Measured with Chrome 148 on a Realtek ALC289 (Dell XPS 13 9300):
 
-- With no switch, a played tone leaves the card's playback =closed=
+- *No switch.* A played tone leaves the card's playback =closed=
   (=/proc/asound/card0/pcm0p/sub0/status=), and =getUserMedia= fails with
-  =NotReadableError: Could not start audio source=. Chrome's log says why:
-  =PcmOpen: default,Host is down=. Debian's Chrome tries PulseAudio, finds no
-  server, falls back to ALSA as expected, and ALSA's =default= is PipeWire's plugin,
-  which has no PipeWire to talk to.
-- With =--alsa-output-device=plughw:0,0 --alsa-input-device=plughw:0,0= the tone's
-  playback is =RUNNING= on the card, and the microphone streams: capture =RUNNING=, a
-  peak level of 0.097 from the room. =enumerateDevices= then lists the card's ALSA
-  devices by name.
+  =NotReadableError: Could not start audio source=. Chrome's log: =PcmOpen:
+  default,Host is down=. Debian's Chrome tries PulseAudio, finds no server, falls back
+  to ALSA, and ALSA's =default= is PipeWire's plugin with no PipeWire behind it.
+- *=--alsa-output-device=plughw:0,0 --alsa-input-device=plughw:0,0=.* Playback is
+  =RUNNING= on the card and the microphone streams (capture =RUNNING=, peak level
+  0.097 from the room). =enumerateDevices= lists the card's ALSA devices by name.
 
 So [[file:../initramfs/web.lisp::defun web-chrome-argv][=web-chrome-argv=]] passes both switches, with the device from
 [[file:../initramfs/web.lisp::defun web-audio-device][=web-audio-device=]]: =plughw:0,0= (the card itself, as the recorder uses it), unless a
-sound server is running (a socket at =$XDG_RUNTIME_DIR/pipewire-0= or =pulse/native=:
-a host test on Debian's desktop, where PipeWire holds the card).
+sound server is running (a socket at =$XDG_RUNTIME_DIR/pipewire-0= or =pulse/native=,
+as on a host desktop where PipeWire holds the card).
 
 *** M2. Permissions — our prompt, Chrome's grant
 
-Without a window Chrome cannot ask "allow microphone?". Measured: a =getUserMedia=
-nobody answers is refused at once with =NotAllowedError= (it does not wait). What
-works is =Browser.grantPermissions= for the page's origin, after which
-=navigator.permissions= says =granted= and the call goes through.
+Without a window Chrome can't ask "allow microphone?": an unanswered =getUserMedia= is
+refused at once with =NotAllowedError=. What works is =Browser.grantPermissions= for
+the page's origin, after which =navigator.permissions= says =granted=.
 
-So a page script ([[file:../initramfs/web.lisp::defparameter +web-media-js+][=+web-media-js+=]], installed into every document as the pickers'
-script is, §4.4) wraps =navigator.mediaDevices.getUserMedia=: it asks us first,
-through a binding, and calls Chrome's own function only after the answer.
-[[file:../initramfs/web.lisp::defun web-ask-media][=web-ask-media=]] asks you in the minibuffer: "meet.google.com wants your microphone and
-camera: y allow · a always · n no". =y= grants the origin until Chrome exits; =a=
-also writes it to =~/.lol/web/permissions.lisp= (0600), granted again at every start
-of Chrome; =n= or =C-g= refuses with =NotAllowedError=, as a refusing user would. A
-page with no origin (a =file:= page's is ="null"=) is refused without asking: a grant
-there would be a grant to every origin. Two facts about the grant: it lasts only as
-long as Chrome, and it /replaces/ an origin's set, so [[file:../initramfs/web.lisp::defun web-grant][=web-grant=]] always sends the
-union of what the origin has.
+*The script asks us first.* [[file:../initramfs/web.lisp::defparameter +web-media-js+][=+web-media-js+=]], installed into every document like
+the pickers' script (§4.4), wraps =MediaDevices.prototype.getUserMedia= (and the old
+=navigator.webkitGetUserMedia=): it asks through a binding and calls Chrome's own
+function only after the answer. Wrapping the prototype, not the one
+=navigator.mediaDevices= object, catches pages that call the prototype's function.
 
-/Found on the laptop 2026-10-20: Meet stayed in its "allow the camera and
-microphone" dialog./ The kernel's webcam (tag #32) was there and Chrome listed it
-("Integrated Webcam (0bda:58fe)"); a plain =getUserMedia= for it, granted, worked.
-What did not was the /camera with pan, tilt and zoom/: a page can ask
-=navigator.permissions.query({name: 'camera', panTiltZoom: true})=, and with
-=videoCapture= alone granted that said =denied= while the plain camera said
-=granted=. So a camera grant now carries =cameraPanTiltZoom= too, and both read
-=granted=. The name matters: the protocol's older =videoCapturePanTiltZoom= is
-refused by Chrome 148 ("Unknown permission type"), and one unknown name makes
-Chrome refuse the /whole/ grant, so the camera and the microphone are denied
-with it. A grant Chrome refuses, every question and every answer now go to
-=session.log= ("web: ..."). Ruled out while looking: Chrome's log line
-"video_capture_service_impl.cc: Bind context provider failed" appears on every
-camera start, also when the camera works. It is noise (no GPU context), not the
-fault.
+*The question.* [[file:../initramfs/web.lisp::defun web-ask-media][=web-ask-media=]] asks in the minibuffer: "meet.google.com wants your
+microphone and camera: y allow · a always · n no".
 
-/Still stuck after that fix, the same day./ This time =session.log= had no question
-from Meet at all, while Chrome's log showed its camera service starting and the
-microphone found busy. So Meet reached the devices by a route the script did not
-wrap. Two changes. First, the script wraps =MediaDevices.prototype.getUserMedia=
-(and the old =navigator.webkitGetUserMedia=) rather than the one
-=navigator.mediaDevices= object, so a page calling the prototype's function is
-asked too. Second, the page now reports what it does: each =getUserMedia= with its
-constraints, its result (the tracks, or the error's name), and each
-=permissions.query= for the camera or microphone with its answer. The first line
-from a document names it, and only pages that touch the media are logged
-("web: page ..." in =session.log=). If that log still shows nothing from Meet, the
-call comes from a frame we do not attach to: we attach to the page's own target
-only, so a cross-site iframe (a separate renderer process) gets neither the script
-nor the binding.
+- *=y=* grants the origin until Chrome exits.
+- *=a=* also writes it to =~/.lol/web/permissions.lisp= (0600), granted again at every
+  start of Chrome.
+- *=n= or =C-g=* refuses with =NotAllowedError=, as a refusing user would.
+- *No origin, no question.* A =file:= page's origin is ="null"=; granting it would
+  grant every origin, so it's refused without asking.
 
-/The log's answer, the next try./ Meet never called =getUserMedia= at all. It asked
-=navigator.permissions.query= for the camera and the microphone dozens of times,
-got =denied= every time, and stayed in its dialog. The profile held a stored
-/block/ for =meet.google.com=: Chrome's content settings =media_stream_camera= and
-=media_stream_mic= set to 2 (block), rewritten at the moment of the user's click.
-Our guess at its source: a request that reached Chrome's own prompt, which headless
-cannot show, was denied and stored. A fresh profile answers =prompt=; nothing of ours
-writes this setting. Measured on a test profile with the same block planted in its
-=Preferences=: the page reads =denied=, our =Browser.grantPermissions= overrides it,
-the page then reads =granted= and its =PermissionStatus= fires =change= (the event a
-page like Meet waits on), and the camera and microphone open. So the script's
-=permissions.query= wrapper now asks us at the first =denied= of a document, once,
-for the camera and the microphone together ("meet.google.com has your microphone and
-camera blocked: y allow · a always · n keep blocked"). On =y= the query is answered
-again: =granted=. =a= keeps the grant across Chrome's restarts, as before; the
-stored block itself stays in the profile, overridden each time.
+*Grant facts.* A grant lasts only as long as Chrome, and it /replaces/ an origin's
+set, so [[file:../initramfs/web.lisp::defun web-grant][=web-grant=]] always sends the union of what the origin has.
 
-/The third try asked, and was dismissed./ =session.log= had the question at 19:46:11
-("asks for audioCapture and videoCapture (blocked in the profile)") and, 3 s later,
-"question cancelled", not an answer: any press in the browser ended an open
-minibuffer prompt (=press-prelude=, "a click is a change of subject"), and the user
-had clicked Meet's own "Allow" button under its dialog. A page's question is now
-/sticky/ (=*minibuffer-sticky*=, set by =minibuffer-read='s =:sticky=): a press
-leaves it open, only =y=, =a=, =n=, Esc or =C-g= end it. The same goes for a page's
-=alert= / =confirm= / =prompt=, which pause the page until answered. While a page
-waits, the strip over its foot says so ("the page is waiting for your answer in the
-line below ↓", =web-asking=): the minibuffer is at the screen's bottom, easy to miss
-while the page shows a dialog of its own. The flag is a variable beside
-=*minibuffer*= rather than a slot of the =mb= struct, so a running image could take it
-from a patch (=~/meet-patch.lisp=, tested by loading it into the =e1a244a= image's
-sources with a live tab). Ruled out: Chrome's new =<permission>= element, an in-page button
-that would ask through Chrome's own prompt; Chrome 148 does not have it
-(=HTMLPermissionElement= is undefined).
+*Pan-tilt-zoom.* A page may ask =navigator.permissions.query({name: 'camera',
+panTiltZoom: true})=; with =videoCapture= alone granted, that reads =denied= while the
+plain camera reads =granted=, and Meet waits in its "allow camera" dialog. So a
+camera grant carries =cameraPanTiltZoom= too. The name matters: the protocol's older
+=videoCapturePanTiltZoom= is refused by Chrome 148 ("Unknown permission type"), and
+one unknown name makes Chrome refuse the /whole/ grant.
+
+*A block stored in the profile.* Chrome's content settings =media_stream_camera= and
+=media_stream_mic= can hold 2 (block) for an origin — likely from a request that
+reached Chrome's own prompt, which headless can't show. The page then never calls
+=getUserMedia=; it calls =permissions.query=, reads =denied=, and waits.
+=Browser.grantPermissions= overrides the block: the page reads =granted= and its
+=PermissionStatus= fires =change= (what a page like Meet waits on). So the script's
+=permissions.query= wrapper asks us at the first =denied= of a document, once, for
+camera and microphone together ("... has your microphone and camera blocked: y allow ·
+a always · n keep blocked"). The stored block stays in the profile, overridden each
+time.
+
+*The question is sticky.* An open minibuffer prompt normally ends on any press ("a
+click is a change of subject"), so clicking the page's own "Allow" button dismissed
+ours. A page's question is now /sticky/ (=*minibuffer-sticky*=, set by
+=minibuffer-read='s =:sticky=): only =y=, =a=, =n=, Esc or =C-g= end it. The same goes
+for a page's =alert= / =confirm= / =prompt=. While a page waits, the strip over its
+foot says "the page is waiting for your answer in the line below ↓" (=web-asking=).
+The flag is a variable beside =*minibuffer*= rather than a slot of the =mb= struct, so
+a running image can take it from a patch.
+
+*Logging.* Every question, answer and refused grant goes to =session.log= ("web:
+..."). Pages that touch the media also report each =getUserMedia= (constraints and
+result) and each camera/microphone =permissions.query= ("web: page ..."). A call made
+from a cross-site iframe (a target we don't attach to) gets neither script nor binding.
+
+*Ruled out:*
+
+- *"Bind context provider failed"* in Chrome's log appears on every camera start,
+  working or not: noise (no GPU context), not a fault.
+- *Chrome's =<permission>= element* (an in-page button asking through Chrome's own
+  prompt) doesn't exist in Chrome 148 (=HTMLPermissionElement= is undefined).
 
 *** M3. Sharing a tab — ruled out, replaced by M5
 
 Headless Chrome /can/ capture a tab: with
-=--auto-select-tab-capture-source-by-title=Example=, a
-=getDisplayMedia({preferCurrentTab: true})= gave a live 800 x 600 stream of the page
-(=displaySurface: browser=). But the tab is picked by a title fixed on Chrome's
-command line at start, and anything else (no switch, or
-=--auto-select-desktop-capture-source=) leaves the promise waiting forever for a
-picker that is never drawn; =--use-fake-ui-for-media-stream= picks the desktop and
-fails (=NotReadableError=: no display). Sharing a web tab also meets §3.3's rule: only
-the tab on screen renders. So the native path was dropped; M5 shares what is on
-our screen, which includes any web tab on it.
+=--auto-select-tab-capture-source-by-title=Example=,
+=getDisplayMedia({preferCurrentTab: true})= gave a live 800 x 600 stream
+(=displaySurface: browser=). But the tab is picked by a title fixed on the command
+line at start. Anything else (no switch, or =--auto-select-desktop-capture-source=)
+leaves the promise waiting for a picker that's never drawn, and
+=--use-fake-ui-for-media-stream= picks the desktop and fails (=NotReadableError=: no
+display). A background tab also doesn't render (§3.3). M5 shares what's on our
+screen instead, which includes any web tab on it.
 
 *** M4. The camera — kernel tag #32
 
-The laptop's webcam is USB Video Class (=0bda:58fe= "Integrated_Webcam_HD" in
-=lsusb=). Tag #32 adds V4L2 and the UVC driver ([[file:kernel-config.org][kernel-config.org]] §12), and preinit's
-=give_devices= hands =/dev/video*= to the user as it does =/dev/snd=; the container
-bind-mounts our =/dev=, and Chrome speaks V4L2 itself. The permission is M2's
-prompt ("wants your camera"). /Not booted yet./
+A typical laptop webcam is USB Video Class (e.g. =0bda:58fe= "Integrated_Webcam_HD").
+Tag #32 adds V4L2 and the UVC driver ([[file:kernel-config.org][kernel-config.org]] §12), and preinit's
+=give_devices= hands =/dev/video*= to the user as it does =/dev/snd=. The container
+bind-mounts our =/dev=, and Chrome speaks V4L2 itself. The permission is M2's prompt
+("wants your camera").
 
 *** M5. Sharing the screen — our canvas as a screen
 
-Chrome cannot capture what it cannot see, so the page is handed a picture of our
-screen as if it were one:
+Chrome can't capture what it can't see, so the page gets a picture of our screen as
+if it were one:
 
-1. The same page script replaces =getDisplayMedia=. After you answer "y share the
-   whole screen", it makes a canvas the screen's size and returns
-   =canvas.captureStream()=; the track says =displaySurface: monitor= to pages that
-   look, and stopping it tells us. Meet's /Present now/ sends that canvas.
-2. We paint the canvas through the DevTools pipe we already hold, with
-   =Runtime.evaluate= calling the page's =__lolShare.put=. What goes is only what
-   changed: [[file:../initramfs/web.lisp::defun web-share-note][=web-share-note=]] is one of =*frame-taps*= (fb-browser.lisp, the
-   recorder's hook made a list), told the rects of every repair; a full frame, or
-   more than 32 rects, sends the whole screen. The pointer is drawn by the page over
-   a copy, since our pointer is never in the canvas (fb-browser.lisp draws it
-   straight to the screen).
-3. Three bytes of colour are exactly four base64 characters, so
-   [[file:../initramfs/web.lisp::defun web-share-message][=web-share-message=]] turns each pixel into four octets of the message with no
-   carrying between pixels, building the whole message as octets
-   (=cdp-send-built=, web-cdp.lisp) instead of through =json-string=.
-4. At most =+web-share-fps+= (10) updates a second, and the next waits for the
-   page's answer to the last: the screencast's flow control, run the other way.
+1. *The script replaces =getDisplayMedia=.* After "y share the whole screen", it makes
+   a canvas the screen's size and returns =canvas.captureStream()=; the track says
+   =displaySurface: monitor=, and stopping it tells us. Meet's /Present now/ sends
+   that canvas.
+2. *We paint the canvas through the pipe we hold*, with =Runtime.evaluate= calling the
+   page's =__lolShare.put=. Only what changed goes:
+   [[file:../initramfs/web.lisp::defun web-share-note][=web-share-note=]] is one of =*frame-taps*= (fb-browser.lisp, the recorder's hook),
+   told the rects of every repair; a full frame, or more than 32 rects, sends the
+   whole screen. The page draws the pointer over a copy, since ours is never in the
+   canvas.
+3. *Base64 without carrying.* Three bytes of colour are exactly four base64
+   characters, so [[file:../initramfs/web.lisp::defun web-share-message][=web-share-message=]] turns each pixel into four octets, building
+   the message as octets (=cdp-send-built=, web-cdp.lisp) instead of through
+   =json-string=.
+4. *Rate and flow control.* At most =+web-share-fps+= (10) updates a second, and the
+   next waits for the page's answer to the last: the screencast's flow control, run
+   the other way.
+5. *Bounded updates.* [[file:../initramfs/web.lisp::defun web-share-take][=web-share-take=]] sends at most =+web-share-max-pixels+=
+   (512 x 512, 1 MB of base64) per update; a rect too big is cut into bands of whole
+   rows, the rest kept for the next. A whole screen is nine updates, about a second.
+   The environment's thread never writes more than 1 MB at a time — one 8.8 MB write
+   used to hold it long enough to freeze the call, and tripped the old whole-message
+   deadline of §3.2.
 
-Measured on the laptop (Chrome 148, =poc/web-test.lisp=): a whole 1920 x 1200 screen
-is 8.8 MB, 32 ms of the environment's thread to encode and write, and the page
-answers about 190 ms later (its decode; =Uint8Array.fromBase64= took that from 208 to
-184 ms). A repaired rect is a few kilobytes. While sharing, the tray says
-=SHARING meet.google.com=, in red; the web tab's menu has "Stop sharing the screen",
-and Meet's own "Stop presenting" works too (the track's =ended= event fires).
+Measured (Chrome 148, =poc/web-test.lisp=): a whole 1920 x 1200 screen is 8.8 MB,
+32 ms of the environment's thread to encode and write, and the page answers about
+190 ms later (its decode; =Uint8Array.fromBase64= took that from 208 to 184 ms); 8.8 MB
+in 9 updates arrives in 1.1 s. A repaired rect is a few kilobytes. While sharing, the
+tray shows =SHARING meet.google.com= in red; the web tab's menu has "Stop sharing the
+screen", and Meet's "Stop presenting" works too (the track's =ended= fires).
 
-/Ruled out:/ a WebSocket from the page to PID 1 on =127.0.0.1= (it would need an HTTP
-server and the WebSocket handshake's SHA-1 in Lisp, for no gain over the pipe we
-have); =v4l2loopback=, a fake camera fed with our frames (out of tree, and the kernel
-has no module support, =CONFIG_MODULES= unset); =--use-file-for-fake-video-capture=
-(plays a file, not a live feed).
-
-*** The first shared call: a lost Chrome, and why
-
-/Tried on the laptop 2026-10-20 20:08: the camera and microphone worked, sharing
-worked while the call's tab was on screen, and switching to another pane froze the
-call, then "the pipe is broken", and Chrome loaded nothing more./ =session.log= said
-"web: Chrome did not read its pipe for 5 s (fd 12 closed)", 24 s after
-=getDisplayMedia=. Switching panes changes the whole screen, so the next update was
-the whole 1920 x 1200 screen in one message, 8.8 MB. Two faults met there:
-
-- [[file:../initramfs/web-cdp.lisp::defun cdp-write-octets][=cdp-write-octets=]]'s 5 s guard was a deadline for the /whole message/. It is
-  there to catch a Chrome that has stopped reading, but a Chrome busy with the call
-  (video encoding in software) reads 8.8 MB slower than that while reading steadily.
-  The wait now restarts with every octet Chrome takes: only 5 s with no progress
-  gives up. =web-test= proves it with a stand-in that reads 64 KB every 0.2 s: 1 MB
-  takes about 3 s against a 1 s wait, and the pipe is kept.
-- Giving up closed the pipe, and the doc said Chrome then exits. It did not: it ran
-  on without its command pipe, so every later command failed ("Chrome's command pipe
-  is closed", a failed turn of the environment for each key into the tab) and no page
-  loaded. Giving up now also sends Chrome =SIGTERM=, so the reader sees EOF, the
-  tabs say Chrome exited, and =r= starts it again.
-
-And the update itself is capped: [[file:../initramfs/web.lisp::defun web-share-take][=web-share-take=]] cuts what changed into at most
-=+web-share-max-pixels+= (512 x 512, 1 MB of base64) per update, a rect too big cut
-into bands of whole rows, the rest kept for the next update. A whole screen is nine
-updates, about a second at 10 a second (measured: 8.8 MB in 9 updates, all there in
-1.1 s), and the environment's thread never writes more than 1 MB at a time. The call
-had looked frozen because that one write held the thread.
-/Tried on the laptop the same evening, loaded as a live patch (=~/share-patch.lisp=
-into the 20:05 build): sharing went on across pane switches, Chrome kept its pipe./
+*Ruled out:* a WebSocket from the page to PID 1 (an HTTP server and SHA-1 in Lisp, for
+no gain over the pipe); =v4l2loopback= as a fake camera (out of tree, and the kernel
+has =CONFIG_MODULES= unset); =--use-file-for-fake-video-capture= (plays a file, not a
+live feed).
 
 *** A call in the background
 
-You present while looking at another pane, so the call's tab is not Chrome's
-foreground page (§3.3). Measured with two tabs and a canvas sent over a loopback
-=RTCPeerConnection=: from the background tab every frame we drew still arrived (50
-of 50), but its timers ran at about 1 Hz (5 ticks of a 100 ms =setInterval= in 5 s;
-52 in the foreground). Meet's own code runs on timers. With
-=Emulation.setFocusEmulationEnabled= on that tab the timers came back (52 in 5 s), so
-a tab given the microphone, camera or screen is kept focused
-([[file:../initramfs/web.lisp::defun web-in-call][=web-in-call=]]). The test asserts it: 19 ticks in about 2 s with another tab on
-screen.
+You present while looking at another pane, so the call's tab isn't Chrome's
+foreground page (§3.3). Measured with two tabs and a canvas over a loopback
+=RTCPeerConnection=: from the background tab every frame still arrived (50 of 50),
+but timers ran at about 1 Hz (5 ticks of a 100 ms =setInterval= in 5 s; 52 in the
+foreground). Meet runs on timers. With =Emulation.setFocusEmulationEnabled= the timers
+came back (52 in 5 s), so a tab given the microphone, camera or screen is kept focused
+([[file:../initramfs/web.lisp::defun web-in-call][=web-in-call=]]). The test asserts 19 ticks in about 2 s with another tab on screen.
 
 *** Still open
 
-- *A real call.* Sign-in, the camera and microphone, and presenting across pane
-  switches all worked in Meet on the laptop (2026-10-20, a test meeting). A call
-  with someone else, hearing and being heard, is still to come; the sound bullet
-  below is what to look at then.
-- *CPU.* Headless means no GPU: Meet's video decode, WebRTC's encoding of the
-  camera and the shared screen, the screencast's JPEGs and our decode all run in
-  software. Unmeasured.
-- *One device, one stream.* Seen in the first call's log: Meet opens the microphone
-  twice, the second time raw (no echo cancellation), and the second open fails with
-  =NotReadableError= ("Could not start audio source"): =plughw:0,0= is the hardware
-  itself, which takes one capture and one playback stream. The call went on with the
-  first. Chrome's log also showed a playback open refused as busy, so two sounds at
-  once (a chime during the call) can fail the same way. ALSA's =dsnoop= / =dmix=
-  plugins share one device among several streams; not tried yet.
-- *One microphone.* =plughw:0,0= capture opens once: recording a call with the
-  recorder (=SuperL-r=) while Chrome holds the mic fails for whichever opens second.
-  ALSA's =dsnoop=, or the recorder taking Chrome's sound, would be the way.
+- *A call with another person.* Sign-in, camera, microphone and presenting across
+  pane switches work in a test meeting; hearing and being heard is untried.
+- *CPU.* No GPU: Meet's video decode, WebRTC's encoding of camera and screen, the
+  screencast's JPEGs and our decode all run in software. Unmeasured.
+- *One device, one stream.* =plughw:0,0= is the hardware itself: one capture and one
+  playback stream. Meet opens the microphone a second time, raw (no echo
+  cancellation), and that open fails with =NotReadableError=; the call goes on with
+  the first. Two sounds at once (a chime) can fail the same way, and recording a call
+  (=SuperL-r=) while Chrome holds the mic fails for whichever opens second. ALSA's
+  =dsnoop= / =dmix= share one device among several streams; not tried.
 - *The whole screen only.* A window or a single pane could be shared by cutting its
-  rect; not offered yet.
-- *The guest check.* =check-web.lisp= has no calls section yet; the guest's QEMU
-  sound card and the container's =/dev/snd= are what it would prove.
+  rect; not offered.
+- *The guest check.* =check-web.lisp= has no calls section; the guest's QEMU sound
+  card and the container's =/dev/snd= are what it would prove.
 
 ** 4.9 A loading page shows it: the strip under the toolbar
 
-/Asked for 2026-10-20: "when things are loading I don't see any reaction, it seems
-frozen."/ A link to a slow server leaves the old page on screen until the new one
-answers. Chrome headless draws no tab spinner and no progress bar, because it has no
-window. Our only sign was the toolbar's =reload= turning into =stop=.
+Headless Chrome draws no tab spinner or progress bar, so a link to a slow server
+used to leave the old page on screen with no sign except =reload= turning into
+=stop=. =Page.frameStartedLoading= arrives about 12 ms after the click and
+=frameStoppedLoading= when the page has loaded, so the tab already knows
+(=web-tab-loading=).
 
-Measured with a server that answers after 3 s: =Page.frameStartedLoading= arrives
-about 12 ms after the click, and =frameStoppedLoading= when the page has loaded. So
-the tab already knew (=web-tab-loading=). It now shows it. A strip a few pixels high
-sits between the toolbar and the page ([[file:../initramfs/web.lisp::defun draw-web-progress][=draw-web-progress=]]). It is still while the page
-is, and while the page loads a bar a third of its width slides across, once every
-1.2 s, in the accent colour. The bar's place comes from the clock, so the pane
-drawing itself and the strip drawn alone show the same picture.
-While a page loads, =web-timeout= wakes the loop every 50 ms, and
-[[file:../initramfs/web.lisp::defun web-loop-service][=web-loop-service=]] paints only the strip, as a frame is painted (§5). That is a few
-rows of pixels, not the pane.
+- *The strip.* A few pixels between toolbar and page
+  ([[file:../initramfs/web.lisp::defun draw-web-progress][=draw-web-progress=]]): still while the page is, and while it loads a bar a third
+  of its width slides across once every 1.2 s, in the accent colour.
+- *Clock-driven.* The bar's place comes from the clock, so the whole pane and the
+  strip drawn alone show the same picture.
+- *Cheap.* While a page loads, =web-timeout= wakes the loop every 50 ms, and
+  [[file:../initramfs/web.lisp::defun web-loop-service][=web-loop-service=]] paints only the strip, as a frame is painted (§5).
 
-Not covered: a page's own background requests (=fetch=, =XMLHttpRequest=), such
-as a sign-in's "Next". They send no =Page= event, and seeing them would mean the
-=Network= domain: an event with headers for every request a page makes, hundreds
-on Google's pages. Pages like that draw their own spinner.
+*Not covered:* a page's background requests (=fetch=, =XMLHttpRequest=), such as a
+sign-in's "Next". They send no =Page= event; seeing them would need the =Network=
+domain, an event per request, hundreds on big pages. Those pages draw their own
+spinner.
 
-=web-test= drives a real slow server. The strip is still when loaded, lit within
-200 ms of the click, moving while the server has not answered, and still again
-once the page has loaded.
+=web-test= drives a real slow server: the strip still when loaded, lit within 200 ms
+of the click, moving while the server hasn't answered, still again once loaded.
 
 ** 4.10 The pointer's shape follows the page
 
-/Asked for 2026-10-20: "adapt the mouse cursor based on browser events: there is no
-pointer, so it is not obvious when things are clickable."/ A page says how the
-pointer should look over each of its parts with CSS =cursor= (=pointer= over a link
-or a button, =text= over text), and a desktop browser draws that. Headless Chrome
-works it out but has no pointer to draw, and the DevTools protocol has nothing that
-reports it: Chrome 148's own description of it (=/json/protocol=, 56 domains) has no
-command or event whose definition mentions a cursor.
+A page says how the pointer should look over each of its parts with CSS =cursor=
+(=pointer= over a link, =text= over text). Headless Chrome works it out but has no
+pointer to draw, and the protocol has nothing that reports it: Chrome 148's
+=/json/protocol= (56 domains) has no command or event whose definition mentions a
+cursor. So the page reports it.
 
-So the page reports it. [[file:../initramfs/web.lisp::defparameter +web-cursor-js+][=+web-cursor-js+=]], installed in every document as the
-pickers' script is (§4.4), listens to =mousemove= in the capture phase. The moves are
-ours: [[file:../initramfs/web.lisp::defun web-hover][=web-hover=]] sends an =Input.dispatchMouseEvent= for every pointer move over
-the page. On each one the script reads =getComputedStyle(el).cursor= of the element
-under the pointer and, when it differs from the last, calls the =__lolCursor=
-binding. CSS =auto=, most of a page, is resolved as Chrome resolves it: the I-beam
-over an editable field or over the characters of a text (=caretRangeFromPoint=, and
-the point must lie on that text's boxes, since the caret lands in the nearest text
-even from blank space), the arrow elsewhere.
+- *The script.* [[file:../initramfs/web.lisp::defparameter +web-cursor-js+][=+web-cursor-js+=]], installed like the pickers' (§4.4), listens to
+  =mousemove= in the capture phase. The moves are ours: [[file:../initramfs/web.lisp::defun web-hover][=web-hover=]] sends an
+  =Input.dispatchMouseEvent= for every pointer move over the page. Each time the
+  script reads =getComputedStyle(el).cursor= under the pointer and, when it differs
+  from the last, calls the =__lolCursor= binding.
+- *Resolving =auto=* (most of a page) as Chrome does: the I-beam over an editable
+  field or over a text's characters (=caretRangeFromPoint=, and the point must lie on
+  that text's boxes, since the caret lands in the nearest text even from blank space),
+  the arrow elsewhere.
+- *Our three shapes.* [[file:../initramfs/web.lisp::defun web-cursor][=web-cursor=]] maps =pointer= to the hand, =text= and
+  =vertical-text= to the I-beam, everything else (=move=, =wait=, resize arrows) to
+  the arrow, and draws it at once ([[file:framebuffer.org][framebuffer.org]], the pointer's shapes).
+- *Off the page* (toolbar, another pane) =web-hover= gives the arrow back; during a
+  press (a drag selecting text) nothing changes. Over a cross-site frame (no script of
+  ours) the shape stays as it was.
+- *Lost reports recover.* The page reports only /changes/, so a lost report would
+  leave a wrong shape until the next change. When the pointer enters a page,
+  =web-hover= first tells it to forget its last report (=__lolCursorReset=). A report
+  from a page the pointer isn't over is ignored.
 
-[[file:../initramfs/web.lisp::defun web-cursor][=web-cursor=]] maps it to one of our three shapes (=pointer= is the hand; =text=
-and =vertical-text= the I-beam; the rest of CSS's cursors, such as =move=, =wait=
-or the resize arrows, are the arrow) and draws it at once
-([[file:framebuffer.org][framebuffer.org]], the pointer's shapes). Off the page, on its toolbar or
-another pane, =web-hover= gives the arrow back; during a press (a drag selecting
-text) nothing changes. A cross-site frame inside a page has no script of ours (we
-do not attach to it), so over one the shape stays as it was.
-
-/Tried on the laptop as a live patch, the same evening: nothing changed./ Two faults,
-the second hidden by the first:
-
-- Chrome's event handler was =#'web-event=, a function /object/ handed over when
-  Chrome started and kept for its whole life. The patch redefined =web-event=, and
-  the running Chrome went on calling the old one, which drops the cursor's reports.
-  The handler is now the /symbol/ =web-event=, looked up on every call, so a live
-  redefinition (=C-c C-c=, a patch) reaches it.
-- The page reports only /changes/. A report lost on the way (to that old handler,
-  or one meant for a tab no longer shown) left the page believing we knew: the
-  arrow stayed over a link until the cursor changed to something else. Now, when
-  the pointer enters a page, or another tab's page, =web-hover= first tells that
-  page to forget its last report (=__lolCursorReset=), and its next move reports
-  whatever it finds. A report from a page the pointer is not over is ignored.
+*Pitfall: live redefinition.* Chrome's event handler is the /symbol/ =web-event=,
+looked up on every call, not the function object =#'web-event=. A function object
+captured when Chrome starts would keep calling the old definition after =C-c C-c= or a
+patch redefines it.
 
 =web-test= checks: the hand over a link, the I-beam over a text field and over a
 heading's characters, the arrow over the blank end of that heading's line and on the
@@ -913,11 +797,10 @@ toolbar, and a lost report recovered by leaving the page and coming back.
 
 * 5. The event loop: services
 
-The browser's loop ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) used to wake
-only for input, a running stage, or a clock deadline. A web page adds another
-reason: Chrome writes to a pipe whenever the page changes, and the loop has to wake
-for that without polling on a timer. =*FB-SERVICES*= is the general mechanism. A
-service registers functions the loop calls by name:
+The browser's loop ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) wakes for input, a running stage or a clock
+deadline. A web page adds another reason: Chrome writes to a pipe whenever the page
+changes, and the loop must wake for that without polling on a timer. =*FB-SERVICES*=
+is the general mechanism; a service registers functions the loop calls by key:
 
 | Key        | Called                                        | Web pane's                                                                             |
 |------------+-----------------------------------------------+----------------------------------------------------------------------------------------|
@@ -926,100 +809,91 @@ service registers functions the loop calls by name:
 | =:run=     | every turn, after input                       | pump the pipe, sync the screencast, decode the newest frame                            |
 | =:motion=  | on a bare pointer move                        | hover: =mouseMoved= into the page                                                      |
 
-When only the page's pixels changed, =:run= copies the new frame into the canvas
-and sends just the page rectangle to the screen. This is the same economy the
-pointer and the systray clock already use, so a scrolling page costs one JPEG decode
-and one rectangle, not a full repaint. The input track's poll
-(=poll-input-once=) gives the services' fds the slots its devices leave free.
+When only the page's pixels changed, =:run= copies the new frame into the canvas and
+sends just the page rectangle to the screen — the same economy as the pointer and
+the systray clock. A scrolling page costs one JPEG decode and one rectangle, not a
+full repaint. The input poll (=poll-input-once=) gives the services' fds the slots its
+devices leave free.
 
-Two smaller things in this layer:
-
-- *The first frame is nudged.* Starting a screencast usually makes the page repaint,
-  which sends the first frame. In about one run in twenty of poc/web-test.lisp it did
-  not, and the pane stayed white. So a tab still without a frame 700 ms after its
-  stream started gets one =Page.captureScreenshot= to show in the meantime.
-- *Nothing blocks.* Starting Chrome takes about a second on the host and five in the
-  guest. So every exchange is a chain of callbacks, run as the replies arrive, and
-  the pane says "starting Chrome ..." until then. Only =WEB-JS=, for tests and the
-  REPL, waits for an answer. When called from another thread (the net REPL), it sends
-  with a callback and waits for the browser's loop to deliver the reply, because two
-  threads reading one pipe would race.
+- *The first frame is nudged.* Starting a screencast usually makes the page repaint.
+  In about one run in twenty it didn't, and the pane stayed white, so a tab still
+  without a frame 700 ms after its stream started gets one =Page.captureScreenshot=.
+- *Nothing blocks.* Chrome takes about a second to start on the host and five in the
+  guest. Every exchange is a chain of callbacks run as replies arrive; the pane says
+  "starting Chrome ..." until then. Only =WEB-JS= (tests, the REPL) waits for an
+  answer. From another thread (the net REPL) it sends with a callback and waits for
+  the browser's loop to deliver the reply, because two threads reading one pipe would
+  race.
 
 * 6. Running it in the guest
 
 ** 6.1 Why a container
 
-Chrome is not one file. It needs the host's whole userland: 81 shared libraries
-(=ldd /opt/google/chrome/chrome= on the dev host), fonts and fontconfig, =/proc/self/exe= (it re-executes itself for its
-child processes), =/dev/shm= for shared memory, and a writable =/tmp=. Our root is a
-small initramfs with none of that. The containers track built exactly what is
-needed: =lol-ct= runs a command with the host's Debian (at =/mnt/host=) as its root,
-as the user, with our =/home=, =/tmp=, =/dev= and network
-([[file:containers.org][containers.org]]). =web.lisp= asks for that through
-=container-command-line=, in a container of its own named =web=, so that Chrome's
-writes never mix with a project's container. Chrome's state lives in =/home= anyway
-(§7.3).
+Chrome isn't one file. It needs a whole userland: 81 shared libraries
+(=ldd /opt/google/chrome/chrome=), fonts and fontconfig, =/proc/self/exe= (it
+re-executes itself for child processes), =/dev/shm=, and a writable =/tmp=. Our root
+is a small initramfs with none of that. =lol-ct= runs a command with the host's
+distribution (at =/mnt/host=) as its root, as the user, with our =/home=, =/tmp=,
+=/dev= and network ([[file:containers.org][containers.org]]). =web.lisp= asks for that through
+=container-command-line=, in a container of its own named =web=, so Chrome's writes
+never mix with a project's container. Chrome's state lives in =/home= anyway (§7.3).
 
 The =/bin/sh= that moves the pipes (§3.2) is therefore the host's, inside the
-container. Our root has no shell of its own, and that absence is also how =web.lisp=
-tells that it runs in the image (=WEB-IN-GUEST-P=). On the host, Chrome starts
-directly.
+container. Our root has no shell, and that absence is how =web.lisp= tells it runs in
+the image (=WEB-IN-GUEST-P=). On the host, Chrome starts directly.
 
 ** 6.2 Lifecycle
 
 - *Lazily.* Chrome starts with the first web tab, not at boot.
 - *If it dies*, every tab says so. =r= or a click restarts Chrome and reloads each tab
   at its last address.
-- *At power-off*, =POWER-OFF= calls =WEB-SHUTDOWN= first. That sends =Browser.close=,
-  which lets Chrome write its profile while =/home= is still writable, and then
-  waits for it to exit before =RELEASE-DISK= remounts =/home= read-only.
-- *Reaping.* When a process dies, its children are handed to PID 1. A dead child
-  stays a *zombie* (a process-table entry holding its exit status) until its parent
-  waits for it. =sb-ext:run-program= waits only for processes it started. Inside the
-  container this is not our problem: lol-ct's init is PID 1 of the container's pid
-  namespace and reaps there. As a safety net for a Chrome started any other way,
-  =WEB-REAP-ORPHANS= looks at every waitable child *without* reaping it
-  (=waitid= with =WNOWAIT=) and reaps only the ones SBCL does not know. That way
-  =run-program='s exit codes are never taken from it. check-web.lisp asserts that
-  no zombie is left after =WEB-SHUTDOWN=.
+- *At power-off*, =POWER-OFF= calls =WEB-SHUTDOWN= first. It sends =Browser.close=, so
+  Chrome writes its profile while =/home= is still writable, and waits for it to exit
+  before =RELEASE-DISK= remounts =/home= read-only.
+- *Reaping.* A dead child stays a *zombie* (a process-table entry holding its exit
+  status) until its parent waits for it, and orphans are handed to PID 1.
+  =sb-ext:run-program= waits only for processes it started. Inside the container
+  lol-ct's init is PID 1 of the pid namespace and reaps there. As a safety net,
+  =WEB-REAP-ORPHANS= looks at every waitable child *without* reaping it (=waitid= with
+  =WNOWAIT=) and reaps only the ones SBCL doesn't know, so =run-program='s exit codes
+  are never stolen. check-web.lisp asserts no zombie is left after =WEB-SHUTDOWN=.
 
 ** 6.3 Memory
 
-Measured in the guest (tag #26, QEMU, =-m 2048=, with one simple page): Chrome's
-processes total *436 MB PSS*, and =MemAvailable= went from 1890 MB to 1573 MB. PSS
-("proportional set size") divides each shared page among the processes sharing it,
-so per-process PSS adds up honestly; RSS would count the shared libraries again for
-every process. 2 GB was enough for the checks, and =-m 4096= was not needed. The
-laptop has far more. Heavy single-page apps will use several times this; that is
-the norm for any browser.
+Measured in the guest (tag #26, QEMU, =-m 2048=, one simple page): Chrome's processes
+total *436 MB PSS*, and =MemAvailable= went from 1890 MB to 1573 MB. PSS
+("proportional set size") divides each shared page among the processes sharing it, so
+per-process PSS adds up honestly; RSS would count the shared libraries again for every
+process. 2 GB was enough for the checks. Heavy single-page apps use several times
+this, as in any browser.
 
 ** 6.4 Chrome's sandbox works inside the container
 
-Chrome confines its renderers, the processes that run web pages' code, in a sandbox
-of their own. One layer is namespaces (a renderer sees no other process and no
-network of its own); the other is seccomp-BPF, a kernel filter on which system calls
-a process may make. Both work without privileges on a kernel with =USER_NS= and
-=SECCOMP_FILTER=, both of which are on since tag #26.
+Chrome confines its renderers (the processes running web pages' code) in a sandbox.
+One layer is namespaces (a renderer sees no other process and has no network of its
+own); the other is seccomp-BPF, a kernel filter on which system calls a process may
+make. Both work unprivileged on a kernel with =USER_NS= and =SECCOMP_FILTER=, on since
+tag #26.
 
 Inside lol-ct, Chrome runs as PID 2 of its own pid namespace with =NO_NEW_PRIVS= and
-no capabilities. =NO_NEW_PRIVS= is a prerequisite of seccomp, not an obstacle. A
-user namespace may create further, nested user namespaces. So we keep the sandbox:
-=*WEB-SANDBOX*= is =:auto=, which passes no =--no-sandbox=. check-web.lisp opens
-=chrome://sandbox=, Chrome's own report, and asserts the line it prints when all is
-well. In the guest it reads: "Layer 1 Sandbox: Namespace · PID namespaces: Yes ·
-Network namespaces: Yes · Seccomp-BPF sandbox: Yes · Seccomp-BPF sandbox supports
-TSYNC: Yes · *You are adequately sandboxed.*" =--no-sandbox= remains available
-(=(setf *web-sandbox* nil)=) for a kernel without those options. It means that a
-page which exploits a bug in Chrome's renderer runs with all of the user's rights.
+no capabilities. =NO_NEW_PRIVS= is a prerequisite of seccomp, not an obstacle, and a
+user namespace may create nested ones. So the sandbox stays: =*WEB-SANDBOX*= is
+=:auto=, which passes no =--no-sandbox=. check-web.lisp opens =chrome://sandbox=,
+Chrome's own report, and asserts its all-clear. In the guest: "Layer 1 Sandbox:
+Namespace · PID namespaces: Yes · Network namespaces: Yes · Seccomp-BPF sandbox: Yes ·
+Seccomp-BPF sandbox supports TSYNC: Yes · *You are adequately sandboxed.*"
+
+=(setf *web-sandbox* nil)= passes =--no-sandbox=, for a kernel without those options.
+Then a page that exploits a renderer bug runs with all of the user's rights.
 
 * 7. Settings
 
-All are =defvar=​s in =web.lisp=, to be set from the Workspace or a future init file.
+All are =defvar=​s in =web.lisp=, set from the Workspace or an init file.
 
 ** 7.1 The engine and the window
 
 - =*web-chrome-binary*= — ="/usr/bin/google-chrome"=, as seen *inside* the container
-  (the host's Debian is its =/=). That path is the alternatives link to
+  (the host's root is its =/=). That's the alternatives link to
   =/opt/google/chrome/google-chrome=, a bash script that execs the real binary beside
   it.
 - =*web-extra-args*= — more switches, e.g. ="--force-dark-mode"=.
@@ -1028,479 +902,116 @@ All are =defvar=​s in =web.lisp=, to be set from the Workspace or a future ini
 
 ** 7.2 Search
 
-=*web-search*= is a =FORMAT= string. The default is Google
-(="https://www.google.com/search?q=~a"=). The address bar decides what you typed
-(=WEB-URL-FOR=): anything with =://= or a known scheme is used as it is; something
-shaped like a host (=github.com/x=, =localhost:3000=, =10.0.2.2:8000/a=) gets a
-scheme, which is =http= for =localhost= and bare IPv4 addresses (where development
-servers live) and =https= otherwise; anything else is percent-encoded and searched
-for.
+=*web-search*= is a =FORMAT= string, Google by default
+(="https://www.google.com/search?q=~a"=). =WEB-URL-FOR= decides what you typed:
+
+- *A URL.* Anything with =://= or a known scheme is used as it is.
+- *A host.* Something shaped like one (=github.com/x=, =localhost:3000=,
+  =10.0.2.2:8000/a=) gets a scheme: =http= for =localhost= and bare IPv4 addresses
+  (where development servers live), =https= otherwise.
+- *Words.* Anything else is percent-encoded and searched for.
 
 ** 7.3 The profile: ours by default, yours if you choose
 
-A Chrome *profile* is the directory that holds cookies (your logins), history,
-saved passwords and cache. =*web-profile*= is =NIL= by default, which means
-=~/.lol/web/chrome/= (=~/.config/lol/chrome/= until 2026-10-17, moved at boot with the
-rest of the [[file:session-persistence.org][=~/.lol/= tree]]): *our own* profile, separate from the one the desktop
-Chrome uses (=~/.config/google-chrome=). Two reasons it is not the default:
+A Chrome *profile* is the directory holding cookies (your logins), history, saved
+passwords and cache. =*web-profile*= is =NIL= by default, meaning
+=~/.lol/web/chrome/= (part of the [[file:session-persistence.org][=~/.lol/= tree]]): *our own* profile, separate from
+the desktop Chrome's =~/.config/google-chrome=. Two reasons:
 
-- *A profile is locked by the Chrome using it.* The desktop Chrome is usually
-  running when the laptop is in its desktop session. Then it holds the lock and a
-  second Chrome cannot open that profile. (In the image the desktop is not running,
-  so this only bites when both run at once, as under QEMU on the dev host.)
+- *A profile is locked by the Chrome using it.* If the desktop Chrome is running, a
+  second Chrome can't open its profile. In the image the desktop isn't running, so
+  this bites only when both run at once (QEMU on a host desktop).
 - *Its secrets may not decrypt here.* On Linux, Chrome encrypts cookie values and
-  saved passwords with a key it keeps in the desktop keyring (the Secret Service,
-  provided here by =gnome-keyring-daemon=). The dev host runs one (/verified/:
-  =gnome-keyring-daemon --components=pkcs11,secrets= is running). The image has no
-  keyring. That is why we pass =--password-store=basic=, which keeps the key in the
-  profile itself. A profile whose cookies were encrypted with the *keyring* key
-  would open, but its logins would be unreadable, so you would be logged out
-  everywhere. /Not tested here/: we did not read the user's cookie database to
-  confirm which key it uses.
+  saved passwords with a key kept in the desktop keyring (the Secret Service, e.g.
+  =gnome-keyring-daemon=). The image has no keyring, so we pass
+  =--password-store=basic=, which keeps the key in the profile. A profile encrypted
+  with the *keyring* key would open, but its logins would be unreadable: logged out
+  everywhere. /Not tested/ against a real desktop profile's cookie database.
 
 To try your own profile, with the desktop Chrome closed, evaluate
 =(setf *web-profile* "/home/<you>/.config/google-chrome")= before the first web tab.
-The lasting answer is to log in once in our profile: it persists in =/home= like
-any other file.
+The lasting answer is to log in once in our profile; it persists in =/home= like any
+other file.
 
 * 8. Tests and measurements
 
 ** 8.1 What is asserted
 
-[[file:../poc/web-test.lisp][poc/web-test.lisp]] (host, =sbcl --script
-poc/web-test.lisp=) drives the host's Chrome through the shell's own entry points
-(a press through the world to the page's pane — =browser-click= until Morphic's §12 —
-=browser-key=, =browser-scroll=) and reads every answer back from
-the page with =Runtime.evaluate=, never from pixels. It checks: start and first
-page, a decoded frame, the title in the tab strip, the viewport equal to the pane, a
-link click, back, typing and Backspace, =C-a C-c= into =lol.clipboard=, =C-v= from it,
-=C-f=, a download into =~/Downloads= with its status line, the wheel, a
-=target=_blank= link becoming a new tab with its own title and frame, closing that
-tab closing its Chrome page, =C-l= and typed addresses, and =WEB-URL-FOR='s rules. It
-writes PPMs of three states to =poc/out/=. One thing it ruled out: a =file://=
-page's =download= attribute is ignored by Chrome (a file URL is an opaque origin, so
-Chrome navigates to the file instead), which is why the test's download link is a
-=data:= URL. Since 2026-10-13 it also drives the pickers of §4.4 (18 checks), with
-=*CHOOSER*= bound to a function that records what it was offered and answers, since
-the host has no modal loop.
+[[file:../poc/web-test.lisp][poc/web-test.lisp]] (host, =sbcl --script poc/web-test.lisp=) drives the host's Chrome
+through the shell's own entry points (a press through the world to the page's pane,
+=browser-key=, =browser-scroll=) and reads every answer back from the page with
+=Runtime.evaluate=, never from pixels.
 
-[[file:../check-web.lisp][check-web.lisp]] (guest:
-=LOL_GUEST_HOSTROOT=1 LOL_PORT=4015 sbcl --script check-web.lisp=) boots the image
-with the host's root shared in, serves two pages from the host on =LOL_PORT=+1000
-(QEMU's user network shows the host as =10.0.2.2=), and drives everything with real
-QMP input: =SuperL-b= held down, an address typed key by key, a click by relative
-pointer motion, =SuperL-Left=, typing into a field, wheel notches. It then loads
-=https://example.com= (DNS and TLS are Chrome's own, inside the container), reads
-=chrome://sandbox=, and checks that =WEB-SHUTDOWN= leaves no Chrome process and no
-zombie. Between the two it loads a page with a =<select>= (optgroups, a disabled
-option, an =onchange= that writes the title) and, with real QMP clicks and keys,
-asserts that our chooser opens (read from =*CHOOSER-STATE*=; the screendump changes)
-on the current option, that Down skips the disabled one, that Enter changes the
-value and runs =onchange=, that Esc changes nothing, and that Space opens it from
-the keyboard. *From 2026-10-13 to 2026-10-16, five of its checks failed.* The check
-that a tab with no URL shows the guide opened a second tab and left it focused, so
-the tab-title, link, back, typing and wheel checks all ran against the guide. The
-check now refocuses the test page's tab, and the wheel check also exposed the
-foreground-page bug in §3.3. Since 2026-10-20 it also drives the address prompt's
-panel (§4.6) with real keys: =/usr/sh= lists =/usr/share/= from the host's root,
-=Down= =Tab= takes it, =doc/= =Enter= opens Chrome's listing of =/usr/share/doc/=,
-and =C-n= =Enter= on "lol test" loads the test page from the history. /That section
-was written on 2026-10-20 from inside the environment, where it could not run: there
-is no =/dev/kvm=, and QEMU's =fat:= drive puts a temporary file in =/var/tmp= (it
-ignores =TMPDIR=), which fails on the container's overlay with EOVERFLOW. Not run
-yet; run it from the host's Debian./ Whether Chrome's own popup stayed shut is asked only on the host: the
-net REPL's =WEB-JS= waits for the browser's loop, which is inside the modal chooser. =LOL_QEMU_MEM= (new in the harness) raises the guest's RAM; it was not needed.
+- *Basics.* Start and first page, a decoded frame, the title in the tab strip, the
+  viewport equal to the pane, a link click, back, typing and Backspace.
+- *Clipboard, find, download.* =C-a C-c= into =lol.clipboard=, =C-v= from it, =C-f=, a
+  download into =~/Downloads= with its status line.
+- *Tabs and addresses.* The wheel, a =target=_blank= link becoming a new tab with its
+  own title and frame, closing that tab closing its Chrome page, =C-l= and typed
+  addresses, =WEB-URL-FOR='s rules.
+- *Everything in §4.4–§4.10.* Pickers (18 checks, with =*CHOOSER*= bound to a function
+  that records what it was offered and answers, since the host has no modal loop),
+  the user agent, zoom, calls, the loading strip, the pointer's shape; plus §3.2's
+  write guard.
+- *Output.* PPMs of three states in =poc/out/=.
+- *Ruled out:* a =file://= page's =download= attribute is ignored by Chrome (a file
+  URL is an opaque origin, so Chrome navigates to the file), which is why the test's
+  download link is a =data:= URL.
+
+[[file:../check-web.lisp][check-web.lisp]] (guest: =LOL_GUEST_HOSTROOT=1 LOL_PORT=4015 sbcl --script
+check-web.lisp=) boots the image with the host's root shared in, serves two pages from
+the host on =LOL_PORT=+1000 (QEMU's user network shows the host as =10.0.2.2=), and
+drives everything with real QMP input:
+
+- *Browsing.* =SuperL-b= held down, an address typed key by key, a click by relative
+  pointer motion, =SuperL-Left=, typing into a field, wheel notches. It refocuses the
+  test page's tab after checking that a tab with no URL shows the guide.
+- *The real web.* =https://example.com= (DNS and TLS are Chrome's own, in the
+  container) and =chrome://sandbox=.
+- *A =<select>=* (optgroups, a disabled option, an =onchange= that writes the title):
+  our chooser opens on the current option (read from =*CHOOSER-STATE*=; the
+  screendump changes), Down skips the disabled one, Enter changes the value and runs
+  =onchange=, Esc changes nothing, Space opens it from the keyboard. Whether Chrome's
+  own popup stayed shut is asked only on the host: the net REPL's =WEB-JS= waits for
+  the browser's loop, which is inside the modal chooser.
+- *The address panel* (§4.6): =/usr/sh= lists =/usr/share/= from the host's root,
+  =Down= =Tab= takes it, =doc/= =Enter= opens Chrome's listing of =/usr/share/doc/=,
+  and =C-n= =Enter= on "lol test" loads the test page from the history.
+- *A torn-off window* ([[file:morphic.org][morphic.org]] §12): load, scroll, click, type, move the window;
+  the frame and the input follow it.
+- *Shutdown.* =WEB-SHUTDOWN= leaves no Chrome process and no zombie.
+
+It needs a host with =/dev/kvm=; it can't run inside the environment's own container,
+where QEMU's =fat:= drive puts a temporary file in =/var/tmp= (ignoring =TMPDIR=) and
+the overlay answers EOVERFLOW. =LOL_QEMU_MEM= raises the guest's RAM; not needed.
 
 ** 8.2 Numbers
 
-| Measure                                                | Host (the dev laptop) | Guest (tag #26, QEMU/KVM, 2 GB) |
-|--------------------------------------------------------+-----------------------+---------------------------------|
-| Chrome cold start to first page                        | 0.25 s                | 5 s                             |
-| Decode of one 1256x701 frame (base64 + JPEG + convert) | 8 ms                  | 4–8 ms                          |
-| Input to the next frame (16 samples)                   | —                     | 20–72 ms, mostly 24–44          |
-| Chrome PSS, all processes, one simple page             | 240–280 MB            | 436 MB                          |
+| Measure                                                | Host       | Guest (tag #26, QEMU/KVM, 2 GB) |
+|--------------------------------------------------------+------------+---------------------------------|
+| Chrome cold start to first page                        | 0.25 s     | 5 s                             |
+| Decode of one 1256x701 frame (base64 + JPEG + convert) | 8 ms       | 4–8 ms                          |
+| Input to the next frame (16 samples)                   | —          | 20–72 ms, mostly 24–44          |
+| Chrome PSS, all processes, one simple page             | 240–280 MB | 436 MB                          |
 
-"Input to next frame" is measured in =web.lisp= itself (=WEB-TAB-LATENCIES=): from
-the moment a key or a click is sent to the moment the next frame arrives. Add the
-decode and a rectangle blit for what the eye sees.
+"Input to next frame" is measured in =web.lisp= itself (=WEB-TAB-LATENCIES=): from a
+key or click sent to the next frame arriving. Add the decode and a rectangle blit for
+what the eye sees.
 
 * 9. Limits, and what is next
 
-- /Tried 2026-10-20: a page's sound./ Headless Chrome plays through the card once told
-  which ALSA device (§4.8, M1): its =default= is the host's PipeWire, not running here.
-  Measured from inside the environment on the laptop; not yet in the guest. A page's
-  video comes through the screencast like any other pixels, unsynchronised; a video
-  file plays properly with the host's MPlayer (=play-video=, §8 there).
-- /Fixed 2026-10-19: non-ASCII typing./ The console sends UTF-8, and =fb-read-key= used
-  to make each byte a character (=ç= arrived as two wrong ones); it decodes UTF-8 now,
-  and pt-BR is typed with Right Alt or Caps Lock ([[file:input.org][input.org]] §1, "Two layouts").
-- *Pickers* are ours for =<select>=, colour, date/time and =<datalist>= (§4.4), but
-  not inside a cross-site iframe, where our page script never runs.
+- *A page's sound* plays once Chrome is told the ALSA device (§4.8, M1). Measured on
+  real hardware, not yet in the guest. A page's video comes through the screencast
+  like any other pixels, unsynchronised; a video file plays properly with the host's
+  MPlayer (=play-video=, [[file:screencast.org][screencast.org]]).
+- *Pickers* are ours for =<select>=, colour, date/time and =<datalist>= (§4.4), but not
+  inside a cross-site iframe, where our page script never runs.
 - *No file upload dialog.* =<input type=file>= opens nothing yet. The next step is
   =Page.setInterceptFileChooserDialog= plus a file-manager prompt.
 - *No per-link right-click menu.* The right button shows the page's commands, not the
   link under the pointer. "Open in new tab" is =SuperL-click=.
-- *Frame rate* is bounded by one decode and one blit per frame in Lisp; smooth
-  scrolling of heavy pages is not 60 fps in the guest.
+- *Frame rate* is bounded by one decode and one blit per frame in Lisp; heavy pages
+  don't scroll at 60 fps in the guest.
 - *Hover* is sent on every bare pointer move, unthrottled. Chrome copes.
-
-* Appendix: the WPE exploration (2026-10-02)
-
-This was the whole document before the browser was built, kept as it was written.
-Section numbers inside it are its own (A1–A6). Its "what it would take in the image"
-table (§A6) is now mostly answered by the container and the network rather than by
-copying libraries in.
-
-** A1. The short answer
-
-A web browser is mostly its *engine*: the HTML/CSS layout, the JavaScript VM and the
-painting. Writing one is out of scope for this project, so the real question is
-/which engine, and how much of a desktop does it drag in with it/.
-
-- *Nyxt* is a Lisp shell around someone else's engine: WebKitGTK in Nyxt 3, Electron
-  (that is, Chromium) in Nyxt 4. The Lisp part would be easy; it is everything
-  under it that costs (§A2).
-- *WPE WebKit* is the same WebKit with *no GTK and no display server*. It is the
-  engine we would pick (§A3).
-- Before anything goes into the image, the engine can be tested on the host, with the
-  same Debian packages we would copy from (§A4–§A5).
-
-** A2. Why not Nyxt (yet)
-
-Nyxt 3 renders through WebKitGTK. Measured on the host by following every shared
-library it pulls in (=ldd=, the dynamic linker's "who do you need" listing):
-
-| Library                  | Shared libs it pulls in | Their size | Its own size                     |
-|--------------------------+-------------------------+------------+----------------------------------|
-| =libwebkit2gtk-4.1.so.0= |                     166 | ~187 MB    | 96 MB, plus JavaScriptCore 33 MB |
-| =libWPEWebKit-2.0.so.1=  |                     143 | ~137 MB    | 130 MB (JavaScriptCore included) |
-
-The totals are close. *What* gets pulled in is where they differ. WebKitGTK needs GTK, and GTK
-needs a display server: an X server or a Wayland compositor (a "compositor"
-is the program that owns the screen and combines every window's pixels into one
-picture). Our image has neither, and its only screen is =/dev/fb0=. On top of that,
-GTK wants to own the main thread, and Nyxt compiles Lisp at runtime, which the guest
-currently cannot do safely (the generic-arithmetic fault in =AGENTS.md=). Nyxt
-would be the /last/ step, not the first.
-
-** A3. The options, and why WPE
-
-| Option                     | Engine / JavaScript                              | How it draws                   | Weight              | Verdict                                  |
-|----------------------------+--------------------------------------------------+--------------------------------+---------------------+------------------------------------------|
-| Links2 =-g=                | own; HTML 4 + basic CSS; no JS                   | its own framebuffer driver     | tiny, can be static | fast, but the modern web is out of reach |
-| w3m                        | text; no JS                                      | the terminal                   | tiny                | docs and Hacker News, little more        |
-| NetSurf (framebuffer)      | own; HTML 4 / CSS 2.1, partial CSS 3; minimal JS | =libnsfb=, a Linux fb surface  | a few MB            | the best of the small ones; SPAs break   |
-| *WPE WebKit*               | *full WebKit + JavaScriptCore*                   | DRM/KMS directly, or headless  | ~270 MB of libs     | *the real web, without a desktop*        |
-| WebKitGTK / Nyxt 3         | full WebKit                                      | GTK → X or Wayland             | §A2                 | needs a whole desktop                    |
-| Electron / Nyxt 4          | Chromium                                         | its own stack                  | larger still        | no                                       |
-| Remote (VNC into the host) | any                                              | a Lisp RFB client in the guest | no native deps      | a thin client, not a browser             |
-| Closure (CL, McCLIM)       | pure Lisp, HTML 4 / CSS 1 era                    | McCLIM                         | Lisp only           | a historical toy                         |
-
-Two terms the WPE row leans on:
-
-- *DRM/KMS* is the kernel's modern display API (=/dev/dri/card0=). It is what a GPU
-  driver such as =i915= exposes, and it is what our image *lacks*: it only has the
-  old firmware framebuffer =efifb= (see [[file:framebuffer.org][framebuffer.org]]).
-- *Headless* means WebKit renders into memory buffers and shows them nowhere. Some
-  other program has to put the pixels on screen. For us that program would be our
-  Lisp, blitting into =/dev/fb0=, which is the "process that sends pixels" case
-  [[file:processes.org][processes.org]] declined for its own components and
-  which a web engine would justify.
-
-So WPE in *software rendering + headless* mode needs no GPU driver and no
-compositor at all. That is the combination worth testing.
-
-** A4. Setting up the host
-
-*** A4.1 Install
-
-#+begin_src sh
-sudo apt install libwpewebkit-2.0-1 cage \
-     gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-libav
-#+end_src
-
-- =libwpewebkit-2.0-1= ships WebKit's own test browser, =MiniBrowser=, at
-  =/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser=. That is the launcher every
-  test below uses.
-- =cage= is a /kiosk/ Wayland compositor: it runs exactly one application,
-  full-window. Started from an X session, it opens as an ordinary X window. Our host
-  runs X (StumpWM), and WPE has *no X11 output*, so cage is the bridge.
-- The GStreamer plugins are only for audio and video (test T6).
-
-To save typing, put this in your shell for the session:
-
-#+begin_src sh
-MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
-#+end_src
-
-*** A4.2 Two dead ends, recorded so nobody repeats them
-
-- *=cog= under X fails* with
-  =libwpe [FATAL]: could not load the impl library ... libWPEBackend-default.so=.
-  Debian builds cog with only the =drm=, =headless= and =wl= platforms (see
-  =/usr/lib/x86_64-linux-gnu/cog/modules/=); there is no =x11= platform, so
-  =-P x11= falls through to a backend that does not exist.
-- *=cog -P wl= under cage with =LIBGL_ALWAYS_SOFTWARE=1= crashes in a loop*: the
-  window stays black and cog prints
-  =Crash!: The renderer process crashed= over and over. The web process dies on
-  =wayland-egldisplay.c:525: dmabuf_feedback_check_main_device: Assertion `dev->size == sizeof(dev_t)' failed=,
-  inside *WPEBackend-fdo*, the legacy backend cog uses. None of
-  =WEBKIT_DISABLE_DMABUF_RENDERER=, =WEBKIT_DISABLE_COMPOSITING_MODE= or
-  =WEBKIT_SKIA_ENABLE_CPU_RENDERING= helps. =GALLIUM_DRIVER=softpipe= avoids it, but
-  softpipe is far too slow to measure anything with. *MiniBrowser does not crash*,
-  because it uses WebKit's newer built-in platform layer instead of libwpe/fdo. So
-  never pass it =--use-legacy-api=, which selects the crashing path again. For the
-  product this means: build on WebKit's new platform API, not on cog.
-
-*** A4.3 The switches the tests use
-
-| Variable / flag                                       | Effect                                                                               | Verified here                             |
-|-------------------------------------------------------+--------------------------------------------------------------------------------------+-------------------------------------------|
-| =LIBGL_ALWAYS_SOFTWARE=1=                             | Mesa renders on the CPU (=llvmpipe=) instead of the GPU                              | yes                                       |
-| =WPE_DISPLAY=drm= / =wayland= / =headless=            | picks WebKit's output; an unknown name errors with =Display of type X was not found= | yes                                       |
-| =WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999=         | serves Web Inspector to an ordinary browser                                          | yes, but only together with the next line |
-| =WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1=          | turns off the web process's sandbox                                                  | yes; for debugging only                   |
-| =MiniBrowser --size=WxH=, =--fullscreen=, =--private= | window size, fullscreen, no saved state                                              | listed in =--help=                        |
-| =WEBKIT_SHOW_FPS=1=                                   | the library knows the name, but *printed nothing* in our runs                        | ruled out, see T2                         |
-| =WEBKIT_DRAW_FPS=1=                                   | present in the library; supposedly draws an FPS overlay                              | *not verified*                            |
-
-** A5. The tests
-
-Run them in order. Each one says what to do, what to watch, and what to write down.
-Keep a terminal open next to the browser: MiniBrowser and the web process log to
-the terminal you started them from.
-
-*** T1 — Smoke test on the GPU (does it work at all?)
-
-#+begin_src sh
-cage -- $MB https://example.org/
-#+end_src
-
-- *Expect*: an X window containing the page. Close it by closing the window, or with
-  =Ctrl-C= in the terminal.
-- *Watch*: the terminal. A loop of =renderer process crashed= means the web process
-  is dying; see T7 for how to find out why.
-- *Record*: works / doesn't.
-
-*** T2 — The software floor (the image's real situation)
-
-The image has no GPU driver, so this is the configuration we would ship first.
-
-#+begin_src sh
-LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB https://example.org/
-#+end_src
-
-/Confirmed working by the user, 2026-10-02./
-
-To judge *smoothness*, use a page that counts its own frames, because
-=WEBKIT_SHOW_FPS= printed nothing on 2.54. Save this as =/tmp/fps.html=:
-
-#+begin_src html
-<!doctype html><title>fps</title>
-<body style="margin:0;font:48px monospace">
-<div id=box style="position:absolute;top:100px;width:200px;height:200px;background:#c33"></div>
-<div id=out style="position:absolute;top:10px;left:10px">…</div>
-<script>
-  // Move a box every frame and show how many frames the browser managed per second.
-  let x = 0, frames = 0, last = performance.now();
-  function tick(now) {
-    x = (x + 6) % (innerWidth - 200);
-    box.style.left = x + 'px';
-    frames++;
-    if (now - last >= 1000) { out.textContent = frames + ' fps'; frames = 0; last = now; }
-    requestAnimationFrame(tick);
-  }
-  requestAnimationFrame(tick);
-</script>
-#+end_src
-
-#+begin_src sh
-                        cage -- $MB file:///tmp/fps.html   # GPU
-LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB file:///tmp/fps.html   # software
-#+end_src
-
-- *Expect*: close to 60 fps on the GPU. Software will be lower; how much lower is the
-  number we want.
-- *Then* open a long real page (a Wikipedia article) in both modes and scroll it hard
-  with the touchpad and with the wheel. Note stutter, tearing and blank tiles
-  (patches that fill in late).
-- *Record*: fps in both modes, at the same window size, plus a sentence on how
-  scrolling felt.
-
-*** T3 — Straight onto the display, on a bare VT (the product's architecture)
-
-This is the closest the host gets to the image: no X, no compositor; WebKit itself
-drives the screen through DRM/KMS.
-
-1. Press =Ctrl-Alt-F3= and log in on the text console. Logging in matters: WebKit
-   asks logind for the display device, and logind only hands it to the user /owning
-   that VT/. Run from your X session instead, it fails with
-   =Failed to take control of session ... EBUSY= and
-   =Failed to become DRM master= (verified).
-2. Run it under =timeout=. Once WebKit owns the screen, the keyboard goes to the
-   browser rather than to the shell, so =Ctrl-C= may never arrive:
-   #+begin_src sh
-   MB=/usr/lib/x86_64-linux-gnu/wpe-webkit-2.0/MiniBrowser
-   WPE_DISPLAY=drm timeout 60 $MB https://en.wikipedia.org/wiki/Lisp_machine
-   #+end_src
-3. When it exits, the console comes back. =Ctrl-Alt-F7= (or F1/F2, whichever holds
-   your X) returns you to the desktop.
-4. Repeat with software rendering:
-   #+begin_src sh
-   WPE_DISPLAY=drm LIBGL_ALWAYS_SOFTWARE=1 timeout 60 $MB https://en.wikipedia.org/wiki/Lisp_machine
-   #+end_src
-   This combination is untested. If it refuses to start, note the error: it tells us
-   whether llvmpipe can hand its buffers to KMS at all, which decides between "DRM +
-   software" and "headless + our own blit" for the image.
-
-- *Watch*: the mouse pointer and the scroll wheel. Here WebKit reads input itself
-  through libinput, the same evdev devices our own [[file:input.org][input.org]] code reads.
-- *Record*: started / refused (with the error), fps from =file:///tmp/fps.html=,
-  and whether the pointer and the wheel behaved.
-- *If the screen is stuck*: wait for =timeout=. If even that fails, switch to another
-  VT (=Ctrl-Alt-F4=), log in, and run =pkill -f MiniBrowser=.
-
-*** T4 — The standard benchmarks
-
-[[https://browserbench.org/][browserbench.org]] hosts the three benchmarks every engine vendor quotes:
-
-| Benchmark        | URL                                       | What it measures                                                                                            |
-|------------------+-------------------------------------------+-------------------------------------------------------------------------------------------------------------|
-| Speedometer 3.1  | https://browserbench.org/Speedometer3.1/  | responsiveness of real web-app code (DOM + JS): how fast the browser /feels/                                |
-| JetStream 3.0    | https://browserbench.org/JetStream3.0/    | JavaScript and WebAssembly throughput; barely touches rendering                                             |
-| MotionMark 1.3.2 | https://browserbench.org/MotionMark1.3.2/ | graphics: how much animation it sustains at a steady frame rate. *The number software rendering hurts most* |
-
-How to run each one:
-
-1. Start the browser on the benchmark URL, e.g.
-   #+begin_src sh
-   LIBGL_ALWAYS_SOFTWARE=1 cage -- $MB https://browserbench.org/Speedometer3.1/
-   #+end_src
-2. Click the start button and *don't touch anything* until the score appears: no
-   mouse movement, no other heavy programs. Plug the laptop in, because on battery
-   the CPU is throttled and the numbers stop being comparable.
-3. Write down the score. Run each benchmark *twice* per configuration; if the two
-   differ by more than ~5%, run a third time and keep the median.
-4. Keep the window size identical across runs. MotionMark in particular scales its
-   work with the window. Maximise cage's window the same way every time, or use
-   StumpWM to give it a fixed frame.
-
-Fill in this table:
-
-| Configuration                            | Speedometer 3.1 | JetStream 3.0 | MotionMark 1.3.2 |
-|------------------------------------------+-----------------+---------------+------------------|
-| Firefox (host, baseline)                 |                 |               |                  |
-| MiniBrowser, GPU (T1 setup)              |                 |               |                  |
-| MiniBrowser, software (T2 setup)         |                 |               |                  |
-| MiniBrowser, DRM on a VT (T3), if it ran |                 |               |                  |
-
-How to read it: Speedometer and JetStream should barely move between GPU and
-software, because they are mostly JavaScript, which runs on the CPU anyway. MotionMark
-shows the cost of having no GPU driver. If software MotionMark is acceptable, the
-image can stay on =efifb= for a long time.
-
-*** T5 — CPU and memory
-
-*CPU while working.* Start a browser (T2's software setup is the interesting one),
-then in another terminal:
-
-#+begin_src sh
-top -b -d 2 -n 15 -p "$(pgrep -d, -f 'MiniBrowser|WPEWebProcess|WPENetworkProcess|cage')" \
-  | grep -E 'MiniBrowser|WPE|cage'
-#+end_src
-
-That prints 15 samples, 2 s apart. Scroll a long page while it runs, then repeat
-while the page sits idle. =%CPU= above 100 means more than one core is busy.
-Rendering in software spreads across llvmpipe's threads.
-
-*Memory.* The obvious number, RSS ("resident set size": the pages a process has
-in RAM), *double-counts* the pages several processes share, and WebKit's processes
-share many libraries. *PSS* ("proportional set size") divides each shared page
-among the processes sharing it, so PSS values add up honestly:
-
-#+begin_src sh
-for p in $(pgrep -f 'MiniBrowser|WPEWebProcess|WPENetworkProcess'); do
-  printf '%-22s %8s kB PSS\n' "$(cat /proc/$p/comm)" \
-    "$(awk '/^Pss:/{print $2}' /proc/$p/smaps_rollup)"
-done
-#+end_src
-
-Measure three states: a blank page, one heavy site, and three heavy sites opened one
-after another. Each MiniBrowser run is a single page, so "three sites" means
-navigating via links within one run.
-
-/Measured so far/: with donorbox.org loaded in software mode, the web process held
-*~570 MB RSS* and the network process ~100 MB. That is RSS, so it is an upper bound.
-Redo it as PSS.
-
-| State             | Web process (PSS) | Network process (PSS) | UI process (PSS) | Total |
-|-------------------+-------------------+-----------------------+------------------+-------|
-| =about:blank=     |                   |                       |                  |       |
-| one heavy site    |                   |                       |                  |       |
-| after three sites |                   |                       |                  |       |
-
-This decides how much RAM the image needs; the browser, not Lisp, will dominate it.
-
-*** T6 — Your own sites (the bug list)
-
-Benchmarks don't find bugs; your daily sites do. For each site, start it in the
-software setup and go through this checklist:
-
-- does it render correctly (fonts, layout, icons)?
-- can you log in (cookies; with =--private= state is not kept between runs)?
-- do typing in forms, the clipboard and right-click work?
-- does video play (YouTube; this needs the GStreamer plugins from §A4.1)?
-  Netflix-style protected video (Widevine DRM) will *not* play; that is a known gap.
-- does it complain about the browser (some sites sniff for Chrome)?
-
-Suggested set: a search engine, Wikipedia, GitHub (a repo page and a diff), YouTube,
-your webmail, Hacker News, and one heavy single-page app you actually use.
-
-| Site | Renders | Login | Forms/clipboard | Video | Notes |
-|------+---------+-------+-----------------+-------+-------|
-|      |         |       |                 |       |       |
-
-Remember that MiniBrowser is a test shell, not a browser: no tabs, no bookmarks, no
-download UI. Those are missing features, and in the image they would be our Lisp's
-job, so don't record them as bugs.
-
-*** T7 — When a site breaks: finding out why
-
-1. *Read the terminal.* A web-process crash prints its assertion or signal there;
-   that is how §A4.2's fdo bug was found.
-2. *Open Web Inspector* (the same devtools Safari has) in your normal browser:
-   #+begin_src sh
-   WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 \
-   WEBKIT_INSPECTOR_HTTP_SERVER=127.0.0.1:5999 \
-     cage -- $MB https://the-broken-site/
-   #+end_src
-   Then open =http://127.0.0.1:5999= in Firefox. It lists the page under
-   /Inspectable targets/ with an *Inspect* button: console errors, network
-   failures, DOM. Without the sandbox line, the web process cannot reach the inspector
-   server and logs =org.freedesktop.portal.Error.NotAllowed: This call is not
-   available inside the sandbox= (verified). The sandbox exists to contain hostile
-   pages, so only disable it while debugging.
-3. *Compare with Firefox*: if the site is broken in Firefox too, it is not a WebKit
-   problem.
-4. *Core dumps*: =coredumpctl list WPEWebProcess= shows web-process crashes if
-   systemd-coredump is installed. Without it, the terminal message is all there is.
-
-** A6. What it would take in the image
-
-This is not a plan yet, just the shopping list the tests feed into.
-
-| Need             | Today (#24)                               | For WPE                                                                                 |
-|------------------+-------------------------------------------+-----------------------------------------------------------------------------------------|
-| storage          | tmpfs only                                | a real filesystem: ~270 MB of libraries (§A2), plus a profile dir for cookies and cache |
-| shared libraries | ld.so + libc + libm, copied from the host | the =ldd= closure of =libWPEWebKit-2.0.so.1=, copied the same way                       |
-| DNS + TLS        | sockets + DHCP, no resolver               | =/etc/resolv.conf=, =nsswitch.conf=, a CA bundle, =glib-networking=                     |
-| fonts            | our own bitmap fonts                      | TTF fonts + fontconfig and its cache                                                    |
-| display          | =efifb= only, =DRM= off                   | /headless/ + our Lisp blitting (no kernel change), or =DRM= + a GPU driver (T3 decides) |
-| input            | our own evdev reader                      | headless: we forward events into WebKit; DRM: WebKit reads them itself via libinput     |
-| child processes  | the supervisor spawns workers             | web, network (and GPU) processes; PID 1 must reap them                                  |
-| sandbox          | no =USER_NS=, no =SECCOMP=                | run without it, or enable both (bubblewrap)                                             |
-
-The headless route is the one that keeps the system ours: Lisp stays the only
-process on =/dev/fb0= and treats a web page as one more thing it draws. How WebKit's
-new platform API hands headless buffers to an embedder has *not* been looked at yet.
-That is the next question once the tests above say the engine is worth it.
+- *Non-ASCII typing* works: =fb-read-key= decodes the console's UTF-8, and a second
+  layout is typed with Right Alt or Caps Lock ([[file:input.org][input.org]] §1, "Two layouts").

@@ -1,6 +1,6 @@
 ;;;; morphic-test.lisp — host test for the World: its core, the shell as a tree of
 ;;;; morphs, windows, the halo's handles, the overlays and stepping (doc/morphic.org,
-;;;; steps 1–5 and §12), against the real shell, headless.
+;;;; §3–§8 and §5), against the real shell, headless.
 ;;;;
 ;;;;     sbcl --script poc/morphic-test.lisp        ; exits 0 if every check passes
 ;;;;
@@ -95,7 +95,7 @@
   "Did the last repair draw only morphs in ALLOWED (inside windows too)?"
   (every (lambda (e) (member (car e) allowed)) (drawn)))
 
-;;; ---- the core alone: a surface, with plain morphs (doc/morphic.org §12.4) ---------
+;;; ---- the core alone: a surface, with plain morphs (doc/morphic.org §3.4) ---------
 
 (defclass box (lol.morph:morph)
   ((color :initarg :color :reader box-color)
@@ -187,7 +187,7 @@
 (setf *world* (make-desk +w+ +h+))
 (repair)
 
-(format t "~&== the shell is a tree of morphs (doc/morphic.org §12) ==~%")
+(format t "~&== the shell is a tree of morphs (doc/morphic.org §5) ==~%")
 (check "the screen starts as one full repair, every morph of the shell drawn"
        (and (getf (last-repair) :full)
             (every (lambda (m) (drew-p m))
@@ -798,7 +798,7 @@
             (when stays (keys "s-w"))))))))
 (repair)
 
-(format t "~&== drag and drop: the hand carries a subject (doc/morphic.org §13) ==~%")
+(format t "~&== drag and drop: the hand carries a subject (doc/morphic.org §9) ==~%")
 (defvar zz-drop-target 1 "An inspector field to drop on: this symbol's value cell.")
 (defun hand () (lol.morph:world-hand *world*))
 (defun row-point (p index)

@@ -5,7 +5,7 @@
 ;;;; looked at by hand, because the code around it may have moved. What survives a
 ;;;; rebuild is source in the repo. So this file closes the loop Smalltalk's file-out
 ;;;; leaves open: instead of producing a file for a human to merge, it puts each
-;;;; changed definition back where it came from (doc/session-persistence.org §2b,
+;;;; changed definition back where it came from (doc/session-persistence.org §5,
 ;;;; "File-out to the repo's source").
 ;;;;
 ;;;; Why that is possible at all: build.sh loads each module by its ABSOLUTE path in

@@ -1,21 +1,19 @@
 #+TITLE: Speaking X11 — a window on the dev host, in pure Lisp
 #+STARTUP: showall
 
-Companion to [[file:framebuffer.org][framebuffer.org]] (pixels → the laptop panel) and [[file:fonts.org][fonts.org]] (glyphs →
+Companion to [[file:framebuffer.org][framebuffer.org]] (pixels → the machine's panel) and [[file:fonts.org][fonts.org]] (glyphs →
 pixels). This file covers the *other* place our pixels can land: an ordinary
-window on your desktop, drawn by [[file:../poc/x11.lisp][=poc/x11.lisp=]] — a complete X11 *client* in 309
+window on your desktop, drawn by [[file:../poc/x11.lisp][=poc/x11.lisp=]] — a complete X11 *client* in about 310
 lines of Common Lisp, with no C, no Xlib and no CLX.
 
-Why it exists: the code browser ([[file:code-browser.org][code-browser.org]]) has to be developed
-*somewhere*, and rebooting a laptop to try a change is a miserable loop. The same
-canvas that [[file:../poc/fb.lisp][=fb.lisp=]] pushes to =/dev/fb0= in the guest goes to an X window on
-the host, so the browser runs from a plain =sbcl= on your desktop. Same code,
-two backends — see [[file:../poc/README.org][poc/README.org]].
+It exists for the development loop. Rebooting a machine to try a change is slow,
+so the same canvas that [[file:../poc/fb.lisp][=fb.lisp=]] pushes to =/dev/fb0= in the guest goes to an X
+window on the host, and the code browser ([[file:code-browser.org][code-browser.org]]) runs from a plain
+=sbcl= on your desktop. Same code, two backends — see [[file:../poc/README.org][poc/README.org]].
 
-Note it is a *development* backend: =x11.lisp= is deliberately **not** in
-=build.sh='s =LISP_SOURCES=, so the booted image carries the framebuffer path
-only. Nothing here ever runs on the machine — which is exactly why it can be
-this small.
+It's a *development* backend only: =x11.lisp= is deliberately not in =build.sh='s
+=LISP_SOURCES=, so the booted image carries the framebuffer path alone. That's
+why it can be this small.
 
 * The one-sentence essence
 
@@ -60,13 +58,11 @@ That collapses the protocol to:
   <- events                   KeyPress, ButtonPress, Motion, Expose, Configure
 #+end_src
 
-Eight message types. Everything else X can do, we simply never use — which is
-the same trade this project makes everywhere: do the work yourself, and the
-interface you must learn shrinks to almost nothing.
+Eight message types. We never use anything else X can do — the trade this
+project makes everywhere: do the work yourself, and the interface you must learn
+shrinks to almost nothing.
 
 * 3. The wire format — three rules
-
-Read these and the code stops looking like magic.
 
 1. *Little-endian, declared by us.* The first byte of the connection is =#x6c= —
    ASCII =l= — telling the server to expect little-endian. (=B= would mean big.)
@@ -179,13 +175,12 @@ request; it has to go as horizontal bands:
 …then walk down the image a band at a time. At 1280 wide that is ~51 rows per
 band, so ~16 requests per frame.
 
-This is the honest reason real toolkits track *damage rectangles* instead of
-pushing whole frames: you should be sending the 200×20 pixels that actually
-changed, not re-shipping four megabytes because a cursor blinked. We push full
-frames because it is a prototype and it is fast enough — the same "correct and
-obvious beats clever" call as the row-at-a-time framebuffer blit
-([[file:framebuffer.org][framebuffer.org §9.1]]). Damage tracking is listed as owed work in
-[[file:code-browser.org][code-browser.org]]'s Phase 2.
+This is why real toolkits send *damage rectangles* instead of whole frames: you
+should ship the 200×20 pixels that changed, not four megabytes because a cursor
+blinked. The world (Morphic) already repairs only the damaged rects *into the
+canvas*, but =present= still ships the whole canvas to the server. For a dev
+backend that's fast enough — the same "correct and obvious beats clever" call as
+the row-at-a-time framebuffer blit ([[file:framebuffer.org][framebuffer.org §9.1]]).
 
 * 8. The keyboard — why a keymap is not optional
 
@@ -234,62 +229,58 @@ bytes that are never coming — the classic protocol hang.
 * 9. Events — 32 bytes, always
 
 Every X event is *exactly 32 bytes*. That makes the read loop trivial: pull 32
-bytes, look at the opcode, decode the five kinds we care about, discard the rest.
+bytes, look at the opcode, decode the kinds we care about, discard the rest.
 
-| code | event             | what we take                   |
-|------+-------------------+--------------------------------|
-|    0 | =Error=           | reported, not modelled (a POC) |
-|    2 | =KeyPress=        | keycode + modifier state       |
-|    4 | =ButtonPress=     | button + x,y + state           |
-|    6 | =MotionNotify=    | x,y (the mouse cursor)         |
-|   12 | =Expose=          | we just repaint everything     |
-|   22 | =ConfigureNotify= | the new window size            |
+| code | event             | what we take                          |
+|------+-------------------+---------------------------------------|
+|    0 | =Error=           | reported, not modelled                |
+|    2 | =KeyPress=        | keycode + modifier state              |
+|    3 | =KeyRelease=      | keycode + modifier state              |
+|    4 | =ButtonPress=     | button + x,y + state                  |
+|    5 | =ButtonRelease=   | button + x,y + state                  |
+|    6 | =MotionNotify=    | x,y + state (button 1 held = a drag)  |
+|   12 | =Expose=          | the exposed rect                      |
+|   22 | =ConfigureNotify= | the new window size                   |
 
 The high bit of byte 0 marks a *synthetic* (client-sent) event, which is why the
 code masks with =#x7f=.
 
-=Expose= is where full-frame pushing quietly pays for itself: the correct
-response to "this region was damaged" is to redraw that region, but since we
-always send the whole canvas anyway, we can ignore the rectangle entirely.
+=Expose= becomes damage of just the exposed rect in the world (§9½); the world
+repairs it, and the next present sends the canvas.
 
 * 9½. The host's loop is the world's cycle
 
 The client above only moves bytes; what turns X events into the environment is
-[[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]]'s loop, and since [[file:morphic.org][morphic.org]] §13 that loop has the same shape
-as the guest's. One turn, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]], repairs what the world says is damaged and
+[[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]]'s loop, which has the same shape as the guest's
+([[file:morphic.org][morphic.org]] §10). One turn, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]], repairs what the world says is damaged and
 presents the canvas, waits for an X event — or for the earliest step deadline, when
 something steps (a running stage) — turns what came into the world's events
 ([[file:../poc/run-browser.lisp::defun x11-world-events][=x11-world-events=]]: a key, the buttons, Button1Mask motion as a drag, buttons 4/5 as
 the wheel, an =Expose= as damage of just the exposed rect), lets the world route them,
 and steps. It is installed as =*world-cycle*=, as the guest installs =fb-cycle=, so
 every overlay that waits for an answer — a menu, the halo, the value prompt, the
-clipboard manager, the debugger — waits by turning *this* loop: before, the host had
-no cycle to turn and a menu simply answered NIL ("no menus on this backend"). The
-runner also loads =fb-browser.lisp= for the debugger and the cheatsheet it defines;
+clipboard manager, the debugger — waits by turning *this* loop. The runner also loads =fb-browser.lisp= for the debugger and the cheatsheet it defines;
 nothing in that file touches =/dev/fb0= until =run-browser-fb=, which the host never
 calls.
 
-lol.x11 can only block on the socket or not, so a wait with a deadline polls every few
-milliseconds — a dev loop, not the guest's =poll(2)=. And the X specifics are three
-functions (=*host-next-event*=, =*host-present*=, =*host-decode*=), which is what lets
-[[file:../poc/x11-test.lisp][poc/x11-test.lisp]] turn the very same cycle with a script of lol.x11's own =EVENT=
-structures and no display: there is no Xvfb on the build host (checked 2026-10-17:
-=which Xvfb= finds nothing), so the overlays are proven against the real cycle that
-way — 26 checks, each overlay waiting in it, the presented canvas equal to a fresh
-paint after each.
+- *Deadlines poll.* lol.x11 can only block on the socket or not, so a wait with a
+  deadline polls every few milliseconds — a dev loop, not the guest's =poll(2)=.
+- *Tested without a display.* The X specifics are three functions
+  (=*host-next-event*=, =*host-present*=, =*host-decode*=), so
+  [[file:../poc/x11-test.lisp][poc/x11-test.lisp]] turns the very same cycle with a script of lol.x11's own =EVENT=
+  structures. No Xvfb is needed (the build host has none). 26 checks: each overlay
+  waits in the cycle, and the presented canvas equals a fresh paint after each.
 
 * 10. What this proves, and what it deliberately omits
 
 *Proved:* the browser's pixel toolkit is backend-neutral. The identical
 =canvas.lisp= renders to an X window on the host and to =/dev/fb0= as PID 1 in
-the guest, and the only thing that differs is the ~40 lines that ship the buffer.
-That is what let Phases 2–4 of [[file:code-browser.org][code-browser.org]] be developed at desktop speed and
-then simply *run* on the machine.
+the guest; only the ~40 lines that ship the buffer differ. So the browser is
+developed at desktop speed and then simply *runs* on the machine.
 
 *Omitted, on purpose:*
 
-- *Sending only damage* — the world repairs only the damaged rects into the canvas
-  (Morphic), but the canvas still goes to the server whole (§7).
+- *Sending only damage* — the canvas goes to the server whole (§7).
 - *Window-manager conversation* — no =WM_PROTOCOLS=, so clicking the ✕ kills the
   connection rather than asking us politely to close. Fine for a dev harness.
 - *Modifier tracking beyond the event's =state= field*, no =xkb=, no compose key,

@@ -20,7 +20,7 @@
 ;;;;     Enter changes the value and runs onchange, Esc changes nothing;
 ;;;;   - a public HTTPS page loads, when the guest has a resolver (it is skipped and
 ;;;;     says so when /etc/resolv.conf is missing — DNS is another track's);
-;;;;   - a page torn off into a window (doc/morphic.org §13.5): an address loads in it,
+;;;;   - a page torn off into a window (doc/morphic.org §12): an address loads in it,
 ;;;;     its viewport is the window's pane, its frames reach the window's store and the
 ;;;;     screen, the wheel scrolls it, a click and keys land in it, and after the window
 ;;;;     is dragged elsewhere the page and a click follow it;
@@ -97,7 +97,7 @@
     ;; preconnect, an idle keep-alive), and a server that served one connection at a
     ;; time sat reading a request line that never came while the real request waited
     ;; behind it — a page load that never finished, which first looked like Chrome
-    ;; hanging a page torn off into a window (doc/morphic.org §13.5)
+    ;; hanging a page torn off into a window (doc/morphic.org §12)
     (sb-thread:make-thread
      (lambda ()
        (loop (let ((c (sb-bsd-sockets:socket-accept sock)))
@@ -177,7 +177,7 @@
 (defun mem-available-mb ()
   (probe "(with-open-file (s \"/proc/meminfo\") (loop for l = (read-line s nil) while l when (search \"MemAvailable\" l) return (round (parse-integer l :start 13 :junk-allowed t) 1024)))"))
 
-;;; ---- a page in a window (doc/morphic.org §13) --------------------------------------
+;;; ---- a page in a window (doc/morphic.org §12) --------------------------------------
 ;;; A web pane torn off into a trail window: its page is drawn into the window's
 ;;; backing store, at the window's own coordinates, and the window is copied to the
 ;;; screen. Everything that maps between the page and the screen must therefore add the

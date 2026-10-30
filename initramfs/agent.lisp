@@ -12,7 +12,7 @@
 ;;;;   tools       §7 — LISP-SOURCE is SOURCE-OF, LISP-SENDERS is the compiler's xref,
 ;;;;               LISP-ACCEPT is the very ACCEPT-SOURCE that C-c C-c calls
 ;;;;
-;;;; The conversation is a CLOS object (§6), so it can be driven from the REPL, from
+;;;; The conversation is a CLOS object (§6.1), so it can be driven from the REPL, from
 ;;;; a browser tab or from the debugger without any of them owning it, and so PRESENT
 ;;;; can show it (agent-ui.lisp). Writes are GATED, and the gate is a CONDITION with
 ;;;; RESTARTS (§8.4): whoever is around decides — the environment's chooser, the
@@ -22,12 +22,12 @@
 ;;;; *AGENT-AUTHORITY*. Bind them with LET for a dynamic extent, SETF them globally.
 ;;;;
 ;;;; CL-USER like the other initramfs modules (the tools call SOURCE-OF, SENDERS, … by
-;;;; their plain names). doc/agent.org §13 had asked whether the agent should get its
+;;;; their plain names). doc/agent.org once asked (now §7.1) whether the agent should get its
 ;;;; own package so that LISP-APROPOS can skip it; it filters by FILE instead (the
 ;;;; registry knows which file every definition came from), which needs no package.
 ;;;;
 ;;;; THE KEY. Read at RUNTIME from ~/.lol/agent/anthropic-api-key (on /home, so it
-;;;; is never in the frozen heap build.sh saves — §11), kept in one special variable,
+;;;; is never in the frozen heap build.sh saves — §4.2), kept in one special variable,
 ;;;; never printed, never logged, and sent ONLY to https://api.anthropic.com. Any
 ;;;; other endpoint (a mock server, a broker) gets no key at all.
 ;;;;
@@ -55,7 +55,7 @@
    conversation) or \"omitted\" (nothing to show; the same thinking happens either way).")
 (defvar *agent-endpoint* "https://api.anthropic.com"
   "Where requests go. A http:// endpoint (a mock server, the broker of doc/agent.org
-   §4) is spoken to without TLS and is NEVER sent the API key.")
+   §2.1, never built) is spoken to without TLS and is NEVER sent the API key.")
 (defvar *agent-fallbacks* t
   "Ask for server-side fallbacks (fallbacks: \"default\"): if the model's safety
    classifiers decline a request, the API re-runs it on the model Anthropic
@@ -75,7 +75,7 @@
    own; nothing does so yet — the dial and its indicator exist so that when something
    does, it is already visible).")
 (defvar *agent-authority* :ask
-  "§8.9's second dial (§7.2's policy) — what may it touch? :READ-ONLY (write tools
+  "§8.9's second dial (§7.3's policy) — what may it touch? :READ-ONLY (write tools
    are not even offered), :ASK (each write is a TOOL-APPROVAL-REQUEST you answer: the
    default), :ALLOW (writes run).")
 
@@ -219,7 +219,7 @@
   (unless *agent-settings-loaded* (ignore-errors (load-agent-settings))))
 
 ;;; ===========================================================================
-;;; The conversation as a live object (§6)
+;;; The conversation as a live object (§6.1)
 ;;; ===========================================================================
 
 (defclass agent-message ()
@@ -293,7 +293,7 @@
    (thread :initform nil :accessor conversation-thread)
    (cancel :initform nil :accessor conversation-cancel)
    (jobs :initform '() :accessor conversation-jobs))       ; tool calls waiting for the UI thread
-  (:documentation "A conversation with the model (doc/agent.org §6). Several coexist;
+  (:documentation "A conversation with the model (doc/agent.org §6.1). Several coexist;
    *CONVERSATION* is the one a bare ? or Ask continues."))
 
 (defmethod print-object ((c conversation) s)
@@ -416,7 +416,7 @@
 
 (defun offered-tools (conv)
   "The tools this request offers: all of them, minus the write tools under
-   :READ-ONLY (§7.2: not offered at all), minus any whose AVAILABLE-P says no."
+   :READ-ONLY (§7.3: not offered at all), minus any whose AVAILABLE-P says no."
   (remove-if (lambda (tool)
                (or (and (agent-tool-write-p tool) (eq (conversation-authority* conv) :read-only))
                    (and (agent-tool-available-p tool) (not (funcall (agent-tool-available-p tool))))))
@@ -779,7 +779,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                                (fentry-type e) (human-size (fentry-size e)) (format-mtime (fentry-mtime e))))
                      entries)))))
 
-;;; ---- write tools: gated (§7.2, §8.4) --------------------------------------
+;;; ---- write tools: gated (§7.3, §8.4) --------------------------------------
 
 (defun read-in-package (text package-name)
   "Read the first form of TEXT in PACKAGE-NAME (default CL-USER) with *READ-EVAL* off:
@@ -994,7 +994,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
    TOOL-APPROVAL-REQUEST with three restarts — ALLOW, DENY, EDIT — and whoever handles
    it decides: the environment's chooser, the REPL's numbered prompt, a test's
    HANDLER-BIND. Nobody handling it means nobody was there to say yes, so it is
-   declined; a denial goes back to the model as a result, never as an error (§7.2)."
+   declined; a denial goes back to the model as a result, never as an error (§7.3)."
   (ecase (conversation-authority* conv)
     (:allow (funcall thunk))
     (:read-only (setf (call-status call) :denied)
@@ -1857,7 +1857,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 
 ;;; ===========================================================================
 ;;; The system prompt — a definition in the registry, so it is browsable, editable
-;;; and Accept-able like everything else (doc/agent.org §13 leaned this way)
+;;; and Accept-able like everything else (doc/agent.org §7.1)
 ;;; ===========================================================================
 
 (defparameter *agent-system-prompt*

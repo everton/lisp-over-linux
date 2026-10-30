@@ -5,33 +5,27 @@ Parent doc: [[file:micro-distro.org][micro-distro.org]] (base EFISTUB micro-linu
 sibling: [[file:sbcl-init.org][sbcl-init.org]] (SBCL as PID 1) ·
 deep-dive: [[file:framebuffer.org][framebuffer.org]] (the Display options explained).
 
-This file is the *single source of truth* for which kernel features the micro
-distro turns on, and — more importantly — *why each one is there*. It is meant
-to be read top-to-bottom by someone (re)building the kernel from scratch.
+This file is the *single source of truth* for which kernel features the image
+turns on, and *why each one is there*. Read it top to bottom when you (re)build
+the kernel from scratch.
 
-Kernel: =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink; the
-tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]]).
-Current tag: *#32* (the webcam: V4L2 + USB Video Class — §12; built on #31 = kexec: the running kernel boots the next image itself, without the
-firmware or GRUB — §11; built on #30 = SMP: every CPU, and with it Intel P-state
-frequency scaling — §10; built on #29 = SOUND: the HD-Audio controller and the Realtek codecs — §9; built on #28 = when
-the KERNEL is stuck: Magic SysRq, the lockup and hung-task
-detectors, pstore on EFI variables — §6; built on #27 = USB Ethernet dongles, the RTL8153
-and the generic CDC classes, §8; built on #26 = the daily-driver set: user namespaces, overlayfs, Wi-Fi, IPv6,
-seccomp, SysV IPC, inotify, fw_cfg and virtio-9p — §8; built on top of #25 = storage:
-NVMe + ext4 + virtio-blk, see [[file:storage.org][storage.org]], #24 = rebased the config onto Linux 7.2.5, #23 =
-dropped legacy BSD PTYs, #21 = IPv4 networking + QEMU virtio-net, #20 = Terminus
-16x32 fbcon font — *since reverted*, see the Display table and
-[[file:framebuffer.org][framebuffer.org]] §7 — #19 = CONFIG_PCI + USB/HID).
-1,203 =CONFIG_= lines are set at #32; most are auto-selected defaults. The tables below
-list only the ones that *matter* for this machine — the ones we chose on purpose.
+- *Kernel.* =linux-7.2.5=, config at [[file:../linux/.config][=./linux/.config=]] (the gitignored symlink);
+  the tracked copy is [[file:../kernel/config-7.2.5][=kernel/config-7.2.5=]].
+- *Current tag: #32* — the webcam (§12). The tags before it, one line each, are in
+  the change log at the end.
+- *Size.* 1,203 =CONFIG_= lines are set at #32; most are auto-selected defaults.
+  The tables list only the ones chosen on purpose.
+- *Reference hardware.* Where a row names a device, it's the one the image is
+  tested on: a Dell XPS 13 9300 (Ice Lake i7-1065G7, NVMe, Intel AX201 Wi-Fi,
+  Realtek ALC289 audio, a UVC webcam).
 
 * How to regenerate / audit this file
 
-These are the exact commands used to produce the inventory below. Re-run them
-after any =make menuconfig= and reconcile any differences into the tables.
+Re-run these after any =make menuconfig= and reconcile any differences into the
+tables. Run from the project root.
 
 #+begin_src sh
-cd ~/lisp-over-linux/linux
+cd linux
 
 # the curated set we care about, grouped by subsystem:
 grep -E 'CONFIG_(EFI|EFI_STUB|FB|FB_EFI|FRAMEBUFFER_CONSOLE|VT|VT_CONSOLE|PCI|\
@@ -78,7 +72,13 @@ grep -cE '^CONFIG_CRASH_DUMP=y' .config      # expect 0
 # the webcam is ON since tag #32 (§12) — UVC alone, no TV or radio:
 grep -cE '^CONFIG_USB_VIDEO_CLASS=y' .config  # expect 1
 grep -cE '^CONFIG_MEDIA_ANALOG_TV_SUPPORT=y' .config  # expect 0
+
+# how many options are set (1,203 at #32):
+grep -c '^CONFIG_' .config
 #+end_src
+
+After any change, refresh the tracked snapshot from the project root:
+=cp linux/.config kernel/config-7.2.5=.
 
 * 1. Boot — how the kernel becomes the EFI application
 
@@ -92,21 +92,15 @@ grep -cE '^CONFIG_MEDIA_ANALOG_TV_SUPPORT=y' .config  # expect 0
 | =CONFIG_BINFMT_SCRIPT=    | y     | =#!= shebang scripts (delegates to an ELF interpreter)                  |
 | =CONFIG_CMDLINE=          | str   | Baked-in kernel cmdline (see below) — EFISTUB fallback boot has no args |
 
-Baked cmdline (=CONFIG_CMDLINE_BOOL=y=, no override):
-="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio"=.
-=initrd== loads the separate initramfs; the =console== pair drives both serial
-(QEMU markers) and the fb console. (A =fbcon=font:TER16x32= parameter was here in
-tag #20 and was dropped again when we reverted to the 8x16 font — Display table
-below, [[file:framebuffer.org][framebuffer.org]] §7.)
-
-Note: =CONFIG_INITRAMFS_SOURCE=""= is why =build.sh= rebuilds in seconds —
-changing the Lisp does not need a kernel rebuild. The initramfs is passed as
-=initrd=initramfs.cpio= (EFISTUB opens it relative to the volume root).
-
-binfmt detail: with =BINFMT_ELF= off the kernel could run *nothing* in
-userspace (every path bottoms out at an ELF interpreter) and would panic with
-"No working init found". =BINFMT_AOUT= no longer exists in the tree (removed
-from x86 in 5.1); =BINFMT_MISC= is off.
+- *The baked cmdline.* =CONFIG_CMDLINE_BOOL=y=, no override:
+  ="console=ttyS0,115200 console=tty0 initrd=initramfs.cpio"=. =initrd== loads the
+  separate initramfs (EFISTUB opens it relative to the volume root); the
+  =console== pair drives both serial (QEMU markers) and the fb console.
+- *Why the initramfs is separate.* With =INITRAMFS_SOURCE=""=, changing the Lisp
+  doesn't need a kernel rebuild, so =build.sh= runs in seconds.
+- *Why ELF is the one that matters.* Without =BINFMT_ELF= the kernel can run
+  *nothing* in userspace and panics with "No working init found". =BINFMT_AOUT= no
+  longer exists (removed from x86 in 5.1); =BINFMT_MISC= is off.
 
 * 2. Display — why the laptop screen is not blank
 
@@ -123,31 +117,24 @@ from x86 in 5.1); =BINFMT_MISC= is off.
 | =CONFIG_TTY=                 | y     | The tty layer console + stdio ride on                               |
 | =CONFIG_UNIX98_PTYS=         | y     | Modern PTYs (=/dev/ptmx= + =/dev/pts/=); legacy pool is OFF         |
 | =CONFIG_FONTS=               | y     | Manually choose compiled-in fbcon fonts                             |
-| =CONFIG_FONT_8x16=           | y     | *The font in use* — 160x50 on the 1280x800 panel                    |
+| =CONFIG_FONT_8x16=           | y     | *The font in use* — 160x50 on a 1280x800 panel                      |
 | =CONFIG_FONT_8x8=            | y     | Second built-in font (defconfig default, unused)                    |
-| =CONFIG_FONT_TER16x32=       | *n*   | Terminus 16x32 — enabled in #20, *reverted* (see below)             |
+| =CONFIG_FONT_TER16x32=       | *n*   | Terminus 16x32 — tried in #20, *reverted* (see below)               |
 
-=CONFIG_FB_DEVICE= is the one that is easy to overlook: =FB= gives the kernel a
-framebuffer, but =FB_DEVICE= is what exposes it to *userland* as =/dev/fb0=.
-Without it fbcon would still paint the console and the screen would look fine —
-and every one of our Lisp drawing routines would fail with "no such file".
+- *Why the screen isn't blank.* Real UEFI has *no legacy VGA text mode*. Without
+  efifb + fbcon the screen stays blank while the kernel runs fine.
+- *=FB_DEVICE= is easy to overlook.* =FB= gives the kernel a framebuffer;
+  =FB_DEVICE= exposes it to userland as =/dev/fb0=. Without it fbcon still paints
+  the console, and every Lisp drawing routine fails with "no such file".
+- *The 8x16 font, not Terminus 16x32.* Bigger glyphs give 80x25 instead of 160x50,
+  and mainline fbcon has *no scrollback*, so the lost rows cost more than the
+  bigger glyphs buy. Reasoning and how to redo it: [[file:framebuffer.org][framebuffer.org]] §7.
 
-*Font: back to the 8x16 default.* Tag #20 compiled in Terminus 16x32 and selected
-it with =fbcon=font:TER16x32= on the cmdline; both were later undone. Bigger
-glyphs meant 80x25 instead of 160x50, and mainline fbcon has *no scrollback*, so
-the halved screen cost us multi-line output permanently. The extra rows/columns
-matter more than glyph size. Full reasoning and how to redo it:
-[[file:framebuffer.org][framebuffer.org]] §7.
-
-Kernel source for this subsystem, if you want to read it:
+Kernel source, if you want to read it:
 [[file:../linux/drivers/video/fbdev/efifb.c][linux → drivers/video/fbdev/efifb.c]] (the dumb driver),
 [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c][linux → drivers/video/fbdev/core/fb_chrdev.c]] (the =/dev/fb0= read/write/mmap
 entry points) and [[file:../linux/drivers/video/fbdev/core/fbcon.c][linux → drivers/video/fbdev/core/fbcon.c]] (glyph → pixels, with the
 actual bit-stamping in [[file:../linux/drivers/video/fbdev/core/bitblit.c][bitblit.c]]).
-
-Why it matters: real UEFI has *no legacy VGA text mode*. Without efifb+fbcon
-the laptop screen stays blank even though the kernel is running fine. This was
-the original "it booted but showed nothing" bug.
 
 * 3. Input — why you can type (the PCI saga)
 
@@ -168,21 +155,19 @@ the original "it booted but showed nothing" bug.
 | =CONFIG_INPUT_MOUSEDEV=                              | *n*   | deliberately OFF — why there is no =/dev/input/mouseN= to look for           |
 | =CONFIG_MOUSE_PS2=                                   | y     | PS/2 mouse + laptop touchpad (QEMU's pointer)                                |
 
-Root-cause story: =CONFIG_PCI= was OFF in early builds. Everything used *early*
-in boot (EFI framebuffer, RAM rootfs, PS/2 keyboard in QEMU) is non-PCI, so the
-gap was invisible — until a real laptop needed USB (xHCI is a PCI device) for
-its keyboard, AND ACPI needed PCI config-space operation regions for =_S5=
-(power-off). Enabling PCI fixed BOTH the dead keyboard and the power-off halt.
+*Why PCI is the keystone.* Everything used early in boot (EFI framebuffer, RAM
+rootfs, PS/2 keyboard in QEMU) is non-PCI, so a kernel without =CONFIG_PCI= works
+under QEMU. Real hardware needs it twice: a USB keyboard sits behind xHCI, a PCI
+device, and ACPI's =_S5= (power-off) evaluates operation regions in PCI config
+space. One option fixes both a dead keyboard and a power-off that halts.
 
-In the tree, the chain a keypress travels: [[file:../linux/drivers/usb/host/xhci.c][=drivers/usb/host/xhci.c=]] (the USB
-3.x host controller, the PCI device that made =CONFIG_PCI= mandatory) →
-[[file:../linux/drivers/hid/usbhid/hid-core.c][=drivers/hid/usbhid/hid-core.c=]] (turn USB HID reports into HID events) →
-[[file:../linux/drivers/hid/hid-input.c][=drivers/hid/hid-input.c=]] (HID → input subsystem key codes) →
-[[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], which is what creates =/dev/input/event*= — the same
-nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the browser's mouse and Ctrl detection
-(the full mechanism: [[file:input.org][input.org]]; what the browser does with it:
-[[file:code-browser.org][code-browser.org]] §6.3). The PS/2 path used under QEMU is
-[[file:../linux/drivers/input/keyboard/atkbd.c][=drivers/input/keyboard/atkbd.c=]] on top of =serio=.
+The chain a keypress travels: [[file:../linux/drivers/usb/host/xhci.c][=drivers/usb/host/xhci.c=]] (the USB 3.x host
+controller) → [[file:../linux/drivers/hid/usbhid/hid-core.c][=drivers/hid/usbhid/hid-core.c=]] (USB HID reports → HID events) →
+[[file:../linux/drivers/hid/hid-input.c][=drivers/hid/hid-input.c=]] (HID → input key codes) →
+[[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], which creates =/dev/input/event*= — the nodes
+[[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the mouse and Ctrl detection (mechanism:
+[[file:input.org][input.org]]; what the browser does with it: [[file:code-browser.org][code-browser.org]] §6.3). Under QEMU
+the PS/2 path is [[file:../linux/drivers/input/keyboard/atkbd.c][=drivers/input/keyboard/atkbd.c=]] on top of =serio=.
 
 * 4. Platform & power
 
@@ -195,19 +180,14 @@ nodes [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] polls for the bro
 | =CONFIG_RTC_MC146818_LIB= | y     | Reading the CMOS clock at boot; =select=-ed by =config X86=  |
 | =CONFIG_RTC_CLASS=        | n     | Not needed: x86 reads the CMOS clock itself (no =/dev/rtc=)  |
 
-The path from our Lisp to the machine actually stopping: [[file:../initramfs/process.lisp::defun power-off][=power-off=]] FFI-calls
-=reboot(2)=, which lands in [[file:../linux/kernel/reboot.c][=kernel/reboot.c=]]; for =RB_POWER_OFF= that ends in
-ACPI's =_S5= handling in [[file:../linux/drivers/acpi/sleep.c][=drivers/acpi/sleep.c=]]. This is why the option depends
-on PCI: evaluating =_S5= needs ACPI operation regions that address PCI config
-space, so with =CONFIG_PCI= off the shutdown silently halted instead.
-
-The battery and AC rows were never chosen by hand — both are =default y= under
-=CONFIG_ACPI= in [[file:../linux/drivers/acpi/Kconfig][=drivers/acpi/Kconfig=]], so they arrived with it at tag #19
-and sat unused until the browser's systray read them. Listed here because the tray
-now depends on them. Likewise the clock: with =RTC_CLASS= off there is no RTC
-driver, yet the system time is right at boot, because x86's =timekeeping_init()=
-path reads the CMOS chip directly through =RTC_MC146818_LIB=. Both stories, and why
-the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 — no rebuild involved.)
+- *Power-off path.* [[file:../initramfs/process.lisp::defun power-off][=power-off=]] FFI-calls =reboot(2)=, which lands in
+  [[file:../linux/kernel/reboot.c][=kernel/reboot.c=]]; =RB_POWER_OFF= ends in ACPI's =_S5= handling in
+  [[file:../linux/drivers/acpi/sleep.c][=drivers/acpi/sleep.c=]]. With =CONFIG_PCI= off it silently halts instead (§3).
+- *Battery and AC came free.* Both are =default y= under =CONFIG_ACPI= in
+  [[file:../linux/drivers/acpi/Kconfig][=drivers/acpi/Kconfig=]]; they're listed because the systray depends on them.
+- *The clock without an RTC driver.* With =RTC_CLASS= off, x86's
+  =timekeeping_init()= path still reads the CMOS chip through =RTC_MC146818_LIB=,
+  so the time is right at boot. Why the RTC must hold UTC: [[file:systray.org][systray.org]].
 
 * 5. Filesystems & userland glue
 
@@ -219,7 +199,7 @@ the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 �
 | =CONFIG_MULTIUSER=                         | y     | uid/gid model glibc assumes                                                              |
 | =CONFIG_PRINTK=                            | y     | Kernel log messages                                                                      |
 | =CONFIG_BLK_DEV_NVME=                      | y     | #25: the laptop's disk is NVMe (selects =NVME_CORE=; needs =PCI=) — [[file:storage.org][storage.org]] §2       |
-| =CONFIG_EXT4_FS=                           | y     | #25: the laptop's root (holding =/home=) is ext4 (selects =JBD2=, =FS_MBCACHE=, =CRC16=) |
+| =CONFIG_EXT4_FS=                           | y     | #25: the host's root (holding =/home=) is ext4 (selects =JBD2=, =FS_MBCACHE=, =CRC16=)   |
 | =CONFIG_EXT4_FS_POSIX_ACL=                 | y     | #25: the host mounts with =acl=; honour ACLs rather than silently ignore them            |
 | =CONFIG_VIRTIO_BLK=                        | y     | #25: QEMU's paravirtual disk — the test stand-in (=make-test-disk.sh=)                   |
 | =CONFIG_MSDOS_PARTITION= / =EFI_PARTITION= | y     | partition tables (GPT on the laptop) → =nvme0n1p2=                                       |
@@ -232,14 +212,17 @@ the RTC must hold UTC: [[file:systray.org][systray.org]]. (Checked at tag #24 �
 | =CONFIG_MAGIC_SYSRQ= (default enable =0x1=, all functions)      | y     | #28: Alt-SysRq works even when the Lisp is dead or stuck — it is the kernel's own keyboard handler, under =KD_GRAPHICS= too. =w= / =t= dump blocked / all tasks to the kernel log, =s u b= sync, remount read-only, reboot; =c= panics on purpose, which (with pstore) keeps the log ([[file:diagnostics.org][diagnostics.org]] §6) |
 | =CONFIG_SOFTLOCKUP_DETECTOR= + =HARDLOCKUP_DETECTOR= (perf NMI) | y     | #28: a CPU stuck in the kernel (with or without interrupts) is reported in the kernel log, which =session-log.lisp= copies to =kernel.log=. Report only: =BOOTPARAM_SOFTLOCKUP_PANIC=0=                                                                                                                   |
 | =CONFIG_DETECT_HUNG_TASK=                                       | y     | #28: a task in uninterruptible sleep over 120 s (a stuck disk or driver) is reported, report only (=BOOTPARAM_HUNG_TASK_PANIC=0=)                                                                                                                                                                         |
-| =CONFIG_PSTORE= + =EFI_VARS_PSTORE= (needs =MISC_FILESYSTEMS=)  | y     | #28: on a panic the kernel writes its last log into EFI variables; the next boot of *Debian* shows it in =/sys/fs/pstore= and =systemd-pstore= (enabled on the host) moves it to =/var/lib/systemd/pstore= — and frees the variables. =PSTORE_COMPRESS= (zlib) keeps the records small                    |
+| =CONFIG_PSTORE= + =EFI_VARS_PSTORE= (needs =MISC_FILESYSTEMS=)  | y     | #28: on a panic the kernel writes its last log into EFI variables; the next boot of the *host distribution* shows it in =/sys/fs/pstore=, and =systemd-pstore= (if enabled) moves it to =/var/lib/systemd/pstore= and frees the variables. =PSTORE_COMPRESS= (zlib) keeps the records small              |
+
+*Why the #28 set.* A stuck kernel is invisible from Lisp; these make it leave a
+trace ([[file:diagnostics.org][diagnostics.org]]). Pitfall: =PSTORE= sits under the =MISC_FILESYSTEMS=
+menu, and =olddefconfig= silently drops =PSTORE= until that menu is on too.
 
 * 7. Networking (IPv4 + QEMU virtio-net) — NEW in tag #21
 
-The kernel half of the network stack (the roadmap in [[file:networking.org][networking.org]] §1). The bus
-plumbing a NIC needs — =CONFIG_PCI= + =CONFIG_PCI_MSI= — was already on from #19.
-Everything here is built-in (=y=), never a module: we ship no modules and have no
-=modprobe=.
+The kernel half of the network stack ([[file:networking.org][networking.org]] §1). The bus plumbing a
+NIC needs — =CONFIG_PCI= + =CONFIG_PCI_MSI= — is §3's. Everything is built in
+(=y=): we ship no modules and have no =modprobe=.
 
 | Option              | State | Role                                                          |
 |---------------------+-------+---------------------------------------------------------------|
@@ -253,34 +236,25 @@ Everything here is built-in (=y=), never a module: we ship no modules and have n
 | =CONFIG_VIRTIO_PCI= | y     | Virtio-over-PCI transport                                     |
 | =CONFIG_VIRTIO_NET= | y     | The QEMU paravirtual NIC driver — binds =[1af4:1000]= as eth0 |
 
-Where each of these lives in the tree: the socket layer every =sb-bsd-sockets=
-call enters through is [[file:../linux/net/socket.c][=net/socket.c=]]; IPv4 registers itself in
-[[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]] and the interface-configuration ioctls of
-[[file:networking.org][networking.org]] §2b land in [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]]; the virtio
-core that =VIRTIO_PCI= plugs drivers into is [[file:../linux/drivers/virtio/virtio.c][=drivers/virtio/virtio.c=]].
+- *In the tree.* Every =sb-bsd-sockets= call enters through [[file:../linux/net/socket.c][=net/socket.c=]]; IPv4
+  registers in [[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]]; the interface ioctls of
+  [[file:networking.org][networking.org]] §2b land in [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]]; the virtio core
+  =VIRTIO_PCI= plugs drivers into is [[file:../linux/drivers/virtio/virtio.c][=drivers/virtio/virtio.c=]].
+- *Under QEMU.* With =-device virtio-net-pci= the NIC enumerates on PCI
+  (=pci 0000:00:02.0: [1af4:1000] ... class 0x020000=) and =virtio_net=
+  ([[file:../linux/drivers/net/virtio_net.c][linux → drivers/net/virtio_net.c]]) binds it. The SLIRP wiring
+  (=-netdev user,...hostfwd...=) is [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]] and [[file:networking.org][networking.org]] §4.
+- *The userland half.* The kernel brings =eth0= up with no address; addressing is
+  Lisp's job. [[file:../initramfs/dhcp.lisp::defun configure-eth0][dhcp.lisp → configure-eth0]] leases one with a real DHCP handshake and
+  [[file:../initramfs/net.lisp::defun start-net-repl][net.lisp → start-net-repl]] serves a REPL on TCP :4005.
 
-Verified (tag #21): under QEMU =-device virtio-net-pci= the NIC enumerates on PCI
-(=pci 0000:00:02.0: [1af4:1000] ... class 0x020000=), and =virtio_net=
-([[file:../linux/drivers/net/virtio_net.c][linux → drivers/net/virtio_net.c]]) binds it. At that tag the supervisor's
-=show-net-interfaces= diagnostic listed =eth0 (down)= — no IP yet, because
-addressing is a userland job. The QEMU SLIRP wiring (=-netdev user,...hostfwd...=)
-lives in [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]] and [[file:networking.org][networking.org]] §4.
-
-*The userland half has since landed too* — =sb-bsd-sockets= is baked into the
-image, [[file:../initramfs/dhcp.lisp::defun configure-eth0][dhcp.lisp → configure-eth0]] leases an address at boot via a real
-DISCOVER/REQUEST handshake, and [[file:../initramfs/net.lisp::defun start-net-repl][net.lisp → start-net-repl]] serves a REPL on
-TCP :4005. So the whole wired path is working end to end; see [[file:networking.org][networking.org]].
-
-What is still OFF on the kernel side: real-hardware NIC drivers (=CONFIG_E1000=,
-=CONFIG_R8169=, …), all Wi-Fi (=CFG80211=/=MAC80211= + firmware + WPA), and IPv6
-(see below).
+Wi-Fi, IPv6 and USB Ethernet are §8's; wired PCI NICs stay off (see "Deliberately OFF").
 
 * 8. Daily-driver set — NEW in tag #26
 
-Tag #26 (2026-10-12) is the kernel half of making the image a machine to work in
-rather than a demo: containers, Wi-Fi, a terminal, a web engine and the tests
-that prove them. Every row was chosen on purpose; =make olddefconfig= pulled in
-the helpers listed in the change log.
+The kernel half of making the image a machine to work in: containers, Wi-Fi, a
+terminal, a web engine, and the test channels that prove them. #27 added USB
+Ethernet to the same set.
 
 | Option                                        | State | Role                                                                                                                                                                                                                                                                                                                                                               |
 |-----------------------------------------------+-------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -289,37 +263,38 @@ the helpers listed in the change log.
 | =CONFIG_SYSVIPC= / =CONFIG_POSIX_MQUEUE=      | y     | System V shared memory and message queues: PostgreSQL in a container needs SysV shm                                                                                                                                                                                                                                                                                |
 | =CONFIG_INOTIFY_USER=                         | y     | file-change notification: hotplugged =/dev/input/eventN= nodes ([[file:input.org][input.org]] §4¾), and the file watchers dev servers use                                                                                                                                                                                                                                              |
 | =CONFIG_SECCOMP= + =SECCOMP_FILTER=           | y     | syscall filters: what Chrome's sandbox is built on ([[file:web-browser.org][web-browser.org]])                                                                                                                                                                                                                                                                                               |
-| =CONFIG_IPV6=                                 | y     | IPv6 (SLAAC autoconfigures on link-up); many networks and sites expect it. Was deliberately off until #26                                                                                                                                                                                                                                                          |
+| =CONFIG_IPV6=                                 | y     | IPv6 (SLAAC autoconfigures on link-up); many networks and sites expect it. Off until #26                                                                                                                                                                                                                                                                           |
 | =CONFIG_CFG80211= + =CONFIG_MAC80211=         | y     | the 802.11 configuration plane (nl80211) and soft-MAC — [[file:networking.org][networking.org]] §7                                                                                                                                                                                                                                                                                          |
-| =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=            | y     | the laptop's Intel AX201 (CNVi) driver and its op-mode; needs its firmware in the initramfs                                                                                                                                                                                                                                                                        |
+| =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=            | y     | the Intel AX201 (CNVi) driver and its op-mode; needs its firmware in the initramfs                                                                                                                                                                                                                                                                                 |
 | =CONFIG_RFKILL=                               | y     | radio kill switches; =/dev/rfkill= to unblock Wi-Fi                                                                                                                                                                                                                                                                                                                |
 | =CONFIG_FW_CFG_SYSFS=                         | y     | QEMU's firmware-config blobs under =/sys/firmware/qemu_fw_cfg=: how a test boot passes switches (=opt/lol/netrepl=, =opt/lol/disk=) to an EFISTUB kernel whose cmdline is built in. Real hardware has no fw_cfg, so these switches cannot exist there                                                                                                              |
 | =CONFIG_DMI_SYSFS=                            | y     | raw SMBIOS tables in sysfs; a second channel for machine identity, cheap                                                                                                                                                                                                                                                                                           |
 | =CONFIG_NET_9P= + =NET_9P_VIRTIO= + =9P_FS=   | y     | QEMU only in practice: the build host's real =/= shared read-only over virtio-9p, so tests can run its programs (=LOL_GUEST_HOSTROOT=1=, preinit's =mount_storage_9p=)                                                                                                                                                                                             |
-| =CONFIG_USB_RTL8152=                          | y     | #27: the user's USB Ethernet dongle (=0bda:8153=, RTL8153), a wired fallback for a laptop with no port; =network-up= leases on any interface. Its =rtl_nic/rtl8153*.fw= files are optional patches (=unable to load firmware patch= is a warning), so none are shipped. Selects =MII= and =PHYLIB=; it does not need =USB_USBNET= (that is for the CDC rows below) |
+| =CONFIG_USB_RTL8152=                          | y     | #27: Realtek RTL8153 USB Ethernet dongles (=0bda:8153=), a wired fallback for a laptop with no port; =network-up= leases on any interface. Its =rtl_nic/rtl8153*.fw= files are optional patches (=unable to load firmware patch= is a warning), so none are shipped. Selects =MII= and =PHYLIB=; it does not need =USB_USBNET= (that is for the CDC rows below) |
 | =CONFIG_USB_NET_CDCETHER= + =USB_NET_CDC_NCM= | y     | #27: the standard USB Ethernet classes (ECM, NCM) most other dongles and phone tethering speak                                                                                                                                                                                                                                                                     |
 
-/Tried and dropped:/ =CONFIG_MAC80211_HWSIM= would have let QEMU emulate Wi-Fi
-radios, but built in (we have no modules) it creates two fake radios on *every*
-boot, the laptop's included, which shifts interface names and clutters the scan.
-Wi-Fi is therefore tested only on the laptop.
-
-/Regulatory database:/ =CFG80211_REQUIRE_SIGNED_REGDB= defaults on with
-=CFG80211_USE_KERNEL_REGDB_KEYS=, which trusts the in-tree keys (=sforshee=,
-=wens=, printed at boot). So the =regulatory.db= in the initramfs must be the
-/upstream/-signed one, not Debian's. Without it the boot logs
-=cfg80211: failed to load regulatory.db= and the radio is held to the world
-domain — harmless, only slower.
+- *Ruled out: =MAC80211_HWSIM=.* It would let QEMU emulate Wi-Fi radios, but built
+  in (no modules) it creates two fake radios on *every* boot, real hardware
+  included, shifting interface names and cluttering scans. Wi-Fi is tested on
+  real hardware only.
+- *Regulatory database.* =CFG80211_REQUIRE_SIGNED_REGDB= defaults on with
+  =CFG80211_USE_KERNEL_REGDB_KEYS=, which trusts the in-tree keys (=sforshee=,
+  =wens=, printed at boot). So the initramfs's =regulatory.db= must be the
+  /upstream/-signed one, not Debian's. Without it the boot logs
+  =cfg80211: failed to load regulatory.db= and the radio is held to the world
+  domain — harmless, only slower.
+- *Overlay on 9p under QEMU.* =overlayfs: failed to set xattr on upper= appears
+  when the test =/home= is an overlay; it falls back to =redirect_dir=nofollow=
+  and =uuid=null=. Harmless for a throwaway =/home=; not investigated further.
 
 * 9. Sound — NEW in tag #29
 
-Tag #29 (2026-10-17) gives the image sound, for screencasts recorded with the user's
-voice and for playing them back ([[file:screencast.org][screencast.org]], whose §2–§3 hold the hardware
-evidence). The laptop (Dell XPS 13 9300) has Intel's Ice Lake audio controller
-(=8086:34c8=) with a *Realtek ALC289* codec, and its microphones — the built-in one
-and the headset jack's — are analogue, on that codec. Debian's own kernel drives it
-with plain =snd_hda_intel= (=snd_intel_dspcfg.dsp_driver= = 0 chose it), so no DSP
-driver and no firmware are needed.
+Sound for screencasts recorded with a voice, and for playing them back
+([[file:screencast.org][screencast.org]], whose §2–§3 hold the hardware evidence). The XPS 13 9300 has
+Intel's Ice Lake audio controller (=8086:34c8=) with a *Realtek ALC289* codec, and
+its microphones — built-in and headset jack — are analogue, on that codec.
+Debian's kernel drives it with plain =snd_hda_intel= (=snd_intel_dspcfg.dsp_driver=
+= 0 chose it), so no DSP driver and no firmware are needed.
 
 | Option                                                   | State | Role |
 |----------------------------------------------------------+-------+------|
@@ -329,75 +304,69 @@ driver and no firmware are needed.
 | =CONFIG_SND_HDA_GENERIC=                                 | y     | the generic codec parser: also what drives QEMU's =hda-duplex= codec in =check-sound.lisp= |
 | =CONFIG_SND_JACK_INPUT_DEV=                              | y     | (default) each jack is also an input device reporting =SW_HEADPHONE_INSERT= & co.; the environment's input code ignores devices with no keys or pointer |
 
-/Pulled in by =make olddefconfig=:/ =SND_PCI=, =SND_X86=, =SND_HDA_CORE=,
-=SND_HDA_PREALLOC_SIZE=0= (buffers allocated when a stream opens),
-=SND_CTL_FAST_LOOKUP=, =SND_CTL_LED=, =SND_DMA_SGBUF=, =SND_PROC_FS= /
-=SND_VERBOSE_PROCFS= (=/proc/asound=), =SND_VMASTER=, =SND_INTEL_NHLT=,
-=SND_INTEL_SOUNDWIRE_ACPI=, =ACPI_NHLT=, =INPUT_LEDS=, =LEDS_TRIGGERS=, and the
-=_LEDS= options of iwlwifi, mac80211 and rfkill that =NEW_LEDS= makes visible.
-
-The userland half: lol-rootd gives =/dev/snd= to the user like =/dev/fb0=
-([[file:../initramfs/preinit.c::static void give_devices][preinit.c, =give_devices=]]), and [[file:../initramfs/mixer.lisp][mixer.lisp]] sets the codec's switches at
-boot and drives the volume keys.
+- *Pulled in by =make olddefconfig=.* =SND_PCI=, =SND_X86=, =SND_HDA_CORE=,
+  =SND_HDA_PREALLOC_SIZE=0= (buffers allocated when a stream opens),
+  =SND_CTL_FAST_LOOKUP=, =SND_CTL_LED=, =SND_DMA_SGBUF=, =SND_PROC_FS= /
+  =SND_VERBOSE_PROCFS= (=/proc/asound=), =SND_VMASTER=, =SND_INTEL_NHLT=,
+  =SND_INTEL_SOUNDWIRE_ACPI=, =ACPI_NHLT=, =INPUT_LEDS=, =LEDS_TRIGGERS=, and the
+  =_LEDS= options of iwlwifi, mac80211 and rfkill that =NEW_LEDS= makes visible.
+  The LED headers are widely included, so this tag recompiles ~1,600 files.
+- *The userland half.* lol-rootd gives =/dev/snd= to the user like =/dev/fb0=
+  ([[file:../initramfs/preinit.c::static void give_devices][preinit.c, =give_devices=]]), and [[file:../initramfs/mixer.lisp][mixer.lisp]] sets the codec's switches at
+  boot and drives the volume keys.
 
 * 10. Processors — SMP, NEW in tag #30
 
-Until tag #29 the kernel was built with =SMP= off (=NR_CPUS=1=, a choice inherited
-from the first minimal config and kept "minimal" through #23–#24), so the laptop's
-i7-1065G7 — 4 cores, 8 hardware threads — ran as one CPU, and the image's threads
-(the agent's turns, =netd=, the recorder's writer, the run panes' readers, the
-watchdog) only ever took turns. Tag #30 (2026-10-19) turns SMP on. What "bringing up
-the other cores" means in hardware — the BSP, INIT–SIPI–SIPI, the APIC — is
-[[file:background/background.org][background.org]] §6; since #30 it runs on every boot.
+Before #30 the kernel had =SMP= off (=NR_CPUS=1=), so a 4-core / 8-thread CPU ran
+as one, and the image's threads (agent turns, =netd=, the recorder's writer, run
+panes' readers, the watchdog) only ever took turns. What "bringing up the other
+cores" means in hardware — the BSP, INIT–SIPI–SIPI, the APIC — is
+[[file:background/background.org][background.org]] §6.
 
 | Option                                    | State | Role |
 |-------------------------------------------+-------+------|
-| =CONFIG_SMP=                              | y     | more than one CPU: the APs are woken at boot, the scheduler balances across them, locks become real spinlocks (=QUEUED_SPINLOCKS=, =QUEUED_RWLOCKS=), RCU becomes =TREE_RCU= / =TREE_SRCU= (in place of #23's =TINY_RCU=) |
-| =CONFIG_NR_CPUS=                          | 16    | the most this kernel will run (each slot costs ~8 KB, =arch/x86/Kconfig=); the laptop has 8, QEMU's checks use 4 — 16 leaves room for a bigger machine without the default 64 |
+| =CONFIG_SMP=                              | y     | more than one CPU: the APs are woken at boot, the scheduler balances across them, locks become real spinlocks (=QUEUED_SPINLOCKS=, =QUEUED_RWLOCKS=), RCU becomes =TREE_RCU= / =TREE_SRCU= (in place of =TINY_RCU=) |
+| =CONFIG_NR_CPUS=                          | 16    | the most this kernel will run (each slot costs ~8 KB, =arch/x86/Kconfig=); the reference laptop has 8, QEMU's checks use 4 — 16 leaves room for a bigger machine without the default 64 |
 | =CONFIG_SCHED_SMT=                        | y     | the scheduler knows two hardware threads share a core, so it fills cores before siblings |
 | =CONFIG_SCHED_MC=                         | y     | ... and that cores share a last-level cache (with =SCHED_CLUSTER= and =SCHED_CACHE=, both default y) |
 | =CONFIG_SCHED_MC_PRIO=                    | y     | (default y under =SCHED_MC=) Turbo Boost Max 3.0 core ordering. It =select=s =X86_INTEL_PSTATE=, =X86_AMD_PSTATE= and =CPU_FREQ=: *frequency scaling came along with SMP*, unasked |
-| =CONFIG_X86_INTEL_PSTATE= + =CONFIG_CPU_FREQ= | y | the Intel P-state driver. On Ice Lake, which has HWP (hardware P-states), it registers in active mode with the =powersave= policy (=intel_pstate.c=, =default_driver = &intel_pstate= when =hwp_active=) — the same as the host's Debian; =CPU_FREQ_DEFAULT_GOV_SCHEDUTIL= is only the governor of its passive mode. Under QEMU there is no driver (=scaling_driver= absent) |
+| =CONFIG_X86_INTEL_PSTATE= + =CONFIG_CPU_FREQ= | y | the Intel P-state driver. On Ice Lake, which has HWP (hardware P-states), it registers in active mode with the =powersave= policy (=intel_pstate.c=, =default_driver = &intel_pstate= when =hwp_active=) — the same as a stock Debian kernel; =CPU_FREQ_DEFAULT_GOV_SCHEDUTIL= is only the governor of its passive mode. Under QEMU there is no driver (=scaling_driver= absent) |
 | =CONFIG_HOTPLUG_CPU=                      | y     | =def_bool y= under =SMP= on x86: CPUs can be taken off line (=/sys/devices/system/cpu/cpuN/online=) |
 
-/Pulled in by =make olddefconfig= besides those:/ =ACPI_HOTPLUG_CPU=, =ACPI_CPPC_LIB=
-(+ =PCC=, =MAILBOX=), =ACPI_PLATFORM_PROFILE=, =GENERIC_IRQ_MIGRATION= /
-=GENERIC_PENDING_IRQ= (interrupts moved between CPUs), =RPS= / =XPS= / =RFS_ACCEL=
-(network queues steered to CPUs), =SPLIT_PTE_PTLOCKS= / =PER_VMA_LOCK= (finer
-page-table locking), the =*_SPIN_ON_OWNER= mutex optimisations, the
-=HOTPLUG_*= helpers and RCU's stall detector (=RCU_CPU_STALL_TIMEOUT=21=); dropped:
-=TINY_RCU=, =TINY_SRCU=, =UP_LATE_INIT=, =FORCE_NR_CPUS=,
-=X86_REQUIRED_FEATURE_UP=, =BROKEN_ON_SMP=. 78 =CONFIG_= lines changed in all.
-
-The userland needed no change: SBCL 2.6.8 is built =:sb-thread= and its
-stop-the-world GC signals every thread wherever it runs. The image already had
-threads under #29, preempted at any instruction; what SMP adds is threads running
-/at the same instant/ (a read-modify-write that one CPU never splits can now
-interleave), which is why the whole guest suite was re-run at =-smp 4= (the change
-log's #30 entry) — no race showed. QEMU boots with =-smp 4= since #30
-(=build.sh=, =refresh-screenshot.sh=, the guest harness; =QEMU_SMP= /
-=LOL_QEMU_SMP= change it, =1= gives the old single CPU) so every guest check runs
-on several CPUs. [[file:../check-smp.lisp][=check-smp.lisp=]] asserts it: =cpu/online= = =0-3=, 4 threads of
-one compiled loop taking 764 ms against 692 ms for one (on one CPU, 4×), seen on 4
-CPUs by =sched_getcpu=, and 4 threads allocating through a forced full GC.
-
-/On the laptop (2026-10-20):/ =nproc= = 8 — all four cores and their second
-hardware threads — and =cpu0/cpufreq/scaling_driver= = =intel_pstate=, so the CPU's
-frequency is now managed by the kernel; under #29 there was no cpufreq driver at all.
+- *Pulled in by =make olddefconfig=.* =ACPI_HOTPLUG_CPU=, =ACPI_CPPC_LIB= (+ =PCC=,
+  =MAILBOX=), =ACPI_PLATFORM_PROFILE=, =GENERIC_IRQ_MIGRATION= /
+  =GENERIC_PENDING_IRQ= (interrupts moved between CPUs), =RPS= / =XPS= /
+  =RFS_ACCEL= (network queues steered to CPUs), =SPLIT_PTE_PTLOCKS= /
+  =PER_VMA_LOCK= (finer page-table locking), the =*_SPIN_ON_OWNER= mutex
+  optimisations, the =HOTPLUG_*= helpers and RCU's stall detector
+  (=RCU_CPU_STALL_TIMEOUT=21=). Dropped: =TINY_RCU=, =TINY_SRCU=, =UP_LATE_INIT=,
+  =FORCE_NR_CPUS=, =X86_REQUIRED_FEATURE_UP=, =BROKEN_ON_SMP=. 78 =CONFIG_= lines
+  changed in all.
+- *No userland change.* SBCL 2.6.8 is built =:sb-thread= and its stop-the-world GC
+  signals every thread wherever it runs. What SMP adds is threads running /at the
+  same instant/ (a read-modify-write one CPU never splits can now interleave), so
+  the whole guest suite was re-run at =-smp 4=; no race showed.
+- *QEMU runs =-smp 4=.* =build.sh=, =refresh-screenshot.sh= and the guest harness
+  boot 4 CPUs; =QEMU_SMP= / =LOL_QEMU_SMP= change it (=1= = a single CPU).
+- *Tested.* [[file:../check-smp.lisp][=check-smp.lisp=]]: =cpu/online= = =0-3=, 4 threads of one compiled
+  loop take 764 ms against 692 ms for one (4× on one CPU), seen on 4 CPUs by
+  =sched_getcpu=, and 4 threads allocate through a forced full GC. On the XPS 13:
+  =nproc= = 8 and =cpu0/cpufreq/scaling_driver= = =intel_pstate=.
 
 * 11. Restarting — kexec, NEW in tag #31
 
-Until #30, a new build of the image reached the laptop through the firmware: power
-cycle, POST, GRUB, its first entry (=/etc/grub.d/06_lisp=, [[file:micro-distro.org][micro-distro.org]]).
-*kexec* lets the RUNNING kernel do it instead. A process with =CAP_SYS_BOOT= hands it
-a kernel and an initramfs (=kexec_file_load(2)=, system call 320 on x86-64: two file
-descriptors and a command line). The kernel parses the bzImage itself, copies both
-into memory and waits. At =reboot(LINUX_REBOOT_CMD_KEXEC)= it shuts its devices down
-the way a reboot would and jumps into the loaded kernel, which boots as if a
-bootloader had started it. No firmware runs, so the screen is not reset and the
-seconds of POST are skipped. PID 1 already holds =CAP_SYS_BOOT= (it is how it powers
-off, [[file:storage.org][storage.org]]); =kexec_load_permitted= in [[file:../linux/kernel/kexec_core.c][=kernel/kexec_core.c=]] asks for nothing
-more. The userland side is [[file:sbcl-init.org][sbcl-init.org]], "Updating from inside".
+*kexec* lets the running kernel boot the next one, without the firmware or GRUB.
+
+- *The call.* A process with =CAP_SYS_BOOT= hands the kernel a kernel and an
+  initramfs (=kexec_file_load(2)=, system call 320 on x86-64: two file descriptors
+  and a command line). The kernel parses the bzImage itself, copies both into
+  memory and waits.
+- *The jump.* At =reboot(LINUX_REBOOT_CMD_KEXEC)= it shuts devices down as a reboot
+  would and jumps into the loaded kernel, which boots as if a bootloader had
+  started it. No firmware runs: the screen isn't reset and POST is skipped.
+- *Permission.* PID 1 already holds =CAP_SYS_BOOT= (it's how it powers off,
+  [[file:storage.org][storage.org]]); =kexec_load_permitted= in [[file:../linux/kernel/kexec_core.c][=kernel/kexec_core.c=]] asks for nothing
+  more. The userland side is [[file:sbcl-init.org][sbcl-init.org]], "Updating from inside".
 
 | Option                    | State | Role |
 |---------------------------+-------+------|
@@ -408,29 +377,31 @@ more. The userland side is [[file:sbcl-init.org][sbcl-init.org]], "Updating from
 | =CONFIG_KEXEC_SIG=        | n     | verify the next kernel's signature. Without Secure Boot it would only refuse our own unsigned builds |
 | =CONFIG_CRASH_DUMP=       | n     | its default follows =ARCH_DEFAULT_CRASH_DUMP= (y on x86), so it is set off by hand: a crash kernel needs =crashkernel== memory reserved at every boot and a tool to read =/proc/vmcore=. Our crash story is the session log and =kernel.panic=10= ([[file:diagnostics.org][diagnostics.org]]) |
 
-The command line: our bzImage carries =CONFIG_CMDLINE= (=console=… initrd=…=), and
-with =CMDLINE_BOOL= and no =CMDLINE_OVERRIDE= the kernel /prepends/ it to whatever it
-is given (=arch/x86/kernel/setup.c=, =builtin_cmdline=). So the userland passes on
-only what is not the built-in line: =/proc/cmdline= minus =console==, =initrd== and
-GRUB's =BOOT_IMAGE== ([[file:../initramfs/process.lisp::defun kexec-cmdline][=kexec-cmdline=]]).
-
-/Not verified yet/: whether every device comes back after a kexec on the laptop. The
-EFI framebuffer should, since the old kernel's =screen_info= is handed over
-(=kexec-bzimage64.c=, "Copying screen_info will do?"), and so should NVMe, the AX201
-and HD-Audio, whose drivers all have shutdown paths. The =:restart-via :firmware= setting
-(=~/.lol/settings=) is there in case one does not; see the change log's #31 entry.
+- *The command line.* The bzImage carries =CONFIG_CMDLINE= (=console=… initrd=…=),
+  and with =CMDLINE_BOOL= and no =CMDLINE_OVERRIDE= the kernel /prepends/ it to
+  whatever it's given (=arch/x86/kernel/setup.c=, =builtin_cmdline=). So userland
+  passes only what isn't built in: =/proc/cmdline= minus =console==, =initrd== and
+  GRUB's =BOOT_IMAGE== ([[file:../initramfs/process.lisp::defun kexec-cmdline][=kexec-cmdline=]]).
+- *Tested.* [[file:../check-update.lisp][=check-update.lisp=]] kexecs a QEMU guest (it comes back in the same
+  QEMU). On the XPS 13 a kexec is not yet verified: the EFI framebuffer should
+  survive (the old kernel's =screen_info= is handed over, =kexec-bzimage64.c=), and
+  NVMe, the AX201 and HD-Audio all have shutdown paths. If a device doesn't come
+  back, the =:restart-via :firmware= setting (=~/.lol/settings=) restarts through
+  the firmware instead.
 
 * 12. The webcam — V4L2 + USB Video Class, NEW in tag #32
 
-A video call in the web pane wants the camera ([[file:web-browser.org][web-browser.org]] §4.8). The laptop's is
-a USB device (=0bda:58fe= "Integrated_Webcam_HD" in =lsusb=) that speaks the *USB
-Video Class* (UVC), the standard every USB webcam follows, so one driver covers it
-and any external one. The kernel side is *V4L2* (Video4Linux 2): a character device
-per camera, =/dev/video0=, opened and read with ioctls (=VIDIOC_QUERYCAP=,
-=VIDIOC_S_FMT=, buffers mapped with =mmap=). Chrome speaks V4L2 itself, so nothing
-in our userland reads the camera; preinit only gives the nodes to the user, as it
-does =/dev/snd= ([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]), and lol-rootd's poll hands over a camera
-plugged in later.
+A video call in the web pane wants the camera ([[file:web-browser.org][web-browser.org]] §4.8).
+
+- *USB Video Class (UVC).* The standard every USB webcam follows, so one driver
+  covers a built-in camera (the XPS 13's is =0bda:58fe= "Integrated_Webcam_HD")
+  and any external one.
+- *V4L2 (Video4Linux 2).* The kernel side: a character device per camera,
+  =/dev/video0=, driven with ioctls (=VIDIOC_QUERYCAP=, =VIDIOC_S_FMT=, buffers
+  mapped with =mmap=).
+- *No camera code in our userland.* Chrome speaks V4L2 itself. preinit only gives
+  the nodes to the user, as it does =/dev/snd= ([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]), and lol-rootd's
+  poll hands over a camera plugged in later.
 
 | Option                       | State | Role |
 |------------------------------+-------+------|
@@ -440,11 +411,11 @@ plugged in later.
 | =CONFIG_MEDIA_USB_SUPPORT=   | y     | media drivers for USB devices: the menu =USB_VIDEO_CLASS= is in |
 | =CONFIG_VIDEO_DEV=           | y     | the V4L2 core: =/dev/videoN=, the ioctls |
 | =CONFIG_USB_VIDEO_CLASS=     | y     | the UVC driver (=drivers/media/usb/uvc/=); selects =VIDEOBUF2_VMALLOC= (its buffers) and =UVC_COMMON= |
-| =CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV= | n | a camera's snapshot BUTTON as an input device. The laptop's has none, and every keyboard-like evdev is opened by the input code ([[file:input.org][input.org]] §4¾) |
+| =CONFIG_USB_VIDEO_CLASS_INPUT_EVDEV= | n | a camera's snapshot BUTTON as an input device. The reference camera has none, and every keyboard-like evdev is opened by the input code ([[file:input.org][input.org]] §4¾) |
 | =CONFIG_MEDIA_SUBDRV_AUTOSELECT= | n | defaults to y with the filter on: it selects =I2C_MUX= and the tuners/sensors other boards need |
 | analog / digital TV, radio, SDR, platform, test drivers | n | other kinds of media device, set off by hand under the filter |
 
-=make olddefconfig= then added, unasked: =MEDIA_CONTROLLER= (the =/dev/media0= graph
+/Pulled in by =make olddefconfig=:/ =MEDIA_CONTROLLER= (the =/dev/media0= graph
 of a device's parts), =V4L2_ASYNC= / =V4L2_FWNODE= / =VIDEO_V4L2_I2C= /
 =VIDEO_V4L2_SUBDEV_API= (V4L2 core helpers), =VIDEOBUF2_CORE= / =_MEMOPS= / =_V4L2=,
 =VIDEO_CAMERA_LENS= (a menu with nothing chosen in it), and =DMA_SHARED_BUFFER=
@@ -454,223 +425,81 @@ of a device's parts), =V4L2_ASYNC= / =V4L2_FWNODE= / =VIDEO_V4L2_I2C= /
 
 ** Sound through the DSP, HDMI audio, USB and Bluetooth audio — OFF (tag #29)
 
-- =SND_SOC= (SOF, AVS): the Intel DSP path. Needed on laptops whose microphones are
-  digital and wired to the DSP; this one's are analogue, on the codec (§9). It would
-  also need the DSP's firmware and topology copied from the host.
-- =SND_HDA_CODEC_HDMI=: sound over HDMI/DisplayPort wants i915's audio component
+- *=SND_SOC= (SOF, AVS).* The Intel DSP path, needed where microphones are
+  digital and wired to the DSP. The reference laptop's are analogue, on the codec
+  (§9). It would also need the DSP's firmware and topology from the host.
+- *=SND_HDA_CODEC_HDMI=.* Sound over HDMI/DisplayPort wants i915's audio component
   (=SND_HDA_I915=); we run on efifb with no i915.
-- =SND_USB_AUDIO=: a USB headset. The user's headset is wired to the jack; one option
-  turns it on if that changes (no firmware).
-- Bluetooth: the whole stack, the AX201's Bluetooth firmware, and a sound server for
-  the hands-free profile — ruled out in [[file:screencast.org][screencast.org]] §2.1.
+- *=SND_USB_AUDIO=.* A USB headset. One option turns it on (no firmware).
+- *Bluetooth.* The whole stack, the AX201's Bluetooth firmware, and a sound server
+  for the hands-free profile — ruled out in [[file:screencast.org][screencast.org]] §2.1.
 
 ** Other storage — SATA/AHCI, USB mass storage, vfat, modules — OFF (tag #25)
-Only the path to /this/ laptop's disk is built: NVMe → GPT → ext4. =ATA=/=SATA_AHCI=
+
+Only the path to the reference disk is built: NVMe → GPT → ext4. =ATA=/=SATA_AHCI=
 (a SATA disk), =USB_STORAGE= + =SCSI= + =BLK_DEV_SD= (the boot stick, or any USB
 drive) and =VFAT_FS= (the ESP, most sticks) stay off until something needs them.
-=CONFIG_MODULES= stays off too: everything is built in, so there is no =modprobe=
+=CONFIG_MODULES= stays off too: everything is built in, so there's no =modprobe=
 and no =/lib/modules= to keep in step. Reasons and the rest: [[file:storage.org][storage.org]] §2.
-
-** IPv6 — was OFF until tag #26 (now ON, §8)
-
-The paragraph below is the reasoning that held from #21 to #25, kept for the record.
-
-=olddefconfig= would default =CONFIG_IPV6=y= the moment =INET= is on; we set
-=# CONFIG_IPV6 is not set= on purpose (networking.org §5 scope guard). Everything
-we want first — static IPv4 under QEMU SLIRP, a UDP/TCP "hello" — is IPv4. Turn
-=CONFIG_IPV6=y= back on if/when an IPv6 path actually matters.
 
 ** Wired real-hardware NICs — OFF (Wi-Fi is ON since tag #26, §8)
 
-For wired links only =virtio-net= (QEMU) is built in (the laptop has no wired port). A laptop's wired chip is one more =y=
-(=CONFIG_R8169= / =CONFIG_E1000E=); Wi-Fi is a whole subsystem
-(=CFG80211=+=MAC80211= + vendor driver + firmware blobs in the initramfs + a WPA
-supplicant) and is a separate, later project. See [[file:networking.org][networking.org]] §1.
+For wired links only =virtio-net= (QEMU) and USB Ethernet (§8) are built in. A
+PCI wired chip is one more =y= (=CONFIG_R8169= / =CONFIG_E1000E=). See
+[[file:networking.org][networking.org]] §1.
 
 ** Hardware RNG — OFF (entropy comes the slow way)
 
-=CONFIG_HW_RANDOM= is not set, so there is no hwrng framework and no =virtio-rng=
-driver, and the QEMU line passes no RNG device. The kernel therefore seeds its
-CRNG only from interrupt/input timing; on this idle VM that often completes only
-once you start *typing* — the =random: crng init done= line that lands in the
-middle of the REPL prompt. Harmless: nothing here needs secure randomness at
-boot. To seed instantly instead: =CONFIG_HW_RANDOM=y= + =CONFIG_HW_RANDOM_VIRTIO=y=
-and add =-device virtio-rng-pci= to the QEMU line in =build.sh=. Full story:
-[[file:background/background.org][background.org]] §8.
+=CONFIG_HW_RANDOM= is not set: no hwrng framework, no =virtio-rng= driver, and the
+QEMU line passes no RNG device. The kernel seeds its CRNG only from
+interrupt/input timing; on an idle VM that often completes only once you start
+*typing* — the =random: crng init done= line in the middle of the REPL prompt.
+Harmless: nothing needs secure randomness at boot. To seed instantly:
+=CONFIG_HW_RANDOM=y= + =CONFIG_HW_RANDOM_VIRTIO=y= and =-device virtio-rng-pci= on
+the QEMU line in =build.sh=. Full story: [[file:background/background.org][background.org]] §8.
 
 ** Legacy BSD PTYs — OFF (tag #22)
 
-=# CONFIG_LEGACY_PTYS is not set=. The legacy scheme pre-allocated a *fixed pool*
-(=CONFIG_LEGACY_PTY_COUNT=, was 256) of =/dev/pty??= master + =/dev/tty??= slave
-nodes, which =devtmpfs= then exposed — 512 unused nodes cluttering =/dev= (the
-=/dev/ptya1= et al. you would see in a directory listing). Modern PTYs use
-=CONFIG_UNIX98_PTYS= (=/dev/ptmx= mints =/dev/pts/N= on demand), which stays ON,
-so nothing real is lost; turning legacy off just declutters =/dev=. (Unix98 PTYs
-are unused so far anyway — see [[file:networking.org][networking.org]] §6b: a Dropbear-style PTY session
-would only need =preinit= to mount =devpts=, no kernel change.)
+=# CONFIG_LEGACY_PTYS is not set=. The legacy scheme pre-allocates a *fixed pool*
+(=CONFIG_LEGACY_PTY_COUNT=, 256) of =/dev/pty??= master + =/dev/tty??= slave nodes
+— 512 unused nodes in =/dev=. Modern PTYs (=CONFIG_UNIX98_PTYS=: =/dev/ptmx= mints
+=/dev/pts/N= on demand) stay on and are what the terminal pane uses
+([[file:terminal.org][terminal.org]]), so nothing is lost.
 
 ** binfmt_misc — OFF; not needed (would only delegate to an ELF interpreter).
 
 * Change log (kernel tags)
 
-- =#16= first working glibc EFISTUB build (embedded initramfs, banner init).
-- =#17= same, init rebuilt with musl (smaller static binary).
-- =#18= SBCL-as-PID-1, separate initrd, interactive supervisor menu.
-- =#19= real-hardware fixes: =CONFIG_PCI= + full USB/HID + I2C-HID + ACPI
-  power-off. Fixed dead laptop keyboard AND the power-off halt (one root cause).
-- =#20= bigger fbcon font: =CONFIG_FONTS= + =CONFIG_FONT_TER16x32= and
-  =fbcon=font:TER16x32= on the cmdline (default 8x16 was too small on the
-  laptop). Incremental rebuild ~27 s on 8 cores. *Later REVERTED* — both the
-  symbol and the cmdline parameter are gone again; 16x32 halves the console to
-  80x25 and mainline fbcon has no scrollback, so the lost rows cost more than
-  the bigger glyphs bought. =CONFIG_FONTS=y= stayed. See [[file:framebuffer.org][framebuffer.org]] §7.
-- =#21= IPv4 networking + QEMU virtio-net: =CONFIG_NET= + =INET= + =UNIX= +
-  =PACKET= + =NETDEVICES= + =VIRTIO=/=VIRTIO_PCI=/=VIRTIO_NET=; =CONFIG_IPV6= held
-  OFF on purpose. Kernel half only — eth0 appears (down). Userland (sb-bsd-sockets,
-  an IP) is the next stage. See [[file:networking.org][networking.org]].
-- =#22= dropped legacy BSD PTYs: =# CONFIG_LEGACY_PTYS is not set= (was =y= with a
-  256-pair pool). Removes 512 unused =/dev/pty??= / =/dev/tty??= nodes from =/dev=;
-  modern =CONFIG_UNIX98_PTYS= stays on. Cosmetic /dev declutter, no functional loss.
-- =#23= rebased the config from Linux 6.18.3 onto *7.1.3* (latest stable line). The
-  jump was clean — =make olddefconfig= took 28 new symbols at safe defaults and
-  dropped only auto-derived/vendor helpers; every option we chose on purpose
-  survived. One deliberate fix: 7.x removed the static =PREEMPT_NONE= /
-  =PREEMPT_VOLUNTARY= models on x86 (they now =depend on ARCH_NO_PREEMPT= /
-  =!ARCH_HAS_PREEMPT_LAZY=, both false here), so the old =PREEMPT_NONE= reconciled
-  to full =PREEMPT= + =TREE_RCU=. We instead pin =CONFIG_PREEMPT_LAZY= (the x86
-  default and modern throughput-oriented successor), which — unlike full =PREEMPT= —
-  does *not* select =PREEMPT_RCU=, so =CONFIG_TINY_RCU= stays on our =SMP=-off,
-  =NR_CPUS=1= image. Net: same minimal uniprocessor character as before. Verified
-  end-to-end — boots clean in QEMU+OVMF (=Linux version 7.1.3=, no oops), supervisor
-  menu + REPL + virtio-net REPL on :4005 all up.
-- =#24= rebased the config from Linux 7.1.3 onto *7.2.5*. Not a feature change —
-  a maintenance one, and overdue for a specific reason: *the 7.1 series went EOL*.
-  kernel.org's last 7.1 was =7.1.13=, flagged end-of-life, so staying put meant
-  taking no further fixes at all; 7.1.3 was also ten patch releases behind inside
-  its own dead series. The jump itself was the cleanest yet — =make olddefconfig=
-  dropped *three* symbols and added *five*, and every one of the eight is an
-  architecture/vendor flag the build selects for itself, not something we chose:
-  | dropped | =ARCH_SUPPORTS_AUTOFDO_CLANG=, =ARCH_SUPPORTS_PROPELLER_CLANG=, =GENERIC_TIME_VSYSCALL=                                |
-  | added   | =ARCH_MEMORY_ORDER_TSO=, =FUTEX_ROBUST_UNLOCK=, =HAVE_FUTEX_ROBUST_UNLOCK=, =GENERIC_BITREVERSE=, =NET_VENDOR_ALIBABA= |
-  Nothing we rely on moved. Audited by name before building, because a silent drop
-  is exactly how this kind of bump goes wrong: =PCI=, =FB_EFI=,
-  =FRAMEBUFFER_CONSOLE=, =INPUT_EVDEV=, =MOUSE_PS2=, =I2C_HID=/=_ACPI=, =USB_HID=,
-  =HID_GENERIC=, =KEYBOARD_ATKBD=, =SERIO=, =NET=/=INET=/=VIRTIO_NET=, =ACPI=,
-  =EFI_STUB=, =BLK_DEV_INITRD=, =DEVTMPFS=/=_MOUNT=, =BINFMT_ELF=, =USB_XHCI_HCD=
-  — all still =y=, and =INPUT_MOUSEDEV= still =n= (which [[file:input.org][input.org]] depends on: it is
-  why there is no =/dev/input/mouseN= and why the browser finds its pointer by
-  capability mask instead). Tag #23's two deliberate choices also survived
-  verbatim — =PREEMPT_LAZY=y= with =TINY_RCU=y= (not =PREEMPT_RCU=), on
-  =SMP=n=/=NR_CPUS=1=. /Verified end-to-end: boots clean in QEMU+OVMF
-  (=Linux version 7.2.5=), supervisor menu, REPL, and the framebuffer browser./
-- =#25= *storage* (2026-10-03): =BLK_DEV_NVME= + =EXT4_FS= + =EXT4_FS_POSIX_ACL= +
-  =VIRTIO_BLK=. =make olddefconfig= then selected only their own helpers —
-  =NVME_CORE=, =JBD2=, =FS_MBCACHE=, =BUFFER_HEAD=, =CRC16=, =SG_POOL=,
-  =EXT4_USE_FOR_EXT2=, =FS_POSIX_ACL= — plus compiler-detection noise from the
-  build host's toolchain moving to gcc 16.2 (=CC_VERSION_TEXT=, =GCC_VERSION=,
-  =AS_/LD_VERSION=, the =RUSTC_*= probes; =CONFIG_RUST= itself stays unset). No
-  option we chose on purpose moved. The image can now mount the laptop's ext4 root:
-  preinit mounts it privately at =/mnt/host= (read-only view), bind-mounts only
-  =/home=, and drops to the user — see [[file:storage.org][storage.org]]. =bootx64.efi= is
-  3,105,792 bytes at #25. /Verified in QEMU+OVMF against a stand-in disk
-  (=make-test-disk.sh=, same UUID): =EXT4-fs (vda): mounted filesystem … r/w=,
-  writes land as uid 1000, and power-off remounts it read-only first (fs state
-  =clean= afterwards)./ Not yet booted on the laptop itself.
-- =#26= *daily-driver set* (2026-10-12): =USER_NS=, =OVERLAY_FS=, =SYSVIPC=,
-  =POSIX_MQUEUE=, =INOTIFY_USER=, =SECCOMP= + =SECCOMP_FILTER=, =IPV6=, =CFG80211=,
-  =MAC80211=, =IWLWIFI=, =IWLMVM=, =RFKILL=, =FW_CFG_SYSFS=, =DMI_SYSFS=, =NET_9P=,
-  =NET_9P_VIRTIO=, =9P_FS= — §8 says why each. =make olddefconfig= then selected their
-  helpers: the crypto API (=CRYPTO_AES=, =CCM=, =GCM=, =CTR=, =ECB=, =SHA256=, =RSA=, the
-  =CRYPTO_LIB_*= pieces), key and certificate handling for the signed regulatory
-  database (=KEYS=, =SYSTEM_TRUSTED_KEYRING=, =X509_CERTIFICATE_PARSER=,
-  =PKCS7_MESSAGE_PARSER=, =ASN1=, =MPILIB=), =CFG80211_REQUIRE_SIGNED_REGDB= +
-  =CFG80211_USE_KERNEL_REGDB_KEYS=, the minstrel rate control, =IPV6_SIT= with its
-  tunnel helpers, =IPC_NS=, =FSNOTIFY=, =FS_STACK=, =NETFS_SUPPORT=, =NET_9P_FD=,
-  =DEV_COREDUMP=. =MAC80211_HWSIM= was enabled and removed again (§8). 1,036
-  =CONFIG_= lines are set; =bootx64.efi= is 3,970,048 bytes at #26 (was 3,105,792 at
-  #25 — the Wi-Fi stack is most of the growth). /Verified in QEMU+OVMF: diskless
-  boot passes, and with =LOL_GUEST_HOSTROOT=1= the guest mounts the host's =/= over
-  9p, puts an overlay on =/home= (=overlayfs: failed to set xattr on upper= then
-  falls back to =redirect_dir=nofollow= and =uuid=null= — harmless for a
-  throwaway test =/home=; the cause was not investigated), drops to uid 1000 and serves the net REPL./ Wi-Fi
-  is not yet booted on the laptop; the boot log shows =cfg80211: failed to load
-  regulatory.db= until the networking track ships it in the initramfs.
-- =#27= *USB Ethernet* (2026-10-12): =USB_NET_DRIVERS=, =USB_USBNET=, =USB_RTL8152=,
-  =USB_NET_CDCETHER=, =USB_NET_CDC_NCM= (§8). =make olddefconfig= added =MII=,
-  =PHYLIB=/=PHYLINK=/=SWPHY=, =FWNODE_MDIO=/=ACPI_MDIO=, =NET_SELFTESTS=,
-  =USB_RTL8153_ECM= and the drivers that default to =y= under =USB_USBNET=
-  (=AX8817X=, =AX88179_178A=, =NET1080=, =CDC_SUBSET= with =BELKIN=/=ARMLINUX=,
-  =ZAURUS=) — left on: they are small and cover common dongles. =bootx64.efi= is
-  4,064,256 bytes at #27. Found by the networking track: the host's =lsusb= shows
-  =0bda:8153 RTL8153 Gigabit Ethernet Adapter=. /Not yet booted on the laptop./
-- =#28= *When the kernel is stuck* (2026-10-16): =MAGIC_SYSRQ= (default enable
-  =0x1=), =SOFTLOCKUP_DETECTOR=, =HARDLOCKUP_DETECTOR= (perf NMI),
-  =DETECT_HUNG_TASK=, =PSTORE= + =EFI_VARS_PSTORE= (§6). =PSTORE= is under the
-  =MISC_FILESYSTEMS= menu, which was off: =scripts/config -e PSTORE= alone was
-  silently dropped by =olddefconfig= until the menu was enabled too — which turned
-  nothing else on (every filesystem in it defaults to =n=). =olddefconfig= added
-  =LOCKUP_DETECTOR=, =HARDLOCKUP_DETECTOR_PERF= / =_COUNTS_HRTIMER=,
-  =DETECT_HUNG_TASK_BLOCKER=, =MAGIC_SYSRQ_SERIAL=, =PSTORE_COMPRESS= with
-  =ZLIB_INFLATE= / =ZLIB_DEFLATE=, and the two =BOOTPARAM_*_PANIC=0= (report, never
-  panic). Why: a session froze on the laptop and a stuck kernel is invisible from
-  Lisp ([[file:diagnostics.org][diagnostics.org]]). =bootx64.efi= is 4,080,640 bytes at #28 (4,064,256 at
-  #27); 1,071 =CONFIG_= lines. Verified in QEMU+OVMF by =check-diagnostics.lisp=:
-  =pstore: Registered efi_pstore=, =/proc/sys/kernel/sysrq= = 1,
-  =hung_task_timeout_secs= = 120, =watchdog= = 1. /Not yet booted on the laptop./
-- =#29= *Sound* (2026-10-17): =SOUND=, =SND=, =SND_HDA_INTEL=,
-  =SND_HDA_CODEC_REALTEK= + =SND_HDA_CODEC_ALC269= (the laptop's ALC289) and
-  =SND_HDA_GENERIC= (QEMU's codec); explicitly *not* =SND_SOC=, =SND_HDA_CODEC_HDMI=,
-  =SND_USB= (§9 and "Deliberately OFF"). =make olddefconfig= added the helpers listed
-  under §9 — among them =NEW_LEDS= / =LEDS_CLASS= / =LEDS_TRIGGERS= (selected by the
-  HDA codecs' LED support), which reach widely included headers: the build recompiled
-  1,576 files and took 5 min 47 s on the i7-1065G7 (=./build.sh --kernel=, 8 jobs), not
-  the "two to five minutes" estimated beforehand. =bootx64.efi= is 4,240,384 bytes at #29
-  (4,080,640 at #28); 1,124 =CONFIG_= lines. Userland in the same tag: lol-rootd gives
-  =/dev/snd= to the user, =mixer.lisp= (the codec's controls at boot, the volume keys,
-  the tray's VOL). Verified in QEMU+OVMF by =check-sound.lisp= (15 checks: the card,
-  =/dev/snd= owned by uid 1000, the mixer, the volume keys over QMP, ffmpeg recording
-  through =plughw:0,0=, mplayer's 440 Hz tone measured at 439.7 Hz in QEMU's WAV).
-  /Booted on the laptop 2026-10-18/: a screencast recorded and played back with sound
-  through the headset ([[file:screencast.org][screencast.org]] §13.6).
-- =#30= *SMP* (2026-10-19): =SMP=, =NR_CPUS=16=, =SCHED_SMT=, =SCHED_MC= (§10); with
-  them, unasked, =SCHED_MC_PRIO= → =X86_INTEL_PSTATE= / =X86_AMD_PSTATE= / =CPU_FREQ=
-  (frequency scaling, §10's table), =TREE_RCU= in place of =TINY_RCU=, queued
-  spinlocks, RPS/XPS; 78 =CONFIG_= lines changed (=diff= of the sorted =CONFIG_= lines
-  against #29). =SMP= touches nearly every file — 1,914 compiler invocations, 6 min 38 s
-  wall on the i7-1065G7 (=./build.sh --kernel=, 32 min of CPU). =bootx64.efi= is
-  4,412,416 bytes at #30 (4,240,384 at #29); 1,180 =CONFIG_= lines. QEMU boots
-  =-smp 4= from now on. Verified in QEMU+OVMF by =check-smp.lisp= (9 checks) and the
-  whole guest suite at =-smp 4= (23 check scripts, two guests at a time): 19 all
-  pass; =check-terminal='s 5 failures are the same 5 at =LOL_QEMU_SMP=1= (older than
-  #30); =check-containers= fails only "rails -v", the host's rbenv having no global
-  rails; =check-files= and =check-crash= failed on a stale =test-disk.img= — *not
-  SMP*: a writable =build.sh --run= boot on 2026-10-18 had moved the disk's fixture
-  =~/.config/lol/settings= and left an archive behind; both pass on a fresh
-  =./make-test-disk.sh=. /Booted on the laptop 2026-10-20/: =nproc= says 8 and
-  =/sys/devices/system/cpu/cpu0/cpufreq/scaling_driver= says =intel_pstate=; the
-  environment, the terminal and the tools in use as before.
-- =#31= *kexec* (2026-10-20): =KEXEC_FILE= on (with it =KEXEC_CORE=,
-  =EFI_RUNTIME_MAP=, =ARCH_SELECTS_KEXEC_FILE=), =CRASH_DUMP= off by hand (§11); 4 more
-  =CONFIG_= lines set than at #30 (1,184), plus the =KEXEC_SIG= / =CRASH_DUMP= "is not
-  set" lines. Built *inside the environment*, in
-  the terminal's container (=make -j8 bzImage=, 19.5 s wall, incremental on #30) — the
-  first kernel built there. =bootx64.efi= is 4,428,800 bytes at #31 (4,412,416 at
-  #30). Userland in the same tag: "Install the new build and restart" (=SuperL-q=,
-  the supervisor's =u=), lol-rootd's install request, =restart-machine= with its
-  firmware fallback ([[file:sbcl-init.org][sbcl-init.org]], "Updating from inside"). Host-tested by
-  =poc/update-test.lisp= (30 checks: lol-rootd's real C under =unshare -rm=; there,
-  on #30, =kexec_file_load= answered ENOSYS). [[file:../check-update.lisp][=check-update.lisp=]], which kexecs a
-  guest, passes from Debian (20 checks, 2026-10-20: the guest came back in the same
-  QEMU 14 s later, by kexec). An install + kexec on the laptop is still to be done.
-- =#32= *The webcam* (2026-10-20): =MEDIA_SUPPORT= with its filter, =MEDIA_CAMERA_SUPPORT=,
-  =MEDIA_USB_SUPPORT=, =VIDEO_DEV=, =USB_VIDEO_CLASS= (§12); set off by hand: the other
-  media kinds (TV, radio, SDR, platform, test), =MEDIA_SUBDRV_AUTOSELECT= and
-  =USB_VIDEO_CLASS_INPUT_EVDEV=. =make olddefconfig= added the V4L2 and videobuf2
-  helpers listed in §12, =MEDIA_CONTROLLER=, and =DMA_SHARED_BUFFER= with =NET_DEVMEM=.
-  19 more =CONFIG_= lines set than at #31 (1,203). Built inside the environment
-  (=./build.sh --kernel=, kernel and userland, 1 min 59 s wall, incremental on #31).
-  =bootx64.efi= is 4,555,776 bytes at #32 (4,428,800 at #31). Userland in the same tag:
-  preinit gives =/dev/video*= to the user; the web pane's video calls
-  ([[file:web-browser.org][web-browser.org]] §4.8). Booted on the laptop the same day:
-  =/dev/video0= to =video3= present, Chrome lists the "Integrated Webcam (0bda:58fe)"
-  and a Meet call had camera and microphone (web-browser.org §4.8). Not booted in QEMU.
+Sizes are =bootx64.efi= (= the bzImage). Every tag below was verified booting in
+QEMU+OVMF unless noted.
+
+| Tag | What changed                                                                                                                                                                                                                  |
+|-----+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| #16 | First working glibc EFISTUB build (embedded initramfs, banner init).                                                                                                                                                          |
+| #17 | Same, init rebuilt with musl (smaller static binary).                                                                                                                                                                         |
+| #18 | SBCL as PID 1, separate initrd, interactive supervisor menu.                                                                                                                                                                  |
+| #19 | =PCI= + USB/HID + I2C-HID + ACPI power-off: fixes a dead laptop keyboard and the power-off halt, one root cause (§3).                                                                                                          |
+| #20 | Terminus 16x32 fbcon font. *Reverted* except =FONTS=y=: 80x25 with no scrollback cost more than it bought (§2).                                                                                                               |
+| #21 | IPv4 + virtio-net: =NET=, =INET=, =UNIX=, =PACKET=, =NETDEVICES=, =VIRTIO=/=_PCI=/=_NET= (§7). IPv6 held off.                                                                                                               |
+| #22 | Dropped legacy BSD PTYs (512 unused =/dev= nodes); Unix98 PTYs stay.                                                                                                                                                         |
+| #23 | Rebased 6.18.3 → 7.1.3. 7.x removed =PREEMPT_NONE= on x86, so we pin =PREEMPT_LAZY= (no =PREEMPT_RCU=, kept =TINY_RCU= on the then-uniprocessor build).                                                                       |
+| #24 | Rebased 7.1.3 → 7.2.5 (7.1 went EOL). =olddefconfig= dropped 3 and added 5 arch/vendor symbols; every chosen option audited by name and unchanged.                                                                           |
+| #25 | Storage: =BLK_DEV_NVME=, =EXT4_FS= (+ =_POSIX_ACL=), =VIRTIO_BLK= (§5, [[file:storage.org][storage.org]]). 3,105,792 bytes.                                                                                                                     |
+| #26 | Daily-driver set: =USER_NS=, =OVERLAY_FS=, =SYSVIPC=, =POSIX_MQUEUE=, =INOTIFY_USER=, =SECCOMP=, =IPV6=, Wi-Fi (=CFG80211=, =MAC80211=, =IWLWIFI=, =IWLMVM=, =RFKILL=), =FW_CFG_SYSFS=, =DMI_SYSFS=, 9p (§8); helpers: crypto API, keyring + X.509 for the signed regdb. 3,970,048 bytes. |
+| #27 | USB Ethernet: =USB_USBNET=, =USB_RTL8152=, =USB_NET_CDCETHER=, =USB_NET_CDC_NCM= (§8); the drivers that default =y= under =USB_USBNET= left on. 4,064,256 bytes.                                                              |
+| #28 | Stuck-kernel diagnostics: =MAGIC_SYSRQ=, soft/hard lockup + hung-task detectors (report only), =PSTORE= + =EFI_VARS_PSTORE= (§6). 4,080,640 bytes. Tested by =check-diagnostics.lisp=.                                      |
+| #29 | Sound: =SOUND=, =SND=, =SND_HDA_INTEL=, Realtek ALC269-family codec, =SND_HDA_GENERIC= (§9); not =SND_SOC=, HDMI or USB audio. 4,240,384 bytes. Tested by =check-sound.lisp= (15 checks) and on the XPS 13.                |
+| #30 | SMP: =SMP=, =NR_CPUS=16=, =SCHED_SMT=, =SCHED_MC=; with them Intel P-state frequency scaling (§10). 4,412,416 bytes. Tested by =check-smp.lisp= and the guest suite at =-smp 4=, and on the XPS 13.                         |
+| #31 | kexec: =KEXEC_FILE= (+ =KEXEC_CORE=, =EFI_RUNTIME_MAP=), =CRASH_DUMP= off (§11). 4,428,800 bytes. Tested by =poc/update-test.lisp= and =check-update.lisp=.                                                                   |
+| #32 | Webcam: =MEDIA_SUPPORT= + filter, =MEDIA_CAMERA_SUPPORT=, =MEDIA_USB_SUPPORT=, =VIDEO_DEV=, =USB_VIDEO_CLASS= (§12). 1,203 =CONFIG_= lines, 4,555,776 bytes. Booted on the XPS 13 (camera in a video call); not in QEMU.     |
+
+*Pitfalls seen across tags:*
+
+- *A silently dropped option.* =olddefconfig= drops an option whose menu is off
+  (=PSTORE= under =MISC_FILESYSTEMS=, #28). Grep for every option you set after
+  each =olddefconfig=, as the audit block does.
+- *A kernel rebase.* Audit the chosen options by name before building; at #24
+  =INPUT_MOUSEDEV= had to stay =n= ([[file:input.org][input.org]] finds the pointer by capability
+  mask instead).
+- *Build times.* LED headers (#29) and =SMP= (#30) touch most of the tree: a full
+  rebuild of ~6 minutes on 8 jobs, not the incremental ~20 s.

@@ -1,4 +1,4 @@
-;;;; overlays.lisp — the browser's modal cards as morphs (doc/morphic.org, step 4).
+;;;; overlays.lisp — the browser's modal cards as morphs (doc/morphic.org §7).
 ;;;;
 ;;;; The Spotter, the menus and the halo, the clipboard manager and the value prompt
 ;;;; were once loops of their own in the framebuffer backend (fb-browser.lisp's

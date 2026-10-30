@@ -62,7 +62,7 @@
 ;;; 256-colour cube and 24-bit colour come out exactly.
 ;;;
 ;;; This is deliberately NOT a terminal emulator — a grid, cursor addressing and an
-;;; alternate screen are the terminal pane's job (doc/containers.org §5.2 step 2).
+;;; alternate screen are the terminal pane's job (doc/terminal.org).
 ;;; It is a LINE reader: text, newlines, colours, and just enough of the rest that
 ;;; common output reads right:
 ;;;   \r without \n   restart the line (progress bars overwrite themselves)

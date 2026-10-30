@@ -1,6 +1,6 @@
 ;;;; recorder.lisp — screencasts of the environment, with sound, recorded from inside it.
 ;;;;
-;;;; doc/screencast.org is the design; this is steps 2 and 3 of its §10. The idea in
+;;;; doc/screencast.org is the design; this is its §4–§7, built. The idea in
 ;;;; two sentences: the environment already draws every frame into a canvas in Lisp
 ;;;; memory and copies rects of it to /dev/fb0 (fb-browser.lisp's PRESENT-REPAIR), so a
 ;;;; recording is "copy the canvas 30 times a second", not "read the screen back"; and

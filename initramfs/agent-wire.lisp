@@ -14,7 +14,7 @@
 ;;;;
 ;;;; Until HTTP-REQUEST landed, this file also carried a plain-http stand-in with the
 ;;;; same signature, so the agent could be written and tested in parallel; it was
-;;;; removed once the real client was in the image (doc/agent.org §14.1).
+;;;; removed once the real client was in the image (doc/agent.org §4.1).
 ;;;;
 ;;;; All original code, under this project's MIT licence.
 

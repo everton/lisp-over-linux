@@ -6,7 +6,7 @@
 ;;;; walking. Our side is small: build one query datagram, send it over UDP to port
 ;;;; 53, parse the answer. That is what glibc's resolver does too, but glibc would
 ;;;; drag in NSS (/etc/nsswitch.conf, dlopen'ed libnss_*.so plugins) — networking.org
-;;;; §5 chose a Lisp resolver instead, and agent.org §10 scheduled it (phase N2).
+;;;; §5 chose a Lisp resolver instead (its §2(c), phase N2).
 ;;;;
 ;;;; A DNS message (RFC 1035 §4), every field big-endian:
 ;;;;

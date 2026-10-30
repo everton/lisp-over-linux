@@ -1,6 +1,6 @@
 ;;;; runs.lisp — run a program and STREAM its output into a read-only pane, live.
 ;;;;
-;;;; doc/containers.org §5.2 step 1, "run and stream": the cheap half of a terminal.
+;;;; doc/containers.org §6.2, "run panes": the cheap half of a terminal.
 ;;;; A command runs; its output appears in a pane as it arrives, in its own colours;
 ;;;; the pane's title says whether it is still running and how it ended; k stops it.
 ;;;; That covers `git status`, `bundle install`, `rails test`, a server's log — and it
@@ -345,7 +345,7 @@
     (and (listp d) (/= (getf d :generation) (run-generation (pane-subject p))))))
 
 (defun run-pane-step-ms (pane)
-  "How often whoever shows PANE must step it (doc/morphic.org step 5): +RUN-TICK-MS+
+  "How often whoever shows PANE must step it (doc/morphic.org §8): +RUN-TICK-MS+
    while one of its run panes is live or behind its run's output, else NIL — a
    finished run that is up to date is still, and costs nothing."
   (and (some (lambda (p) (or (run-live-p (pane-subject p)) (run-pane-behind-p p)))

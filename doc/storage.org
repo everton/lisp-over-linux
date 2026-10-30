@@ -1,85 +1,79 @@
-#+TITLE: Storage — the laptop's disk, /home, and running as the user
+#+TITLE: Storage — the host's disk, /home, and running as the user
 #+STARTUP: showall
 
 Parent docs: [[file:sbcl-init.org][sbcl-init.org]] (the boot sequence this extends) ·
 [[file:kernel-config.org][kernel-config.org]] (the options, §5) · sibling: [[file:file-manager.org][file-manager.org]] (what you
-do with the disk once it is there).
+do with the disk once it's there).
 
-STATUS (kernel tag #25, 2026-10-03): *working in QEMU* against a stand-in disk
-image. The image mounts the laptop's ext4 root privately, shares only =/home=, and
-runs the whole Lisp environment as the user (uid 1000) with five named
-capabilities. Since booted and used on the laptop itself (confirmed by the user,
-2026-10-16); "Before the first real boot" at the end is kept as the pre-flight notes.
+STATUS (kernel tag #25 onward): *built*, tested in QEMU against a stand-in disk
+image and in use on real hardware. The image mounts the machine's ext4 root
+privately, shares only =/home=, and runs the whole Lisp environment as the user
+with five named capabilities.
 
-* 1. What we wanted, in one paragraph
+* 1. The goal
 
-Until tag #24 the machine could not even /see/ a disk: the root filesystem was
-the initramfs in RAM, and nothing else existed. Now it should reach the laptop's
-NVMe drive — but our =/= must stay *our* =/=: the tiny initramfs, a dozen
-entries, obviously not the Debian install it shares the laptop with. The one
-exception, for convenience, is =/home=: the user's files are at the same path in
-both systems. And anything the environment creates on that real disk must belong
-to the user, not to root.
-
-So the target picture is:
+Without storage, the root filesystem is the initramfs in RAM and nothing else
+exists. The image should reach the machine's NVMe drive, but our =/= must stay
+*our* =/=: the tiny initramfs, not the Linux install it shares the machine with.
+The one exception is =/home=, so your files are at the same path in both systems.
+Anything the environment creates on the real disk must belong to the user, not
+root.
 
 | Path        | What it is                                 | Writable?           |
 |-------------+--------------------------------------------+---------------------|
 | =/=         | the initramfs (rootfs, in RAM)             | yes, but evaporates |
 | =/tmp=      | tmpfs, 64 MB                               | yes, evaporates     |
-| =/home=     | the laptop's =/home=, bind-mounted         | yes — the real disk |
-| =/mnt/host= | the laptop's whole =/= (fonts, pictures …) | *read-only*         |
+| =/home=     | the host's =/home=, bind-mounted           | yes — the real disk |
+| =/mnt/host= | the host's whole =/= (fonts, pictures …)   | *read-only*         |
 
-And the process tree:
+The process tree:
 
-| PID | Program      | Runs as                           | Why                                                                                      |
-|-----+--------------+-----------------------------------+------------------------------------------------------------------------------------------|
-| 1   | =/sbin/lisp= | uid 1000 + 5 capabilities         | the whole environment                                                                    |
-| ~28 | =lol-rootd=  | root (real uid 1000, see §6)      | chown hotplugged devices; remount ro at exit; clock, NM profiles, new build on request   |
-| any | =lol-ct=     | uid 1000; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs                                    |
+| PID | Program      | Runs as                           | Why                                                                                    |
+|-----+--------------+-----------------------------------+----------------------------------------------------------------------------------------|
+| 1   | =/sbin/lisp= | the user + 5 capabilities         | the whole environment                                                                  |
+| ~28 | =lol-rootd=  | root (real uid the user's, §6)    | chown hotplugged devices; remount ro at exit; clock, NM profiles, new build on request |
+| any | =lol-ct=     | the user; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs                                  |
 
 * 2. The kernel half (tag #25)
 
 Four options, chosen by asking "what is between the NVMe and an =open(2)=?":
 
-| Option              | Why                                                                                           |
-|---------------------+-----------------------------------------------------------------------------------------------|
-| =BLK_DEV_NVME=      | The laptop's only disk is NVMe (=nvme0n1=). Pulls in =NVME_CORE=. Needs =PCI= (on since #19). |
-| =EXT4_FS=           | The laptop's root partition is ext4. Pulls in =JBD2= (the journal), =FS_MBCACHE=, =CRC16=.    |
-| =EXT4_FS_POSIX_ACL= | The host mounts with =acl=; without it the kernel would silently ignore ACLs on files.        |
-| =VIRTIO_BLK=        | QEMU's paravirtual disk, so the same image can be tested against a disk image (§8).           |
+| Option              | Why                                                                                             |
+|---------------------+-------------------------------------------------------------------------------------------------|
+| =BLK_DEV_NVME=      | The target laptop's disk is NVMe (=nvme0n1=). Pulls in =NVME_CORE=. Needs =PCI= (on since #19). |
+| =EXT4_FS=           | The root partition is ext4. Pulls in =JBD2= (the journal), =FS_MBCACHE=, =CRC16=.               |
+| =EXT4_FS_POSIX_ACL= | Debian mounts with =acl=; without it the kernel would silently ignore ACLs on files.            |
+| =VIRTIO_BLK=        | QEMU's paravirtual disk, so the same image can be tested against a disk image (§8).             |
 
 =BLOCK=, =MSDOS_PARTITION= and =EFI_PARTITION= (GPT) were already on. A
-*partition table* is just a small index at the start of a disk saying "bytes X to
-Y are partition 2"; the kernel reads it at probe time and makes one block device
-per partition — =nvme0n1p2= — which is what we mount.
+*partition table* is a small index at the start of a disk saying "bytes X to Y
+are partition 2"; the kernel reads it at probe time and makes one block device per
+partition — =nvme0n1p2= — which is what we mount.
 
-Checked against the host before choosing (=findmnt=, =lsblk -f=,
-=/proc/fs/ext4/nvme0n1p2/options=): one NVMe disk, ext4 root holding =/home=
-(there is no separate =/home= partition), a vfat ESP and swap. The test image
-=mke2fs= made on this host has the features =orphan_file metadata_csum_seed
-metadata_csum 64bit extent flex_bg huge_file dir_nlink extra_isize=, and 7.2.5
-mounted it without complaint — a fair proxy for the real partition, which the
-same Debian tools created.
+The target layout: one NVMe disk, an ext4 root holding =/home= (no separate
+=/home= partition), a vfat ESP and swap. A test image made by Debian's =mke2fs=
+(features =orphan_file metadata_csum_seed metadata_csum 64bit extent flex_bg
+huge_file dir_nlink extra_isize=) mounts on 7.2.5 without complaint — a fair proxy
+for a partition the same tools created.
 
 *Ruled out, on purpose:*
-- *Modules.* =CONFIG_MODULES= stays off; everything is built in. There is no
-  =modprobe= and no =/lib/modules= to keep in step with the kernel.
-- *SATA/AHCI, USB mass storage (=USB_STORAGE= + =SCSI= + =BLK_DEV_SD=), vfat.*
-  None is needed to reach this laptop's disk. USB storage would let the image
-  read its own stick; that is a separate, later want.
-- *=UNICODE= (casefold) and =FS_ENCRYPTION=.* Only needed if the host fs used
-  those features; it does not (=/sys/fs/ext4/features= only says the /host
-  kernel/ supports them, which is a different question — we could not read the
-  partition's own superblock without root, so the evidence is the test image
-  above plus Debian's defaults).
+
+- *Modules.* =CONFIG_MODULES= stays off; everything is built in. No =modprobe=, no
+  =/lib/modules= to keep in step with the kernel.
+- *SATA/AHCI, USB mass storage (=USB_STORAGE= + =SCSI= + =BLK_DEV_SD=), vfat.* Not
+  needed to reach an NVMe root. USB storage would let the image read its own
+  stick; that's a separate want.
+- *=UNICODE= (casefold) and =FS_ENCRYPTION=.* Only needed if the host fs used those
+  features; it doesn't. (=/sys/fs/ext4/features= only says the /host kernel/
+  supports them, a different question. The partition's own superblock can't be
+  read without root, so the evidence is the test image plus Debian's defaults.)
 
 * 3. Finding the disk with no udev
 
-On Debian, =/etc/fstab= says =UUID=3d89…=, and udev + blkid resolve that to
-=/dev/nvme0n1p2=. We have neither. But "UUID" is not magic: it is 16 bytes inside
-the filesystem's *superblock* — the header block that describes an ext2/3/4
-filesystem — which always starts 1024 bytes into the partition:
+A Linux install's =/etc/fstab= says =UUID=…=, and udev + blkid resolve that to
+=/dev/nvme0n1p2=. We have neither. But the UUID is just 16 bytes inside the
+filesystem's *superblock* — the header block describing an ext2/3/4 filesystem —
+which always starts 1024 bytes into the partition:
 
 | Offset in superblock | Size | Field                          |
 |----------------------+------+--------------------------------|
@@ -87,81 +81,86 @@ filesystem — which always starts 1024 bytes into the partition:
 | =0x68=               |   16 | filesystem UUID                |
 | =0x78=               |   16 | volume label                   |
 
-So [[file:../initramfs/preinit.c::static struct ext_id read_ext_id][=read_ext_id=]] =pread=s 256 bytes at offset 1024 of each
-=/dev/<name>= listed in =/sys/class/block= (every disk and partition the kernel
-found), checks the magic and formats the UUID. [[file:../initramfs/preinit.c::static int find_disk][=find_disk=]] retries for ~8 s,
-because NVMe and USB controllers probe *asynchronously*: =/init= can start before
-the partition's device node exists. It only waits if a controller that could
-carry the disk is there at all ([[file:../initramfs/preinit.c::static int storage_controller_present][=storage_controller_present=]]: a PCI device of
-class =0x010802= — NVMe — or a virtio-blk one, vendor =0x1af4=), so a diskless
-QEMU boot does not stall 8 s. PCI enumeration, unlike disk probing, is finished
-before =/init= runs. (QEMU's q35 always carries an AHCI controller, class
-=0x0106=; we have no driver for it, so it is deliberately not counted.)
+- *Read the superblock.* [[file:../initramfs/preinit.c::static struct ext_id read_ext_id][=read_ext_id=]] =pread=s 256 bytes at offset 1024 of each
+  =/dev/<name>= listed in =/sys/class/block= (every disk and partition the kernel
+  found), checks the magic and formats the UUID.
+- *Retry for probing.* [[file:../initramfs/preinit.c::static int find_disk][=find_disk=]] retries for ~8 s, because NVMe and USB
+  controllers probe *asynchronously*: =/init= can start before the partition's
+  device node exists.
+- *Only if a controller exists.* It waits only if a controller that could carry
+  the disk is there ([[file:../initramfs/preinit.c::static int storage_controller_present][=storage_controller_present=]]: a PCI device of class
+  =0x010802= — NVMe — or virtio-blk, vendor =0x1af4=), so a diskless QEMU boot
+  doesn't stall 8 s. PCI enumeration, unlike disk probing, finishes before =/init=
+  runs. QEMU's q35 always carries an AHCI controller (class =0x0106=); we have no
+  driver for it, so it isn't counted.
 
 ** Which disk, and which user: =/etc/lol.conf=
 
-=build.sh= writes [[file:../initramfs/initramfs.sbcl.list][=/etc/lol.conf=]] into the cpio from the build host — which
-/is/ the laptop the image boots on:
+=build.sh= writes [[file:../initramfs/initramfs.sbcl.list][=/etc/lol.conf=]] into the cpio from the build host, on the
+assumption that you build on the machine you boot:
 
 #+begin_example
-user=everton
-disk=UUID=3d89cf97-a0ba-45aa-b10e-f41905689b0d     (findmnt -no UUID -T $HOME)
+user=<user>
+disk=UUID=<uuid of the fs holding $HOME>     (findmnt -no UUID -T $HOME)
 #+end_example
 
-The kernel command line overrides either key (=lol.user== / =lol.disk==), so a
-GRUB entry or another machine can differ without a rebuild; =lol.disk=none=
-switches storage off; =lol.disk=/dev/sda2= and =LABEL=...= also work. At build
-time, =LOL_USER= / =LOL_DISK= in the environment override what =build.sh= detects.
-
-Why a file /and/ the cmdline, not just the cmdline? Our command line is compiled
-into the kernel (=CONFIG_CMDLINE=, §1 of [[file:kernel-config.org][kernel-config.org]]) and the USB boot
-passes none of its own, so putting the UUID there would mean a kernel rebuild
-per machine. The cpio is rebuilt in seconds anyway.
+- *Cmdline overrides.* =lol.user== / =lol.disk== on the kernel command line
+  override either key, so a GRUB entry or another machine can differ without a
+  rebuild. =lol.disk=none= switches storage off; =lol.disk=/dev/sda2= and
+  =LABEL=...= also work.
+- *Build overrides.* =LOL_USER= / =LOL_DISK= in the environment override what
+  =build.sh= detects. In a container, where =findmnt= can't see the disk, the
+  build reads the UUID from the host's =/etc/fstab=.
+- *Why a file too.* Our command line is compiled into the kernel (=CONFIG_CMDLINE=,
+  §1 of [[file:kernel-config.org][kernel-config.org]]) and the USB boot passes none of its own, so a UUID
+  there would mean a kernel rebuild per machine. The cpio rebuilds in seconds.
 
 * 4. The mount layout: the host's / stays apart
 
 [[file:../initramfs/preinit.c::static int mount_storage][=mount_storage=]] does three =mount(2)= calls:
 
 1. =mount(dev, "/mnt/host", "ext4", MS_NOSUID|MS_NODEV)= — the whole host root,
-   read-write. =nosuid= means a setuid binary on that disk cannot make anyone
-   root here; =nodev= means a device node on it is not honoured.
+   read-write. =nosuid= means a setuid binary on that disk can't make anyone root
+   here; =nodev= means a device node on it isn't honoured.
 2. =mount("/mnt/host/home", "/home", NULL, MS_BIND)= — a *bind mount*: the same
    directory made to appear at a second path. No copy, no second filesystem;
    =stat= on either path shows the same inode. This is the only place the host
    tree crosses into ours.
 3. =mount(NULL, "/mnt/host", NULL, MS_REMOUNT|MS_BIND|MS_RDONLY…)= — makes the
-   =/mnt/host= *view* read-only. The trick worth knowing: a filesystem
-   (superblock) has one rw/ro state, but since Linux 2.6.26 each *mount point*
-   carries its own read-only flag too. A bind-remount sets the per-mount flag, so
-   =/home= stays writable while =/mnt/host/etc= refuses writes — to everyone,
-   root included. Verified in the guest: =/proc/mounts= shows
-   =/dev/vda /mnt/host ext4 ro,nosuid,nodev= and =/dev/vda /home ext4 rw,nosuid,nodev=,
-   and opening =/mnt/host/etc/x= for output fails.
+   =/mnt/host= *view* read-only.
 
-Why keep =/mnt/host= visible at all? Reading the host's =/usr/share/fonts=,
-wallpapers or docs from the file manager is useful, and the read-only flag means
-it costs nothing in safety. It is not part of /our/ tree — it is under =/mnt=,
-where foreign filesystems traditionally go.
+The trick in step 3: a filesystem (superblock) has one rw/ro state, but since
+Linux 2.6.26 each *mount point* carries its own read-only flag too. A
+bind-remount sets the per-mount flag, so =/home= stays writable while
+=/mnt/host/etc= refuses writes — to everyone, root included. In the guest,
+=/proc/mounts= shows =/dev/vda /mnt/host ext4 ro,nosuid,nodev= and
+=/dev/vda /home ext4 rw,nosuid,nodev=, and opening =/mnt/host/etc/x= for output
+fails.
+
+=/mnt/host= stays visible because reading the host's fonts, wallpapers, docs and
+programs is useful, and the read-only flag makes it cost nothing in safety. It
+lives under =/mnt=, where foreign filesystems traditionally go.
 
 * 5. Running as the user: capabilities, not root
 
-** Why ownership needs a different uid, not a chown afterwards
+** Why a different uid, not a chown afterwards
 
 Every file a process creates gets the process's *filesystem uid/gid* as owner. As
 root, everything the environment wrote into =~/= would be root-owned, and the
-user's Debian session could then not edit or delete it. Chown-after-create would
-have to be remembered at every write site (save, mkdir, symlink, rename-into,
-the editor's temp file…) and is racy. Becoming the user once, before anything
-runs, gets every site right by construction — and additionally means the
-environment *cannot* write anywhere the user could not, which matters now that a
-live-editable Lisp image holds a real disk.
+user's own desktop session couldn't edit or delete it.
+
+- *Chown-after-create is fragile.* It must be remembered at every write site
+  (save, mkdir, symlink, rename-into, the editor's temp file…) and is racy.
+- *Becoming the user once is right by construction.* Done before anything runs, it
+  covers every site — and the environment *can't* write anywhere the user
+  couldn't, which matters when a live-editable Lisp image holds a real disk.
 
 ** What root powers the Lisp still needs
 
-Root's power in Linux is split into ~41 *capabilities* — each a named slice
+Root's power in Linux is split into ~41 *capabilities*, each a named slice
 (=CAP_NET_ADMIN= = configure interfaces, =CAP_SYS_BOOT= = reboot, …). A process
-can hold some without being uid 0. We audited every privileged call in the
-userland (=grep= for =ioctl=, =reboot=, =bind=, =/dev/=):
+can hold some without being uid 0. An audit of every privileged call in the
+userland (=grep= for =ioctl=, =reboot=, =bind=, =/dev/=) gives five:
 
 | Capability             | Used by                                              |
 |------------------------+------------------------------------------------------|
@@ -171,22 +170,22 @@ userland (=grep= for =ioctl=, =reboot=, =bind=, =/dev/=):
 | =CAP_NET_BIND_SERVICE= | binding UDP port 68 (< 1024) for DHCP                |
 | =CAP_SYS_TTY_CONFIG=   | =KDSETMODE= (=KD_GRAPHICS=) on =/dev/tty0= ([[file:../poc/fb.lisp][fb.lisp]]) |
 
-Not kept, deliberately: =CAP_DAC_OVERRIDE= (ignore file permissions),
+Deliberately not kept: =CAP_DAC_OVERRIDE= (ignore file permissions),
 =CAP_DAC_READ_SEARCH=, =CAP_CHOWN=, =CAP_FOWNER=, =CAP_SYS_ADMIN= (mount and much
 else). Without those, file access is checked exactly as for the user.
 
 ** The sequence ([[file:../initramfs/preinit.c::static int become_user][=become_user=]])
 
 Capabilities normally vanish across =execve()= for a non-root program, and we
-must =exec= the Lisp. The *ambient* set (Linux 4.3) exists for exactly this: a
-capability that is permitted + inheritable + ambient is handed to the new program
-as permitted + effective.
+must =exec= the Lisp. The *ambient* set (Linux 4.3) exists for this: a capability
+that is permitted + inheritable + ambient is handed to the new program as
+permitted + effective.
 
 1. Shrink the *bounding set* (the ceiling no later exec can exceed) to the five,
    while we still hold =CAP_SETPCAP=.
 2. =prctl(PR_SET_KEEPCAPS, 1)= — otherwise leaving uid 0 wipes the permitted set.
 3. =setgroups= (the user's supplementary groups), =setresgid=, =setresuid= — gid
-   first, because after the uid change we could no longer change gids.
+   first, because after the uid change we can no longer change gids.
 4. =capset= permitted = inheritable = effective = the five (a raw syscall: musl
    has no libcap, and the five constants are copied from the kernel's
    =include/uapi/linux/capability.h=).
@@ -194,33 +193,32 @@ as permitted + effective.
    =HOME=, =USER=, =LOL_ROOTD_PID= set and the cwd at =$HOME=.
 
 The user's uid, gid, home and groups come from the *host's* =/etc/passwd= and
-=/etc/group= read through =/mnt/host= ([[file:../initramfs/preinit.c::static struct user lookup_user][=lookup_user=]]) — our initramfs has no
-passwd file because nobody logs in to it, and the uid that owns the files is
-whatever the host says.
+=/etc/group= through =/mnt/host= ([[file:../initramfs/preinit.c::static struct user lookup_user][=lookup_user=]]). Our initramfs has no passwd
+file because nobody logs in to it; the uid that owns the files is whatever the
+host says.
 
-Verified in the guest over the net REPL: =(sb-unix:unix-getuid)= → 1000,
-=HOME= → =/home/everton=, and =/proc/self/status= shows
+Verified in the guest over the net REPL: =(sb-unix:unix-getuid)= → 1000, =HOME= →
+=/home/<user>=, and =/proc/self/status= shows
 =CapPrm/CapEff/CapBnd/CapAmb: 0000000004403400= — bits 10, 12, 13, 22, 26, exactly
 the five. A file written to =~/= from the Lisp is owned 1000:1000 (=debugfs= on
-the image afterwards agrees). The framebuffer, the keyboard, the evdev mouse,
-DHCP and the TCP REPL all still work.
+the image agrees). The framebuffer, keyboard, evdev mouse, DHCP and TCP REPL all
+work.
 
 ** The five, and containers
 
-A container ([[file:containers.org][containers.org]]) needed *no sixth capability* and no new job for
+A container ([[file:containers.org][containers.org]]) needs *no sixth capability* and no new job for
 =lol-rootd=: an ordinary user may create a user namespace, and every mount a
-container makes happens inside one. What the five do across that boundary, all
-/verified/ in the guest (=check-containers.lisp=):
+container makes happens inside one. Across that boundary (verified by
+=check-containers.lisp=):
 
-- The Lisp starts =/sbin/lol-ct= as a plain child. Ambient capabilities survive
-  =execve= of a program without file capabilities, so =lol-ct= arrives holding
-  the same five. That outer process only waits and forwards signals.
-- =unshare(CLONE_NEWUSER)= gives the caller a full capability set /over the new
-  namespace only/, and *clears the ambient set*
+- *=lol-ct= inherits the five.* Ambient capabilities survive =execve= of a program
+  without file capabilities. That outer process only waits and forwards signals.
+- *A new user namespace.* =unshare(CLONE_NEWUSER)= gives the caller a full
+  capability set /over the new namespace only/, and *clears the ambient set*
   (=linux/kernel/user_namespace.c=, =set_cred_user_ns=). Those namespace-local
-  capabilities are what let the container's init mount overlays, =proc= and a
-  tmpfs; they mean nothing to files the namespace does not own.
-- The command itself runs as uid 1000 inside, and a non-root uid keeps no
+  capabilities let the container's init mount overlays, =proc= and a tmpfs; they
+  mean nothing to files the namespace doesn't own.
+- *The command has none.* It runs as the user inside, and a non-root uid keeps no
   capabilities across =execve= without ambient ones; =lol-ct= also clears the
   ambient set again and sets =NO_NEW_PRIVS=. Measured: =CapEff= inside is
   =0000000000000000= — less than the Lisp itself has.
@@ -230,194 +228,199 @@ container makes happens inside one. What the five do across that boundary, all
 =devtmpfs= creates nodes root-owned (=fb0= and =input/event*= are 0600). The Lisp
 opens =/dev/fb0= and =/dev/tty0= read-write and =/dev/input/event*= read-only, so
 preinit chowns =fb*=, =tty*= and =input/event*= to the user before dropping
-([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]). The kernel had already opened =/dev/console= as our fds 0–2,
-so the console keyboard needs nothing.
+([[file:../initramfs/preinit.c::static void give_devices][=give_devices=]]). The kernel already opened =/dev/console= as our fds 0–2, so the
+console keyboard needs nothing.
+
+Preinit hands over a few more things:
+
+- *=/dev/rfkill=* — in =give_devices=, so a hotplugged radio's is handed over too
+  (the Wi-Fi kill switch).
+- *=/dev/snd/*=* — tag #29, the sound card ([[file:screencast.org][screencast.org]] §3.1).
+- *=/dev/video*=* — tag #32, the webcam ([[file:web-browser.org][web-browser.org]] §4.8).
+- *=/etc/resolv.conf=* — the one file in our root the user owns, which =dns.lisp=
+  rewrites from each DHCP lease.
 
 ** Why this is in C and not in the Lisp
 
-- *It must happen before the Lisp, and only once.* Mounting needs
-  =CAP_SYS_ADMIN=; if the Lisp did it, the Lisp would have to hold it — and the
-  Lisp is a live-editable image. Keeping every privileged step on the far side of
-  an =execve= means no amount of live editing can get those powers back.
-- *Checked and ruled out:* "SBCL runs helper threads, and =capset= is
+- *Before the Lisp, and only once.* Mounting needs =CAP_SYS_ADMIN=; if the Lisp
+  did it, the Lisp would have to hold it, and the Lisp is a live-editable image.
+  Keeping every privileged step on the far side of an =execve= means no amount of
+  live editing gets those powers back.
+- *Ruled out as a reason:* "SBCL runs helper threads, and =capset= is
   per-thread". This 2.6.8 build has no such thread: =(sb-thread:list-all-threads)=
-  shows only the main thread, even after registering a finalizer and a full GC. So
-  this was /not/ the reason, and should not be cited as one.
+  shows only the main thread, even after registering a finalizer and a full GC.
+  Don't cite it.
 
-When there is no disk (QEMU without the test image, another machine, or
-=lol.disk=none=) there is also no passwd to look the user up in, and preinit
-stays root — the system exactly as it was before storage. Nothing of the user's
-is reachable then, so there is nothing to protect.
+With no disk (QEMU without the test image, another machine, or =lol.disk=none=)
+there's no passwd to look the user up in, and preinit stays root. Nothing of the
+user's is reachable then, so there's nothing to protect.
 
 * 6. =lol-rootd=: the one process that stays root
 
-Two jobs need root /after/ the drop, and a user may do neither (three small
-requests were added later — end of this section):
+Two jobs need root /after/ the drop, and the user may do neither:
 
 - *Hotplug.* A USB mouse plugged in after boot gets a fresh root-owned
-  =/dev/input/eventN=; a browser restarted later could not open it. =lol-rootd=
-  re-runs =give_devices= every second — a poor man's udev. Polling a handful of
-  directory entries once a second costs nothing measurable and needs no netlink
-  socket.
+  =/dev/input/eventN=. =lol-rootd= re-runs =give_devices= every second — a poor
+  man's udev. Polling a handful of directory entries once a second costs nothing
+  measurable and needs no netlink socket.
 - *A clean shutdown.* On =SIGUSR1= it =sync=s and remounts the filesystem
-  read-only (=MS_REMOUNT|MS_RDONLY= without =MS_BIND= changes the /superblock/,
-  so =/home= and =/mnt/host= both go ro). The Lisp's [[file:../initramfs/process.lisp::defun release-disk][=release-disk=]] sends the
-  signal (pid from =$LOL_ROOTD_PID=), waits up to 3 s for =/proc/mounts= to show
-  =/home= read-only, then calls =reboot(2)=. Without this, ext4 would be left
-  marked "mounted" and the host would replay the journal at its next boot —
-  harmless with a journal, but not clean.
+  read-only (=MS_REMOUNT|MS_RDONLY= without =MS_BIND= changes the /superblock/, so
+  =/home= and =/mnt/host= both go ro). The Lisp's [[file:../initramfs/process.lisp::defun release-disk][=release-disk=]] sends the signal
+  (pid from =$LOL_ROOTD_PID=), waits up to 3 s for =/proc/mounts= to show =/home=
+  read-only, then calls =reboot(2)=. Without this, ext4 is left marked "mounted"
+  and the host replays the journal at its next boot — harmless, but not clean.
 
-One subtlety: =kill(2)= lets a process signal another only if the sender's uid
-matches the target's *real or saved* uid. A plain root daemon could therefore not
-be signalled by the user's Lisp. So =lol-rootd= runs with =setresuid(1000, 0, 0)=:
-real uid = the user (signalable by them), effective and saved uid = root (keeps
-root's powers). =/proc/<pid>/status= in the guest reads =Uid: 1000 0 0 0=.
+*Signalable by the user.* =kill(2)= lets a process signal another only if the
+sender's uid matches the target's *real or saved* uid, so a plain root daemon
+couldn't be signalled by the user's Lisp. =lol-rootd= runs with
+=setresuid(<user>, 0, 0)=: real uid = the user, effective and saved uid = root.
+=/proc/<pid>/status= in the guest reads =Uid: 1000 0 0 0=.
 
-Verified: =(power-off)= from the REPL printed
-=EXT4-fs (vda): re-mounted 3d89cf97-… ro.= then =reboot: Power down=, and
-=dumpe2fs -h test-disk.img= afterwards says =Filesystem state: clean=.
+Verified: =(power-off)= from the REPL prints =EXT4-fs (vda): re-mounted <uuid> ro.=
+then =reboot: Power down=, and =dumpe2fs -h test-disk.img= afterwards says
+=Filesystem state: clean=.
 
-*Two more requests (2026-10-12, the network track — [[file:networking.org][networking.org]] §2d, §7.2).*
-Each is one signal, never a message to parse:
-- *signal 40, set the clock* — queued with =sigqueue(2)=, whose one-word payload is
-  the new time in Unix milliseconds; [[file:../initramfs/preinit.c::static void do_settime][=do_settime=]] refuses anything before
-  2026. PID 1 has no =CAP_SYS_TIME=; =sntp.lisp= measures, =lol-rootd= sets.
-- *signal 41, copy the host's NetworkManager Wi-Fi profiles* (root-only on the
-  host) to =/tmp/lol-nm-import/= — read as root, *written as the user* through
-  =setfsuid(2)= ([[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]).
+** Requests: one signal each
 
-*A fourth (2026-10-20, tag #31): signal 42, install a new build.* It copies
-=~/.lol/stage/{bzImage,initramfs.cpio,build-info}= into the host's =/boot/lisp/=,
-which GRUB boots, so the image can be updated without booting Debian
-([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]). [[file:../initramfs/preinit.c::static void do_install][=do_install=]] keeps the
-other requests' shape: no argument, fixed paths, the source read *as the user*
-(=setfsuid=, =O_NOFOLLOW=, so a staged symlink to =/etc/shadow= is refused, not
-copied), and each file checked for its magic number. =/mnt/host= becomes writable
-only for the copy, by a bind remount of the view (the superblock is read-write
-anyway, for =/home=), then read-only again before it answers in
-=/tmp/lol-install.status=.
+Each request is one signal, never a message to parse:
 
-This one *does* widen what the user can do, and on purpose. Before it, nothing the
-user ran could change what boots as root. Now the user picks the next image, and
-preinit runs as root in it. The magic-number checks catch a half-written build, not
-a hostile one. That is the same trust Debian gives its =sudo= group, which this user
-is in. The alternative, verifying a signature, needs a key the user would hold
-anyway. With tag #31, =CAP_SYS_BOOT= also lets PID 1 kexec any kernel it can read,
-which is the same power reached another way. So the line that holds is the one
-around PID 1 itself. A container gets no capabilities and cannot signal
-=lol-rootd= (it is in another pid namespace), so a program in the terminal can stage
-a build but only the environment can install it.
+| Signal  | Request                                    | Handler / details                                                         |
+|---------+--------------------------------------------+---------------------------------------------------------------------------|
+| SIGUSR1 | sync and remount read-only (power-off)     | above                                                                     |
+| 40      | set the clock                              | [[file:../initramfs/preinit.c::static void do_settime][=do_settime=]]; [[file:networking.org][networking.org]] §2d                               |
+| 41      | copy the host's NetworkManager profiles    | [[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]; [[file:networking.org][networking.org]] §7.2                             |
+| 42      | install a new build into =/boot/lisp/=     | [[file:../initramfs/preinit.c::static void do_install][=do_install=]]; below                                                     |
 
-And preinit hands the user more things before the drop: =/dev/rfkill= (in
-=give_devices=, so a hotplugged radio's is handed over too — the Wi-Fi kill switch),
-=/dev/snd/*= (tag #29, the sound card: [[file:screencast.org][screencast.org]] §3.1),
-=/dev/video*= (tag #32, the webcam: [[file:web-browser.org][web-browser.org]] §4.8)
-and the one file =/etc/resolv.conf= in our root, which =dns.lisp= rewrites from each
-DHCP lease.
+- *Clock (40).* Queued with =sigqueue(2)=, whose one-word payload is the new time
+  in Unix milliseconds; anything before 2026 is refused. PID 1 has no
+  =CAP_SYS_TIME=: =sntp.lisp= measures, =lol-rootd= sets.
+- *NetworkManager profiles (41).* Root-only on the host; copied to
+  =/tmp/lol-nm-import/=, read as root, *written as the user* through =setfsuid(2)=.
+
+*** Installing a build (signal 42, tag #31)
+
+It copies =~/.lol/stage/{bzImage,initramfs.cpio,build-info}= into the host's
+=/boot/lisp/=, which GRUB boots, so the image can be updated from inside itself
+([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]).
+
+- *Same shape as the others.* No argument, fixed paths.
+- *Source read as the user.* =setfsuid=, =O_NOFOLLOW=, so a staged symlink to
+  =/etc/shadow= is refused, not copied. Each file is checked for its magic number.
+- *Writable only for the copy.* =/mnt/host= is made writable by a bind remount of
+  the view (the superblock is read-write anyway, for =/home=), then read-only
+  again before it answers in =/tmp/lol-install.status=.
+
+*Trust.* This one does widen what the user can do, on purpose: the user picks the
+next image, and preinit runs as root in it. The magic-number checks catch a
+half-written build, not a hostile one. That's the trust a distro gives its =sudo=
+group; a signature check would need a key the user holds anyway. And since tag #31
+=CAP_SYS_BOOT= lets PID 1 kexec any kernel it can read — the same power by another
+route. So the line that holds is the one around PID 1 itself. A container gets no
+capabilities and can't signal =lol-rootd= (it's in another pid namespace), so a
+program in the terminal can stage a build but only the environment can install it.
 
 * 7. Logging
 
-preinit's messages go to =/dev/kmsg= — into the kernel log — rather than to fd 2.
-fd 2 is =/dev/console=, which reaches only the /last/ =console== on the command
-line (=tty0=); the kernel log is printed on every console, so =serial.log= (and
-the guest harnesses that read it) see =preinit: storage: …= / =preinit: user: …=
-lines, and so does =dmesg=. The fd is opened once, while still root, and kept: =/dev/kmsg= is
-root-only for writing, but an fd opened before the uid drop stays usable after
-it — so the line =preinit: user: now everton (uid 1000 …)=, printed /after/ the
-drop, still arrives. (The first version opened it per message and lost exactly
-that line.)
+Preinit's messages go to =/dev/kmsg= — into the kernel log — not to fd 2.
+
+- *Why not fd 2.* fd 2 is =/dev/console=, which reaches only the /last/
+  =console== on the command line (=tty0=). The kernel log is printed on every
+  console, so =serial.log= (and the guest harnesses reading it) see
+  =preinit: storage: …= / =preinit: user: …= lines, and so does =dmesg=.
+- *Opened once, while root.* =/dev/kmsg= is root-only for writing, but an fd
+  opened before the uid drop stays usable after it. So
+  =preinit: user: now <user> (uid 1000 …)=, printed /after/ the drop, still
+  arrives. Opening it per message loses exactly that line.
 
 * 8. Testing under QEMU — never with the real disk
 
-The rule: *never* hand QEMU the real =/dev/nvme0n1=. The host has it mounted
-read-write; two kernels writing one ext4 is how filesystems are destroyed.
+*Never* hand QEMU the real =/dev/nvme0n1=. The host has it mounted read-write; two
+kernels writing one ext4 is how filesystems are destroyed.
 
-Instead [[file:../make-test-disk.sh][=make-test-disk.sh=]] builds =test-disk.img= (gitignored), a 256 MB ext4
-image that looks like the laptop's root to preinit:
-- the *same filesystem UUID* as the host's =/=, so the unchanged =lol.conf=
-  finds it;
-- an =/etc/passwd= and =/etc/group= naming the build user with the host's
-  uid/gid;
-- =/home/<user>= with things worth browsing: text, a =.lisp= file, PNG / baseline
+[[file:../make-test-disk.sh][=make-test-disk.sh=]] builds =test-disk.img= (gitignored), a 256 MB ext4 image that
+looks like the host's root to preinit:
+
+- *Same UUID.* The host's =/= filesystem UUID, so the unchanged =lol.conf= finds
+  it.
+- *A user.* An =/etc/passwd= and =/etc/group= naming the build user with the
+  host's uid/gid.
+- *Things to browse.* =/home/<user>= with text, a =.lisp= file, PNG / baseline
   and progressive JPEG / GIF pictures, a =.tar.gz= and a =.gz=, a symlink to a
-  directory, a dangling symlink and dotfiles;
-- the =.lisp= files of the =./sbcl= tree (=src/=, =contrib/=, ~25 MB) *at the same
-  absolute path* the laptop has them, when that tree lives under =$HOME= — so a
-  builtin's source reads from the disk in the guest exactly as on the laptop
-  ([[file:code-browser.org][code-browser.org]], "Two kinds of subject").
+  directory, a dangling symlink and dotfiles.
+- *SBCL's sources.* The =.lisp= files of the =./sbcl= tree (=src/=, =contrib/=,
+  ~25 MB) *at the same absolute path* as on the host, when that tree lives under
+  =$HOME= — so a builtin's source reads from the disk in the guest as on real
+  hardware ([[file:code-browser.org][code-browser.org]], "Two kinds of subject").
 
 No root needed: =mke2fs -d DIR= populates the new filesystem from a directory and
-copies each file's owner from the source — us, uid 1000. =build.sh --run= and
-=--interactive= attach the image as virtio-blk whenever it exists
-(=LOL_TEST_DISK== names another, =LOL_TEST_DISK== empty boots diskless). The
-guest harness attaches it only when asked — =LOL_GUEST_DISK=test-disk.img= — and
-then with QEMU's =snapshot=on=, so the guest's writes go to a throwaway overlay
-and the image is identical for the next run. The older checks don't ask, so they
-keep testing the diskless, root-run system they were written for (all five still
-pass at #25).
+copies each file's owner from the source.
 
-*One exception, for persistence (2026-10-16).* A test of "does the next boot see
-what this one saved" cannot use =snapshot=on=. [[file:../check-persist.lisp][=check-persist.lisp=]] therefore
-copies =test-disk.img= (=cp --sparse=always=) into its scratch directory and attaches
-/that copy/ writable (the harness's =*disk-copy*=); the copy is deleted at the end,
-and the pristine image is never opened for writing. What the session keeps lives in
-the user's home, owned by the user like every other write here:
-=~/.lol/journal/changes.lisp= (the journal), =changes-unfolded.lisp=,
-=changes-damaged.lisp=, and =~/.lol/desk/desk.lisp= (+ =desk-autosave.lisp=)
-— [[file:session-persistence.org][session-persistence.org]] §3. Since 2026-10-17 /everything/ the image keeps
-in your home is under that one =~/.lol/= (settings, Wi-Fi, the agent, the journal,
-the desk, the containers, the logs), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]. Files
-left at the older XDG places (=~/.config/lol=, =~/.local/share/lol=,
-=~/.local/state/lol=) are renamed into it at boot, never overwriting — the table and
-the rules are in §3 there. All of it is written before =release-disk=
-makes =/home= read-only, and none of it on a diskless boot.
+- *=build.sh --run= / =--interactive=* attach the image as virtio-blk whenever it
+  exists (=LOL_TEST_DISK== names another; =LOL_TEST_DISK== empty boots diskless).
+- *The guest harness* attaches it only when asked — =LOL_GUEST_DISK=test-disk.img=
+  — and then with QEMU's =snapshot=on=, so the guest's writes go to a throwaway
+  overlay and the image is identical for the next run. Checks that don't ask keep
+  testing the diskless, root-run system.
+- *Persistence across boots.* "Does the next boot see what this one saved" can't
+  use =snapshot=on=. [[file:../check-persist.lisp][=check-persist.lisp=]] copies =test-disk.img=
+  (=cp --sparse=always=) into its scratch directory and attaches /that copy/
+  writable (the harness's =*disk-copy*=); the copy is deleted at the end, and the
+  pristine image is never opened for writing.
+- *Screenshots.* [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]] attaches it, =snapshot=on=, for its disk
+  scenes (=--scene files=, =files-archive=, =spotter-path=) only
+  ([[file:file-manager.org][file-manager.org]] shows them).
 
-The same image backs the file manager's screenshots: [[file:../refresh-screenshot.sh][=refresh-screenshot.sh=]]
-attaches it, =snapshot=on=, for its disk scenes (=--scene files=, =files-archive=,
-=spotter-path=) and for no others ([[file:file-manager.org][file-manager.org]] shows them).
+What the session keeps lives in the user's home, owned by the user: everything
+under one =~/.lol/= (settings, Wi-Fi, the agent, the journal, the desk, the
+containers, the logs), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]
+([[file:session-persistence.org][session-persistence.org]] §3). All of it is written before =release-disk= makes
+=/home= read-only, and none of it on a diskless boot.
 
 ** The host's real root, for tests that run its programs (tag #26)
 
-=test-disk.img= has a passwd and a =/home= but no Debian, so nothing that runs the
+=test-disk.img= has a passwd and a =/home= but no distro, so nothing that runs the
 host's programs (a container, Chrome, =wpa_supplicant=) can be tried against it.
 For those, =LOL_GUEST_HOSTROOT=1= makes the harness share the build host's *real*
 =/= with QEMU read-only
 (=-virtfs local,path=/,mount_tag=hostroot,security_model=none,readonly=on=) and pass
-=-fw_cfg name=opt/lol/disk,string=9p:hostroot=. preinit then mounts that share at
-=/mnt/host= instead of looking for a disk ([[file:../initramfs/preinit.c::static int mount_storage_9p][=mount_storage_9p=]]), and makes =/home=
-an *overlay*: the host's =/home= as the read-only lower layer, a tmpfs as the upper
-one that takes every write and vanishes at power-off. Everything after that is
-unchanged: the user comes from the real =/etc/passwd= and PID 1 drops to them.
+=-fw_cfg name=opt/lol/disk,string=9p:hostroot=.
 
-Two differences from the laptop to keep in mind. The root is 9p, not ext4, so
-overlay behaviour over a 9p lower layer may differ. And nothing a test does reaches
-the host's =/home=. /Verified 2026-10-12 at tag #26: uid 1000,
-=hostroot /mnt/host 9p ro=, =overlay /home=, =/mnt/host/usr/bin/google-chrome=
-visible./
+- *9p, not a disk.* Preinit mounts that share at =/mnt/host= instead of looking
+  for a disk ([[file:../initramfs/preinit.c::static int mount_storage_9p][=mount_storage_9p=]]).
+- *=/home= as an overlay.* The host's =/home= is the read-only lower layer; a tmpfs
+  upper layer takes every write and vanishes at power-off. Nothing a test does
+  reaches the host's =/home=.
+- *The rest unchanged.* The user comes from the real =/etc/passwd= and PID 1 drops
+  to them. Verified at tag #26: uid 1000, =hostroot /mnt/host 9p ro=,
+  =overlay /home=, =/mnt/host/usr/bin/google-chrome= visible.
+- *A difference to remember.* The root is 9p, not ext4, so overlay behaviour over
+  a 9p lower layer may differ from real hardware.
 
-[[file:../check-files.lisp][=check-files.lisp=]] is the guest test for this doc: mounts, uid 1000, the
-capability mask, a folder made with the file manager owned by the user, JPEG
-through =libstbi.so=, the Spotter's =~/= completion, and =release-disk=:
+** The guest test
+
+[[file:../check-files.lisp][=check-files.lisp=]] covers this doc: mounts, uid 1000, the capability mask, a folder
+made with the file manager owned by the user, JPEG through =libstbi.so=, the
+Spotter's =~/= completion, and =release-disk=:
 
 #+begin_src sh
   ./make-test-disk.sh
   LOL_GUEST_DISK=test-disk.img sbcl --script check-files.lisp
 #+end_src
 
-One trap found writing it: the harness's answer markers refuse a =~= (so the echo
-of a =FORMAT= string can never match), and every path row the Spotter returns
-starts with =~/= — a probe that returns those labels reads as "no answer". Ask
-the guest for a boolean instead.
+*Pitfall:* the harness's answer markers refuse a =~= (so the echo of a =FORMAT=
+string can never match), and every path row the Spotter returns starts with =~/= —
+a probe returning those labels reads as "no answer". Ask the guest for a boolean
+instead.
 
-* 9. Before the first real boot
+* 9. Safety notes for real hardware
 
-- The earlier promise in [[file:micro-distro.org][micro-distro.org]] — "the image cannot even see the
-  host's disk" — is *no longer true* from tag #25. It now mounts the laptop's
-  root. The safety story is different: the host's =/= is read-only to us, and
-  the environment writes as the user.
-- Do not boot it from GRUB while the host is *hibernated* (suspended to disk):
-  mounting a filesystem that a sleeping kernel also has open corrupts it. A
-  normal shutdown or reboot is fine.
-- If the disk is not found, the serial/console log says
+- *The image sees the host's disk.* [[file:micro-distro.org][micro-distro.org]]'s older promise — "the
+  image cannot even see the host's disk" — doesn't hold from tag #25. The safety
+  story is now: the host's =/= is read-only to us, and the environment writes as
+  the user.
+- *Not while hibernated.* Don't boot it while the host OS is *hibernated*
+  (suspended to disk): mounting a filesystem that a sleeping kernel also has open
+  corrupts it. A normal shutdown or reboot is fine.
+- *Disk not found.* The serial/console log says
   =preinit: storage: UUID=… not found= and the system comes up diskless, as root —
   nothing breaks.

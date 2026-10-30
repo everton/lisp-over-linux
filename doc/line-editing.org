@@ -7,83 +7,71 @@ escapes) · [[file:kernel-config.org][kernel-config.org]] · [[file:input.org][i
 =/dev/input/event*= devices, for the mouse and for the bare modifiers this
 termios path structurally cannot see).
 
-Question that prompted this: the supervisor's menu/REPL only has the kernel's
-*canonical-mode* editing (backspace + line buffering). Can we get readline-style
-editing (history, arrows, Ctrl-A/E, kill/yank) *entirely in Lisp*, without
-shipping GNU readline or any new native =.so=?
+The console REPL has readline-style editing — history, arrows, =C-a= / =C-e=,
+kills, Tab completion, Lisp colouring — written entirely in Lisp. SBCL's core has
+no readline, and the image ships no GNU readline or any other new native =.so=.
+The one thing Lisp can't do alone, switching the terminal to raw mode, is an FFI
+call into the =libc= the image already ships.
 
-Short answer: SBCL's core has *no* built-in readline. But yes — rich editing is
-achievable in pure Lisp. The catch is one unavoidable syscall (raw mode), which
-is FFI into the =libc= we ALREADY ship, not a new library.
-
-*Status: DONE.* Path 2 (below) is implemented and baked into the image — see
-[[*What we actually shipped][What we actually shipped]] at the end for the code, the key bindings, and the
-termios byte-patching. The rest of this doc is the reasoning that led there.
+*Status: built.* Code: [[file:../initramfs/line-editor.lisp][initramfs/line-editor.lisp]] (termios, editing, history,
+completion hook) and [[file:../initramfs/repl.lisp][initramfs/repl.lisp]] (the REPL that drives it).
 
 * Why canonical mode is the wall
 
 The kernel TTY (N_TTY line discipline) defaults to *canonical mode*: it buffers a
-whole line and only hands it to the program on Enter; it handles backspace for
-you but NOTHING else. Arrow keys, history recall, word movement — the program
-never even sees those keystrokes.
+whole line and hands it to the program only on Enter. It handles Backspace for you
+but nothing else. Arrow keys, history recall, word movement — the program never
+even sees those keystrokes.
 
 That behaviour is real code you can read: [[file:../linux/drivers/tty/n_tty.c][=drivers/tty/n_tty.c=]], and specifically
 [[file:../linux/drivers/tty/n_tty.c::static bool n_tty_receive_char_canon][=n_tty_receive_char_canon=]] — the per-character path taken when =ICANON= is set,
-which is where "hold it until a line terminator arrives" actually lives.
+where "hold it until a line terminator arrives" lives.
 
-To do real editing you must switch the TTY to *raw mode* (disable canonical +
-echo) so you receive *each keystroke as it is pressed*, including the escape
-sequences arrows send (=ESC [ C=, =ESC [ D=, ...). You then echo and redraw the
-line yourself.
+To edit for real you switch the TTY to *raw mode* (canonical and echo off). Then
+you receive each keystroke as it's pressed, including the escape sequences arrows
+send (=ESC [ C=, =ESC [ D=, …), and you echo and redraw the line yourself.
 
-* The one unavoidable bit: termios (and why it is NOT a new dependency)
+* termios: the one syscall, and why it isn't a new dependency
 
-Raw mode is set via =termios= (=tcgetattr= / =tcsetattr=) — a *syscall*, not
-portable Lisp. But calling it is FFI into =libc.so.6=, which is already in the
-initramfs. So the EDITING LOGIC (buffer, cursor, history, key handling) is 100%
-Lisp; only the mode flip is a few lines of =sb-alien= to a function that is
-already present. No new native library, no new file.
+Raw mode is set with =tcgetattr= / =tcsetattr= — a syscall, not portable Lisp.
+Calling it is FFI into =libc.so.6=, which is already in the initramfs. So the
+editing logic (buffer, cursor, history, keys) is all Lisp; only the mode flip is a
+few lines of =sb-alien= to a function that's already there.
 
-(=sb-posix= also exposes termios, but that contrib gave us friction earlier, so a
-direct =sb-alien tcsetattr= binding is the cleaner path here — no contrib fasl.)
-Always restore the saved termios on exit with =unwind-protect=.
+- *Why not =sb-posix=.* It grovels =struct termios= from the real header, nicer
+  than our hand-counted offsets, and a migration to it was written and tested. It
+  was reverted: =sb-posix:tcgetattr= is =declaim inline= and expands into groveled
+  alien structs whose type information doesn't survive =save-lisp-and-die= into
+  the guest. The REPL still ran, but =(compile nil '(lambda () (with-raw-mode (0)
+  :x)))= failed in the guest — you could no longer =C-c C-c= this file's own
+  definitions from inside the image. The hand-rolled version recompiles there
+  (checked both ways). Full audit: [[file:processes.org][processes.org]] §6.
+- *Always restore.* The saved termios goes back on every exit through
+  =unwind-protect=.
 
-*That parenthesis was re-examined on 2026-09-20 and survives — for a better
-reason than it originally had.* =sb-posix= does grovel =struct termios= out of
-the real header, which is genuinely nicer than our hand-counted offsets
-(=c_lflag= at 12, =c_cc= at 17, VTIME=[5], VMIN=[6]), and the migration was
-written and tested. It was then *reverted*: =sb-posix:tcgetattr= is =declaim
-inline= and expands into groveled alien structs whose type information does not
-survive =save-lisp-and-die= into the guest. The migrated code ran — the REPL came
-up and edited fine — but =(compile nil '(lambda () (with-raw-mode (0) :x)))=
-*failed in the guest*, meaning you could no longer =C-c C-c= this file's own
-definitions from inside the running image. The hand-rolled version recompiles
-there; that was checked, both ways. Full audit: [[file:processes.org][processes.org]] §6.
+* Aside: what an =ioctl= is
 
-* Aside: what an =ioctl= actually is
+=tcsetattr= isn't its own syscall — glibc implements it as an *ioctl*. This
+project leans on ioctls throughout, so here is what one is.
 
-=tcsetattr= is not really its own syscall — glibc implements it as an *ioctl*.
-This project leans on ioctls repeatedly and never stops to say what one is, so:
-
-=read= and =write= move a *stream of bytes*. Plenty of what you need from a device
-is not a stream at all — "set the baud rate", "give this interface an IP", "stop
-rendering the console". Rather than invent a syscall per question, Unix has one
-catch-all door:
+=read= and =write= move a *stream of bytes*. Much of what you need from a device
+isn't a stream — "set the baud rate", "give this interface an IP", "stop rendering
+the console". Rather than a syscall per question, Unix has one catch-all door:
 
 #+begin_src c
   int ioctl(int fd, unsigned long request, void *argp);
 #+end_src
 
-- =fd= — *which* device (an open file descriptor, so the usual permission rules
-  already apply);
-- =request= — a magic number *naming the operation*;
-- =argp= — a pointer to a struct that carries arguments in, results out, or both.
+- *=fd=* — which device (an open file descriptor, so the usual permission rules
+  apply).
+- *=request=* — a magic number naming the operation.
+- *=argp=* — a pointer to a struct carrying arguments in, results out, or both.
 
-The request number is not arbitrary: it packs a direction (read/write/both), the
-size of the struct, a "magic" letter claiming a namespace for the subsystem, and
-an ordinal within it — that is what the kernel's =_IOR= / =_IOW= / =_IOWR= macros
-build. Every device family then defines its own set, which is why these constants
-look unrelated and why you must get each one exactly right:
+The request number packs a direction (read/write/both), the struct's size, a
+"magic" letter claiming a namespace for the subsystem, and an ordinal within it —
+what the kernel's =_IOR= / =_IOW= / =_IOWR= macros build. Each device family
+defines its own set, which is why the constants look unrelated and must each be
+exactly right:
 
 | constant                   | value    | what it does                  | where we use it    |
 |----------------------------+----------+-------------------------------+--------------------|
@@ -93,12 +81,11 @@ look unrelated and why you must get each one exactly right:
 | =KDSETMODE=                | =0x4B3A= | console text ↔ graphics mode  | [[file:../poc/fb.lisp::defconstant +kdsetmode+][fb.lisp]]            |
 | =FBIOGET_VSCREENINFO=      | =0x4600= | read framebuffer pixel format | [[file:framebuffer.org][framebuffer.org]] §5 |
 
-The important consequence for us: an ioctl is *the same three-argument FFI call
-every time*. Bind it once with =sb-alien= and every one of those knobs is
-reachable — which is exactly why this project needs no =stty=, no =ip=, no
-=fbset=, no =setfont=. There is no userland to shell out to, and none is
-required. The cost is that the kernel does no type-checking on your behalf: pass
-a wrongly-laid-out struct and you get =EINVAL= at best, silence at worst.
+An ioctl is *the same three-argument FFI call every time*. Bind it once with
+=sb-alien= and every one of those knobs is reachable — which is why this project
+needs no =stty=, =ip=, =fbset= or =setfont=. The cost: the kernel does no type
+checking for you. A wrongly laid-out struct gets =EINVAL= at best, silence at
+worst.
 
 See also [[file:networking.org][networking.org]] §2 (the interface ioctls in anger) and [[file:framebuffer.org][framebuffer.org]]
 §9.3 (=KDSETMODE=, with the =unwind-protect= that keeps you from a dead console).
@@ -106,129 +93,44 @@ See also [[file:networking.org][networking.org]] §2 (the interface ioctls in an
 * What makes it render: fbcon speaks ANSI/VT
 
 The Linux framebuffer console is itself a *terminal emulator*: it interprets a
-solid set of ANSI/VT escape sequences — move cursor left/right, clear-to-EOL,
-go-to-column, etc. So a Lisp editor renders by EMITTING those escapes (=\e[K=,
-=\e[C=, =\e[D=, =\e[<n>G=) and they work on the framebuffer. That is exactly how
-readline drives a terminal. (This is the nuance behind the old "the fb console is
-line-based" remark: line-based is only the canonical DEFAULT; in raw mode the
-same console becomes a full escape-driven canvas. See [[file:framebuffer.org][framebuffer.org]].)
+solid set of ANSI/VT escape sequences. So a Lisp editor renders by emitting
+escapes (=\e[K=, =\e[C=, =\e[D=, =\e[<n>G=), exactly as readline drives a
+terminal. "The fb console is line-based" is only true of the canonical default; in
+raw mode it's a full escape-driven canvas ([[file:framebuffer.org][framebuffer.org]]).
 
-* Path 1 — the linedit library (feature-rich, but NOT free of native deps)
-
-=linedit= (https://github.com/sharplispers/linedit) is a pure-CL line editor.
-You would bake it into the image at build time (=load= before
-=save-lisp-and-die=, the frozen-heap model).
-
-** Everything linedit brings (from its README)
-
-- *single-line text reader* — the readline-equivalent entry point.
-- *multi-line form reader* (=formedit=) — edit a whole Lisp form across lines,
-  with a continuation prompt.
-- *unlimited undo*.
-- *unlimited kill-ring* (kill/yank).
-- *unlimited history*, and *multiple histories*.
-- *paren matching* (shows the matching paren; NOT across lines).
-- *completion on packages and symbols* in the current image (Lisp-aware TAB).
-- *completion on directories and filenames*.
-- *apropos-word* and *describe-word* — inspect the symbol at point.
-- *paging* (pager for long output).
-- *fully customizable in CL* (key bindings / commands), though the README calls
-  deep customization "advanced and undocumented".
-- *REPL integration* via =install-repl= (keywords =:wrap-current=,
-  =:eof-quits=); entry points =linedit= (=:prompt=) and =formedit=
-  (=:prompt1=, =:prompt2=).
-- *help*: Meta-H (or ESC-H) in the prompt.
-- Works on SBCL and CCL; Linux / FreeBSD / macOS.
-
-** The catch for THIS project — linedit's dependencies
-
-=:depends-on (:cffi :terminfo :osicat :alexandria)=. Two of these break the
-"minimal, no native lib" goal:
-
-- *osicat* — ships a *native C shim* (=libosicat=) built via CFFI-grovel, so it
-  needs a C compiler at build time AND adds a native =.so= to ship. This is
-  exactly the native dependency we were trying to avoid.
-- *terminfo* (pure Lisp itself) reads the *terminfo database* at runtime to learn
-  the terminal's capabilities — so you must also ship the terminfo data files
-  (e.g. =/usr/share/terminfo/l/linux=) and set =TERM=linux=. Same class of
-  problem as the rlwrap notes in [[file:sbcl-init.org][sbcl-init.org]].
-- *cffi*, *alexandria* — pure Lisp, harmless.
-
-Net: linedit is powerful but is *not* a self-contained drop-in for our
-initramfs; it would re-introduce a native shim + a data-file dependency.
-
-* Path 2 — hand-roll a minimal editor (best fit for this project)
-
-A small editor in pure Lisp + one =sb-alien= termios call (to the libc we
-already ship) + ANSI escapes. No CFFI, no osicat, no terminfo DB, zero new files.
-Recipe:
-
-1. =tcgetattr= save; =tcsetattr= to raw (clear ICANON|ECHO).  [unwind-protect to restore]
-2. loop =read-char=; parse escape sequences for arrows / Home / End.
-3. maintain a buffer + cursor + a history list (plain Lisp).
-4. echo + redraw by emitting ANSI escapes to the console.
-5. on Enter, return the line; push it to history.
-
-Basic editing is a few dozen lines, and it folds neatly into the poll-loop idea
-(reading char-by-char already, so the alien-redraw and the editor share one
-loop). It teaches termios + ANSI + escape parsing — very much in this project's
-spirit.
-
-* What to NOT reach for
-
-- *cl-readline* — it is a BINDING to GNU readline, i.e. the native library we are
-  avoiding. Wrong tool here.
-- *Swank/SLY network REPL* — gives full editing from your editor. (When this was
-  written networking was off, so it was ruled out outright; since tag #21 we
-  *do* have TCP and a network REPL of our own — see [[file:networking.org][networking.org]]. Swank itself
-  remains out of scope: it is a large dependency to bake into the image, and the
-  point of this exercise was to learn termios, not to import an editor protocol.)
-
-* Recommendation
-
-For a self-contained local console under our constraints, *Path 2* (hand-rolled,
-FFI-to-existing-libc) is the right call. Reach for *linedit* only if you decide
-to relax the no-native-lib / minimal-files goal and accept osicat + a shipped
-terminfo database in exchange for its richer feature set.
-
-* What we actually shipped
-
-Path 2, in =initramfs/line-editor.lisp= — the reusable readline toolkit (termios
-+ editing + history), with the REPL that drives it in =initramfs/repl.lisp=.
-(Both started life inside =supervisor.lisp= and were split out when that file got
-crowded; see the module list in [[file:sbcl-init.org][sbcl-init.org]].) The editor itself is ~120 lines of
-Lisp plus two FFI declarations, and =build.sh= bakes every module into the image.
+* The editor
 
 ** The three pieces
 
-1. *Raw mode* — [[file:../initramfs/line-editor.lisp::defmacro with-raw-mode][=with-raw-mode=]] flips the TTY out of canonical line-buffering and
-   echo so we see every keystroke. It is the project's *second* use of the
-   "FFI into the libc we already ship" trick (the first is =reboot(2)= in
-   [[file:../initramfs/process.lisp::defun power-off][=power-off=]]): two [[file:../sbcl/src/code/target-alieneval.lisp::defmacro define-alien-routine][=sb-alien:define-alien-routine=]] bindings, =%tcgetattr= /
-   =%tcsetattr=. (That macro is itself readable Lisp — it expands into a
-   =%alien-funcall= with the argument types you declared; SBCL's alien layer is
-   [[file:../sbcl/src/code/target-alieneval.lisp][=sbcl/src/code/target-alieneval.lisp=]], and its syscall wrappers are in
-   [[file:../sbcl/src/code/unix.lisp][=sbcl/src/code/unix.lisp=]].) We treat =struct termios= as a 60-byte blob and patch only what
-   we need — clear =ICANON|ECHO= (=0x0A=) in =c_lflag='s low byte, set
-   =c_cc[VMIN]=1= / =c_cc[VTIME]=0= so =read()= returns one keystroke at a time,
-   and (since 2026-10-17) clear =IXON|IXOFF= in =c_iflag=: with =IXON= on, Ctrl-S is
-   flow control (XOFF) — the kernel keeps the byte and *stops the console's output*
-   until a Ctrl-Q, which once froze the environment on its next write
-   ([[file:diagnostics.org][diagnostics.org]] §1).
-   The struct offsets are documented inline. =unwind-protect= restores the saved
-   settings on *every* exit (return, error, Ctrl-C), so a crash never leaves the
-   console in raw mode. We deliberately *keep ISIG enabled* so Ctrl-C still
-   interrupts a runaway eval the normal way.
+1. *Raw mode* — [[file:../initramfs/line-editor.lisp::defmacro with-raw-mode][=with-raw-mode=]]. Two [[file:../sbcl/src/code/target-alieneval.lisp::defmacro define-alien-routine][=sb-alien:define-alien-routine=]] bindings,
+   =%tcgetattr= / =%tcsetattr= — the same "FFI into the libc we ship" trick as
+   =reboot(2)= in [[file:../initramfs/process.lisp::defun power-off][=power-off=]]. (The macro is readable Lisp: it expands into a
+   =%alien-funcall= with the declared types; SBCL's alien layer is
+   [[file:../sbcl/src/code/target-alieneval.lisp][=sbcl/src/code/target-alieneval.lisp=]], its syscall wrappers
+   [[file:../sbcl/src/code/unix.lisp][=sbcl/src/code/unix.lisp=]].) =struct termios= is treated as a 60-byte blob,
+   patched only where needed:
+   - *=c_lflag=* (offset 12): clear =ICANON|ECHO= (=0x0A=) in the low byte.
+   - *=c_cc=* (offset 17): =VMIN=1=, =VTIME=0=, so =read()= returns one keystroke
+     at a time.
+   - *=c_iflag=*: clear =IXON|IXOFF=. With =IXON= on, Ctrl-S is flow control
+     (XOFF): the kernel keeps the byte and stops the console's output until a
+     Ctrl-Q, which froze the environment on its next write ([[file:diagnostics.org][diagnostics.org]] §1).
+   - *=ISIG= kept by default*, so Ctrl-C still interrupts a runaway eval. Passing
+     =signals nil= clears it too, so Ctrl-C arrives as a byte — what the code
+     browser needs for its =C-c C-c= chord.
+   =unwind-protect= restores the saved settings on every exit (return, error,
+   Ctrl-C), so a crash never leaves the console raw.
 2. *Rendering* — [[file:../initramfs/line-editor.lisp::defun refresh-line][=refresh-line=]] redraws the whole line on every edit with three
-   escapes the fbcon terminal already understands: =\r= (column 0), =\e[K=
-   (clear to EOL), =\e[<n>G= (absolute column for the cursor). One uniform redraw
-   covers insert, delete, cursor move and history. Single-line only (no wrap
-   handling yet).
-3. *Editing logic* (pure Lisp) — [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] keeps a =line= string +
-   =point=, rebuilding the string on each edit (lines are short; clarity beats a
-   gap buffer). [[file:../initramfs/line-editor.lisp::defun read-escape][=read-escape=]] parses arrow / Home / End / Delete sequences
-   (=ESC [ …=, the numeric =ESC [ n ~= forms, and =ESC O H/F=). History is a
-   plain list in =*repl-history*=.
+   escapes fbcon understands: =\r= (column 0), =\e[K= (clear to EOL), =\e[<n>G=
+   (absolute column for the cursor). One uniform redraw covers insert, delete,
+   motion and history. The line goes through =colorize-lisp= (strings, comments,
+   keywords, =#\= characters, depth-cycled parens), which inserts only zero-width
+   SGR, so the column math stays exact.
+3. *Editing logic* — [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] keeps a =line= string and a =point=,
+   rebuilding the string on each edit (lines are short; clarity beats a gap
+   buffer). [[file:../initramfs/line-editor.lisp::defun read-escape][=read-escape=]] parses arrow / Home / End / Delete sequences (=ESC [ …=,
+   the numeric =ESC [ n ~= forms, and =ESC O H/F=). History is a plain list in
+   =*repl-history*=.
 
 ** Key bindings
 
@@ -245,42 +147,58 @@ Lisp plus two FFI declarations, and =build.sh= bakes every module into the image
 | Up / Down, C-p/C-n  | history previous / next                           |
 | Tab                 | complete the symbol at point (or list candidates) |
 | C-d on empty line   | EOF — leave the REPL (same as =:quit=)            |
+| C-c                 | abandon the line (network REPL only; locally it's SIGINT) |
 
 ** Tab completion (symbols)
 
-=<Tab>= completes the partial symbol before the cursor. The editor stays
-Lisp-agnostic: =read-line-edited= just calls a hook =*completer*= (a function of
-the token → list of candidate strings), and the REPL layer points it at
-=complete-symbol= (=repl.lisp=). On =<Tab>= the editor:
-1. scans back from point over symbol constituents to find the token (=token-start=);
-2. asks =*completer*= for matches;
-3. one match → insert it; many → insert their =longest-common-prefix=; if that
-   can't extend the token, list the candidates on a fresh line and redraw.
+=Tab= completes the partial symbol before the cursor. The editor stays
+Lisp-agnostic: =read-line-edited= calls a hook, =*completer*= (token → list of
+candidate strings), which the REPL points at =complete-symbol= (=repl.lisp=).
 
-=complete-symbol= matches (case-insensitively, returning lowercase) symbols
-accessible in =*package*=, or — given a =pkg:= / =pkg::= prefix — the external /
-all symbols of that package, or keywords after a leading =:=. It iterates with
-=do-symbols= / =do-external-symbols=; nothing native, nothing precomputed. Because
-it rides =read-line-edited=, it works identically on the local console and over
-the network REPL (the host client just forwards the =Tab= byte).
+1. *Find the token* — scan back from point over symbol constituents (=token-start=).
+2. *Ask* =*completer*= for matches.
+3. *Insert* — one match: insert it; many: insert their =longest-common-prefix=; if
+   that can't extend the token, list the candidates on a fresh line and redraw.
+
+=complete-symbol= matches case-insensitively (returning lowercase) the symbols
+accessible in =*package*=, or with a =pkg:= / =pkg::= prefix the external / all
+symbols of that package, or keywords after a leading =:=. It iterates with
+=do-symbols= / =do-external-symbols=; nothing native, nothing precomputed. It works
+the same on the local console and over the network REPL (the host client forwards
+the Tab byte).
 
 ** How it plugs into the REPL
 
-=run-repl= picks the mode at entry: =tty-raw-capable-p= (a throwaway
-=tcgetattr=) decides whether we have a real terminal. If yes →
-=with-raw-mode= + =editing-repl=; if stdin is a pipe/file → =plain-repl=, the
-old line-buffered =read= loop, unchanged. =editing-repl= reads a line, and if
-=complete-form= reports the form is unbalanced it keeps reading continuation
-lines (=  ...>= prompt) until a whole form is available — so multi-line forms
-work like a normal listener. Every =read= and =eval= stays wrapped so a typo
-can't kill PID 1.
+=run-repl= picks the mode at entry. =tty-raw-capable-p= (a throwaway =tcgetattr=)
+decides whether there's a real terminal:
 
-** Known limitations (deliberately out of scope for the "poor man's" version)
+- *A terminal* → =with-raw-mode= + =editing-repl=. If =complete-form= reports the
+  form unbalanced, it keeps reading continuation lines (=  ...>= prompt), so
+  multi-line forms work like a normal listener.
+- *A pipe or file* → =plain-repl=, a line-buffered =read= loop.
 
-- *Single line only*: a line longer than the screen width will mis-render on the
-  wrap (the =\r=/column math assumes one row). Fine for a REPL prompt.
-- *No kill-ring / yank*, no undo, no paren-match. These are exactly what =linedit=
-  brings; add them here only if they earn their keep. (=Tab= symbol completion IS
-  done — see above.)
-- *Recalled multi-line history* is flattened to a single line (newlines → spaces)
-  so the single-line renderer stays honest.
+Every =read= and =eval= is guarded, so a typo can't kill PID 1.
+
+* Alternatives ruled out
+
+- *linedit* (https://github.com/sharplispers/linedit). A pure-CL editor with far
+  more: a multi-line form reader, unlimited undo / kill ring / history, paren
+  matching, symbol and filename completion, apropos at point. But it depends on
+  =:cffi :terminfo :osicat :alexandria=. *osicat* builds a native C shim
+  (=libosicat=) with CFFI-grovel — a C compiler at build time and a new =.so= to
+  ship. *terminfo* reads the terminfo database at runtime, so its data files
+  (=/usr/share/terminfo/l/linux=) and =TERM=linux= would have to ship too. Worth
+  revisiting only if the no-native-lib goal is relaxed.
+- *cl-readline.* A binding to GNU readline — the native library being avoided.
+- *Swank / SLY.* Full editing from your own editor over TCP, but a large
+  dependency to bake in. The image has its own network REPL instead
+  ([[file:networking.org][networking.org]]).
+
+* Known limits
+
+- *Single line only.* A line longer than the screen mis-renders on the wrap (the
+  =\r= / column math assumes one row). Fine for a REPL prompt.
+- *No kill ring / yank, no undo, no paren match.* The editor's =C-k= / =C-u= /
+  =C-w= delete; nothing can be yanked back.
+- *Multi-line history is flattened* to one line (newlines → spaces), so the
+  single-line renderer stays honest.

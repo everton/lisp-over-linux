@@ -2,7 +2,7 @@
 ;;;;
 ;;;;     LOL_GUEST_HOSTROOT=1 LOL_PORT=4021 sbcl --script check-recorder.lisp
 ;;;;
-;;;; doc/screencast.org steps 2-4. LOL_GUEST_HOSTROOT=1 gives the container the build
+;;;; doc/screencast.org §4–§8. LOL_GUEST_HOSTROOT=1 gives the container the build
 ;;;; host's ffmpeg / ffprobe / mplayer, and a real home (the host's /home under a tmpfs
 ;;;; overlay — nothing reaches the host) for ~/.lol/rec. QEMU's sound card here is
 ;;;; intel-hda + hda-duplex on audiodev `none`: it RECORDS SILENCE, which is what makes

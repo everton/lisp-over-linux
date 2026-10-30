@@ -1,11 +1,13 @@
 #+TITLE: poc/ — the graphics proof-of-concept for the code browser
 #+STARTUP: showall
 
-Plan this validates: [[file:../doc/code-browser.org][doc/code-browser.org]] (§1, "one pixel buffer, two backends").
+The design this validates: [[file:../doc/code-browser.org][doc/code-browser.org]] (§1, "one pixel buffer, two
+backends"). It began as a proof of concept and is now the browser's pixel toolkit
+and shell, loaded in place by =build.sh=.
 
 * What this proves
 
-The code-browser plan rests on one claim:
+The code browser rests on one claim:
 
 #+begin_quote
 The browser draws into a pixel buffer it owns, in pure Lisp. A *backend* does
@@ -14,91 +16,81 @@ on the bare framebuffer AND in a window on the dev host — and "supporting X"
 never means running an X *server*, only writing a small X *client*.
 #+end_quote
 
-Everything except the X11 client was already proven by =draw-alien=
-([[file:../doc/framebuffer.org][framebuffer.org §8]]). The X11 client was *not*. This POC settles it.
+*The claim holds.* The identical =canvas.lisp= + =scene.lisp= render the same mock
+browser in an X11 window on the host and on =/dev/fb0= with SBCL as PID 1. No C,
+no Xlib, no CLX, no DRM, no kernel change. (The framebuffer half was already
+proven by =draw-alien=, [[file:../doc/framebuffer.org][framebuffer.org §8]]; the X11 client was the open question.)
 
-*Result: the claim holds.* The identical =canvas.lisp= + =scene.lisp= render the
-same mock browser in an X11 window on the host and on =/dev/fb0= with SBCL as
-PID 1. No C, no Xlib, no CLX, no DRM, no kernel change.
+* The files
 
-| file                                                     | role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-|----------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| =canvas.lisp=                                            | the pixel buffer + =fill-rect= / =blit-rgba= / the =font= (outline or bitmap, resizable at run time, glyph cache) + =draw-string=. *Backend-blind.*                                                                                                                                                                                                                                                                                                                                            |
-| =ttf.lisp=                                               | =lol.ttf=: a TrueType reader (head/hhea/maxp/cmap 4+12/hmtx/loca/glyf, composites) and an anti-aliased rasteriser (font-rs signed-area coverage), pure Lisp. [[file:../doc/fonts.org][doc/fonts.org]].                                                                                                                                                                                                                                                                                                                    |
-| =font-test.lisp=                                         | its host test, against the host's DejaVu Sans Mono (or =$LOL_FONT=): tables, cmap, coverage, sizes, the cache, blending, the bitmap fallback, and timings. =sbcl --script poc/font-test.lisp=; exits non-zero on failure.                                                                                                                                                                                                                                                                      |
-| =scene.lisp=                                             | what we draw: a mock code browser (tabs, 3 list panes, syntax-coloured source, the alien). *Backend-blind.*                                                                                                                                                                                                                                                                                                                                                                                    |
-| =x11.lisp=                                               | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, events. 309 lines — written up in full in [[file:../doc/x11.org][doc/x11.org]].                                                                                                                                                                                                                                                                                                                                                                      |
-| =fb.lisp=                                                | the =/dev/fb0= presenter + =KD_GRAPHICS= (stop fbcon scribbling on us).                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| =run-host.lisp=                                          | host entry: present via X11.                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| =run-guest.lisp=                                         | guest entry: present via =/dev/fb0=. PID 1, so it never returns.                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| =shell.lisp=                                             | the drill-down accordion shell: renders =present= (a stack of panes) into pixels; drill / breadcrumb / commands. A =pane= is a morph that draws its panel; its body — a list, a text view, a grid, a stage … — is a morph of its own (=pane-body=), with its own hit map. Drives the real =initramfs/= registry+model+present.                                                                                                                                                                 |
-| =morph.lisp=                                             | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface= (a backing store its subtree draws into), events, damage repair (=invalidate=, =world-repair=), routing (=world-dispatch=, each morph in its surface's coordinates), the hand's press and drag and drop (=hand-press=, =accept-drop=, =world-drop=). *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]].                                                                                                                                    |
-| =morphic.lisp=                                           | the *desk*: the world the environment runs in — the tiled shell as a tree of morphs (tab strip, tray, trail area of pane morphs and their body morphs, status line), trail windows holding the same pane morphs (=SuperL-g=, a tab dragged out), the grab mode, the halo over the tree, damage by signature (a text view's by its rows), drag and drop. *Backend-blind.*                                                                                                                       |
-| =clip-test.lisp= / =morphic-test.lisp= / =x11-test.lisp= | host tests: the canvas's clip rect (every writer, 34 checks); the World against the real shell — after every step of a long script the incrementally repaired screen equals the whole tree painted from scratch, and the right morphs drew: a key in a text view repairs the lines it changed, a dragged row lands where it is dropped (178 checks); the X11 loop turned headless with scripted X events, every overlay waiting in it (26 checks). =sbcl --script poc/…=; non-zero on failure. |
-| =widgets.lisp=                                           | *the phase 3 toolkit* (=lol.widgets=): panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card — plus the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map.                                                                                                                                                                                                                                             |
-| =run-browser.lisp=                                       | *the code browser, live in an X11 window.* =sbcl --script poc/run-browser.lisp= — root at CL-USER, drill definitions, read source, browse the browser itself. Its loop is the world's cycle (=host-cycle=), so menus, the halo, the value prompt, the clipboard manager, the cheatsheet and the debugger work there as on the guest ([[file:../doc/x11.org][doc/x11.org]] §9½).                                                                                                                                         |
-| =render-frame.lisp=                                      | *the verification harness.* Renders ONE browser frame headless in plain SBCL and dumps it as a PPM — no QEMU, no X, no =/dev/fb0=. How every visual change is checked; see [[*Verifying a visual change][Verifying a visual change]] below.                                                                                                                                                                                                                                                                                    |
-| =clipboard.lisp=                                         | =lol.clipboard=: the clipboard core as plain data — history (blank refusal, dedup, bound, Emacs append and yank-pop), PRIMARY, and the =C-x r= rectangle commands. No dependencies. Design: [[file:../doc/clipboard.org][doc/clipboard.org]].                                                                                                                                                                                                                                                                                 |
-| =clipboard-test.lisp=                                    | its host test: =sbcl --script poc/clipboard-test.lisp=, PASS/FAIL per assertion, non-zero exit on failure.                                                                                                                                                                                                                                                                                                                                                                                     |
-| =undo-test.lisp=                                         | host test for the text view's Emacs-style undo (=tv-undo= in =textview.lisp=): amalgamated typing, the run, undo-the-undo as redo. =sbcl --script poc/undo-test.lisp=; exits non-zero on failure. See [[file:../doc/clipboard.org][doc/clipboard.org]] §6½.                                                                                                                                                                                                                                                                   |
-| =sysinfo-test.lisp=                                      | host test for the systray data ([[file:../initramfs/sysinfo.lisp][initramfs/sysinfo.lisp]]): builds fake =/sys/class/power_supply= trees and checks battery parsing, the cache, and the clock against =date=. =sbcl --script poc/sysinfo-test.lisp=; exits non-zero on failure. See [[file:../doc/systray.org][doc/systray.org]].                                                                                                                                                                                                                               |
-| =terminal.lisp=                                          | =lol.terminal=: the VT engine as plain data — UTF-8 bytes in, a cell grid out (Williams' parser, scrollback, alternate screen, SGR to truecolor), keys / mouse / paste encoded back. Host test =terminal-test.lisp=. Design: [[file:../doc/terminal.org][doc/terminal.org]].                                                                                                                                                                                                                                                 |
-| =terminal-pane.lisp=                                     | =subj-terminal=: the terminal as a pane (drawing, keys, mouse, =open-terminal=, =SuperL-↵=), over [[file:../initramfs/pty.lisp][initramfs/pty.lisp]]. =render-frame.lisp terminal:CMD= renders a real program in it.                                                                                                                                                                                                                                                                                                           |
-| =file-manager.lisp=                                      | the file manager's hands: the letters a folder binds (r rename, d delete, / filter, …), its minibuffer prompts, the operations and =C-x C-s=. The data and the views live in [[file:../initramfs/files.lisp][initramfs/files.lisp]] and [[file:../initramfs/file-views.lisp][file-views.lisp]]; design: [[file:../doc/file-manager.org][doc/file-manager.org]].                                                                                                                                                                                                                                           |
-| =files-test.lisp=                                        | host test for the file manager's data layer, in a fresh scratch directory (=$FILES_TEST_DIR=, else =/tmp=; never =$HOME=): create / rename / delete / links / copy / move / the atomic save / hidden / sort / bounded find / the Spotter's path grammar / the sniffers. =sbcl --script poc/files-test.lisp=; exits non-zero on failure.                                                                                                                                                        |
-| =build-poc.sh=                                           | builds a throwaway =lisp-init= + initramfs and boots it headless in QEMU.                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| =cozette.lolf=                                           | the FALLBACK font, *committed*: Cozette (MIT) baked to our tiny 6x15 blob — used when no TrueType file loads (the default is the host's DejaVu Sans Mono, never committed). How the font path works end to end: [[file:../doc/fonts.org][doc/fonts.org]].                                                                                                                                                                                                                                                                 |
-| =bdf2font.lisp=                                          | build-host converter: a BDF font → the =.lolf= blob (indexed by codepoint).                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| =cozette-LICENSE.txt=                                    | Cozette's MIT license (required to ship the font).                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| file                                                     | role                                                                                                                                                                                                                                                         |
+|----------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =canvas.lisp=                                            | the pixel buffer + =fill-rect= / =blit-rgba= / the =font= (outline or bitmap, resizable at run time, glyph cache) + =draw-string=. *Backend-blind.*                                                                                                          |
+| =ttf.lisp=                                               | =lol.ttf=: a TrueType reader (head/hhea/maxp/cmap 4+12/hmtx/loca/glyf, composites) and an anti-aliased rasteriser (font-rs signed-area coverage), pure Lisp. [[file:../doc/fonts.org][doc/fonts.org]].                                                                  |
+| =scene.lisp=                                             | the POC's mock code browser (tabs, 3 list panes, syntax-coloured source, the alien). *Backend-blind.*                                                                                                                                                        |
+| =x11.lisp=                                               | a minimal X11 *client* in pure Lisp: auth, CreateWindow, PutImage, the keymap, events. About 300 lines, written up in [[file:../doc/x11.org][doc/x11.org]].                                                                                                                  |
+| =fb.lisp=                                                | the =/dev/fb0= presenter + =KD_GRAPHICS= (stops fbcon scribbling on us).                                                                                                                                                                                     |
+| =run-host.lisp= / =run-guest.lisp=                       | the POC scene's entries: present via X11 / via =/dev/fb0= (PID 1, so it never returns).                                                                                                                                                                      |
+| =widgets.lisp=                                           | =lol.widgets=, the toolkit: panel, bar, list (sections, selection, viewport, scrollbar), scrollbar, grid, card, the palette and row metrics. Knows nothing about the browser: it takes geometry and =ROW=s and returns a hit map.                            |
+| =textview.lisp=                                          | =lol.textview=: the editable, syntax-colouring text view (Emacs keys, undo, incremental search).                                                                                                                                                             |
+| =shell.lisp=                                             | the drill-down accordion shell: renders =present= into pixels; drill / breadcrumb / commands. A =pane= is a morph that draws its panel; its body (list, text view, grid, stage …) is a morph of its own (=pane-body=), with its own hit map. Drives the real =initramfs/= registry, model and =present=. |
+| =morph.lisp=                                             | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface=, events, damage repair (=invalidate=, =world-repair=), routing (=world-dispatch=), the hand's press and drag and drop. *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]].                         |
+| =morphic.lisp=                                           | the *desk*: the tiled shell as a tree of morphs (tab strip, tray, trail area, status line), trail windows (=SuperL-g=), the grab mode, the halo, damage by signature, drag and drop. *Backend-blind.*                                                         |
+| =overlays.lisp=                                          | the modal cards as overlay morphs: the Spotter, menus and the halo, the clipboard manager, the value prompt.                                                                                                                                                 |
+| =run-browser.lisp=                                       | *the code browser in an X11 window*: =sbcl --script poc/run-browser.lisp=. Its loop is the world's cycle (=host-cycle=), so every overlay works there as on the guest ([[file:../doc/x11.org][doc/x11.org]] §9½).                                                           |
+| =run-editor.lisp=                                        | a text view alone in an X11 window.                                                                                                                                                                                                                          |
+| =render-frame.lisp=                                      | *the verification harness*: one browser frame rendered headless to a PPM. See [[*Verifying a visual change][Verifying a visual change]].                                                                                                                                  |
+| =clipboard.lisp=                                         | =lol.clipboard=: the clipboard core as plain data — history, PRIMARY, the =C-x r= rectangle commands. No dependencies. [[file:../doc/clipboard.org][doc/clipboard.org]].                                                                                                   |
+| =terminal.lisp=                                          | =lol.terminal=: the VT engine as plain data — UTF-8 bytes in, a cell grid out; keys / mouse / paste encoded back. [[file:../doc/terminal.org][doc/terminal.org]].                                                                                                         |
+| =terminal-pane.lisp=                                     | =subj-terminal=: the terminal as a pane, over [[file:../initramfs/pty.lisp][initramfs/pty.lisp]]. =render-frame.lisp terminal:CMD= renders a real program in it.                                                                                                       |
+| =file-manager.lisp=                                      | the file manager's keys, minibuffer prompts and operations, and =C-x C-s=. Data and views: [[file:../initramfs/files.lisp][initramfs/files.lisp]], [[file:../initramfs/file-views.lisp][file-views.lisp]]; design: [[file:../doc/file-manager.org][doc/file-manager.org]].                                  |
+| =org.lisp= / =org-mode.lisp=                             | Org's structure as data, and Org files in the shell ([[file:../doc/org.org][doc/org.org]]).                                                                                                                                                                            |
+| =inflate.lisp= / =deflate.lisp= / =image.lisp=           | DEFLATE reader and writer, and image decoding for previews ([[file:../doc/previews.org][doc/previews.org]]).                                                                                                                                                            |
+| =cozette.lolf= / =bdf2font.lisp= / =cozette-LICENSE.txt= | the *committed* fallback font (Cozette, MIT, as our 6×15 blob), the BDF → =.lolf= converter, and the licence. See [[*The fonts][The fonts]].                                                                                                                                 |
+| =build-poc.sh=                                           | builds a throwaway =lisp-init= + initramfs for the POC scene and boots it headless in QEMU.                                                                                                                                                                  |
+| =*-test.lisp=                                            | host tests, each =sbcl --script poc/NAME-test.lisp=, non-zero exit on failure. See [[*Host tests][Host tests]].                                                                                                                                                            |
 
 * Run it
 
-The font (=cozette.lolf=) is committed, so there is no setup — just run:
+The fallback font is committed, so there's no setup:
 
 #+begin_src sh
-  sbcl --script poc/run-host.lisp   # a window on your desktop. arrows/click; q quits.
-  ./poc/build-poc.sh                # boots the LoL machine; writes poc/screen-fb.png
+  sbcl --script poc/run-host.lisp      # the POC scene in a window. arrows/click; q quits.
+  sbcl --script poc/run-browser.lisp   # the real browser in a window
+  ./poc/build-poc.sh                   # boots the POC scene as PID 1; writes poc/screen-fb.png
 #+end_src
 
-=run-host.lisp= needs =$DISPLAY= and =$XAUTHORITY= (an ordinary X session).
-=build-poc.sh= touches *nothing* in =initramfs/= — it builds its own image and
-reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
+- *X11 runners* need =$DISPLAY= and =$XAUTHORITY= (an ordinary X session).
+- *=build-poc.sh=* touches nothing in =initramfs/=: it builds its own image and
+  reuses only =preinit=, =alien.rgba= and the already-built =bootx64.efi=.
 
-* What it settles, concretely
+* What it settles
 
-- *X11 from scratch is small.* Because we do all our own drawing, the client
-  never asks X to render a glyph or a line — we hand it one finished image via
-  =PutImage=. Connection handshake + MIT-MAGIC-COOKIE-1 + =CreateWindow= +
-  =MapWindow= + =CreateGC= + =PutImage= + five event types is the *whole* protocol
-  surface we need.
+- *X11 from scratch is small.* We do all our own drawing, so the client never asks
+  X to render a glyph or a line — it hands over one finished image via =PutImage=.
+  The handshake, MIT-MAGIC-COOKIE-1, =CreateWindow=, =MapWindow=, =CreateGC=,
+  =PutImage=, the keymap and a handful of event types are the whole protocol
+  surface.
 - *One pixel format serves both.* The canvas stores =#x00RRGGBB= words, which sit
-  in memory little-endian as =B,G,R,0= — exactly BGRX, exactly what efifb scans
-  out *and* what the X server wants at depth 24 on x86. Both backends ship the
-  buffer with zero conversion. (Confirmed by the alien coming out green, not
-  magenta.)
-- *Text is not a problem.* PSF1 is a 4-byte header and 256 glyph bitmaps. Parsing
-  it is 15 lines; blitting it is 20. Crisp, fast, and enough for a browser.
-- *=KD_GRAPHICS= works and is cheap* — one ioctl, and fbcon stops fighting us. It
-  does *not* stop key delivery, so the existing raw-mode keyboard survives intact.
-- *The mouse is already there — and now read.* The guest's boot log shows
-  =input: ImExPS/2 Generic Explorer Mouse=; =CONFIG_INPUT_EVDEV=y= is already set,
-  so it is live under QEMU with no kernel change. =fb-browser.lisp= reads it: a
-  cursor tracks motion, left-click drills, and the wheel scrolls. The device is
-  *not* a fixed =eventN= and has no =mouseN= handler (=mousedev= is not built), so
-  =input-device-kind= finds it by *capability* — a block in
-  =/proc/bus/input/devices= whose =B: EV=- mask has EV_REL (bit 2) or EV_ABS
-  (bit 3) with an X axis. Every such pointer (and every keyboard) is opened, and
-  hotplugged ones too. The whole mechanism —
-  the 24-byte =input_event= record, the =poll(2)= over every device, the wheel's sign
-  convention, and why a bare Ctrl needs the keyboard's *own* evdev — is written up
-  in [[file:../doc/input.org][doc/input.org]].
+  in memory little-endian as =B,G,R,0= — exactly BGRX, which efifb scans out *and*
+  the X server wants at depth 24 on x86. Both backends ship the buffer with zero
+  conversion. (The alien comes out green, not magenta.)
+- *Text is not a problem.* The bitmap fallback is a 256-glyph blob (PSF1 is just a
+  4-byte header in front of the same thing): a few lines to parse, a few to blit.
+  The default is a TrueType font rasterised by =ttf.lisp=.
+- *=KD_GRAPHICS= works and is cheap.* One ioctl, and fbcon stops fighting us. It
+  does *not* stop key delivery, so the raw-mode keyboard keeps working.
+- *The mouse needs no kernel change.* =CONFIG_INPUT_EVDEV=y= is set and QEMU's PS/2
+  mouse is live. It isn't a fixed =eventN= and has no =mouseN= handler (=mousedev= is
+  not built), so =input-device-kind= finds pointers by *capability*: a block in
+  =/proc/bus/input/devices= whose =B: EV== mask has EV_REL (bit 2) or EV_ABS (bit 3)
+  with an X axis. The whole input path is in [[file:../doc/input.org][doc/input.org]].
 
 * Verifying a visual change
 
-The browser is pixels, so a change to it is only "done" when somebody has *looked*
-at the result. Doing that through the guest means a full =./build.sh=, a QEMU boot
-and a QMP key sequence — minutes, for a two-pixel colour tweak. =render-frame.lisp=
-collapses that to about a second:
+The browser is pixels, so a change is only done when someone has *looked* at it.
+Through the guest that's a full =./build.sh=, a QEMU boot and a QMP key sequence —
+minutes. =render-frame.lisp= takes about a second:
 
 #+begin_src sh
   sbcl --script poc/render-frame.lisp modules                  # the default root
@@ -108,29 +100,25 @@ collapses that to about a second:
   sbcl --script poc/render-frame.lisp -h                       # every subject form
 #+end_src
 
-It loads the real stack in the real order — =registry= -> =model= -> =present= ->
-=canvas= -> =textview= -> =shell=, the same modules =build.sh= bakes into the image,
-minus the ones that want hardware — seeds the environment with =open-environment=
-(so tab 1 is your subject and tab 2 the Workspace, exactly as in the guest), makes
-the *real* world (=make-desk=: the tab strip, the trail area of pane morphs, the
-status line — [[file:../doc/morphic.org][doc/morphic.org]] §12) and lets it repair itself into a canvas, every
-morph drawing itself as it does on the panel. Nothing is mocked and nothing is
-re-implemented; if a frame looks right here it looks right on the panel.
+- *Nothing is mocked.* It loads the real stack in the real order (=registry= →
+  =model= → =present= → =canvas= → =textview= → =shell=, the modules =build.sh=
+  bakes in, minus those that want hardware), seeds the environment with
+  =open-environment= (tab 1 your subject, tab 2 the Workspace, as in the guest),
+  makes the *real* world (=make-desk=, [[file:../doc/morphic.org][doc/morphic.org]] §5) and lets it repair
+  itself into a canvas.
+- *The pixels are the framebuffer's.* The guest doesn't re-render: =lol.fb= copies
+  this very canvas into =/dev/fb0= byte for byte. The PPM is the framebuffer's
+  contents, not an approximation of them.
+- *Size.* =-s WxH= sets the canvas (default 1280x720); =-s 1280x800= matches the
+  guest checks' QEMU.
+- *Output.* =poc/out/frame.ppm= by default (gitignored; =-o FILE= elsewhere). PPM
+  is dependency-free; =pnmtopng= or =convert= makes a PNG.
 
-*Why the pixels are trustworthy.* The guest does not re-render anything: =lol.fb=
-copies this very canvas — =#x00RRGGBB= words — into =/dev/fb0= byte for byte, which
-is the "one pixel format serves both" property above. So the PPM is not an
-approximation of the framebuffer, it is its contents. Pass =-s 1280x800= to match
-QEMU's geometry exactly.
+** Reaching a state that isn't a root
 
-Output defaults to =poc/out/frame.ppm= (already gitignored). PPM is deliberately
-dependency-free — a short ASCII header and raw RGB — and =pnmtopng= or =convert=
-makes a PNG if your viewer wants one.
-
-*Reaching a state that is not a root.* =-k= replays a script through the real world's
-event routing (=lol.morph:world-dispatch=: keys to the focused pane's =browser-key=, a
-click to the morph under it), so a frame can show a drilled pane, a split, or a
-matrix cell's onion:
+=-k= replays a script through the real world's event routing
+(=lol.morph:world-dispatch=: keys to the focused pane, a click to the morph under
+it), so a frame can show a drilled pane, a split, or a matrix cell's onion:
 
 #+begin_src sh
   -k "down down ret"        # drill the third row
@@ -143,148 +131,102 @@ matrix cell's onion:
   -k "s-= s-="              # SuperL-= twice: a bigger font, and the status line says so
 #+end_src
 
-*At another font size.* =--size N= sets the font's pixel size (10–40; default 18),
-=--font PATH= another TrueType file, or a =.lolf= for the bitmap fallback. Any change
-to layout should be looked at at three sizes — 12, 18 and 28 cover it — because a
-distance that does not follow the font only shows when the font moves
-([[file:../doc/fonts.org][doc/fonts.org]] §6).
+The canvas is repaired between steps, because clicks hit-test against geometry each
+morph records as it draws (a list body's rows, a pane's =pane-body-top=, a grid
+body's cells, the tab strip's tabs). A =click:X,Y= is a press and its release; a
+press on a row acts on the release (one that moves picks the row up instead —
+[[file:../doc/morphic.org][doc/morphic.org]] §9.1). So a scripted click exercises the same draw/hit-test
+agreement a real one does.
 
-*The Spotter too.* =--spotter QUERY= draws the palette over whatever subject you
-named, filtered by QUERY — so the finder can be looked at without booting the guest
-and holding down Super:
+** Other options and subjects
 
-#+begin_src sh
-  sbcl --script poc/render-frame.lisp modules --spotter coll   # 9 matches, banded
-  sbcl --script poc/render-frame.lisp modules --spotter ""     # the recents band
-  sbcl --script poc/render-frame.lisp workspace --spotter "~/"  # a PATH: completions
-#+end_src
-
-*Org files* ([[file:../doc/org.org][doc/org.org]]). =org:PATH= opens a file's outline; an =.org= opened with
-=file:PATH= is the Org editor, so its keys replay too:
-
-#+begin_src sh
-  sbcl --script poc/render-frame.lisp org:doc/org.org -k "down down"         # outline + a section's preview
-  sbcl --script poc/render-frame.lisp file:doc/org.org -k "S-tab"            # OVERVIEW: every top heading folded
-  sbcl --script poc/render-frame.lisp file:doc/org.org -k "S-tab C-c C-n C-c C-n tab"  # one heading's CHILDREN
-#+end_src
-
-*The file manager.* =dir:PATH= opens it on a folder and =file:PATH= drills a file
-(an editor for text); PATH may be absolute, =~/…= or relative. With =-k=, its letters
-replay like any key, so the minibuffer prompts render too
-([[file:../doc/file-manager.org][doc/file-manager.org]]):
+- *Font size.* =--size N= sets the pixel size (10–40; default 18), =--font PATH=
+  another TrueType file or a =.lolf=. Look at any layout change at 12, 18 and 28: a
+  distance that doesn't follow the font only shows when the font moves
+  ([[file:../doc/fonts.org][doc/fonts.org]] §6).
+- *The Spotter.* =--spotter QUERY= draws the palette over the subject, filtered by
+  QUERY. Its drawing lives in =shell.lisp= (its input loop in =overlays.lisp=),
+  which is why the host can render it.
+- *Org files* ([[file:../doc/org.org][doc/org.org]]). =org:PATH= opens a file's outline; an =.org=
+  opened with =file:PATH= is the Org editor, so its keys replay too.
+- *The file manager* ([[file:../doc/file-manager.org][doc/file-manager.org]]). =dir:PATH= opens a folder, =file:PATH=
+  drills a file (an editor for text); PATH may be absolute, =~/…= or relative.
+- *The halo.* =--halo X,Y[,D]= opens the middle-button halo at X,Y on layer D (0 is
+  the innermost thing under the point) and prints the layers and handles.
 
 #+begin_src sh
-  sbcl --script poc/render-frame.lisp dir:~/lisp-over-linux/poc                 # listing + preview
-  sbcl --script poc/render-frame.lisp dir:~/lisp-over-linux/poc -k "/ l i s p"  # the live filter
-  sbcl --script poc/render-frame.lisp dir:~ -k ". s"          # dot files shown, sorted by date
-  sbcl --script poc/render-frame.lisp dir:/tmp -k "down r"    # the rename prompt
+  sbcl --script poc/render-frame.lisp modules --spotter coll             # banded matches
+  sbcl --script poc/render-frame.lisp workspace --spotter "~/"           # a PATH: completions
+  sbcl --script poc/render-frame.lisp org:doc/org.org -k "down down"     # outline + a section's preview
+  sbcl --script poc/render-frame.lisp file:doc/org.org -k "S-tab"        # OVERVIEW: every top heading folded
+  sbcl --script poc/render-frame.lisp dir:poc -k "/ l i s p"             # the live filter
+  sbcl --script poc/render-frame.lisp dir:/tmp -k "down r"               # the rename prompt
+  sbcl --script poc/render-frame.lisp workspace --halo 110,280           # the symbol under the point
+  sbcl --script poc/render-frame.lisp workspace --halo 110,280,1         # the TEXTVIEW holding it
 #+end_src
 
 /Careful: a replayed key really runs. =-k "… C-x C-s"= writes the file and =-k "d y"=
 deletes — point =dir:= at a scratch copy for those./
 
-*And the halo.* =--halo X,Y[,D]= opens the middle-button halo at X,Y on layer D (0 is
-the innermost thing under the point) and prints the layers and the handles — the
-quickest way to see what a point on the screen is made of:
+** What it doesn't cover
 
-#+begin_src sh
-  sbcl --script poc/render-frame.lisp workspace --halo 110,280     # the symbol LAUNCH
-  sbcl --script poc/render-frame.lisp workspace --halo 110,280,1   # the TEXTVIEW holding it
-#+end_src
+- *Input plumbing.* evdev, the wheel, =poll(2)= ([[file:../doc/input.org][doc/input.org]]).
+- *The live debugger.* It's in =fb-browser.lisp=, which isn't loaded here.
+- *=present-fb= itself.* The module index here is correspondingly a subset of the
+  guest's.
 
-That works because the Spotter's *drawing* lives in =shell.lisp= with the rest of the
-shell's; only its modal input loop is in =fb-browser.lisp=. The same split is why the
-palette's colours could be fixed by looking at a frame rather than by guessing: the
-matched characters were being lit in the accent, which is also every function row's
-colour, so the highlight was invisible on exactly the rows that matter.
+For that half there are the guest checks, e.g. [[file:../check-scroll.lisp][=check-scroll.lisp=]] and
+[[file:../check-pointer.lisp][=check-pointer.lisp=]] in the project root: they boot the real image, send QMP keys
+and genuine evdev =REL_WHEEL= records, and read =pane-top= / =pane-sel= /
+=tv-scroll= back over the net REPL rather than guessing from pixels. Split:
+=render-frame.lisp= for how a frame looks, the =check-*.lisp= files for how the
+machine behaves.
 
-The canvas is repaired between script steps, because clicks hit-test against
-geometry each morph records as it draws (a list body's rows, a pane's
-=pane-body-top=, a grid body's cells; the tab strip's tabs). A =click:X,Y= token is a
-press and its release: a press on a row acts on the release (a press that moves would
-pick the row up instead — [[file:../doc/morphic.org][doc/morphic.org]] §13). That is deliberate: a scripted click therefore
-exercises the same draw/hit-test agreement a real one does, instead of testing a stale
-layout.
+* Host tests
 
-*What it does NOT cover*, and still needs the guest: input plumbing (evdev, the
-wheel, =poll(2)= — [[file:../doc/input.org][doc/input.org]]), the live debugger (=fb-browser.lisp=, not loaded
-here), and anything about =present-fb= itself. Its module index is correspondingly a
-subset of the guest's.
+Each runs as =sbcl --script poc/NAME-test.lisp= and exits non-zero on failure. The
+ones about the toolkit and the shell:
 
-For the half it cannot reach there is [[file:../check-scroll.lisp][=check-scroll.lisp=]] in the project root (and
-[[file:../check-pointer.lisp][=check-pointer.lisp=]] beside it, for the pointer not redrawing the frame): it boots
-the real image and asserts what the machine *does* with real input — QMP keys and
-genuine evdev =REL_WHEEL= records — reading =pane-top= / =pane-sel= / =tv-scroll=
-back over the net REPL rather than guessing from pixels. The two harnesses divide
-the work cleanly: =render-frame.lisp= for how a frame looks, =check-scroll.lisp= for
-how the machine behaves.
+| test                 | what it checks                                                                                                                                                                                 |
+|----------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| =clip-test.lisp=     | the canvas's clip rect: every pixel writer agrees with its unclipped self inside a clip and leaves the outside alone (34 checks).                                                             |
+| =morphic-test.lisp=  | the World against the real shell: after every step of a long script the incrementally repaired screen equals the whole tree painted afresh, and the right morphs drew (206 checks).          |
+| =x11-test.lisp=      | the X11 loop turned headless with scripted X events, every overlay waiting in it (26 checks).                                                                                                  |
+| =font-test.lisp=     | the TrueType reader against the host's DejaVu Sans Mono (or =$LOL_FONT=): tables, cmap, coverage, sizes, the cache, blending, the bitmap fallback, timings.                                   |
+| =clipboard-test.lisp= | the clipboard core.                                                                                                                                                                           |
+| =undo-test.lisp=     | the text view's Emacs-style undo (=tv-undo=): amalgamated typing, undo-the-undo as redo ([[file:../doc/clipboard.org][doc/clipboard.org]] §6½).                                                                                      |
+| =terminal-test.lisp= | the VT engine, against recordings in =poc/terminal-data/=.                                                                                                                                     |
+| =files-test.lisp=    | the file manager's data layer in a scratch directory (=$FILES_TEST_DIR=, else =/tmp=; never =$HOME=): create, rename, delete, links, copy, move, atomic save, sort, find, the path grammar. |
+| =sysinfo-test.lisp=  | the systray data ([[file:../initramfs/sysinfo.lisp][initramfs/sysinfo.lisp]]) against fake =/sys/class/power_supply= trees ([[file:../doc/systray.org][doc/systray.org]]).                                                                          |
 
-* Known rough edges (it is a POC)
+The other =*-test.lisp= files test image modules (networking, the agent, the
+journal, …); each doc names its own.
 
-- The framebuffer path redraws and pushes a *full frame* whenever the state changes
-  (no damage tracking) — one =pwrite(2)= of the canvas, ~3 ms a frame under KVM
-  (doc/framebuffer.org §9.4). The mouse pointer is the one exception: it is
-  composited on the way out, so a bare move re-sends two arrow-sized patches and
-  redraws nothing (§9.5). Dirty rectangles for the rest are still owed.
-- =run-guest.lisp= (the standalone POC scene) draws once and parks and does not
-  read the mouse; the shipped =fb-browser.lisp= does read it (see above).
-- Keys are raw X11 keycodes (evdev layout), not keysyms — no keymap.
+* Known limits
 
-** Browser shell — known gaps / TODO (=shell.lisp=, =run-browser.lisp=)
+- *=run-guest.lisp= is the POC scene only.* It draws once and parks, and doesn't
+  read the mouse; the shipped =fb-browser.lisp= does.
+- *A bare Ctrl on the console* needs the keyboard's own evdev (the cooked tty can't
+  report a bare modifier), which =fb-browser.lisp= reads; the X11 runner takes Ctrl
+  from the event's modifier state.
 
-- *Scrolling — DONE, on both backends.* =tv-wheel= scrolls a text pane's viewport
-  without moving the caret, =move-page= pages the caret, and a list pane has a
-  viewport of its own (=lol.widgets:draw-list=): the wheel moves it and leaves the
-  selection alone — scrolling is /looking/ — while touching the selection
-  re-attaches the view to it. The guest decodes evdev =REL_WHEEL= in =read-mouse=;
-  X delivers the wheel as button 4/5 press events, which =run-browser.lisp= and
-  =run-editor.lisp= route to =browser-scroll= / =tv-wheel=. =+wheel-lines+= (3 lines
-  a notch) lives in =shell.lisp= so both backends share it. /Verified in the booted
-  guest over QMP against the browser's own state — twelve assertions, all passing
-  (see [[file:../doc/code-browser.org][code-browser.org]], phase 5)./ See [[file:../doc/input.org][doc/input.org]] §6-7 for the wheel end to
-  end on both backends.
-- Trail *tabs* and the *Spotter* are DONE (§4¾) — =draw-tabs= here, the palette in
-  =draw-spotter-card= here too, candidates from [[file:../initramfs/present.lisp][=present.lisp=]]. Note that only the
-  Spotter's *input loop* lives in [[file:../initramfs/fb-browser.lisp][=fb-browser.lisp=]] — its drawing moved into
-  =shell.lisp= with the rest of the shell's, which is what lets =render-frame.lisp=
-  render the palette on the host (=--spotter Q=). Summoning it, and the debugger,
-  still needs the guest: the host X11 runner reaches them via =(fboundp …)= and
-  simply does nothing when that file was not loaded.
-- *Jump-to-definition — done for the mouse* (=shell.lisp=: =jump-to-definition=,
-  =click-token=, =resolve-symbol=): =Ctrl-click= a symbol in a source pane resolves
-  it (=find-symbol=, so a typo can't intern) and drills into its definition on a new
-  trail level — source if we recorded it, else a =sb-introspect= reference. A plain
-  click in code is inert (reserved for future caret placement). *=M-.= from the
-  keyboard is now done too* — Esc is decoded as the Emacs Meta prefix
-  (=fb-read-key= / =lol.canvas:meta-p=) and resolves the symbol at point through
-  the same =jump-at-point=. Holding Ctrl over the console needs the keyboard's own
-  evdev (the cooked tty can't report a bare modifier) — the framebuffer browser
-  does this; the X11 runner reads Ctrl straight from the button event's modifier
-  state.
-- Chrome markers are ASCII (=>= / =v= / =>=); the 6×15 blob is 256 codepoints, so
-  no ▸▾→ glyphs — draw chrome as shapes later (§6.2). (The TrueType font has them;
-  the markers stay ASCII so the fallback draws the same chrome.)
-
-* The fonts — DejaVu Sans Mono (TrueType), Cozette (MIT) as the fallback
+* The fonts
 
 The environment draws with a TrueType font rasterised by =ttf.lisp= — by default the
 host's =/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf=, or =$LOL_FONT= — at a
-size =SuperL-= / =SuperL--= / =SuperL-0= change at run time. =render-frame.lisp=
-takes =--size N= and =--font PATH=. Everything below is about the fallback; the
-whole story is [[file:../doc/fonts.org][doc/fonts.org]].
+size =SuperL-= / =SuperL--= / =SuperL-0= change at run time. The whole story is
+[[file:../doc/fonts.org][doc/fonts.org]]; what follows is about the fallback.
 
-The fallback font is *Cozette* (=cozette.lolf=, MIT — see =cozette-LICENSE.txt=),
-chosen from a side-by-side comparison. It is baked into our own tiny =.lolf= blob
-(6x15, glyphs indexed by codepoint) by =bdf2font.lisp=, the way =alien.rgba= is
-pre-generated and committed. Note the kernel's built-in =font_8x16= is *GPL* and
-must not be lifted; Cozette's MIT license is committed alongside the blob.
+- *Cozette, MIT.* =cozette.lolf= (licence in =cozette-LICENSE.txt=) is used when no
+  TrueType file loads. =bdf2font.lisp= bakes it into our 6×15 =.lolf= blob (glyphs
+  indexed by codepoint), pre-generated and committed like =alien.rgba=.
+- *Not the kernel's font.* The kernel's built-in =font_8x16= is GPL and must not be
+  lifted.
 
-To *regenerate* =cozette.lolf= (the blob is committed, so this is only for updates):
+To regenerate =cozette.lolf= (only for updates; the blob is committed):
 
 #+begin_src sh
   curl -fsSL -o /tmp/cozette.bdf \
     https://github.com/slavfox/Cozette/releases/latest/download/cozette.bdf
   sbcl --script poc/bdf2font.lisp /tmp/cozette.bdf poc/cozette.lolf
 #+end_src
-
-The =.lolf= format and the whole glyph→pixel path are documented in [[file:../doc/fonts.org][doc/fonts.org]].

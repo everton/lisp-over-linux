@@ -14,7 +14,7 @@
 ;;;;
 ;;;; Which reply you get depends on the words of the last user message (see REPLY-FOR),
 ;;;; so a test steers it by what it asks. A guest reaches it at 10.0.2.2 (QEMU's SLIRP
-;;;; host address); doc/agent.org §0.4 says why the real agent must not, which is why
+;;;; host address); doc/agent.org §2.1 and §13 say why the real agent must not, which is why
 ;;;; this is a test fixture and not the broker.
 ;;;;
 ;;;; It also CHECKS what the client sends (CHECK-REQUEST) and answers a malformed

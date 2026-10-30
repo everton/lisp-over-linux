@@ -11,16 +11,14 @@ Code: [[file:../poc/inflate.lisp][poc/inflate.lisp]] (package =LOL.INFLATE=) ·
 [[file:../poc/vendor/README][poc/vendor/]] (the vendored =stb_image.h=) · test:
 [[file:../poc/image-test.lisp][poc/image-test.lisp]] (=sbcl --script poc/image-test.lisp=).
 
-Question that prompted this: /the environment is getting a file manager, and I
-want almost everything that could have a preview to have one./ Text previews are
-easy. Pictures are not: every image format is a compressed encoding, and the
-image is a frozen SBCL heap with libc and libm and nothing else — no =libpng=,
-no =zlib=, no =libjpeg=.
+The file manager ([[file:file-manager.org][file-manager.org]]) previews almost everything that can have a
+preview. Text is easy. Pictures aren't: every image format is a compressed
+encoding, and the image is a frozen SBCL heap with libc and libm and nothing
+else — no =libpng=, no =zlib=, no =libjpeg=.
 
-*Status (2026-10-03):* *built and host-tested* — 294 checks against ImageMagick,
-all passing on SBCL 2.6.8 (=./sbcl=) and the host's 2.6.6. *Not yet in the image:*
-the file-manager work wires the two Lisp files into =build.sh='s =LISP_SOURCES=
-and =libstbi.so= into the cpio (§11 says exactly how).
+*Status:* built, in the image (both Lisp files in =LISP_SOURCES=, =libstbi.so= at
+=/usr/lib/lol/=), and host-tested: 294 checks against ImageMagick, passing on
+SBCL 2.6.8 (=./sbcl=) and 2.6.6.
 
 * The one-sentence essence
 
@@ -61,9 +59,10 @@ Three rules shape the API, all because the caller is PID 1:
 
 * 2. DEFLATE — the decompressor everything else needs
 
-[[file:../poc/inflate.lisp][poc/inflate.lisp]] is the reading half of [[file:../host-client/png.lisp][host-client/png.lisp]], which writes
-DEFLATE. PNG needs it (every PNG's pixels are a zlib stream), and so will the file
-manager's =.gz=, =.zip= and =.tar.gz= previews, so it is its own package.
+[[file:../poc/inflate.lisp][poc/inflate.lisp]] is the reading half; [[file:../poc/deflate.lisp][poc/deflate.lisp]] (=lol.deflate=, used by
+[[file:../host-client/png.lisp][host-client/png.lisp]] and the log archives) writes DEFLATE. PNG needs it (every
+PNG's pixels are a zlib stream), and so do the file manager's =.gz= and =.tar.gz=
+previews, so it's its own package.
 
 ** The stream
 
@@ -130,11 +129,11 @@ sniffs which of the three it was given. Corrupt input signals =inflate-error= �
 the test flips and truncates a gzip 200 ways and checks nothing else ever escapes.
 
 =:max-output= stops inflating at a size instead of trusting one. The file manager's
-=.gz= preview passes 64 MB (since 2026-10-17). Its check of the gzip trailer was not
-enough: the trailer's size is mod 2^32, covers only the last member, and is whatever
-the file says. =poc/files-test.lisp= builds 100 MB of zeros, about 100 KB
-compressed, with a trailer claiming 16 bytes, and the preview stops at the cap. The
-PNG decoder has always passed the size its header implies.
+=.gz= preview passes 64 MB. Checking the gzip trailer isn't enough: its size is mod
+2^32, covers only the last member, and is whatever the file says.
+=poc/files-test.lisp= builds 100 MB of zeros (about 100 KB compressed) with a
+trailer claiming 16 bytes, and the preview stops at the cap. The PNG decoder passes
+the size its header implies.
 
 * 3. PNG
 
@@ -242,11 +241,13 @@ and record in EXIF tag =0x0112= how to turn them. stb ignores it, so
 =jpeg-orientation= walks the APP1 segment's little TIFF directory for that one
 tag and =reorient= applies it (all eight cases, the mirrored ones included).
 
-Ruled out: a pure-Lisp JPEG decoder (the size and the risk above, for a format
-where a mature public-domain decoder exists); =libjpeg-turbo= (~600 KB and a
-SIMD build for no visible gain in a preview). For lossy WebP, =libwebp= is the
-only realistic route: =libwebp.so.7= is 600 KB and pulls =libsharpyuv= besides
-libc/libm — an /option/ recorded here, deliberately not taken.
+Ruled out:
+
+- *A pure-Lisp JPEG decoder.* The size and risk above, for a format with a mature
+  public-domain decoder.
+- *=libjpeg-turbo=.* ~600 KB and a SIMD build, for no visible gain in a preview.
+- *=libwebp= for lossy WebP.* The only realistic route, but =libwebp.so.7= is
+  600 KB and pulls =libsharpyuv= besides libc/libm. An option, not taken.
 
 * 5. GIF — LZW
 
@@ -327,7 +328,7 @@ mean difference is 0.65/255 (the box edges are placed slightly differently).
 | TIFF              | A container of /everything/ (LZW, JPEG, Deflate, planar, tiles, 32-bit float). Uncompressed + LZW TIFF would be cheap with the GIF and inflate code if ever needed |
 | SVG               | Not an image but a program: XML + CSS + path rasterising. =librsvg= drags in cairo, pango, glib                                                                    |
 | PDF               | A page-description language with fonts; =mupdf= / =poppler=                                                                                                        |
-| Video             | Container + codec; the same story as AVIF, many times over                                                                                                         |
+| Video             | Container + codec, AVIF's story many times over. The file manager previews a frame cut by the host's =ffmpeg= instead ([[file:file-manager.org][file-manager.org]] §6) |
 | Animation         | GIF and WebP previews show the first frame                                                                                                                         |
 | Colour management | ICC profiles, PNG =gAMA=/=cHRM= are ignored — pixels are taken as sRGB                                                                                             |
 | 16-bit precision  | Rounded to 8 bits: the framebuffer has 8 per channel                                                                                                               |
@@ -338,7 +339,7 @@ magic bytes, so the file manager can say "HEIC — no preview" rather than
 
 * 10. Measured
 
-Host numbers — Intel i7-1065G7 (laptop), SBCL 2.6.8 (=./sbcl=), files loaded with
+Host numbers — Intel i7-1065G7, SBCL 2.6.8 (=./sbcl=), files loaded with
 plain =load= (SBCL compiles each top-level form natively as it loads, so this is
 the speed the image gets). Timer granularity is 4 ms.
 
@@ -357,15 +358,17 @@ the speed the image gets). Timer granularity is 4 ms.
 | loading =inflate.lisp= + =image.lisp= (compiling them) |         | ~1.3 s   |
 | heap the two files add (after GC)                      |         | ~0.75 MB |
 
-The guest's QEMU CPU is slower than this laptop; real hardware boots this same
-laptop. In the guest (tag #25, [[file:../check-files.lisp][check-files.lisp]]) =libstbi.so= loads from
-=/usr/lib/lol/= and decodes the stand-in disk's 320x200 progressive JPEG. The first lossless-WebP version took 560 ms for 3 MP; declaring types in
-the pixel loop and the transforms, and computing a per-byte average with the
-=(a & b) + ((a ^ b) & 0xFEFEFEFE) >> 1= bit trick, brought it to 200 ms.
+The guest's QEMU CPU is slower; on real hardware the numbers are the host's. In
+the guest ([[file:../check-files.lisp][check-files.lisp]]) =libstbi.so= loads from =/usr/lib/lol/= and decodes
+the stand-in disk's 320x200 progressive JPEG.
+
+Lossless WebP is the format that needed tuning: declaring types in the pixel loop
+and the transforms, and averaging bytes with the
+=(a & b) + ((a ^ b) & 0xFEFEFEFE) >> 1= bit trick, took 3 MP from 560 ms to 200 ms.
 
 * 11. Integration — what the file manager calls
 
-What it looks like in the guest at tag #25: a 320x200 JPEG from the stand-in disk,
+What it looks like in the guest: a 320x200 JPEG from the stand-in disk,
 through =libstbi.so=, scaled to fit the file manager's preview pane
 ([[file:file-manager.org][file-manager.org]] §6; =./refresh-screenshot.sh --scene files=).
 
@@ -395,16 +398,16 @@ through =libstbi.so=, scaled to fit the file manager's preview pane
 =decode-image-file= reads at most 256 MB. Decode once per file and keep the
 /scaled/ pixels: the full-size array of a 12 MP photo is 48 MB.
 
-Wiring it into the image (owned by whoever edits =build.sh=):
+How it's wired into the image:
 
-- =LISP_SOURCES=: add =$POC_DIR/inflate.lisp= then =$POC_DIR/image.lisp= (that
+- *=LISP_SOURCES=.* =$POC_DIR/inflate.lisp= then =$POC_DIR/image.lisp= (that
   order; both before anything that calls them). Each starts with its
   =defpackage=/=in-package= like [[file:../poc/clipboard.lisp][poc/clipboard.lisp]], and every top-level form
   reads with the standard reader and =*read-eval*= off, as =load-recording=
   requires.
-- =build.sh=: run =poc/build-stbi.sh "$POC_DIR/out"= (needs =gcc=; output is
+- *=build.sh=.* Runs =poc/build-stbi.sh "$POC_DIR/out"= (needs =gcc=; the output is
   gitignored).
-- =initramfs.sbcl.list=: =dir /usr/lib/lol 0755 0 0= and
+- *=initramfs.sbcl.list=.* =dir /usr/lib/lol 0755 0 0= and
   =file /usr/lib/lol/libstbi.so poc/out/libstbi.so 0755 0 0=.
 
 * 12. How it is tested
@@ -424,20 +427,18 @@ translucent images again after compositing onto a colour, against =-flatten=.
 Then every fixture is truncated or byte-flipped 12 ways (900 damaged files): none
 makes =decode-image= signal.
 
-Findings that are /not/ bugs, recorded so nobody re-investigates them:
+*Not bugs* — recorded so nobody re-investigates them:
 
 - *4-bit and 5/6-bit BMP channels differ from ImageMagick by up to 15 and 1.*
   We scale an n-bit value exactly (4-bit 15 -> 255, i.e. x17); ImageMagick
   shifts (15 -> 240). The test allows exactly that difference.
 - *16-bit grey PNG differs by 1.* We round 16 -> 8 bits (as libpng does);
   ImageMagick truncates for grey (it rounds for RGB, which matches exactly).
-- *ImageMagick's =-orient= writes no EXIF tag* into a picture that has no EXIF
-  profile, so the first orientation tests compared an unrotated image with an
-  unrotated image and passed vacuously. The test now splices a minimal APP1
-  segment carrying only tag =0x0112=.
-- An early run of the gzip-corruption test reported one damaged file
-  "slipping through" every check. Its "damage" was =(setf byte (random 256))=,
-  which leaves the byte unchanged one time in 256 (a 1-in-3 chance over 100
-  flips) — the likeliest explanation, and a test artifact, not a finding. The test now XORs with a non-zero byte. (A change /can/ still
-  legitimately pass: the unused padding bits of a stream's last byte are covered
-  by no checksum.)
+- *ImageMagick's =-orient= writes no EXIF tag* into a picture without an EXIF
+  profile, so orientation tests built that way compare an unrotated image with
+  itself and pass vacuously. The test splices a minimal APP1 segment carrying only
+  tag =0x0112=.
+- *A "damaged" gzip that decodes cleanly* is a test artifact if the damage was
+  =(setf byte (random 256))=: that leaves the byte unchanged one time in 256. The
+  test XORs with a non-zero byte. A real change /can/ still pass: the unused
+  padding bits of a stream's last byte are covered by no checksum.

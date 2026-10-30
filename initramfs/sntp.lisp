@@ -29,7 +29,7 @@
 ;;;; a single queued signal carrying the new time (preinit.c, ROOTD_SIG_SETTIME). A
 ;;;; diskless boot still runs as root and sets it directly.
 ;;;;
-;;;; The honest weakness, said out loud (agent.org §0.4): SNTP is unauthenticated, so
+;;;; The honest weakness, said out loud (agent.org §11): SNTP is unauthenticated, so
 ;;;; anyone on the path can lie about the time, and we then use that time to judge
 ;;;; certificates. Universally accepted, still a weakness; the RTC is the cross-check
 ;;;; (we refuse to step to a time before 2026, and lol-rootd refuses it too).

@@ -1,4 +1,4 @@
-;;;; x11-test.lisp — the X11 host backend's loop, turned headless (doc/x11.org, morphic.org §13).
+;;;; x11-test.lisp — the X11 host backend's loop, turned headless (doc/x11.org, morphic.org §10).
 ;;;;
 ;;;;     sbcl --script poc/x11-test.lisp        ; exits 0 if every check passes
 ;;;;

@@ -1,6 +1,6 @@
 ;;;; player.lisp — play a video with the host's MPlayer, full screen, then come back.
 ;;;;
-;;;; doc/screencast.org §8 (step 4 of §10). We do not build a player (the user's call,
+;;;; doc/screencast.org §8.2. We do not build a player (the user's call,
 ;;;; 2026-10-17): decoding, A/V sync, seeking and the sound are MPlayer's, the host's
 ;;;; own, run in the default container. Our part is the screen and the keys.
 ;;;;

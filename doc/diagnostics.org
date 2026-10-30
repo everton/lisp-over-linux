@@ -1,113 +1,99 @@
 #+TITLE: Diagnostics — what the machine was doing when it stopped
 #+STARTUP: overview
 
-On 2026-10-15 a session on the laptop *froze* while the agent was working, and left
-almost nothing behind: =~/.lol/log/network.log= stopped three minutes after boot,
-and nothing else recorded the Lisp heap, the threads or the kernel. This doc is
-what was built so that the next freeze explains itself — in
-[[file:../initramfs/session-log.lisp][=initramfs/session-log.lisp=]], with a little help from
-[[file:../initramfs/preinit.c][=preinit.c=]] and a gzip writer in [[file:../poc/deflate.lisp][=poc/deflate.lisp=]].
+Under =KD_GRAPHICS= a frozen screen looks the same whatever froze it. This doc
+covers the logs and watchers that make a freeze explain itself afterwards: what
+each cause looks like, what's written to =~/.lol/log/=, and how to read it from the
+host. Code: [[file:../initramfs/session-log.lisp][=initramfs/session-log.lisp=]], with help from [[file:../initramfs/preinit.c][=preinit.c=]] and a
+gzip writer in [[file:../poc/deflate.lisp][=poc/deflate.lisp=]].
 
 * 1. Four ways a screen "freezes"
 
 The environment draws into =/dev/fb0= with the console switched to =KD_GRAPHICS=
 ([[file:framebuffer.org][framebuffer.org]]): the kernel stops painting text, so *whatever happens underneath,
-the last frame stays on screen*. A frozen picture is therefore one symptom with at
-least four causes, and each needs a different witness.
+the last frame stays on screen*. One symptom, at least four causes, each needing a
+different witness:
 
-1. *The environment's thread is stuck.* It is one loop: sleep in =poll(2)= until a
+1. *The environment's thread is stuck.* It's one loop: sleep in =poll(2)= until a
    key, a click or a deadline, do the work, sleep again. If the work never ends — a
    loop, a wait on a lock — nothing repaints. An agent's =lisp-eval= runs *on this
-   thread*, by design ([[file:../initramfs/agent.lisp::defun post-job-and-wait][=post-job-and-wait=]]): that is how its changes land in the
+   thread* by design ([[file:../initramfs/agent.lisp::defun post-job-and-wait][=post-job-and-wait=]]), which is how its changes land in the
    live image.
-2. *A deadlock* between that thread and another (the agent's turn, OpenSSL's setup
+2. *A deadlock* between that thread and another (an agent turn, OpenSSL's setup
    lock): case 1 with a partner.
-3. *PID 1 is dead.* Found by reading, then confirmed — two separate ways:
+3. *PID 1 is dead.* Two ways to die silently, both confirmed:
    - *An unhandled error on any background thread quits the whole process.* The
-     image is saved from a =--non-interactive= build, and =--non-interactive=
-     implies =--disable-debugger=, which installs
-     =SB-DEBUG::DEBUGGER-DISABLED-HOOK=; =save-lisp-and-die= keeps it. Checked on
-     the built =lisp-init=: =(make-thread (lambda () (error "boom")))= printed
-     /unhandled condition in --disable-debugger mode, quitting/ and the process
-     exited. As PID 1, exiting is a *kernel panic* ("Attempted to kill init!"),
-     drawn on a console nobody can see.
-   - *A fatal runtime error waits forever.* When the C runtime cannot go on —
-     "Heap exhausted, game over", a GC invariant — it calls =lose()=
-     ([[file:../sbcl/src/runtime/interr.c::void enable_lossage_handler][=sbcl/src/runtime/interr.c=]]). Unless SBCL was started with
-     =--disable-ldb=, =runtime.c= has called =enable_lossage_handler()=, so =lose()=
-     enters *LDB*, SBCL's low-level debugger, which reads commands from the
-     console. It waits there. The host test proves both halves on a plain SBCL (§7).
-   - Running out of heap was not far-fetched: SBCL's default *dynamic space* (the
-     heap's ceiling) is 1 GiB, and the agent, Chrome's screencast frames and the
-     glyph cache all allocate.
-4. *The kernel is stuck* (a driver, the Wi-Fi firmware, the display). No Lisp code
-   sees that. §6.
+     image is saved from a =--non-interactive= build, which implies
+     =--disable-debugger= and installs =SB-DEBUG::DEBUGGER-DISABLED-HOOK=;
+     =save-lisp-and-die= keeps it. On the built =lisp-init=,
+     =(make-thread (lambda () (error "boom")))= printed /unhandled condition in
+     --disable-debugger mode, quitting/ and exited. As PID 1 that's a kernel panic
+     ("Attempted to kill init!") on a console nobody sees.
+   - *A fatal runtime error waits forever.* When the C runtime can't go on ("Heap
+     exhausted, game over", a GC invariant) it calls =lose()=
+     ([[file:../sbcl/src/runtime/interr.c::void enable_lossage_handler][=sbcl/src/runtime/interr.c=]]). Unless SBCL started with =--disable-ldb=,
+     =runtime.c= has called =enable_lossage_handler()=, so =lose()= enters *LDB*,
+     SBCL's low-level debugger, which waits for commands on the console.
+   - Running out of heap is plausible: SBCL's default *dynamic space* (the heap's
+     ceiling) is 1 GiB, and the agent, Chrome's screencast frames and the glyph
+     cache all allocate.
+4. *The kernel is stuck* (a driver, Wi-Fi firmware, the display). No Lisp code sees
+   that. §6.
 
-A fifth, found on the laptop on 2026-10-17 and a special case of the first: *the
-console was stopped*. A terminal's line discipline has software flow control:
-with the =IXON= input flag on, the byte Ctrl-S (XOFF, "transmit off") is taken by
-the kernel — it never reaches the program — and *stops the terminal's output*;
-every later =write(2)= to it blocks until a Ctrl-Q (XON). The environment's raw
-mode cleared =ICANON=, =ECHO= and =ISIG= but left =IXON= on, so a =C-s= typed in it
-(alone, or inside =C-x C-s=) stopped the console silently, and the freeze came
-later, at the next write: a Workspace =(play …)= whose =defun= had not been
-evaluated made the compiler print "undefined function: PLAY" to =*error-output*=,
-which is the console, and the environment's thread waited in
-=FLUSH-OUTPUT-BUFFER= — the STALL report (§3) showed exactly that frame. Pressing
-=C-q= would have released it. Fixed twice: raw mode clears =IXON= and =IXOFF=
-([[file:../initramfs/line-editor.lisp::defconstant +ixon][line-editor.lisp]], so =C-s= / =C-q= are keys like any other), and the Workspace's
-=ws-eval= captures =*error-output*= as it does =*standard-output*=, so a warning
-lands in the Workspace and not on a console nobody sees. =check-clipboard.lisp=
-section L asserts both; the freeze was reproduced in QEMU first (after a QMP
-=C-s=, a write to =*stderr*= blocked; after =C-q= it went through).
+** A special case of 1: the stopped console
 
-The same test found a second key that does it, which no termios flag governs:
-*Scroll Lock*. The console's default keymap binds it to =Hold= (=K_HOLD=,
-=0x0209=; =defkeymap.c_shipped= has it at keycode 70 in the plain and Alt tables),
-and the VT's =fn_hold= ([[file:../linux/drivers/tty/vt/keyboard.c::static void fn_hold][=drivers/tty/vt/keyboard.c=]]) calls =stop_tty()= itself — the
-console stops whatever =IXON= says. The laptop's own keyboard has no Scroll Lock;
-an external one does. Now [[file:../initramfs/fb-browser.lisp::defun unbind-console-hold][=unbind-console-hold=]] rewrites every keymap entry that
-holds =Hold= on that key to =K_HOLE= (VoidSymbol) when the environment starts,
-through =KDGKBENT= / =KDSKBENT= (=0x4B46= / =0x4B47=, the latter needing
-=CAP_SYS_TTY_CONFIG=, one of PID 1's five capabilities) — the way
-=unbind-console-ctrl-dot= already took Compose off =Ctrl-.=. Section L asserts
-that a QMP =scroll_lock= no longer stops the console.
+A terminal's line discipline has software flow control. With the =IXON= input flag
+on, Ctrl-S (XOFF) is taken by the kernel — it never reaches the program — and
+*stops the terminal's output*; every later =write(2)= to it blocks until Ctrl-Q
+(XON).
 
-And the Workspace's message got shorter on the way: =ws-eval= now keeps what the
-compiler said apart from what the form printed, as one short note per message
-(=ws-compiler-notes=). =C-x C-e= on =(zz-nothing 1 2)= says only
-=(ZZ-NOTHING 1 2) error: The function ZZ-NOTHING is undefined.=, and a =defun= that
-calls something undefined says ~=> ZZ-F   [undefined function: ZZ-BAR]~.
+- *How it froze.* Raw mode cleared =ICANON=, =ECHO= and =ISIG= but left =IXON= on.
+  A =C-s= (alone or in =C-x C-s=) stopped the console silently; the freeze came at
+  the next write, e.g. a compiler warning printed to =*error-output*= (the
+  console), with the thread waiting in =FLUSH-OUTPUT-BUFFER= — exactly what the
+  STALL report (§3) showed.
+- *The fixes.* Raw mode clears =IXON= and =IXOFF= ([[file:../initramfs/line-editor.lisp::defconstant +ixon][line-editor.lisp]]), so =C-s= /
+  =C-q= are ordinary keys. The Workspace's =ws-eval= captures =*error-output*= as it
+  does =*standard-output*=, so a warning lands in the Workspace as a short note
+  (=ws-compiler-notes=), e.g. ~=> ZZ-F   [undefined function: ZZ-BAR]~.
+- *Scroll Lock does it too*, whatever =IXON= says. The console's default keymap
+  binds it to =Hold= (=K_HOLD=, =0x0209=; keycode 70 in the plain and Alt tables of
+  =defkeymap.c_shipped=), and the VT's =fn_hold=
+  ([[file:../linux/drivers/tty/vt/keyboard.c::static void fn_hold][=drivers/tty/vt/keyboard.c=]]) calls =stop_tty()= itself.
+  [[file:../initramfs/fb-browser.lisp::defun unbind-console-hold][=unbind-console-hold=]] rewrites every entry holding =Hold= on that key to =K_HOLE=
+  (VoidSymbol) when the environment starts, through =KDGKBENT= / =KDSKBENT=
+  (=0x4B46= / =0x4B47=; the latter needs =CAP_SYS_TTY_CONFIG=, one of PID 1's five
+  capabilities) — the way =unbind-console-ctrl-dot= takes Compose off =Ctrl-.=.
+- *Tested.* =check-clipboard.lisp= section L: after a QMP =C-s= a write to
+  =*stderr*= no longer blocks, and a QMP =scroll_lock= no longer stops the console.
 
 * 2. The logs
 
-Everything goes to =~/.lol/log/= — on the laptop that is the host's =/home=, which
-survives a power-button reset and is readable from Debian. A diskless boot (=HOME=
-is =/=) uses =/tmp/lol-log/=: gone at power-off, but readable over the net REPL,
-which is what the QEMU test does.
+Everything goes to =~/.lol/log/=, on the host's =/home=: it survives a
+power-button reset and is readable from the host OS. A diskless boot (=HOME= is
+=/=) uses =/tmp/lol-log/=, gone at power-off but readable over the net REPL, which
+is what the QEMU tests do.
 
 | file          | written by                                         | holds                                                                                                                                                                                                                    |
 |---------------+----------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | =session.log= | [[file:../initramfs/session-log.lisp::defun session-log][=session-log=]], from every thread                   | the boot, entering/leaving the environment, every agent turn and tool call (with its input, clipped) and how it ended, retries, errors caught and uncaught, debugger entries, the *pulse*, *STALL* reports, the shutdown |
 | =stderr.log=  | file descriptor 2 — the C runtime, child processes | =lose()='s last words and backtrace, heap-exhaustion reports, Chrome's and =wpa_supplicant='s complaints                                                                                                                 |
-| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                      | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b) — unchanged in content                                                                                                                                                           |
-| =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])                    | the kernel's own log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also said in =session.log= as =kernel: …=                                                                                     |
+| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                      | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b)                                                                                                                                                                                  |
+| =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])                    | the kernel's log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also written to =session.log= as =kernel: …=                                                                                     |
 
-*Every line is =fsync='d.* A line still in the page cache is lost to a hard reset,
-and a hard reset is exactly when it is wanted. At a few lines a second that costs
-nothing measurable. =kernel.log= is drained every 2 s with one =fsync= per batch
-(the boot alone is a thousand records), so its last two seconds can be missing —
-the EFI pstore of §6 is what catches a dying kernel's last words.
-
-*Private.* The logs are created 0600 and their directories 0700: they quote what
-the agent ran and what the network did. A =file-write= call is logged as its path
-and size, never its content ([[file:../initramfs/agent.lisp::defun call-input-for-log][=call-input-for-log=]]) — a file is where a secret would
-be; forms and commands are kept, clipped, because after a freeze they are the
-evidence.
+- *Every line is =fsync='d.* A line still in the page cache is lost to a hard reset,
+  which is exactly when it's wanted. At a few lines a second it costs nothing
+  measurable. =kernel.log= is drained every 2 s with one =fsync= per batch (the
+  boot alone is a thousand records), so its last two seconds can be missing; §6's
+  EFI pstore catches a dying kernel's last words.
+- *Private.* Files 0600, directories 0700: they quote what the agent ran and what
+  the network did. A =file-write= call is logged as path and size, never content
+  ([[file:../initramfs/agent.lisp::defun call-input-for-log][=call-input-for-log=]]); forms and commands are kept, clipped, because after a
+  freeze they're the evidence.
 
 A line is a UTC stamp, the thread, the event:
 #+begin_example
-2026-10-16 03:16:21Z [main] boot: pid 1 uid 1000, SBCL 2.6.8, heap 4096 MB, kernel 7.2.5, log /home/everton/.lol/log/
+2026-10-16 03:16:21Z [main] boot: pid 1 uid 1000, SBCL 2.6.8, heap 4096 MB, kernel 7.2.5, log /home/<user>/.lol/log/
 2026-10-16 03:16:21Z [main] previous session: ENDED WITHOUT A SHUTDOWN — its last line was: …
 2026-10-16 03:16:26Z [lol-watch] pulse  main idle | heap 59/4096 MB, after GC 0 | 0 GCs | 4 threads | 1.8 GB free
 2026-10-16 03:17:02Z [agent turn 1] agent: conversation 1 calls lisp-eval {"form":"(…)"}
@@ -116,66 +102,70 @@ A line is a UTC stamp, the thread, the event:
 ** Taking file descriptor 2
 
 =stderr.log= is the only way to hear the C runtime, which writes straight to fd 2.
-[[file:../initramfs/session-log.lisp::defun capture-stderr][=capture-stderr=]] does it in three system calls: =dup(2)= keeps the console on a new
-descriptor; =dup2(log, 2)= puts the log file /at/ 2 — every later write to fd 2, from
-C or from a child that inherits it, lands there; and Lisp's =*ERROR-OUTPUT*=, a
-synonym for =SB-SYS:*STDERR*=, is pointed at a fresh stream on the kept console
-descriptor, so the supervisor's menu and the REPL still show Lisp's own errors.
-The file is bounded by the watcher: past 16 MB it is truncated (fd 2 is =O_APPEND=,
-so writers carry on at the new end).
+[[file:../initramfs/session-log.lisp::defun capture-stderr][=capture-stderr=]] does it in three steps:
 
-*Opened =O_DSYNC=*, so each write reaches the disk before it returns. Found by
-=check-crash.lisp=: without it, =lose()='s dying message reached =stderr.log= only in
-the page cache — and the panic reboots in 10 s, before the kernel's 30 s writeback
-(=vm.dirty_expire_centisecs= = 3000), so it was lost every time.
+1. =dup(2)= keeps the console on a new descriptor;
+2. =dup2(log, 2)= puts the log file /at/ 2, so every later write to fd 2, from C or
+   from a child that inherits it, lands there;
+3. Lisp's =*ERROR-OUTPUT*=, a synonym for =SB-SYS:*STDERR*=, gets a fresh stream on
+   the kept console descriptor, so the supervisor's menu and the REPL still show
+   Lisp's own errors.
 
-*Let go of at power-off.* A file open for writing is all it takes for the kernel to
-refuse a read-only remount of its filesystem (=EBUSY=), and fd 2 holds =stderr.log=
-open for the whole session — so =lol-rootd='s remount of =/home= failed and the
-power-off fell back to "synced only". Found by =check-files.lisp= on 2026-10-16, a
-regression of the day fd 2 moved here. [[file:../initramfs/session-log.lisp::defun session-log-close][=session-log-close=]], after the shutdown line,
-now points fd 2 back at the console ([[file:../initramfs/session-log.lisp::defun stderr-to-console][=stderr-to-console=]]), and
-[[file:../initramfs/process.lisp::defun release-disk][=release-disk=]] closes the logs itself when its caller has not. *Ruled out:* children
-holding it. Every =run-program= here passes =:error= =nil= or a stream (SBCL's
-default follows =:output=, which defaults to =/dev/null=), and a pty child's fd 2 is
-its pty; the one exception, the supervisor menu's worker (=:error t=), is not
-running at power-off. The other logs are opened per line and closed again.
+- *Bounded.* Past 16 MB the watcher truncates it (fd 2 is =O_APPEND=, so writers
+  carry on at the new end).
+- *Opened =O_DSYNC=*, so each write reaches the disk before it returns. Without it,
+  =lose()='s dying message sat in the page cache, and the panic reboot (10 s) beat
+  the kernel's 30 s writeback (=vm.dirty_expire_centisecs= = 3000) every time.
+  =check-crash.lisp= caught this.
+- *Let go of at power-off.* A file open for writing makes the kernel refuse a
+  read-only remount of its filesystem (=EBUSY=), so =lol-rootd='s remount of =/home=
+  failed while fd 2 held =stderr.log=. [[file:../initramfs/session-log.lisp::defun session-log-close][=session-log-close=]], after the shutdown
+  line, points fd 2 back at the console ([[file:../initramfs/session-log.lisp::defun stderr-to-console][=stderr-to-console=]]), and
+  [[file:../initramfs/process.lisp::defun release-disk][=release-disk=]] closes the logs itself when its caller hasn't.
+- *Ruled out: children holding it.* Every =run-program= passes =:error= =nil= or a
+  stream (SBCL's default follows =:output=, which defaults to =/dev/null=), and a
+  pty child's fd 2 is its pty. The one exception, the supervisor menu's worker
+  (=:error t=), isn't running at power-off. The other logs are opened per line and
+  closed again.
 
 * 3. The pulse and the stall watcher
 
 One thread, =lol-watch=, wakes every second ([[file:../initramfs/session-log.lisp::defun watch-loop][=watch-loop=]]).
 
-*The pulse.* Every 5 s it writes one line: the environment's thread (idle, or busy
-for how long and doing what), the heap in use against its ceiling and what the last
-GC left, the GC count, the thread count, =MemAvailable=. After a freeze, *the gap
-after the last pulse says when*, and the pulses before it say what memory looked
-like on the way there. Post-GC heap over 80% is logged once as =HEAP HIGH=.
+- *The pulse.* Every 5 s, one line: the environment's thread (idle, or busy for how
+  long doing what), heap in use against its ceiling and what the last GC left, GC
+  count, thread count, =MemAvailable=. After a freeze, *the gap after the last pulse
+  says when*, and the pulses before it show memory on the way there. Post-GC heap
+  over 80% is logged once as =HEAP HIGH=.
+- *Idle or busy.* Every loop in the environment — main loop, Spotter, debugger,
+  menus, prompts — sleeps in one function, [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]], which sets
+  =*main-state*= to =:idle= going into =poll(2)= and =:busy= coming out. /Busy for
+  ten seconds/ means one piece of work hasn't returned to wait for input: the
+  definition of a frozen screen. =:away= is the text console, not watched. These are
+  global =SETF=s, not bindings, because a =LET= is private to its thread and another
+  thread reads them.
+- *A STALL report*, at 10 s, 60 s and 300 s of busy ([[file:../initramfs/session-log.lisp::defun watch-step][=watch-step=]]), is the whole
+  picture: the named activity if any (e.g. =agent tool lisp-eval (conversation 1)=,
+  via [[file:../initramfs/session-log.lisp::defmacro with-main-activity][=with-main-activity=]]), who holds each watched lock, and *every thread's
+  backtrace*. One more line when the thread comes back: =responsive again (it was
+  busy 13.0s)=.
 
-*Idle or busy.* Every loop in the environment — the main loop, the Spotter, the
-debugger, menus, prompts — sleeps in one function, [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]], which now
-sets =*main-state*= to =:idle= going into =poll(2)= and =:busy= coming out. So /busy
-for ten seconds/ means one piece of work has run ten seconds without returning to
-wait for input — the definition of a frozen screen. =:away= is the text console,
-which is not watched. These are global =SETF=s, not bindings, because a =LET= is
-private to its thread and the point is that /another/ thread reads them.
+** Reading another thread's stack
 
-*A STALL report*, at 10 s, 60 s and 300 s of busy ([[file:../initramfs/session-log.lisp::defun watch-step][=watch-step=]]), is the whole
-picture: the activity if one was named (an agent tool says
-=agent tool lisp-eval (conversation 1)=, via [[file:../initramfs/session-log.lisp::defmacro with-main-activity][=with-main-activity=]]), who holds each
-watched lock, and *every thread's backtrace*. Then one line when the thread comes
-back: =responsive again (it was busy 13.0s)=.
+A stack can only be walked from inside the thread that owns it.
+[[file:../initramfs/session-log.lisp::defun thread-backtrace][=thread-backtrace=]] sends the thread an =INTERRUPT-THREAD= whose function prints the
+backtrace into a box and returns, then waits up to 2 s.
 
-*How you read another thread's stack.* You cannot, from outside: a stack is walked
-from inside the thread that owns it. [[file:../initramfs/session-log.lisp::defun thread-backtrace][=thread-backtrace=]] sends the thread an
-=INTERRUPT-THREAD= whose function prints the backtrace into a box and returns, then
-waits up to 2 s. A thread can refuse: SBCL delays an interruption while interrupts
-are disabled (=WITHOUT-INTERRUPTS=, parts of the GC). The report then says /no
-answer in 2.0s: interrupts disabled/ — which is itself a finding. The interruption
-is the same signal SBCL already sends every thread for each GC, so a blocking
-system call it breaks is one every GC breaks already.
+- *A thread can refuse.* SBCL delays an interruption while interrupts are disabled
+  (=WITHOUT-INTERRUPTS=, parts of the GC). The report then says /no answer in 2.0s:
+  interrupts disabled/ — itself a finding.
+- *It's harmless.* The interruption is the same signal SBCL sends every thread for
+  each GC, so any blocking system call it breaks, every GC breaks already.
+- *Arguments are printed short* (=*print-length* 6=, =*print-level* 3=): a frame's
+  argument may be a whole conversation.
 
-Arguments are printed short (=*print-length* 6=, =*print-level* 3=): a frame's
-argument may be a whole conversation. A real report, from the guest test:
+A real report, from the guest test (frame 0 is the interruption's own entry; the
+stuck code starts at 1):
 #+begin_example
 [lol-watch] STALL: the environment's thread has been busy 10s — zz test wedge
 [lol-watch]   thread [main] backtrace:
@@ -185,111 +175,112 @@ argument may be a whole conversation. A real report, from the guest test:
     …
 [lol-watch] the environment's thread is responsive again (it was busy 13.0s)
 #+end_example
-(Frame 0 is the interruption's own entry; the stuck code starts at 1.)
 
-*Stuck inside C, the answer comes back with a hole.* =check-diagnostics.lisp= wedges
-the thread in libc's =sleep(3)=: the interruption still runs, but the walk cannot
-get back /through/ libc, which is built without frame pointers — frame 0 reads
-=bogus stack frame= and the Lisp function that made the call is missing; the walk
-resumes a frame or two further out. Measured 2026-10-16. So for anything that can
-block in C (OpenSSL, a pipe to Chrome, a container), the activity label
-(=with-main-activity=) is what names the culprit.
+*Stuck inside C, the backtrace has a hole.* Wedged in libc's =sleep(3)=, the
+interruption still runs, but the walk can't get back /through/ libc, which is built
+without frame pointers: frame 0 reads =bogus stack frame=, the Lisp function that
+made the call is missing, and the walk resumes a frame or two further out. So for
+anything that can block in C (OpenSSL, a pipe to Chrome, a container),
+=with-main-activity='s label is what names the culprit.
 
-*LONG: other threads that run too long.* A STALL is about the environment's thread,
-because that is what freezes the screen. An agent turn stuck in a read freezes
-nothing — but it is the next question. A module names its busy threads with
-[[file:../initramfs/session-log.lisp::defun watch-busy-threads][=watch-busy-threads=]]; =agent.lisp= names each conversation's running turn, except
-one waiting on a posted job or an approval (that is your time, not its). Past 5 and
-15 minutes the watcher logs /LONG: agent turn 3 has been busy 300s/ with that
-thread's backtrace.
+** Other threads and locks
 
-*Which locks.* A module registers the mutexes worth naming with [[file:../initramfs/session-log.lisp::defun watch-locks][=watch-locks=]]:
-=agent.lisp= its conversations' locks, =tls.lisp= OpenSSL's setup lock. A deadlock
-then reads as /lock "conversation" held by [agent turn 3]/ next to a main-thread
-backtrace waiting for it.
+- *LONG reports.* A STALL is about the environment's thread, because that's what
+  freezes the screen. An agent turn stuck in a read freezes nothing, but it's the
+  next question. A module names its busy threads with
+  [[file:../initramfs/session-log.lisp::defun watch-busy-threads][=watch-busy-threads=]]; =agent.lisp= names each conversation's running turn, except
+  while it waits on a posted job or an approval (your time, not its). Past 5 and 15
+  minutes the watcher logs /LONG: agent turn 3 has been busy 300s/ with that
+  thread's backtrace.
+- *Watched locks.* A module registers mutexes with [[file:../initramfs/session-log.lisp::defun watch-locks][=watch-locks=]] — =agent.lisp= its
+  conversations' locks, =tls.lisp= OpenSSL's setup lock. A deadlock then reads as
+  /lock "conversation" held by [agent turn 3]/ beside a main-thread backtrace
+  waiting for it.
 
 * 4. Dying loudly instead of silently
 
 - *An unhandled error ends only its own thread.* [[file:../initramfs/session-log.lisp::defun log-unhandled][=log-unhandled=]] replaces the
   disabled-debugger hook: it logs =UNHANDLED <type>: <message>= with the backtrace,
   and on a background thread calls =ABORT-THREAD= (which runs the thread's
-  =UNWIND-PROTECT= cleanups). On the main thread there is no one to hand it to, so
-  it logs and passes it to the old hook. The environment's own errors never get
-  here: its =HANDLER-BIND= opens the framebuffer debugger first, and that is now
-  logged too ([[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][=run-debugger-fb=]]).
-- *LDB is off.* [[file:../initramfs/session-log.lisp::defun disable-ldb][=disable-ldb=]] calls the runtime's own =disable_lossage_handler=
-  (exported for exactly this — SBCL's =DISABLE-DEBUGGER= calls it), restoring the
-  default handler: print a backtrace to fd 2 — =stderr.log= — and =exit(1)=. Every
-  role of the image does this first thing ([[file:../initramfs/supervisor.lisp::defun init-toplevel][=init-toplevel=]]), not only PID 1.
+  =UNWIND-PROTECT= cleanups). On the main thread there's no one to hand it to, so it
+  logs and passes it to the old hook. The environment's own errors never get here:
+  its =HANDLER-BIND= opens the framebuffer debugger first, which is logged too
+  ([[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][=run-debugger-fb=]]).
+- *A failing turn of the environment is survived.* An error in one turn of
+  =fb-cycle= (a key's command, a morph's drawing, a service) is caught by
+  [[file:../initramfs/fb-browser.lisp::defun guarded-fb-cycle][=guarded-fb-cycle=]]: logged with its backtrace ("a turn of the environment
+  failed"), shown on the status line, the whole screen marked for repair, and the
+  loop goes on with every tab. Three failed turns in a row — the error is in the
+  drawing itself — still leave.
+- *LDB is off.* [[file:../initramfs/session-log.lisp::defun disable-ldb][=disable-ldb=]] calls the runtime's =disable_lossage_handler=
+  (exported for this; SBCL's =DISABLE-DEBUGGER= calls it), restoring the default:
+  print a backtrace to fd 2 — =stderr.log= — and =exit(1)=. Every role of the image
+  does this first ([[file:../initramfs/supervisor.lisp::defun init-toplevel][=init-toplevel=]]), not only PID 1.
 - *A dead PID 1 reboots.* =exit(1)= from PID 1 is still a panic, and
   =CONFIG_PANIC_TIMEOUT=0= means a panic waits forever. preinit writes =10= to
-  =/proc/sys/kernel/panic= while it is still root: ten seconds after a panic the
-  machine resets, and the reason is already on the disk.
-- *A 4 GiB heap.* preinit now starts the Lisp with =--dynamic-space-size 4GB=. The
-  dynamic space is *reserved address space*, not memory: a page costs RAM only once
-  it is used, so a higher ceiling is free until it is needed. The runtime strips its
-  own options from =*posix-argv*= (checked: =sbcl --dynamic-space-size 2GB … foo=
-  leaves =("sbcl" "foo")=), so the supervisor still sees no role argument.
+  =/proc/sys/kernel/panic= while still root: ten seconds after a panic the machine
+  resets, with the reason already on disk.
+- *A 4 GiB heap.* preinit starts the Lisp with =--dynamic-space-size 4GB=. Dynamic
+  space is *reserved address space*, not memory: a page costs RAM only once used,
+  so a higher ceiling is free until needed. The runtime strips its own options from
+  =*posix-argv*= (=sbcl --dynamic-space-size 2GB … foo= leaves =("sbcl" "foo")=),
+  so the supervisor still sees no role argument.
 
 * 5. One session per file, archived at every boot
 
 [[file:../initramfs/session-log.lisp::defun session-boot][=session-boot=]] is the supervisor's first act, before anything else writes a line:
 
 1. *Set the last session aside.* Each non-empty live log is renamed
-   =session.20261016T031650Z.log= — the stamp is when it was *last written*, i.e.
-   when that session ended or died. If =session.log='s last line is not the
-   =shutdown:= line that [[file:../initramfs/process.lisp::defun power-off][=power-off=]] writes, the session did not end on purpose: the
-   new log says so, quoting that last line, and the status line says /the last
-   session ended without a shutdown/. (So the shutdown line stays last, nothing is
-   logged after it — =session-log-close=.)
+   =session.20261016T031650Z.log=, stamped with when it was *last written* — when
+   that session ended or died. If =session.log='s last line isn't the =shutdown:=
+   line [[file:../initramfs/process.lisp::defun power-off][=power-off=]] writes, the session didn't end on purpose: the new log says
+   so, quoting that last line, and the status line says /the last session ended
+   without a shutdown/. (So nothing is logged after the shutdown line —
+   =session-log-close=.)
 2. Take fd 2, turn LDB off, log the boot, install the hook, start =lol-watch=.
-3. *Archive in the background*, on a =log-archive= thread: gzip each set-aside log
-   into =~/.lol/log/archive/=, delete it, and keep only the newest 30 of each kind.
-   A crash midway leaves the plain file, and the next boot finishes it (the gzip is
-   written to =.tmp= and renamed, so a half-written archive never looks finished).
+3. *Archive in the background* on a =log-archive= thread: gzip each set-aside log
+   into =~/.lol/log/archive/=, delete it, keep the newest 30 of each kind. The gzip
+   is written to =.tmp= and renamed, so a crash midway leaves the plain file for
+   the next boot, never a half-written archive that looks finished.
 
-Right after =session-boot=, and so the first thing the new log records, the
-supervisor runs [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]] (2026-10-17): a file left at a
-pre-2026-10-17 place (=~/.config/lol/…=, =~/.local/share/lol=, =~/.local/state/lol=)
-is renamed into =~/.lol/=, one =lol-home: moved OLD -> NEW= line each, or
-=lol-home: NOT moved …= with the reason when the new place exists or the rename
-fails ([[file:session-persistence.org][session-persistence.org]] §3). =grep lol-home ~/.lol/log/session.log= shows
-what a boot moved. The logs themselves did not move: =~/.lol/log/= was already
-there.
+Right after, the supervisor runs [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]], which moves files left at the
+old XDG places into =~/.lol/= and logs one =lol-home: moved OLD -> NEW= (or =NOT
+moved …= with the reason) line each ([[file:session-persistence.org][session-persistence.org]] §3).
+=grep lol-home ~/.lol/log/session.log= shows what a boot moved.
 
-A log that passes 16 MB mid-session is set aside the same way and started afresh,
-so even a session that runs for weeks cannot fill the disk.
+A log that passes 16 MB mid-session is set aside the same way and restarted, so a
+session running for weeks can't fill the disk.
 
-*Why our own gzip.* The image has no =gzip= binary and gets no new ones casually.
-=poc/inflate.lisp= already /read/ DEFLATE; the /writer/ lived in
-=host-client/png.lisp= (PNG screenshots), a host tool. It moved to
-[[file:../poc/deflate.lisp][=poc/deflate.lisp=]] (=lol.deflate=), which both now load. It is LZ77 with DEFLATE's
-fixed Huffman code: about 10% of the text on a real =network.log= (=gzip -9=: 8.4%),
-about 10 MB/s, and every file it writes passes =gzip -t=.
+*Why our own gzip.* The image has no =gzip= binary and doesn't take new ones
+casually. =poc/inflate.lisp= already read DEFLATE; the writer, from the PNG
+screenshot tool, lives in [[file:../poc/deflate.lisp][=poc/deflate.lisp=]] (=lol.deflate=), shared by both. It's
+LZ77 with DEFLATE's fixed Huffman code: about 10% of the text on a real
+=network.log= (=gzip -9=: 8.4%), about 10 MB/s, and every file passes =gzip -t=.
 
 * 6. When the kernel is the one stuck — tag #28
 
-A kernel that stops cannot be heard from Lisp: the pulses simply end, the same as a
+A kernel that stops can't be heard from Lisp: the pulses just end, as a
 whole-process GC deadlock would look. Kernel tag #28 ([[file:kernel-config.org][kernel-config.org]] §6) adds the
 kernel's own witnesses:
-- *Magic SysRq.* Hold Alt and SysRq (PrintScreen) and press a letter. It is an input
+
+- *Magic SysRq.* Hold Alt and SysRq (PrintScreen) and press a letter. It's an input
   filter inside the kernel ([[file:../linux/drivers/tty/sysrq.c::static struct input_handler sysrq_handler][=drivers/tty/sysrq.c=]]), so it works whatever the Lisp is
   doing and under =KD_GRAPHICS=. On a freeze, in this order:
-  - =w=: dump the blocked (uninterruptible) tasks to the kernel log; =t=: all tasks;
+  - =w=: dump blocked (uninterruptible) tasks to the kernel log; =t=: all tasks;
   - =s=, =u=: sync the disks, remount them read-only;
-  - =c=: panic on purpose — pstore then keeps the log, and =kernel.panic=10= reboots
+  - =c=: panic on purpose — pstore keeps the log, and =kernel.panic=10= reboots
     (=b= reboots at once, without the pstore record).
-- *The lockup and hung-task detectors* report a CPU stuck in the kernel (soft: with
-  interrupts on; hard: with them off, via the perf NMI) and a task in uninterruptible
-  sleep for 120 s. Report only — they never panic. While the Lisp still runs, the
-  =kmsg= thread copies those reports into =kernel.log= and =session.log=.
+- *Lockup and hung-task detectors* report a CPU stuck in the kernel (soft: with
+  interrupts on; hard: with them off, via the perf NMI) and a task in
+  uninterruptible sleep for 120 s. Report only, never panic. While the Lisp still
+  runs, the =kmsg= thread copies those reports into =kernel.log= and =session.log=.
 - *pstore on EFI variables.* On a panic the kernel writes the tail of its log into
-  EFI variables, which survive the reset. Our image does not read them: Debian does.
-  Its =/sys/fs/pstore= shows them on the next boot, and =systemd-pstore= (enabled on
-  the host) moves them to =/var/lib/systemd/pstore/= and frees the variables —
-  which matters, because the firmware's variable store is small.
+  EFI variables, which survive the reset. Our image doesn't read them; the host OS
+  does. On Debian, =/sys/fs/pstore= shows them on the next boot, and
+  =systemd-pstore= moves them to =/var/lib/systemd/pstore/= and frees the variables
+  — which matters, since the firmware's variable store is small.
 
-* 7. After a freeze, from Debian
+* 7. After a freeze, from the host
 
 #+begin_src sh
   ls -t ~/.lol/log/archive/ | head                      # newest first
@@ -298,57 +289,55 @@ kernel's own witnesses:
   zcat "$(ls -t ~/.lol/log/archive/kernel.*.gz | head -1)" | tail -40
   sudo ls /var/lib/systemd/pstore/                       # a kernel panic's log (§6)
 #+end_src
-Read it as: *when* did the pulses stop; was the last pulse =busy=, with what
-activity; is there a =STALL= (whose backtrace?), a =LONG=, an =UNHANDLED=, a =HEAP
-HIGH=, a =kernel:= line; what was the agent's last call. No stall and no error with
-pulses that just stop points at the kernel: look in pstore, and next time try
-Alt-SysRq-w then -c before holding the power button (§6).
+
+Read it as:
+
+- *When* did the pulses stop, and was the last one =busy=, with what activity?
+- Is there a =STALL= (whose backtrace?), a =LONG=, an =UNHANDLED=, a =HEAP HIGH=, a
+  =kernel:= line? What was the agent's last call?
+- *No stall, no error, pulses that just stop* points at the kernel: look in
+  pstore, and next time try Alt-SysRq-w then -c before holding the power button.
 
 * 8. Tests
 
 - [[file:../poc/session-log-test.lisp][=poc/session-log-test.lisp=]] (host, 44 checks): lines, the cap, set-aside and
   the clean/crash verdict, archive + read back (our inflate and =gzip -t=), pruning,
   a STALL naming the stuck function and the lock it holds, a LONG report, kmsg
-  records, file modes, an unhandled error ending only its thread, fd 2 captured and given back at close —
-  and *the LDB freeze itself*: a plain SBCL calling =lose()= is still waiting after
-  6 s; after =disable_lossage_handler= it exits with the message on stderr.
+  records, file modes, an unhandled error ending only its thread, fd 2 captured and
+  given back at close — and *the LDB freeze itself*: a plain SBCL calling =lose()=
+  is still waiting after 6 s; after =disable_lossage_handler= it exits with the
+  message on stderr.
 - [[file:../check-diagnostics.lisp][=check-diagnostics.lisp=]] (guest, 35 checks; with or without
-  =LOL_GUEST_DISK=test-disk.img=): the boot line, the 4 GiB heap,
-  =kernel.panic= = 10, fd 2, the pulse, idle while waiting — then the environment's
-  thread is made to spin 13 s (an =INTERRUPT-THREAD= into it from the net REPL) and
-  the STALL report, its activity, the backtrace through the spinning function and
-  its end are all asserted; the same stuck in libc's =sleep(3)= (§3's hole);
-  =kernel.log=, the 0600 modes, tag #28's SysRq, detectors and =efi_pstore=; an
-  unhandled error on a thread; archiving inside the image.
+  =LOL_GUEST_DISK=test-disk.img=): the boot line, the 4 GiB heap, =kernel.panic= =
+  10, fd 2, the pulse, idle while waiting; the environment's thread made to spin
+  13 s (an =INTERRUPT-THREAD= from the net REPL) and the STALL report, its activity,
+  the backtrace through the spinning function and its end; the same stuck in libc's
+  =sleep(3)= (§3's hole); =kernel.log=, the 0600 modes, tag #28's SysRq, detectors
+  and =efi_pstore=; an unhandled error on a thread; archiving; one failing turn of
+  the environment survived with both tabs, a failure every turn leaving.
 - [[file:../check-crash.lisp][=check-crash.lisp=]] (guest, 13 checks, three boots on a writable copy of
   =test-disk.img=): =lose()= in PID 1 → panic → reset in about 11 s; the next boot
   says the session ended without a shutdown (log and status line) and its archive
-  holds the dead session's log, its =stderr= (=lose()='s message — this is the test
-  that found the missing =O_DSYNC=) and its kernel log; a power-off is then
-  recognised as clean.
+  holds the dead session's log, its =stderr= (=lose()='s message — the test that
+  found the missing =O_DSYNC=) and its kernel log; a power-off is then recognised as
+  clean.
 - Host tests that load modules one by one load [[file:../poc/host-logging.lisp][=poc/host-logging.lisp=]] first: the
   modules log, and a host test must never write the real =~/.lol/log=.
 
 * 9. Should the agent run in its own process?
 
-Asked on the day of the freeze. Less changes than it seems: tools already run in
-the environment's image through a job queue, so a separate agent process would
-keep the conversation, HTTPS and JSON on its side and send tool calls back over a
-pipe to PID 1 — changes still land in the live image. It would protect PID 1 from
-the /client/ failing (its heap, OpenSSL); it would *not* protect it from a tool's
-=lisp-eval= wedging the environment's thread, which runs here either way. It
-costs the conversation as a live object to inspect (it becomes a view, like
-[[file:processes.org][processes.org]] §2's worker) and a second heap. Decision deferred until a STALL or
-an =UNHANDLED= in these logs says which part failed.
+Less changes than it seems. Tools already run in the environment's image through a
+job queue, so a separate agent process would keep the conversation, HTTPS and JSON
+on its side and send tool calls back over a pipe — changes still land in the live
+image.
 
-*Since 2026-10-17 the tools cannot wedge it for long* ([[file:agent.org][agent.org]] §14.11).
-=container-run= and =web-fetch= run on the turn's thread once approved, where C-g
-reaches them. =lisp-eval= stops after 60 s, and every tool's output is capped as it is
-written. The same review made a failing turn of the environment non-fatal. An error
-in one turn of =fb-cycle= (a key's command, a morph's drawing, a service) used to end
-the environment, and its tabs were dropped "to be safe". Now
-[[file:../initramfs/fb-browser.lisp::defun guarded-fb-cycle][=guarded-fb-cycle=]] logs it with its backtrace ("a turn of the environment
-failed"), says it on the status line, marks the whole screen for repair and goes
-on. Only three failed turns in a row, which means the error is in the drawing
-itself, still leave. Asserted by =check-diagnostics.lisp=: one failure keeps both
-tabs, and a failure every turn leaves.
+- *It would protect PID 1* from the /client/ failing (its heap, OpenSSL).
+- *It wouldn't protect it* from a tool's =lisp-eval= wedging the environment's
+  thread, which runs there either way.
+- *It would cost* the conversation as a live object to inspect (it becomes a view,
+  like [[file:processes.org][processes.org]] §2's worker) and a second heap.
+
+Deferred until a STALL or an =UNHANDLED= in these logs shows which part fails.
+Meanwhile the tools can't wedge it for long ([[file:agent.org][agent.org]] §7.5): =container-run= and
+=web-fetch= run on the turn's thread once approved, where C-g reaches them;
+=lisp-eval= stops after 60 s; every tool's output is capped as it's written.

@@ -13,14 +13,14 @@
 ;;;;   LOL_GUEST_DISK=test-disk.img — ext4, as on the laptop, so the uppers CAN live in
 ;;;;     ~/.lol/ct/<name>. The disk has an /etc but no Debian, so nothing can be
 ;;;;     executed inside: this mode asserts the LAYOUT lol-ct built, and re-asks the
-;;;;     §3.3 whole-root question on ext4.
+;;;;     whole-root question (doc/containers.org §9) on ext4.
 ;;;;
 ;;;; Host-root checks, cheapest first:
 ;;;;   - lol-ct is in the image and a host root is there;
-;;;;   - the §3.3 question, re-asked in the guest (recorded, not asserted);
+;;;;   - the whole-root question (§9), re-asked in the guest (recorded, not asserted);
 ;;;;   - inside you are yourself (uid 1000), with NO capabilities, as PID 2 of your
 ;;;;     own pid namespace, on hostname lol-default;
-;;;;   - a write to /etc works, and the host's apt dirs stay unwritable (§3.5);
+;;;;   - a write to /etc works, and the host's apt dirs stay unwritable (§4);
 ;;;;   - ruby loads openssl; rails answers -v (when the host has them);
 ;;;;   - a private PostgreSQL: initdb + pg_ctl start + psql + stop;
 ;;;;   - git status in a repository under /home;
@@ -63,7 +63,7 @@
 ;;; itself to the front of the command's first line of output.
 
 (defun probe-root-question ()
-  (format t "~&~%== §3.3 again: the whole root as a lower layer ==~%")
+  (format t "~&~%== §9 again: the whole root as a lower layer ==~%")
   (row "lol-ct --probe-root"
        (probe "(substitute #\\| #\\Newline (with-output-to-string (o) (sb-ext:run-program \"/sbin/lol-ct\" '(\"--probe-root\") :output o :error o)))" 20)))
 

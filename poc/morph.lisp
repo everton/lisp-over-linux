@@ -26,7 +26,7 @@
 ;;;; that. Coordinates are WORLD pixels, not owner-relative (as in Squeak): hit-testing
 ;;;; and damage are then plain rectangle comparisons, with no transform stack.
 ;;;;
-;;;; SURFACES (doc/morphic.org §12.4). A surface is a morph that draws its subtree into
+;;;; SURFACES (doc/morphic.org §3.4). A surface is a morph that draws its subtree into
 ;;;; a canvas of its OWN — a backing store — which the world's repair then copies onto
 ;;;; the screen: a window, so that moving it is a copy and never a redraw. Inside a
 ;;;; surface, morphs DRAW and TAKE EVENTS in the surface's coordinates (its top-left is
@@ -207,7 +207,7 @@
             :documentation "How many times SURFACE-REFRESH drew anything into the backing
    store — the tests' evidence that a moved window was copied, not redrawn."))
   (:documentation "A morph that draws its subtree into a backing store of its own,
-   which the world then copies onto the screen (doc/morphic.org §12.4). Its
+   which the world then copies onto the screen (doc/morphic.org §3.4). Its
    descendants draw and take events in its coordinates; their bounds stay world
    coordinates. Moving it is a copy."))
 
@@ -347,7 +347,7 @@
    not (SETF MORPH-BOUNDS), is how bounds are CHANGED: the accessor writes the slot
    and nothing else, so the screen would never hear of it. The inspector's bounds
    field calls this (poc/morphic.lisp, INSPECT-SLOT-SETTER), which is why editing a
-   window's bounds there moves the window on screen (doc/morphic.org §6)."
+   window's bounds there moves the window on screen (doc/morphic.org §6.3)."
   (unless (and (listp rect) (= 4 (length rect)) (every #'integerp rect))
     (error "bounds are a list of four integers (x y w h), not ~s" rect))
   (destructuring-bind (x y w h) rect
@@ -371,7 +371,7 @@
 ;;; DATA is a plist for what only one backend knows (:tty T for a key that came from
 ;;; the console rather than the keyboard's evdev).
 
-;;; X,Y are in the coordinates of the morph handling the event — its surface's (§12.5):
+;;; X,Y are in the coordinates of the morph handling the event — its surface's (doc/morphic.org §3.3):
 ;;; the world's for most, a window's for the morphs inside one. WX,WY are the same
 ;;; point on the SCREEN, for what must be placed there (a menu card, the halo); the
 ;;; world fills them in when it routes the event.
@@ -766,7 +766,7 @@
           ((and (hand-carrying hand) (eq kind :up))
            (setf (hand-capture hand) nil)
            (hand-drop hand world) t)
-          ;; a payload being dragged (doc/morphic.org §13): the pointer only carries it;
+          ;; a payload being dragged (doc/morphic.org §9): the pointer only carries it;
           ;; letting go of the button — or, picked up with a key, the next press — drops
           ;; it on the morph under the pointer
           ((and (hand-payload hand) (member kind '(:drag :move))) t)

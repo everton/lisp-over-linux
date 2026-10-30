@@ -413,7 +413,7 @@ OPTIONS
         (case key
           ;; a click is a press and its release: a press on a row that opens
           ;; something acts on the release (a press that moves picks it up instead —
-          ;; doc/morphic.org §13)
+          ;; doc/morphic.org §9.1)
           (:click (send :down (car arg) (cdr arg))
                   (send :up (car arg) (cdr arg)))
           ;; drag:X1,Y1,X2,Y2 — press, move with the button held, release: a text

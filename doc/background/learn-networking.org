@@ -1,15 +1,14 @@
 #+TITLE: Learn networking — from zero, then into our code
 #+STARTUP: showall content
 
-This is a *from-scratch* tutorial: it assumes you know nothing about networking
-and builds up just enough to understand how our box gets an IP (DHCP) and what it
-would take to reach the outside world (routing, NAT, and the famous "ping"). It is
-deliberately short — read one section, then ask about it; we go deeper together.
+A *from-scratch* tutorial: it assumes no networking knowledge and builds up just
+enough to understand how the image gets an IP (DHCP) and reaches the outside world
+(routing, NAT, and why =ping= is special). Read one section at a time.
 
 Each section ends with two things:
-- *In the code* — direct links into the exact spot in *our userland* (=initramfs/=)
-  or the *kernel source* (=./linux/=) that does this, so you can jump straight from
-  the idea to the implementation. (Kernel links need the fetched =./linux= tree.)
+- *In the code* — links to the exact spot in our userland (=initramfs/=) or the
+  kernel source (=./linux/=) that does this. Kernel links need the fetched
+  =./linux= tree.
 - *Check yourself* — a question to make sure it stuck.
 
 Companion: [[file:background.org][background.org]] (firmware/CPU theory) · the project's networking write-up
@@ -50,15 +49,14 @@ Each layer only cares about its own header; it hands the payload up or down.
 
 * 2. Two kinds of address: MAC vs IP
 
-There are *two* addresses in play, and beginners always conflate them:
+There are *two* addresses in play, and they're easy to conflate:
 - A *MAC address* (48-bit, e.g. =52:54:00:12:34:56=) belongs to a *NIC* and
   identifies it on the *local link*. Think "which card on this wire."
 - An *IP address* (e.g. =10.0.2.15=) identifies a *host* in the wider network.
   Think "which house in the world."
 
-Why two? Because they answer different questions. The IP address says where a
-packet should ultimately end up; the MAC address says who to hand it to *on the
-current hop*. As a packet crosses routers, its *IP* src/dst stay the same the
+They answer different questions. The IP address says where a packet should
+ultimately end up; the MAC address says who to hand it to *on the current hop*. As a packet crosses routers, its *IP* src/dst stay the same the
 whole way, but its *MAC* src/dst are rewritten at *every* hop.
 
 *In the code:*
@@ -123,8 +121,8 @@ rewrites the MAC and passes it along (this is §2's "MAC changes every hop").
 - The default route is the =SIOCADDRT= ioctl with a =struct rtentry= whose
   destination and mask are both =0.0.0.0= and whose gateway is that router:
   [[file:../../initramfs/net.lisp::defun add-default-route][net.lisp → add-default-route]], installed from every lease by
-  [[file:../../initramfs/dhcp.lisp::defun apply-lease][dhcp.lisp → apply-lease]] (since 2026-10-12; [[file:../networking.org][networking.org]] §2c). Read the
-  table back with =(ipv4-routes)= — it is =/proc/net/route=, parsed.
+  [[file:../../initramfs/dhcp.lisp::defun apply-lease][dhcp.lisp → apply-lease]] ([[file:../networking.org][networking.org]] §2c). Read the table back with
+  =(ipv4-routes)= — it's =/proc/net/route=, parsed.
 - Kernel routing decisions: [[file:../../linux/net/ipv4/fib_frontend.c][linux → net/ipv4/fib_frontend.c]]
 
 *Check yourself:* to send to =8.8.8.8=, whose *MAC* goes in the frame — Google's,
@@ -141,15 +139,18 @@ Hard-coding =10.0.2.15= works in QEMU but not on a real LAN. *DHCP* lets a host
 3. *REQUEST* — the client broadcasts "yes, I'll take that one"
 4. *ACK* — the server confirms, and includes the *mask, gateway, DNS, lease time*
 
-It's all *broadcast* because the client has no address yet; the two sides match
-their messages by a random *transaction id* (xid).
+The client sends by *broadcast* because it has no address yet. Servers often
+broadcast back, but many unicast the OFFER to the address being offered. The two
+sides match their messages by a random *transaction id* (xid).
 
 *In the code:* this whole dance is ours, in pure Lisp —
 - builds the request packet: [[file:../../initramfs/dhcp.lisp::defun build-dhcp][dhcp.lisp → build-dhcp]]
 - parses the reply: [[file:../../initramfs/dhcp.lisp::defun parse-dhcp][dhcp.lisp → parse-dhcp]]
 - runs DISCOVER→REQUEST: [[file:../../initramfs/dhcp.lisp::defun dhcp-acquire][dhcp.lisp → dhcp-acquire]]
-- applies the lease at boot: [[file:../../initramfs/dhcp.lisp::defun configure-eth0][dhcp.lisp → configure-eth0]]
-- why it works with no IP yet (broadcast flag + SO_BINDTODEVICE): [[file:../networking.org][networking.org]] §2b
+- leases on any interface: [[file:../../initramfs/dhcp.lisp::defun dhcp-configure][dhcp.lisp → dhcp-configure]], run at boot by
+  [[file:../../initramfs/dhcp.lisp::defun network-up][network-up]]
+- why it works with no IP yet (SO_BINDTODEVICE to send, a packet socket to
+  receive a unicast reply): [[file:../networking.org][networking.org]] §2b
 - The kernel even has its *own* tiny DHCP, for the =ip=dhcp= boot option: [[file:../../linux/net/ipv4/ipconfig.c][linux → net/ipv4/ipconfig.c]]
 
 *Check yourself:* which of the four messages carries the subnet mask and gateway?
@@ -198,7 +199,7 @@ rule: "host port 4005 → guest port 4005."
 
 *In the code:*
 - The SLIRP + hostfwd wiring: [[file:../../build.sh::QEMU_NET][build.sh → QEMU_NET]]
-- The kernel side of ping (raw / ICMP sockets), for when we add ping: [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]] and [[file:../../linux/net/ipv4/icmp.c][linux → net/ipv4/icmp.c]]
+- The kernel side of ping (raw / ICMP sockets; we have no ping yet): [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]] and [[file:../../linux/net/ipv4/icmp.c][linux → net/ipv4/icmp.c]]
 
 *Check yourself:* why does a TCP connection to the internet succeed through SLIRP
 while an external =ping= may not?
@@ -209,8 +210,8 @@ Now put it all together. When our REPL tries to ping =8.8.8.8=:
 
 1. *Is it on-link?* =8.8.8.8= is not in =10.0.2.0/24= (§3), so we need the
    *default route* (§5). Without one the kernel returns =ENETUNREACH= and nothing
-   leaves the box. *(Prerequisite 1: add the route — done since 2026-10-12; a TCP
-   connection to the internet, e.g. =(http-get "http://example.com/")=, now works.)*
+   leaves the box. *(Prerequisite 1: the route — installed from every DHCP lease,
+   so a TCP connection out, e.g. =(http-get "http://example.com/")=, works.)*
 2. *Build the frame:* with the route, the packet's IP dst is =8.8.8.8= but its MAC
    dst is the gateway =10.0.2.2='s MAC (§2, §5) — found via ARP (§4) — and off it
    goes to SLIRP.
@@ -218,16 +219,17 @@ Now put it all together. When our REPL tries to ping =8.8.8.8=:
    needs host ICMP permission → *may not work*. *(Prerequisite 2: SLIRP/host
    cooperation — or sidestep it with a TCP test.)*
 
-So "add ping" really means three things: (a) the default route (=SIOCADDRT=),
-(b) a raw ICMP socket + a hand-built Echo packet in Lisp, and (c) SLIRP/host
-cooperating on ICMP. A *TCP* reachability test avoids (c) entirely, which is why
+So "add ping" means three things: (a) the default route (=SIOCADDRT=, done),
+(b) a raw ICMP socket + a hand-built Echo packet in Lisp (not built), and (c)
+SLIRP/host cooperating on ICMP. A *TCP* reachability test avoids (c) entirely, which is why
 it's the more reliable "am I online?" check here.
 
-*In the code (where each piece will land):*
-- the gateway we'd route through: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
-- where the route + a ping helper would go (alongside the other ioctls): [[file:../../initramfs/net.lisp::defun bring-up-interface][net.lisp → net.lisp ioctls]]
+*In the code:*
+- the gateway we route through: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
+- the route itself, beside the other ioctls: [[file:../../initramfs/net.lisp::defun add-default-route][net.lisp → add-default-route]]
+  (a ping helper would go there too)
 - the kernel's ICMP socket support: [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]]
-- the plan: [[file:../networking.org][networking.org]] §2c.
+- the whole outbound path: [[file:../networking.org][networking.org]] §2c.
 
 *Check yourself:* name the three things that must all be true for our ping to
 =8.8.8.8= to actually get a reply.

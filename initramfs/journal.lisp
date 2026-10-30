@@ -7,7 +7,7 @@
 ;;;; Smalltalk solved this forty years ago with its .changes file: every accepted
 ;;;; method is appended to a log THE MOMENT it is accepted, so a crash or a pulled plug
 ;;;; loses nothing that was accepted, and the log is replayed to recover. This is that
-;;;; log, for this image (doc/session-persistence.org §2b — the design, the choices
+;;;; log, for this image (doc/session-persistence.org §4 — the design, the choices
 ;;;; and the reasons; this header only says what the code does).
 ;;;;
 ;;;; WRITE side.  ACCEPT-SOURCE (registry.lisp) runs *ACCEPT-HOOKS* after every
@@ -34,7 +34,7 @@
 ;;;;   :pending        written by a DIFFERENT build: the code around it may have moved,
 ;;;;                   so it waits in the journal view to be Accepted or dropped by hand
 ;;;;   :needs-rebuild  a DEFSTRUCT: redefining a struct breaks every live instance
-;;;;                   (§2b, "Structs are the sharp edge"), so it is never replayed
+;;;;                   (doc §4, "Structs are the sharp edge"), so it is never replayed
 ;;;;   :failed         it would not read, or not compile, or ran past the timeout
 ;;;;
 ;;;; A torn last record (the power went mid-write) stops the reader; the readable

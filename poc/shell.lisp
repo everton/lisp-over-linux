@@ -49,7 +49,7 @@
    by each entry point (run-browser-fb, run-browser.lisp, render-frame.lisp) for its
    canvas size.")
 
-;;; A PANE is a MORPH (doc/morphic.org §12): the object that holds a subject and its
+;;; A PANE is a MORPH (doc/morphic.org §5.2): the object that holds a subject and its
 ;;; view IS the thing on screen that draws it and takes its events. It used to be a
 ;;; DEFSTRUCT drawn by one big function that left what it drew where in specials
 ;;; (*LIST-ROWS*, *CONTENT-TOP* …), which every window then had to keep its own copy
@@ -117,7 +117,7 @@
    (split-plan :initform nil :accessor pane-split-plan
             :documentation "An expanded pane's split, as EXPANDED-COLUMNS laid it out.")
    (sig :initform nil :accessor pane-sig
-        :documentation "What its picture was last a function of (doc/morphic.org §12.6)."))
+        :documentation "What its picture was last a function of (doc/morphic.org §4.4)."))
   (:documentation "A subject, presented: its view, where you are in it, and — being a
    morph — where it is on screen and what it drew there."))
 
@@ -128,7 +128,7 @@
 
 (defun pane-p (x) (typep x 'pane))
 
-;;; A pane's BODY is a morph too (doc/morphic.org §13): the list, the text view, the
+;;; A pane's BODY is a morph too (doc/morphic.org §5.4): the list, the text view, the
 ;;; grid, the stage, the image, the page, the terminal — whatever the view kind paints
 ;;; under the pane's header. The pane draws only its panel (title, tint, badge, the
 ;;; divider and header of a split); its body is its child, laid out by the pane at the
@@ -221,7 +221,7 @@
 
 (defun screen-to-pane (pane x y)
   "The screen point X,Y in the coordinates PANE draws and records in — a window's,
-   when PANE is in one (doc/morphic.org §12.4) -> (values X Y). A backend that knows
+   when PANE is in one (doc/morphic.org §3.4) -> (values X Y). A backend that knows
    only where the pointer is on the screen (the web page's hover, its wheel) asks this."
   (if (and pane (lol.morph:morph-owner pane))
       (multiple-value-bind (ox oy) (lol.morph:surface-origin pane)
@@ -451,14 +451,14 @@
 (defvar *restore-desk-fn* nil
   "A function of no arguments that rebuilds *TRAILS* from the saved desk and returns
    true, or returns NIL when there is none. Set by initramfs/desk.lisp, which loads
-   after this file (doc/session-persistence.org §2c).")
+   after this file (doc/session-persistence.org §6).")
 
 (defun open-environment (&optional root)
   "Seed the cohesive environment (§4¾), WITHOUT throwing away what is already open.
 
    With no ROOT: the trails as they were, when there are any — leaving to the
    supervisor's console and coming back with 'b' used to replace them with one fresh
-   Workspace, losing every tab (doc/session-persistence.org §1.3); else the desk
+   Workspace, losing every tab (doc/session-persistence.org §10); else the desk
    saved by the last session (*RESTORE-DESK-FN*); else the Workspace alone.
 
    With a ROOT (the menu's 'p', 'c', 'l'; a host entry point): focus a tab already
@@ -1940,7 +1940,7 @@
    front, each drawing itself — the tab strip, the tray, the breadcrumbs, the panes,
    the status line, the windows (each window's contents drawn anew, not copied).
    There is no other way to draw the browser: what used to be one function laying
-   out and painting everything is the world's tree now (doc/morphic.org §12). The name
+   out and painting everything is the world's tree now (doc/morphic.org §5). The name
    stays for its callers — checks that time a full frame, the backdrop of a card with
    no world to draw it."
   (declare (ignore w h))
@@ -1985,7 +1985,7 @@
         (t (list :hints (status-hints cur)))))
 
 (defun carried-label ()
-  "The name of what the hand carries to be dropped (doc/morphic.org §13), or NIL."
+  "The name of what the hand carries to be dropped (doc/morphic.org §9), or NIL."
   (let ((h (the-hand)))
     (and h (getf (lol.morph:hand-payload h) :label))))
 
@@ -3434,7 +3434,7 @@
     t))
 
 ;;; ---- a press, wherever it lands -----------------------------------------------
-;;; A left press goes to the morph under the pointer (doc/morphic.org §12.5): a tab or
+;;; A left press goes to the morph under the pointer (doc/morphic.org §5.5): a tab or
 ;;; the + (TAB-STRIP-CLICK), a breadcrumb (back to that level), the clipboard icon, the
 ;;; minibuffer's ✕, a window's title bar or grip — and anything inside the expanded
 ;;; pane is PANE-CLICK. Every one of them that is the browser's begins the same way.
@@ -3991,7 +3991,7 @@
                              inspect))))
          (own (if (member role '(:element)) '()
                   (and (not (stringp object)) (command-entries object :halo g)))))
-    (append (and (typep object 'lol.morph:morph)  ; a morph's own handles first (§12.5):
+    (append (and (typep object 'lol.morph:morph)  ; a morph's own handles first (doc/morphic.org §6.3):
                  (mapcar (lambda (a) (menu-entry (getf a :label) (getf a :action)
                                                  :group "halo" :tone :restart))
                          (lol.morph:morph-affordances object)))   ; a window's Move, Resize …
@@ -4205,7 +4205,7 @@
 (defun leave-menu ()
   "SuperL-q: ask how to leave — down to the supervisor's console menu (the REPL, the
    worker, the other roots), or shut down, saving the desk or not
-   (doc/session-persistence.org §4). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
+   (doc/session-persistence.org §7). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
    :SAVE-POWER-OFF, :POWER-OFF, :SAVE-RESTART, :RESTART or :UPDATE-RESTART — the
    last offered only when a finished build waits in the checkout, update.lisp), or
    NIL when the menu is dismissed. The console comes first so that a reflexive
@@ -4262,7 +4262,7 @@
   "Before shutting down: are there file panes with unsaved changes, and if so, what
    becomes of them? Asks once for all of them — save all, discard, or cancel — and
    returns true when it is fine to go on. A file you did not save used to vanish at
-   power-off without a word (doc/session-persistence.org §1.3)."
+   power-off without a word (doc/session-persistence.org §7, §10)."
   (let ((dirty (loop for trail in *trails*
                      append (loop for p in trail
                                   when (file-pane-dirty-p p) collect p
@@ -4310,7 +4310,7 @@
 
 ;;; ---- drag and drop: a subject, carried by the hand ---------------------------
 ;;; Morphic's hand carries what you pick up and offers it to whatever is under it when
-;;; you let go (doc/morphic.org §13). Here what is carried is a SUBJECT — a row's (a
+;;; you let go (doc/morphic.org §9). Here what is carried is a SUBJECT — a row's (a
 ;;; definition, a class, a file, an inspector field's value), a sprite's instance, the
 ;;; symbol at the caret — and each kind of morph says what a drop on it means
 ;;; (ACCEPT-DROP, poc/morphic.lisp): a text you can edit inserts a READABLE REFERENCE to

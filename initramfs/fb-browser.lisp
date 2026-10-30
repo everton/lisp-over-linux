@@ -248,7 +248,7 @@
 
    A bitmap prints as space-separated 64-bit words, MOST significant first, so the
    lowest word — the one holding bit 0 — is the LAST token on the line, not the
-   first (doc/input.org §4, 'one parsing subtlety'). For EV and PROP there is only
+   first (doc/input.org §4, 'Parsing the bitmaps'). For EV and PROP there is only
    ever one word, so first and last agree.
 
    This used to be SCAN-INPUT-DEVICE, singular: it returned the first device a
@@ -1323,7 +1323,7 @@
 
 ;;; Every write of ours to /dev/fb0 is in the five functions below — PUT-CURSOR,
 ;;; PRESENT-FRAME, PRESENT-REPAIR, MOVE-CURSOR, HIDE-CURSOR — which is what makes
-;;; these two hooks enough (doc/screencast.org §1, §8.2):
+;;; these two hooks enough (doc/screencast.org §1.1, §8.2):
 (defvar *frame-taps* '()
   "Functions called with (RECTS FULL) each time a repair (its rects) or a whole frame
    (FULL) is presented: the screen recorder's \"the canvas changed\" (recorder.lisp),
@@ -1467,7 +1467,7 @@
 ;;; The browser has always been a pure function of state that only input changes, and
 ;;; the poll that sleeps forever is how it stays at zero CPU on an idle console. A
 ;;; running stage breaks that, so it is allowed to — but ONLY while one is actually on
-;;; screen and running. It is a STEP now (doc/morphic.org step 5): the morph that shows
+;;; screen and running. It is a STEP now (doc/morphic.org §8): the morph that shows
 ;;; the stage asks to be stepped every +STAGE-FRAME-MS+ (poc/morphic.lisp,
 ;;; STEP-STAGE-PANE), the poll's deadline is the world's next step
 ;;; (LOL.MORPH:WORLD-STEP-TIMEOUT), and the moment nothing on screen steps that
@@ -1538,11 +1538,13 @@
 ;;; its backing store (TERMINAL-ROWS-TO-WORLD, poc/morphic.lisp).
 (defun terminal-service-run (canvas dirty)
   (declare (ignore dirty))
+  (pty-reap-orphans)                    ; closed terminals: reap, or SIGKILL when overdue
   (let ((r (terminal-service (terminal-fds))))
     (cond ((eq r :full) :redraw)
           ((eq r :rows) (terminal-rows-to-world canvas) nil))))
 
-(fb-register-service :terminals :fd 'terminal-fds :run 'terminal-service-run)
+(fb-register-service :terminals :fd 'terminal-fds :timeout 'pty-orphans-timeout
+                     :run 'terminal-service-run)
 
 ;;; ---- what happened, as events ------------------------------------------------
 ;;; The loop used to act on each input as it decoded it. Now it only DECODES — into
@@ -1618,7 +1620,7 @@
               (setf clicked nil button :middle *button-down* nil))
             ;; a TAP is a click with no button held, and no release to come: marked,
             ;; so what waits for a release (a row, which a press that moves would pick
-            ;; up instead — doc/morphic.org §13) acts at once
+            ;; up instead — doc/morphic.org §9.1) acts at once
             (when clicked
               (emit :down :state (logior (if *ctrl-down* 4 0) (if *super-down* 64 0))
                           :data (unless *button-down* '(:tap t))))

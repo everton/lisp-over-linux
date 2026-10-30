@@ -1,8 +1,8 @@
-;;;; check-morphic.lisp — the World, in the booted guest (doc/morphic.org, steps 1–5).
+;;;; check-morphic.lisp — the World, in the booted guest (doc/morphic.org §3–§8).
 ;;;;
 ;;;;     sbcl --script check-morphic.lisp        ; LOL_PORT=4111 to run beside another
 ;;;;
-;;;; A. The world (step 1, and §12: the shell is a tree of morphs). The environment is
+;;;; A. The world (step 1, and doc/morphic.org §5: the shell is a tree of morphs). The environment is
 ;;;;    a DESK whose only child is the tiled shell, covering the screen: a tab strip,
 ;;;;    the trail area holding the trail's panes, the status line; the keyboard focus is
 ;;;;    the expanded pane. A key in it repairs that pane and nothing else (the shell's
@@ -42,7 +42,7 @@
 ;;;;    drawn by that pane alone; paused, the step deadline is -1 again. Prints what a
 ;;;;    body-only step costs against a full repair.
 ;;;;
-;;;; G. §13: a pane's body is a morph (the tiled list's LIST-BODY, the window's
+;;;; G. §5.4, §9: a pane's body is a morph (the tiled list's LIST-BODY, the window's
 ;;;;    TEXT-BODY; a key typed into the window's text repairs one line of it), and drag
 ;;;;    and drop by QEMU's pointer — a row into a Workspace in a window, onto the tab
 ;;;;    strip, onto an inspector field — and by keys (SuperL-p, SuperL-d, Esc,
@@ -50,7 +50,7 @@
 ;;;;
 ;;;; H. What it costs in this guest, 50-run averages, each a real event or a damage,
 ;;;;    repaired and sent: a key in a text view beside a list, a key in a window, a full
-;;;;    repair, a stage step (doc/morphic.org §13.10).
+;;;;    repair, a stage step (doc/morphic.org §11).
 ;;;;
 ;;;; I. More tabs than fit (doc/code-browser.org §4¾): sixteen more tabs, and the
 ;;;;    focused one still has its tab with a … button before the run; SuperL-Tab wraps
@@ -559,7 +559,7 @@
   (probe "(sb-int:unencapsulate 'fb-cycle 'zz)")
   (qmp-hold "meta_l" "w") (sleep 1.0))
 
-;;; ---- §13: a pane's body is a morph; drag and drop ---------------------------------
+;;; ---- §5.4, §9: a pane's body is a morph; drag and drop ---------------------------------
 
 (defun qmp-hold2 (m1 m2 qcode)
   "QCODE pressed while M1 and M2 are both held (SuperL-Shift-d)."
@@ -577,7 +577,7 @@
 (defun ws-text () (probe "(lol.textview:tv-text (pane-tv (window-pane (focused-window))))"))
 
 (defun section-g ()
-  "§13: bodies are morphs (a key in a text view beside a list), and drag and drop by
+  "§5.4, §9: bodies are morphs (a key in a text view beside a list), and drag and drop by
    QEMU's pointer and by keys."
   (format t "~&~%== G. bodies are morphs; drag and drop ==~%")
   (qmp-key "esc") (sleep 0.3)
@@ -680,7 +680,7 @@
 
 (defun section-h ()
   "What each kind of repair costs in this guest, drawn and sent, averaged over 50 —
-   doc/morphic.org §13's table."
+   doc/morphic.org §11's table."
   (format t "~&~%== H. what it costs (50-run averages, drawn and sent) ==~%")
   (qmp-hold "meta_l" "l") (sleep 2.0)
   (qmp-key "down") (qmp-hold "shift" "ret") (sleep 1.5)     ; a list with source pinned beside

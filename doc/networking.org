@@ -2,331 +2,311 @@
 #+STARTUP: showall
 
 Parent doc: [[file:micro-distro.org][micro-distro.org]] · kernel options:
-[[file:kernel-config.org][kernel-config.org]] §7 (Networking — it moved out of "Deliberately OFF" in tag #21) ·
-Lisp side: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL supervisor that opens the sockets) ·
-from-scratch tutorial with deep code links: [[file:background/learn-networking.org][background/learn-networking.org]].
+[[file:kernel-config.org][kernel-config.org]] §7 (on since tag #21) · Lisp side: [[file:sbcl-init.org][sbcl-init.org]] (the SBCL
+supervisor that opens the sockets) · from-scratch tutorial with deep code links:
+[[file:background/learn-networking.org][background/learn-networking.org]].
 
-*STATUS (2026-10-12, kernel tag #26): THE OUTBOUND PATH IS COMPLETE IN QEMU; Wi-Fi
-IS BUILT AND IN USE ON THE LAPTOP (confirmed by the user, 2026-10-16).* On top of
-the wired path below, the image now installs a *default route* from the DHCP lease
-(§2c), keeps the lease as an object and *renews* it (the =netd= thread), resolves
-names with its own *DNS stub resolver* and writes =/etc/resolv.conf= for everybody
-else (§2c), checks the *clock* over SNTP and has =lol-rootd= step it (§2d), speaks
-*HTTP/1.1* and *HTTPS* — TLS from the host's own OpenSSL, loaded at runtime (§2e) —
-and runs *Wi-Fi* through the host's =wpa_supplicant= with the AX201's firmware in the
-cpio (§7), with a network view on =SuperL-n= and the SSID in the systray.
-[[file:../check-net.lisp][=check-net.lisp=]] asserts it in the guest — 34 checks, all passing with
-=LOL_GUEST_HOSTROOT=1= (§8); [[file:../poc/http-test.lisp][=poc/http-test.lisp=]] and [[file:../poc/wifi-test.lisp][=poc/wifi-test.lisp=]] test the
-same code on the host. agent.org's network track (N1–N4) is done.
-
-The history, kept: *WIRED PATH WORKING end-to-end in QEMU.* Kernel half DONE (tag #21:
-=CONFIG_NET= + =INET= + =virtio-net=). Userland half DONE: =sb-bsd-sockets= is
-baked into the image; =eth0= is configured at boot by *DHCP* (=dhcp.lisp=, a real
-DISCOVER/REQUEST handshake — static fallback if no server answers); and the
-network REPL (=net.lisp=) serves the *full line editor* over TCP on =:4005= —
-*OFF by default since tag #26* — it starts only when the boot asks for it, through QEMU's =fw_cfg= (=-fw_cfg name=opt/lol/netrepl,string=1=, which =build.sh=, =refresh-screenshot.sh= and every =check-*.lisp= pass; real hardware has no =fw_cfg=, so the laptop never serves it) or =lol.netrepl=1= on the kernel cmdline; see [[file:../initramfs/net.lisp::defun net-repl-wanted-p][=net-repl-wanted-p=]]. The menu's =t= still toggles it by hand, with a host-side
-raw-forwarding client (=host-client/lol-repl-client.c=) so
-arrows/history/Ctrl-C/Ctrl-D work remotely with no guest PTY (§6a). Verified
-against QEMU SLIRP: eth0 leases =10.0.2.15= (gw =10.0.2.2=, dns =10.0.2.3=), and
-the host client gives a live editing REPL — =(+ 40 2)= → =42=. (What was "still
-ahead" then — the default route, DNS, SNTP, HTTP and Wi-Fi — is the STATUS above.)
-It is the
-single biggest subsystem we have taken
-on, because — unlike the framebuffer alien (pure userland) or the bigger console
-font (pure kernel) — networking straddles *BOTH* the kernel and userland at once.
+*STATUS (kernel tag #26 onward): built.* Wired networking in QEMU, the whole
+outbound path — a default route from the DHCP lease and its renewal (§2c), a Lisp
+DNS resolver that also writes =/etc/resolv.conf= (§2c), SNTP stepped through
+=lol-rootd= (§2d), HTTP/1.1 and HTTPS through the host's OpenSSL (§2e), IPv6 by
+SLAAC (§2f) — and Wi-Fi through the host's =wpa_supplicant= (§7), in use on real
+hardware. [[file:../check-net.lisp][=check-net.lisp=]] asserts it in the guest (34 checks, §8);
+[[file:../poc/http-test.lisp][=poc/http-test.lisp=]], [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] and [[file:../poc/wifi-test.lisp][=poc/wifi-test.lisp=]] test the same
+code on the host. The network REPL on =:4005= (§6a) is off unless the boot asks for
+it.
 
 * The one-paragraph essence
 
-To "have networking" two independent things must both become true: (1) the
-KERNEL must be able to move packets — a socket layer (=NET=), a protocol stack
-(=INET= = TCP/IP), a network device layer, and a *driver for an actual NIC*; and
-(2) USERLAND must be able to *use* sockets — SBCL needs the =sb-bsd-sockets=
-contrib baked into its frozen image, the interface needs an *IP address*
-(static, or DHCP), and something has to resolve names (DNS) if we want them.
-Neither half is useful without the other. We will build the kernel half first
-(prove a link exists with packets), then the userland half (reach it from Lisp).
+"Having networking" needs two independent things. The *kernel* must move packets:
+a socket layer (=NET=), a protocol stack (=INET= = TCP/IP), a network device layer
+and a *driver for an actual NIC*. *Userland* must use sockets: SBCL needs the
+=sb-bsd-sockets= contrib baked into its frozen image, the interface needs an *IP
+address* (static or DHCP), and something must resolve names. Neither half is
+useful without the other, so the kernel half comes first (prove a link with
+packets), then the userland half (reach it from Lisp).
 
-* Why this is harder than everything so far
+* Why this is harder than a framebuffer or a font
 
-| Past change       | Kernel? | Userland? | Notes                                  |
+| Change            | Kernel? | Userland? | Notes                                  |
 |-------------------+---------+-----------+----------------------------------------|
 | Draw the alien    | no      | yes       | /dev/fb0 already existed               |
 | Bigger fbcon font | yes     | no        | compile-in font + cmdline              |
 | *Networking*      | *yes*   | *yes*     | NET+INET+NIC driver AND sb-bsd-sockets |
 
-Everything we relied on before boots *early* and needs no driver negotiation.
-A network link is different: a real driver must bind to a real (PCI) device,
-bring the link up, and exchange packets with something on the other end. So we
-test it in stages and prove each layer before adding the next.
+A framebuffer or a font is there at boot with no negotiation. A network link
+needs a driver to bind to a real (PCI) device, bring the link up, and exchange
+packets with something at the other end. So each layer is proved before the next
+(§3).
 
 * 1. Kernel half — what has to be turned on
 
-*DONE in tag #21* — all of the below are now =y= (=grep -c '^CONFIG_NET=y'=
-returns 1). The keystone =CONFIG_PCI= was already on (tag #19 for USB/ACPI), and
-=CONFIG_PCI_MSI= too — modern NICs want MSI/MSI-X — so the bus plumbing was
-already present. The options we turned on, smallest-useful-set first
-(=CONFIG_IPV6= was left OFF at #21 — see §5 — and turned on in tag #26, §2f):
+All =y= since tag #21. The keystone =CONFIG_PCI= (and =CONFIG_PCI_MSI=; modern NICs
+want MSI/MSI-X) was already on from tag #19 for USB/ACPI.
 
 | Option              | Role                                                  |
 |---------------------+-------------------------------------------------------|
 | =CONFIG_NET=        | The socket / protocol core — THE master switch        |
 | =CONFIG_INET=       | IPv4 (TCP, UDP, ICMP). The thing we actually want     |
 | =CONFIG_UNIX=       | AF_UNIX local sockets (handy even before a NIC works) |
-| =CONFIG_PACKET=     | AF_PACKET (raw sockets; some DHCP clients use it)     |
+| =CONFIG_PACKET=     | AF_PACKET (raw frames; our DHCP receives on it, §2b)  |
 | =CONFIG_NETDEVICES= | The network-device layer (gate for any NIC driver)    |
 | =CONFIG_NET_CORE=   | Core netdev machinery                                 |
-| a NIC driver        | the actual hardware — see stage plan below            |
-| (=CONFIG_IPV6=)     | optional; skip at first to stay minimal               |
+| a NIC driver        | the actual hardware — see below                       |
+| =CONFIG_IPV6=       | on since tag #26 (§2f)                                |
 
-NIC driver — the staged target list (easiest → hardest):
+NIC drivers, easiest first:
 
-1. *=CONFIG_VIRTIO_NET=* (+ =CONFIG_VIRTIO=, =CONFIG_VIRTIO_PCI=) — a QEMU
-   paravirtual NIC. This is the *first* target: trivial to wire up in
-   =build.sh --run= (=-netdev user,... -device virtio-net-pci,...=), reliable,
-   and isolates "does our NET/INET stack work" from any real-hardware quirk.
-2. *=CONFIG_E1000= / =CONFIG_E1000E=* — Intel emulated/real NIC; another easy
-   QEMU device and present on many laptops/desktops.
-3. *The laptop's actual NIC.* This machine (checked with =lspci -nnk=) has *no
-   wired port at all* — only Intel Wi-Fi (=8086:34f0=, see §7). So on real
-   hardware Wi-Fi is the *only* path to a network; wired/virtio is a QEMU-only
-   convenience. Wi-Fi is a big jump and a separate, later project — its full
-   shape (and how to add it without polluting this MIT repo or hard-coding one
-   laptop) is §7.
+1. *=CONFIG_VIRTIO_NET=* (+ =CONFIG_VIRTIO=, =CONFIG_VIRTIO_PCI=) — QEMU's
+   paravirtual NIC. Trivial to wire up in =build.sh --run= (§4), and it isolates
+   "does our NET/INET stack work" from any hardware quirk.
+2. *=CONFIG_E1000= / =CONFIG_E1000E=* — Intel's emulated/real NIC; another easy
+   QEMU device, present on many machines.
+3. *Wi-Fi* — the tested laptop has *no wired port*, only Intel Wi-Fi (§7), so on
+   real hardware Wi-Fi is the main link and virtio is a QEMU convenience.
+   =CONFIG_USB_RTL8152= (tag #27, [[file:kernel-config.org][kernel-config.org]]) adds a USB Ethernet
+   dongle as a wired fallback.
 
-Reminder (the frozen-heap / minimal rule): build NIC drivers *=y= (built-in)*,
-not =m= — we ship no modules and have no =modprobe=.
+Build NIC drivers *=y=*, not =m=: we ship no modules and have no =modprobe=.
 
 * 2. Userland half — reaching the network from SBCL
 
-A working kernel link is invisible until userland does three things:
+** (a) sockets in the Lisp image — =sb-bsd-sockets=
 
-** (a) sockets in the Lisp image — =sb-bsd-sockets= — *DONE*
-SBCL's BSD-sockets API lives in the *=sb-bsd-sockets= contrib*, a =require=-loaded
-fasl. Our image is a *frozen heap* (see [[file:sbcl-init.org][sbcl-init.org]]): we cannot =require= it at
-runtime (no contrib fasls on the initramfs, no network to fetch them — the very
-chicken-and-egg this whole file is about). So =build.sh= does
-=(require :sb-bsd-sockets)= *at build time*, before =save-lisp-and-die=, with
-=SBCL_HOME= pointed at the built tree's =obj/sbcl-home= so the contrib fasl
-resolves. The socket code is then frozen into =/sbin/lisp= — at runtime no fasl
-or =SBCL_HOME= is needed. Pure Lisp + kernel syscalls; no new native library.
-(Resolved the old open question: yes, this SBCL tree can =require= it at build
-time, given =SBCL_HOME=.)
+SBCL's BSD-sockets API is the *=sb-bsd-sockets= contrib*, a =require=-loaded fasl.
+Our image is a *frozen heap* ([[file:sbcl-init.org][sbcl-init.org]]): no contrib fasls on the initramfs,
+no network to fetch them. So =build.sh= does =(require :sb-bsd-sockets)= *at build
+time*, before =save-lisp-and-die=, with =SBCL_HOME= pointed at the built tree's
+=obj/sbcl-home= so the fasl resolves. At runtime no fasl or =SBCL_HOME= is needed:
+pure Lisp + kernel syscalls, no new native library.
 
-** (b) an IP address — static, then DHCP — both *DONE*
-A NIC with no address can't talk.
-- *Static* ([[file:../initramfs/net.lisp::defun bring-up-interface][=bring-up-interface=]], [[file:../initramfs/net.lisp][=net.lisp=]]): assigns address + mask and
+** (b) an IP address — static, then DHCP
+
+- *Static* ([[file:../initramfs/net.lisp::defun bring-up-interface][=bring-up-interface=]], [[file:../initramfs/net.lisp][=net.lisp=]]). Assigns address + mask and
   brings the link UP via =SIOCSIFADDR= / =SIOCSIFNETMASK= / =SIOCSIFFLAGS=
   ioctls on a throwaway UDP socket — the classic =ifconfig= path as =sb-alien=
-  calls (no =ifconfig=/=ip= binary). Kept as the fallback if DHCP gets no answer.
-  ([[file:line-editing.org][line-editing.org]] explains what an ioctl is, if the shape is unfamiliar.) The
-  kernel end of these is [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]], which is
-  where =SIOCSIFADDR= actually lands; sockets themselves enter through
+  calls, no binary. It's the fallback when DHCP gets no answer, and only for a
+  =virtio_net= NIC: a real NIC never gets a made-up address. ([[file:line-editing.org][line-editing.org]]
+  explains what an ioctl is.) In the kernel, =SIOCSIFADDR= lands in
+  [[file:../linux/net/ipv4/devinet.c::devinet_ioctl][=net/ipv4/devinet.c='s =devinet_ioctl=]]; sockets enter through
   [[file:../linux/net/socket.c][=net/socket.c=]] and IPv4 is registered in [[file:../linux/net/ipv4/af_inet.c][=net/ipv4/af_inet.c=]].
-- *DHCP* ([[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]): a real *DISCOVER → OFFER → REQUEST → ACK* conversation,
-  ~a hundred lines of pure Lisp on a =sb-bsd-sockets= UDP socket. The BOOTP packet
-  and option parsing are built/parsed by hand. *Sending* with NO IP yet works over
-  an ordinary socket: *SO_BINDTODEVICE* ties it to the interface so the broadcast
-  leaves the right NIC with no routing entry. *Receiving* is the hard half — see
-  "Why a packet socket" just below. The pieces by name: [[file:../initramfs/dhcp.lisp::defun build-dhcp][=build-dhcp=]] / [[file:../initramfs/dhcp.lisp::defun parse-dhcp][=parse-dhcp=]] (the BOOTP packet and
-  its options, by hand), [[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]] (one send/await-reply round with retries),
-  [[file:../initramfs/dhcp.lisp::defun dhcp-acquire][=dhcp-acquire=]] (the four-message conversation), and [[file:../initramfs/dhcp.lisp::defun interface-mac][=interface-mac=]] (our own
-  hardware address, via =SIOCGIFHWADDR=).
-  [[file:../initramfs/dhcp.lisp::defun configure-eth0][=configure-eth0=]] ran it at boot, applied the leased IP+mask, and stashed
-  the gateway/DNS (=*gateway*= / =*dns*=) for §2c. Verified against QEMU SLIRP:
-  eth0 gets =10.0.2.15=, gw =10.0.2.2=, dns =10.0.2.3= from the ACK. (Since §2c
-  the boot runs [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]] instead, and the code is no longer eth0-only:
-  [[file:../initramfs/dhcp.lisp::defun dhcp-configure][=dhcp-configure=]] leases on any interface, which is how =wlan0= gets its
-  address.)
+- *DHCP* ([[file:../initramfs/dhcp.lisp][=dhcp.lisp=]]). A real *DISCOVER → OFFER → REQUEST → ACK* exchange in
+  pure Lisp. *Sending* with no IP yet works on an ordinary UDP socket:
+  *SO_BINDTODEVICE* ties it to the interface, so the broadcast leaves the right NIC
+  with no route. *Receiving* is the hard half (next section).
 
-*** Why a packet socket receives the replies (found on the laptop, 2026-10-12)
-Until 2026-10-12 the replies came in on the same UDP socket. We set the DHCP
-*broadcast flag* (bit 15 of the =flags= field), which asks the server to broadcast
-its OFFER and ACK to =255.255.255.255:68=, and a UDP socket bound to port 68 does
-receive a broadcast. QEMU's server obeys the flag, so every guest test passed. On the
-laptop, Wi-Fi associated with the home network and *no address ever came*. That
-router — a mesh access point; its DHCP replies carry a =MULTIAP_MASTER= option —
-treats the flag as a hint. It *unicasts* the OFFER to the address it is offering, at
-our MAC. The frame does reach =wlan0=. But the IP layer asks "is 192.168.1.x one of
-mine?", gets "not yet", and, with forwarding off, drops the packet before any UDP
-socket can see it. That is why real DHCP clients (=dhclient=, NetworkManager's,
-=udhcpc=) all read replies from a *packet socket*.
+The DHCP pieces by name:
+
+- *The packet.* [[file:../initramfs/dhcp.lisp::defun build-dhcp][=build-dhcp=]] / [[file:../initramfs/dhcp.lisp::defun parse-dhcp][=parse-dhcp=]] build and parse BOOTP and its
+  options by hand.
+- *One round.* [[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]] sends and awaits a reply, with retries.
+- *The exchange.* [[file:../initramfs/dhcp.lisp::defun dhcp-acquire][=dhcp-acquire=]] runs the four messages;
+  [[file:../initramfs/dhcp.lisp::defun interface-mac][=interface-mac=]] reads our hardware address (=SIOCGIFHWADDR=).
+- *Any interface.* [[file:../initramfs/dhcp.lisp::defun dhcp-configure][=dhcp-configure=]] leases on any interface (that's how =wlan0=
+  gets its address); the boot calls [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]]. Under QEMU SLIRP, =eth0= gets
+  =10.0.2.15=, gateway =10.0.2.2=, DNS =10.0.2.3=. (The older eth0-only entry,
+  [[file:../initramfs/dhcp.lisp::defun configure-eth0][=configure-eth0=]], is still there.)
+
+*** Why a packet socket receives the replies
+
+A DHCP client can set the *broadcast flag* (bit 15 of =flags=), asking the server to
+broadcast its OFFER and ACK to =255.255.255.255:68=; a UDP socket bound to port 68
+receives that. QEMU's server obeys the flag. Many real routers treat it as a hint
+and *unicast* the OFFER to the address being offered, at our MAC.
+
+That frame reaches the interface, but the IP layer asks "is 192.168.1.x one of
+mine?", gets "not yet", and, with forwarding off, drops it before any UDP socket
+sees it. The symptom: Wi-Fi associated, no address ever. That's why real DHCP
+clients (=dhclient=, NetworkManager's, =udhcpc=) read replies from a *packet socket*.
 
 A packet socket (=AF_PACKET=, [[file:../linux/net/packet/af_packet.c][=net/packet/af_packet.c=]]) receives frames at the
-device, before the IP layer decides anything. We open it as
-=socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_IP))=. =SOCK_DGRAM= means the kernel strips
-the link header and hands us the IP packet. =ETH_P_IP= means IPv4 only. We bind it to
-the interface with a =struct sockaddr_ll= that carries the interface index
-([[file:../initramfs/dhcp.lisp::defun open-dhcp-packet-socket][=open-dhcp-packet-socket=]]). Every IPv4 packet arriving on the link then reaches
-us. [[file:../initramfs/dhcp.lisp::defun dhcp-reply-from-ip-packet][=dhcp-reply-from-ip-packet=]] reads the IP header's length nibble, keeps
-protocol 17 (UDP) with destination port 68, and returns where the DHCP part starts.
+device, before the IP layer decides anything.
 
-A packet socket needs =CAP_NET_RAW=, which PID 1 keeps ([[file:storage.org][storage.org]]). Without it,
-the code falls back to the UDP socket and says so in netd's log. The UDP socket
-stays open in either case: it sends, and holding port 68 stops the kernel answering
-the server's broadcasts with "port unreachable". The interface index comes from the
-=SIOCGIFINDEX= ioctl, not =/sys/class/net/IF/ifindex=: sysfs shows the network
-namespace it was *mounted* in, which is wrong inside the host test's namespace.
-
-Two smaller fixes came with it:
-- *One attempt is a deadline, not one packet* ([[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]]). The packet socket
-  sees every IP packet, and a busy Wi-Fi carries other clients' DHCP replies. Each
-  attempt now keeps reading until its timeout and skips what is not ours. Before,
-  any stray packet used up the attempt.
+- *How it's opened.* =socket(AF_PACKET, SOCK_DGRAM, htons(ETH_P_IP))=:
+  =SOCK_DGRAM= strips the link header and hands us the IP packet; =ETH_P_IP= means
+  IPv4 only. It's bound to the interface by a =struct sockaddr_ll= carrying the
+  interface index ([[file:../initramfs/dhcp.lisp::defun open-dhcp-packet-socket][=open-dhcp-packet-socket=]]).
+- *Filtering.* [[file:../initramfs/dhcp.lisp::defun dhcp-reply-from-ip-packet][=dhcp-reply-from-ip-packet=]] reads the IP header's length nibble,
+  keeps protocol 17 (UDP) with destination port 68, and returns where the DHCP
+  part starts.
+- *Capability.* It needs =CAP_NET_RAW=, which PID 1 keeps ([[file:storage.org][storage.org]]). Without
+  it, the code falls back to the UDP socket and says so in netd's log.
+- *UDP socket still open.* It sends, and holding port 68 stops the kernel
+  answering the server's broadcasts with "port unreachable".
+- *Index by ioctl.* The interface index comes from =SIOCGIFINDEX=, not
+  =/sys/class/net/IF/ifindex=: sysfs shows the network namespace it was *mounted*
+  in, which is wrong inside the host test's namespace.
+- *An attempt is a deadline.* The packet socket sees every IP packet, and a busy
+  Wi-Fi carries other clients' DHCP replies. [[file:../initramfs/dhcp.lisp::defun dhcp-xchg][=dhcp-xchg=]] keeps reading until
+  its timeout and skips what isn't ours, rather than spending the attempt on a
+  stray packet.
 - *Associated without a lease, keep asking.* [[file:../initramfs/wifi.lisp::defun wifi-dhcp][=wifi-dhcp=]] runs on association,
-  and =netd='s Wi-Fi tick runs it again every 20 s while =wpa_state= is =COMPLETED=
-  and there is no lease.
+  and =netd='s Wi-Fi tick runs it again every 20 s while =wpa_state= is
+  =COMPLETED= and there's no lease.
 
-*Evidence that survives the machine.* Every exchange leaves a line in netd's log:
+*** Logs that survive the machine
+
+Every exchange leaves a line in netd's log:
 =wlan0: DHCP no offer — sent 4, 37 packets seen, 0 DHCP replies (packet socket)=.
-The counts tell the failures apart: nothing seen means the link is dead; packets
-but no DHCP means no server answered; DHCP replies that were not ours mean another
-client's traffic. Those lines, and every Wi-Fi event, are also appended to
-=~/.lol/log/network.log= ([[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]). That file is on the laptop's =/home=, so
-Debian can read it after a failed boot; =/tmp/lol-wifi= is gone by then. Since
-2026-10-16 it is one of the session logs ([[file:diagnostics.org][diagnostics.org]]): set aside at every
-boot, gzipped into =~/.lol/log/archive/= with the newest 30 kept, and cut at 16 MB
-mid-session; a diskless boot writes it to =/tmp/lol-log/= instead.
+The counts tell failures apart: nothing seen means a dead link; packets but no
+DHCP means no server answered; DHCP replies not ours means other clients' traffic.
 
-The test that reproduces the laptop's failure is [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] (§8): a fake
-router that unicasts, one veth cable, no root needed.
+Those lines, and every Wi-Fi event, go to =~/.lol/log/network.log=
+([[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]), on the disk's =/home=, so you can read it from the host OS after
+a failed boot (=/tmp/lol-wifi= is gone by then). It's one of the session logs
+([[file:diagnostics.org][diagnostics.org]]): set aside at every boot, gzipped into =~/.lol/log/archive/=
+with the newest 30 kept, cut at 16 MB mid-session; a diskless boot writes to
+=/tmp/lol-log/= instead.
 
-** (c) the default route, the lease, and names — *DONE* (2026-10-12)
+The unicasting router is reproduced by [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] (§8): one veth
+cable, no root needed.
 
-The plan was agent.org's network track (§10, N1–N4). What it planned and what
-shipped:
+** (c) the default route, the lease, and names
 
-| Phase | Planned                  | Shipped                                                                     |
-|-------+--------------------------+-----------------------------------------------------------------------------|
-| N1    | default route, ~40 lines | =SIOCADDRT= + the lease as an object + renewal ([[file:../initramfs/net.lisp][net.lisp]], [[file:../initramfs/dhcp.lisp][dhcp.lisp]])        |
-| N2    | DNS client, ~150 lines   | a stub resolver with a cache, TCP fallback, overrides ([[file:../initramfs/dns.lisp][dns.lisp]], 423 lines) |
-| N3    | SNTP, ~60 lines          | drift report + stepping through =lol-rootd= ([[file:../initramfs/sntp.lisp][sntp.lisp]], 164 lines; §2d)     |
-| N4    | plain-HTTP =GET=         | a full HTTP/1.1 client, and HTTPS (§2e)                                     |
+This is the outbound path the agent needs ([[file:agent.org][agent.org]]), built in four phases:
 
-*** The loopback, =lo= (fixed 2026-10-12)
-The kernel creates =lo= *down*, and until 2026-10-12 nothing here raised it. So
-=127.0.0.1= did not exist. On the laptop, a Rails server in the terminal could not
-be reached at =localhost= from the web pane. [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]] now raises =lo= first.
-Setting =IFF_UP= is enough: when a loopback device comes up, the kernel gives it
-=127.0.0.1/8= itself ([[file:../linux/net/ipv4/devinet.c::inetdev_event][=inetdev_event=]], =NETDEV_UP=), and IPv6 adds =::1=.
-Containers and Chrome share this network namespace, so they all see the same
-=lo=. =check-containers.lisp= serves a page on =127.0.0.1:3999= and fetches it
-with =curl=. *Not a finding:* the first version of that check used Ruby's
-=-run -e httpd=, which needs =webrick=, a gem Ruby 3 no longer bundles; the
-server never started.
+| Phase | What                                                                                    |
+|-------+-----------------------------------------------------------------------------------------|
+| N1    | =SIOCADDRT= + the lease as an object + renewal ([[file:../initramfs/net.lisp][net.lisp]], [[file:../initramfs/dhcp.lisp][dhcp.lisp]])                    |
+| N2    | a stub resolver with a cache, TCP fallback, overrides ([[file:../initramfs/dns.lisp][dns.lisp]])                        |
+| N3    | SNTP: drift report + stepping through =lol-rootd= ([[file:../initramfs/sntp.lisp][sntp.lisp]], §2d)                      |
+| N4    | an HTTP/1.1 client, and HTTPS (§2e)                                                     |
+
+*** The loopback, =lo=
+
+The kernel creates =lo= *down*; without it, =127.0.0.1= doesn't exist and a server
+in a container can't be reached at =localhost= from the web pane.
+[[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]] raises =lo= first. Setting =IFF_UP= is enough: when a loopback
+device comes up, the kernel gives it =127.0.0.1/8= itself
+([[file:../linux/net/ipv4/devinet.c::inetdev_event][=inetdev_event=]], =NETDEV_UP=), and IPv6 adds =::1=. Containers and Chrome share
+this network namespace, so they all see the same =lo=. =check-containers.lisp=
+serves a page on =127.0.0.1:3999= and fetches it with =curl=.
 
 *** The default route
 
-Giving =eth0= an address and a mask makes the kernel add *one* route by itself:
-"=10.0.2.0/24= is on-link, out of =eth0=". That reached everything in QEMU's SLIRP
-subnet and nothing beyond it. The internet needs a *default route* — "for every
-other destination, hand the packet to the gateway" — and there are two ways to ask
-the kernel for one: the =SIOCADDRT= ioctl with a =struct rtentry= (what the old
-=route add= does), or an =RTM_NEWROUTE= message on an =AF_NETLINK= socket (what
-=ip route add= does). We chose the *ioctl*: one route through one gateway is all
-we need, it is the same throwaway-socket idiom as =SIOCSIFADDR= above, and the one
-place netlink would earn its keep — IPv6 routes — never arises, because the kernel
-installs those itself (§2f). [[file:../initramfs/net.lisp::defun %route-ioctl][=%route-ioctl=]] fills the 120-byte struct
-(offsets measured with =offsetof= against glibc's =<net/route.h>=, not worked out
-by hand: =rt_dst= at 8, =rt_gateway= 24, =rt_genmask= 40, =rt_flags= 56, =rt_dev=
-88); [[file:../initramfs/net.lisp::defun add-default-route][=add-default-route=]] treats =EEXIST= as success. It needs =CAP_NET_ADMIN=,
-one of PID 1's five ([[file:storage.org][storage.org]] §5; =linux/net/ipv4/fib_frontend.c= checks it).
-Reading the table back needs no netlink either: the kernel prints it as text —
+An address and a mask make the kernel add *one* route by itself: "=10.0.2.0/24= is
+on-link, out of =eth0=". The internet needs a *default route* — "every other
+destination, hand to the gateway". Two ways to ask for one:
+
+- *=SIOCADDRT= ioctl* with a =struct rtentry= (what the old =route add= does) —
+  *chosen*. One route through one gateway is all we need, it's the same
+  throwaway-socket idiom as =SIOCSIFADDR=, and IPv6 routes, where netlink would
+  earn its keep, are installed by the kernel itself (§2f).
+- *=RTM_NEWROUTE= on an =AF_NETLINK= socket* (what =ip route add= does) — not
+  needed.
+
+[[file:../initramfs/net.lisp::defun %route-ioctl][=%route-ioctl=]] fills the 120-byte struct (offsets measured with =offsetof= against
+glibc's =<net/route.h>=: =rt_dst= at 8, =rt_gateway= 24, =rt_genmask= 40,
+=rt_flags= 56, =rt_dev= 88). [[file:../initramfs/net.lisp::defun add-default-route][=add-default-route=]] treats =EEXIST= as success. It
+needs =CAP_NET_ADMIN=, one of PID 1's five ([[file:storage.org][storage.org]] §5;
+=linux/net/ipv4/fib_frontend.c= checks it).
+
+Reading the table back needs no netlink: the kernel prints it as text in
 =/proc/net/route= (addresses as host-order hex: =0202000A= is =10.0.2.2=) and
-=/proc/net/ipv6_route= — read by [[file:../initramfs/net.lisp::defun ipv4-routes][=ipv4-routes=]] and [[file:../initramfs/net.lisp::defun ipv6-default-route][=ipv6-default-route=]].
+=/proc/net/ipv6_route=, read by [[file:../initramfs/net.lisp::defun ipv4-routes][=ipv4-routes=]] and [[file:../initramfs/net.lisp::defun ipv6-default-route][=ipv6-default-route=]].
 
 *** The lease as an object, and renewing it
 
 A lease is an address *with a deadline*, plus facts the rest of the machine needs:
-the router, the DNS servers, the NTP servers (option 42), the search domain
-(option 15). [[file:../initramfs/dhcp.lisp::defstruct lease][the =LEASE= struct]] holds them, one per interface in =*leases*=;
-[[file:../initramfs/dhcp.lisp::defun current-lease][=current-lease=]] is the one that owns the default route. [[file:../initramfs/dhcp.lisp::defun apply-lease][=apply-lease=]] makes a
-lease true in the kernel (address, mask, default route — replacing another
-interface's, so the newest link wins) and then runs =*lease-hooks*=: that is how
-=dns.lisp= rewrites =/etc/resolv.conf= and =sntp.lisp= checks the clock without
-=dhcp.lisp= naming either. At boot the supervisor calls [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]]: DHCP on every
-*wired* interface with a carrier (none on the laptop), then the =netd= thread.
-[[file:../initramfs/dhcp.lisp::defun netd-loop][=netd-loop=]] wakes every 5 s: a lease past its T1 (half its length by default)
-gets a renewal REQUEST ([[file:../initramfs/dhcp.lisp::defun dhcp-renew][=dhcp-renew=]] — the "may I keep this address?" form, no
-server id); a NAK or an expired lease starts over with DISCOVER; silence retries a
-minute later. It also runs =*netd-hooks*=, which is where Wi-Fi lives (§7), so the
-machine has *one* network thread. The QEMU static fallback (=10.0.2.15=) now
-applies only to a =virtio_net= NIC — a real NIC never gets a made-up address.
+the router, DNS servers, NTP servers (option 42), the search domain (option 15).
+
+- *The object.* [[file:../initramfs/dhcp.lisp::defstruct lease][The =LEASE= struct]], one per interface in =*leases*=;
+  [[file:../initramfs/dhcp.lisp::defun current-lease][=current-lease=]] is the one owning the default route.
+- *Applying it.* [[file:../initramfs/dhcp.lisp::defun apply-lease][=apply-lease=]] makes a lease true in the kernel (address, mask,
+  default route — replacing another interface's, so the newest link wins), then
+  runs =*lease-hooks*=. That's how =dns.lisp= rewrites =/etc/resolv.conf= and
+  =sntp.lisp= checks the clock without =dhcp.lisp= naming either.
+- *At boot.* The supervisor calls [[file:../initramfs/dhcp.lisp::defun network-up][=network-up=]]: DHCP on every *wired* interface
+  with a carrier, then the =netd= thread.
+- *Renewal.* [[file:../initramfs/dhcp.lisp::defun netd-loop][=netd-loop=]] wakes every 5 s. A lease past its T1 (half its length
+  by default) gets a renewal REQUEST ([[file:../initramfs/dhcp.lisp::defun dhcp-renew][=dhcp-renew=]], "may I keep this address?",
+  no server id); a NAK or an expired lease starts over with DISCOVER; silence
+  retries a minute later.
+- *One network thread.* =netd= also runs =*netd-hooks*=, which is where Wi-Fi
+  lives (§7).
 
 *** DNS: a stub resolver in Lisp
 
-"Stub" means we do not walk the DNS tree ourselves; we ask the *recursive*
-resolver the lease named (SLIRP answers at =10.0.2.3=, a home router at its own
-address) and it does the walking. A query is one UDP datagram to port 53 — a
-12-byte header, the question as *labels* (=7example3com0=), a type and a class —
-and the answer comes back in the same shape. The subtle part is *compression*: in
-a reply a name may end in a two-byte pointer (top bits =11=) back to where the rest
-of it already appeared; [[file:../initramfs/dns.lisp::defun decode-dns-name][=decode-dns-name=]] follows those, and stops after 64
-jumps, because a loop of pointers is a malformed (or hostile) message.
-[[file:../initramfs/dns.lisp::defun dns-query][=dns-query=]] adds what real networks need: *CNAME chasing* (=www.github.com= is an
-alias; we follow the chain inside the answer, or ask again, at most 8 hops), *TC →
-TCP* (an answer too big for UDP comes back truncated; we repeat it over TCP with
-the 2-byte length prefix), a *TTL cache* with *negative caching* (an NXDOMAIN is
-remembered for the SOA's minimum, at most five minutes), and *timeouts and
-retries* over every server, two rounds. *Overrides* come first: our =/etc/hosts=,
-then =~/.lol/hosts= (yours to edit; =~/.config/lol/hosts= until 2026-10-17, moved at boot), then =(setf (dns-override "name")
-"10.0.2.2")= at the REPL. *AAAA* records are asked for only when there is an IPv6
-default route (§2f). The API the other tracks use is [[file:../initramfs/dns.lisp::defun resolve-host][=resolve-host=]] → =#(93 184 215
-14)= (IPv4 when there is one) and =resolve-addresses= (all of them, v4 first — the
-docstring says why we depart from RFC 6724 there); failure is a =DNS-ERROR=
-naming the reason.
+"Stub" means we don't walk the DNS tree ourselves; we ask the *recursive* resolver
+the lease named (SLIRP's at =10.0.2.3=, a home router at its own address). A query
+is one UDP datagram to port 53: a 12-byte header, the question as *labels*
+(=7example3com0=), a type and a class. The answer comes back in the same shape.
 
-No NSS, as §5 decided: glibc's =getaddrinfo= would =dlopen= =libnss_*= plugins
-named by =/etc/nsswitch.conf=; our resolver is a datagram and a parser.
+- *Compression.* In a reply a name may end in a two-byte pointer (top bits =11=)
+  back to where the rest already appeared. [[file:../initramfs/dns.lisp::defun decode-dns-name][=decode-dns-name=]] follows those and
+  stops after 64 jumps: a pointer loop is a malformed (or hostile) message.
+- *CNAME chasing.* [[file:../initramfs/dns.lisp::defun dns-query][=dns-query=]] follows an alias chain inside the answer, or
+  asks again, at most 8 hops.
+- *TC → TCP.* An answer too big for UDP comes back truncated; we repeat it over
+  TCP with the 2-byte length prefix.
+- *TTL cache.* With *negative caching*: an NXDOMAIN is remembered for the SOA's
+  minimum, at most five minutes.
+- *Retries.* Timeouts and retries over every server, two rounds.
+- *Overrides first.* Our =/etc/hosts=, then =~/.lol/hosts= (yours to edit), then
+  =(setf (dns-override "name") "10.0.2.2")= at the REPL.
+- *AAAA only with a v6 route.* AAAA records are asked for only when there's an
+  IPv6 default route (§2f).
+
+The API: [[file:../initramfs/dns.lisp::defun resolve-host][=resolve-host=]] → =#(93 184 215 14)= (IPv4 when there is one) and
+=resolve-addresses= (all of them, v4 first — the docstring says why we depart from
+RFC 6724 there). Failure is a =DNS-ERROR= naming the reason.
+
+No NSS (§5): glibc's =getaddrinfo= would =dlopen= =libnss_*= plugins named by
+=/etc/nsswitch.conf=; our resolver is a datagram and a parser.
 
 *** =/etc/resolv.conf=, for everybody else
 
-Our own code never reads it, but glibc programs do — the host's tools run in a
-container ([[file:containers.org][containers.org]]; =lol-ct= binds our file over the container's), or
-anything run from =/mnt/host=. So [[file:../initramfs/dns.lisp::defun write-resolv-conf][=write-resolv-conf=]] (a lease hook) writes the
-lease's servers and search domain into *our* root. The catch: our =/etc= is root's
-and the user deliberately cannot write it. Instead [[file:../initramfs/preinit.c::static void give_resolv_conf][preinit creates that one file]]
-and gives it to the user before dropping root, and the Lisp rewrites it *in place*
-(=O_TRUNC=, no rename — a rename into =/etc= would need write permission on the
-directory). A static =/etc/hosts= and an =/etc/nsswitch.conf= (=hosts: files dns=)
-ship in the cpio from [[file:../initramfs/etc/hosts][=initramfs/etc/=]]. Since 2026-10-16 [[file:../initramfs/preinit.c::static void merge_host_hosts][preinit appends the
-host's =/etc/hosts=]] to ours at boot, while it is still root, so the names you gave
-your machines in Debian resolve here too (and in every container, which gets our
-file — [[file:containers.org][containers.org]]). It is read at boot, not baked in, so an edit in Debian
-needs no rebuild.
+Our code never reads it, but glibc programs do: the host's tools in a container
+([[file:containers.org][containers.org]]; =lol-ct= binds our file over the container's), or anything run
+from =/mnt/host=. So [[file:../initramfs/dns.lisp::defun write-resolv-conf][=write-resolv-conf=]] (a lease hook) writes the lease's servers
+and search domain into *our* root.
 
-** (d) time: SNTP, and a clock only =lol-rootd= may set — *DONE*
+- *Owned by the user.* Our =/etc= is root's, and the user can't write it.
+  [[file:../initramfs/preinit.c::static void give_resolv_conf][Preinit creates that one file]] and gives it to the user before dropping root.
+- *Rewritten in place.* =O_TRUNC=, no rename — a rename into =/etc= would need
+  write permission on the directory.
+- *Static companions.* A static =/etc/hosts= and an =/etc/nsswitch.conf=
+  (=hosts: files dns=) ship in the cpio from [[file:../initramfs/etc/hosts][=initramfs/etc/=]].
+- *The host's names too.* [[file:../initramfs/preinit.c::static void merge_host_hosts][Preinit appends the host's =/etc/hosts=]] to ours at
+  boot, while still root, so names you gave your machines in the host OS resolve
+  here and in every container. It's read at boot, so an edit there needs no
+  rebuild.
 
-An earlier version of this doc said the guest "boots at epoch 0" because
-=CONFIG_RTC_CLASS= is off. *That was wrong*: x86 Linux reads the CMOS clock once at
-boot even without the RTC class ([[file:systray.org][systray.org]]), the laptop's holds UTC, and QEMU's
-emulated RTC starts at the host's time. So the clock is usually right, and
-[[file:../initramfs/sntp.lisp::defun sync-clock][=sync-clock=]]'s main job is to *report drift*; it steps the clock only when it is
-off by more than 2 s (a dead CMOS battery, a month switched off). It still
-matters, because TLS judges certificates by their dates.
+** (d) time: SNTP, and a clock only =lol-rootd= may set
+
+x86 Linux reads the CMOS clock once at boot even with =CONFIG_RTC_CLASS= off
+([[file:systray.org][systray.org]]), and QEMU's emulated RTC starts at the host's time. So the clock is
+usually right, and [[file:../initramfs/sntp.lisp::defun sync-clock][=sync-clock=]]'s main job is to *report drift*. It steps the clock
+only when it's off by more than 2 s (a dead CMOS battery, a month switched off).
+It matters because TLS judges certificates by their dates.
 
 SNTP is one 48-byte UDP datagram each way to port 123. The reply carries when our
 request reached the server (T2) and when the answer left (T3); with our own send
 and receive times T1, T4, the offset is =((T2-T1) + (T3-T4)) / 2=. NTP counts
-seconds from 1900 — which is exactly Common Lisp's universal-time epoch.
+seconds from 1900 — exactly Common Lisp's universal-time epoch.
 
-Setting the clock needs =CAP_SYS_TIME=, which PID 1 deliberately lacks. So
-[[file:../initramfs/sntp.lisp::defun set-system-clock][=set-system-clock=]] asks =lol-rootd= with *one queued signal*: =sigqueue(2)=
-carries a one-word payload, the new time in Unix milliseconds, and preinit's
-handler ([[file:../initramfs/preinit.c::static void do_settime][=do_settime=]]) calls =clock_settime=. A request to =lol-rootd= is
-a signal, never a message to parse — the whole vocabulary is three signal numbers
-(=SIGUSR1=, 40, 41), fixed in both programs because glibc and musl number
-=SIGRTMIN= differently (34 vs 35). =lol-rootd= refuses any time before 2026: a
-clock pushed to 1970 would make every certificate "not yet valid". A diskless
-boot runs as root and sets it directly. Verified in the guest: asking for +100 s
-moves the clock by 100 s, and the next =sync-clock= steps it back.
+Setting the clock needs =CAP_SYS_TIME=, which PID 1 deliberately lacks:
 
-The weakness, said out loud: SNTP is unauthenticated, so anyone on the path can
-lie about the time we then use to judge certificates. Universally accepted; the
-RTC is the cross-check.
+- *One queued signal.* [[file:../initramfs/sntp.lisp::defun set-system-clock][=set-system-clock=]] asks =lol-rootd= with =sigqueue(2)=,
+  whose one-word payload is the new time in Unix milliseconds. Preinit's handler
+  ([[file:../initramfs/preinit.c::static void do_settime][=do_settime=]]) calls =clock_settime=.
+- *Signals, never messages.* A =lol-rootd= request is a signal, never a message
+  to parse: =SIGUSR1=, 40, 41 and 42 ([[file:storage.org][storage.org]]), fixed numbers in both
+  programs because glibc and musl number =SIGRTMIN= differently (34 vs 35).
+- *A floor.* =lol-rootd= refuses any time before 2026: a clock pushed to 1970
+  would make every certificate "not yet valid".
+- *Diskless.* A diskless boot runs as root and sets it directly.
 
-** (e) HTTP/1.1 and HTTPS — *DONE*
+Verified in the guest: asking for +100 s moves the clock by 100 s, and the next
+=sync-clock= steps it back.
 
-[[file:../initramfs/http.lisp::defun http-request][=http-request=]] is the API agent.org's track consumes:
+*Known limit:* SNTP is unauthenticated, so anyone on the path can lie about the
+time we then use to judge certificates. Universally accepted; the RTC is the
+cross-check.
+
+** (e) HTTP/1.1 and HTTPS
+
+[[file:../initramfs/http.lisp::defun http-request][=http-request=]] is the API the agent consumes:
 
 #+begin_src lisp
   (http-request url &key (method :get) headers body (want :string) on-chunk
@@ -334,122 +314,127 @@ RTC is the cross-check.
     => (values status headers body final-url)
 #+end_src
 
-HTTP/1.1 is text up to the body; the part a client must get right is the body's
-*framing*, which comes in three kinds: =Content-Length: N=; =Transfer-Encoding:
-chunked= (a series of =<hex size>\r\n<data>\r\n=, ending with size 0 and optional
-trailer headers — how a server streams something whose length it does not know
-yet, such as server-sent events); or neither, and the body runs until the server
-closes. [[file:../initramfs/http.lisp::defun body-pieces][=body-pieces=]] turns all three into one "next piece" function, which
-three consumers share: =:want :string= / =:octets= collect it, =:on-chunk= hands
-each piece to a function *as it arrives* (the SSE hook — three chunks sent 0.3 s
-apart arrive as three calls), and =:want :stream= wraps it in a Gray stream the
-caller closes. Every request says =Connection: close= — one request per
-connection, no pool — which is the right trade until something measures it.
-Redirects 301/302/303/307/308 are followed; a 303, and a 301/302 answering a POST,
-become a GET. A redirect to *another origin* (scheme, host or port) drops
-=Authorization=, =Proxy-Authorization=, =Cookie= and =X-Api-Key= first
-([[file:../initramfs/http.lisp::defun strip-credentials][=strip-credentials=]], 2026-10-17). Before that, a server we never chose would
-have received the API key, and an https→http hop would have sent it in the clear.
-=poc/http-test.lisp= asserts both directions against two loopback ports. Timeouts are =SO_SNDTIMEO= (on Linux it bounds =connect()= too) and
-=SO_RCVTIMEO= per read. =:connect-timeout= (2026-10-13) bounds the connect alone
-when it should be shorter than =:timeout=: the agent waits 300 s between two reads of
-a long answer, but gives a connect 15 s — with one timeout for both, an unanswered
-SYN could hold a question on "thinking..." for the kernel's whole SYN-retry budget,
-about two minutes, per attempt ([[file:agent.org::14.8 Failure reporting][agent.org §14.8]]).
+HTTP/1.1 is text up to the body. The part a client must get right is the body's
+*framing*, three kinds:
 
-*HTTPS* is the one place we borrow: TLS from scratch is agent.org §9, a separate
-project. Until then [[file:../initramfs/tls.lisp][=tls.lisp=]] uses the *host's* OpenSSL 3 from =/mnt/host=. The
-rule that makes it safe: *the library is loaded at runtime, never at build time.*
-A saved SBCL image reopens every shared object it had loaded, so a libssl loaded
-while building would make =/sbin/lisp= refuse to start without =/mnt/host=. So
-[[file:../initramfs/tls.lisp::defun ensure-openssl][=ensure-openssl=]] loads it on the first HTTPS request (=:dont-save t=), and every
-OpenSSL function is looked up *by name at call time* ([[file:../initramfs/tls.lisp::defun ssl-sym][=ssl-sym=]],
-=find-dynamic-foreign-symbol-address=). libssl needs libcrypto, which needs libz
-and libzstd; the loader would look for those in *our* =/lib=, but it never looks
-for a library already loaded under the same soname — so we load all four, deepest
-first, by full path. It works because the image's glibc *is* the host's (copied at
-build time); if the host upgrades glibc and the image is not rebuilt, the error
-says so. Checked: the chain against the host's CA bundle
-(=/etc/ssl/certs/ca-certificates.crt=), the *name* with =SSL_set1_host=, SNI, TLS
-≥ 1.2. Without =/mnt/host= an HTTPS request fails with one sentence ("HTTPS needs
-the host's OpenSSL, and there is no host system at /mnt/host …").
+- *=Content-Length: N=.*
+- *=Transfer-Encoding: chunked=.* A series of =<hex size>\r\n<data>\r\n=, ending
+  with size 0 and optional trailers — how a server streams something whose length
+  it doesn't know yet, such as server-sent events.
+- *Neither.* The body runs until the server closes.
+
+[[file:../initramfs/http.lisp::defun body-pieces][=body-pieces=]] turns all three into one "next piece" function shared by three
+consumers: =:want :string= / =:octets= collect it; =:on-chunk= hands each piece to
+a function *as it arrives* (the SSE hook — three chunks sent 0.3 s apart arrive
+as three calls); =:want :stream= wraps it in a Gray stream the caller closes.
+
+- *One request per connection.* Every request says =Connection: close=; no pool.
+- *Redirects.* 301/302/303/307/308 are followed; a 303, and a 301/302 answering a
+  POST, become a GET.
+- *Credentials stay home.* A redirect to *another origin* (scheme, host or port)
+  drops =Authorization=, =Proxy-Authorization=, =Cookie= and =X-Api-Key= first
+  ([[file:../initramfs/http.lisp::defun strip-credentials][=strip-credentials=]]), so a server we never chose doesn't get the API key, and
+  an https→http hop doesn't send it in the clear. =poc/http-test.lisp= asserts
+  both directions against two loopback ports.
+- *Timeouts.* =SO_SNDTIMEO= (on Linux it bounds =connect()= too) and =SO_RCVTIMEO=
+  per read. =:connect-timeout= bounds the connect alone when it should be shorter
+  than =:timeout=: the agent waits 300 s between two reads of a long answer but
+  gives a connect 15 s. With one timeout for both, an unanswered SYN could hold a
+  question for the kernel's whole SYN-retry budget, about two minutes, per attempt
+  ([[file:agent.org::Failure reporting][agent.org §9]]).
+
+*** HTTPS: the host's OpenSSL, loaded at runtime
+
+TLS from scratch is a separate project (agent.org §12). Until then
+[[file:../initramfs/tls.lisp][=tls.lisp=]] uses the *host's* OpenSSL 3 from =/mnt/host=. The rule that makes it
+safe: *the library is loaded at runtime, never at build time.* A saved SBCL image
+reopens every shared object it had loaded, so a libssl loaded while building would
+make =/sbin/lisp= refuse to start without =/mnt/host=.
+
+- *Loaded on first use.* [[file:../initramfs/tls.lisp::defun ensure-openssl][=ensure-openssl=]] loads it on the first HTTPS request
+  (=:dont-save t=).
+- *Called by name.* Every OpenSSL function is looked up *at call time*
+  ([[file:../initramfs/tls.lisp::defun ssl-sym][=ssl-sym=]], =find-dynamic-foreign-symbol-address=).
+- *Dependencies by full path.* libssl needs libcrypto, which needs libz and
+  libzstd. The loader would look in *our* =/lib=, but never looks for a library
+  already loaded under the same soname — so we load all four, deepest first, by
+  full path.
+- *Same glibc.* It works because the image's glibc *is* the host's (copied at
+  build time); if the host upgrades glibc and the image isn't rebuilt, the error
+  says so.
+- *What's checked.* The chain against the host's CA bundle
+  (=/etc/ssl/certs/ca-certificates.crt=), the *name* with =SSL_set1_host=, SNI,
+  TLS ≥ 1.2.
+- *No host, one sentence.* Without =/mnt/host= an HTTPS request fails with "HTTPS
+  needs the host's OpenSSL, and there is no host system at /mnt/host …".
 
 Verified in the guest (=LOL_GUEST_HOSTROOT=1=): =https://example.com/= → 200 with
-its page, =https://expired.badssl.com/= refused as expired; on the host
+its page, =https://expired.badssl.com/= refused as expired. On the host,
 =poc/http-test.lisp= also refuses badssl's wrong-host and self-signed certificates.
 
-*** Interrupted is not timed out (2026-10-13)
-Found in a session run inside the environment: an HTTPS read could fail with "timed
-out waiting for …" long before any timeout could have fired. The cause is how SBCL
-collects garbage. To stop
-the other threads for a GC, it sends each one a signal (=SIGUSR2=,
-=SIG_STOP_FOR_GC= in =./sbcl='s =src/runtime/linux-os.h=). A thread blocked in
-=recv= or =send= on a socket that has a timeout set (=SO_RCVTIMEO= /
-=SO_SNDTIMEO=, which we always set) is *not* restarted after the signal. The call
-returns =EINTR= (signal(7) lists these calls as never restarted). OpenSSL reports
-that as =WANT_READ= / =WANT_WRITE= — exactly the code our timeout produces. So a GC
-in any thread looked like a network timeout in the thread doing HTTPS.
+*** Pitfall: interrupted is not timed out
 
-[[file:../initramfs/tls.lisp::defun tls-interrupted-p][=tls-interrupted-p=]] tells them apart. =errno= 4 (=EINTR=) is an interruption. So
-is a =WANT_*= that came back well before any timeout could fire (under half a
-second) without =EAGAIN= (11), which is what a real timeout leaves. =tls-connect=,
-=tls-read= and =tls-write= then make the same call again, up to 200 times.
+An HTTPS read could fail with "timed out waiting for …" long before any timeout
+could fire. The cause is how SBCL collects garbage:
 
-*The UDP side had the same bug, found by the 2026-10-16 review.* SB-BSD-SOCKETS
-returns NIL from =socket-receive= on =EINTR=, and SIGNALS on a real timeout
-(=EAGAIN=). Every site wrapped it in =ignore-errors=, which makes the two look the
-same. So a GC landing in a DHCP attempt, a DNS query, an SNTP exchange or a
-=wpa_supplicant= request ended it as "no answer".
-[[file:../initramfs/dhcp.lisp::defun socket-receive-patiently][=socket-receive-patiently=]] reads again after an =EINTR= until its own deadline,
-and all four now use it (=dhcp-receive= reports =:interrupted= and the attempt keeps
-listening). Plain HTTP writes got the same treatment as its reads: =conn-write=
-retries =EINTR=. =poc/http-test.lisp= proves the premise first. With another thread
-interrupting the reader every 100 ms, a plain receive returns NIL within 0.5 s,
-while the patient one waits out its 2 s deadline.
+- *GC stops threads by signal.* SBCL sends each thread =SIGUSR2=
+  (=SIG_STOP_FOR_GC= in =./sbcl='s =src/runtime/linux-os.h=).
+- *Timed sockets aren't restarted.* A thread blocked in =recv= or =send= on a
+  socket with =SO_RCVTIMEO= / =SO_SNDTIMEO= set (we always set them) gets =EINTR=
+  back; signal(7) lists these calls as never restarted.
+- *OpenSSL hides the difference.* It reports that as =WANT_READ= / =WANT_WRITE= —
+  exactly what our timeout produces. So a GC in any thread looked like a network
+  timeout in the thread doing HTTPS.
 
-** (f) IPv6 — on since tag #26, and nothing breaks
+[[file:../initramfs/tls.lisp::defun tls-interrupted-p][=tls-interrupted-p=]] tells them apart: =errno= 4 (=EINTR=) is an interruption, and
+so is a =WANT_*= that came back well before any timeout could fire (under half a
+second) without =EAGAIN= (11), which a real timeout leaves. =tls-connect=,
+=tls-read= and =tls-write= then retry, up to 200 times.
 
-We configure nothing: when an interface comes up the kernel gives it a link-local
-=fe80::= address, and when the router advertises a prefix the kernel builds a
-global address from it (SLAAC, stateless address autoconfiguration) and installs
-the v6 default route. Under QEMU, SLIRP advertises =fec0::/64=: =eth0= gets
-=fec0::5054:ff:fe12:3456= and a default route via =fe80::2=. The Lisp only reads:
-[[file:../initramfs/net.lisp::defun ipv6-addresses][=ipv6-addresses=]] (=/proc/net/if_inet6=) for the network view, and
-=ipv6-default-route= to decide whether AAAA lookups are worth making. =http.lisp=
-connects to a 16-octet address with an =inet6-socket=. Checked that nothing broke:
-every v4 path above passes with IPv6 on.
+*The UDP side had the same bug.* SB-BSD-SOCKETS returns NIL from =socket-receive=
+on =EINTR= and *signals* on a real timeout (=EAGAIN=); wrapping it in
+=ignore-errors= makes the two look the same. So a GC during a DHCP attempt, a DNS
+query, an SNTP exchange or a =wpa_supplicant= request ended it as "no answer".
 
-* 3. The staged bring-up plan (prove each layer before the next)
+- *The fix.* [[file:../initramfs/dhcp.lisp::defun socket-receive-patiently][=socket-receive-patiently=]] reads again after an =EINTR= until its own
+  deadline; all four use it (=dhcp-receive= reports =:interrupted= and the attempt
+  keeps listening). Plain HTTP writes retry =EINTR= too (=conn-write=).
+- *The proof.* =poc/http-test.lisp= proves the premise first: with another thread
+  interrupting the reader every 100 ms, a plain receive returns NIL within 0.5 s,
+  while the patient one waits out its 2 s deadline.
 
-1. *Kernel builds with NET+INET+VIRTIO_NET* — *DONE (tag #21).* The NIC
-   enumerates on PCI (=[1af4:1000]=, class 0x0200) and =show-net-interfaces=
-   lists =eth0 (down)= at boot. =kernel-config.org= §7 + changelog updated; the
-   QEMU NIC wiring is in =build.sh= (=QEMU_NET=).
-2. *Static IP from Lisp* — *DONE.* =bring-up-interface= (=net.lisp=) brings =eth0=
-   UP|RUNNING at =10.0.2.15/24=; =show-net-interfaces= now prints the address.
-3. *First packets — a TCP server* — *DONE.* We went straight to the TCP REPL
-   (§6a, =start-network-repl=): =bind= / =listen= / =accept= a connection and run
-   the REPL over the socket stream. From the host, =nc 127.0.0.1 4005= (QEMU
-   =hostfwd=) returns a live remote REPL — verified =(* 6 7)= → =42=. This proves
-   the whole INET path (a UDP/ICMP "hello" or an outbound TCP *client* would be
-   strictly easier and were skipped as redundant).
-4. *DHCP* — *DONE.* =dhcp.lisp= does a real DISCOVER/REQUEST handshake at boot
-   (=configure-eth0=), so =eth0= gets =10.0.2.15= dynamically instead of a hard
-   coded address; gateway/DNS are parsed and stashed. Verified against QEMU SLIRP.
-5. *Outbound* — *DONE (2026-10-12).* Default route, the lease object and renewal,
-   DNS, =/etc/resolv.conf=, SNTP, HTTP/1.1 and HTTPS (§2c–f) — [[file:agent.org][agent.org]]'s
-   network track N1–N4. Proved by =check-net.lisp= (§8).
-6. *Wi-Fi* — *BUILT, in use on the laptop* (§7): firmware in the cpio, the host's
-   =wpa_supplicant=, the network view. In QEMU everything short of a radio is
-   exercised; the radio itself has been used for real on the laptop.
-7. *(open)* real-hardware Ethernet: the laptop has no port, but the user's USB
-   dongle (=0bda:8153=, RTL8153) would need =CONFIG_USB_RTL8152= (§7.5).
+** (f) IPv6 — on since tag #26
+
+We configure nothing. When an interface comes up, the kernel gives it a link-local
+=fe80::= address. When the router advertises a prefix, the kernel builds a global
+address from it (SLAAC, stateless address autoconfiguration) and installs the v6
+default route.
+
+Under QEMU, SLIRP advertises =fec0::/64=: =eth0= gets =fec0::5054:ff:fe12:3456=
+and a default route via =fe80::2=. The Lisp only reads:
+
+- *Addresses.* [[file:../initramfs/net.lisp::defun ipv6-addresses][=ipv6-addresses=]] (=/proc/net/if_inet6=), for the network view.
+- *The route.* =ipv6-default-route=, to decide whether AAAA lookups are worth
+  making.
+- *Connecting.* =http.lisp= connects to a 16-octet address with an
+  =inet6-socket=.
+
+Every v4 path above passes with IPv6 on.
+
+* 3. The staged bring-up (prove each layer before the next)
+
+1. *Kernel* (tag #21): the virtio NIC enumerates on PCI (=[1af4:1000]=, class
+   0x0200) and =show-net-interfaces= lists =eth0 (down)=.
+2. *Static IP from Lisp*: =eth0= UP|RUNNING at =10.0.2.15/24=.
+3. *First packets*: the TCP REPL (§6a) — =nc 127.0.0.1 4005= through QEMU's
+   =hostfwd= gives a live remote REPL, proving the whole INET path.
+4. *DHCP*, then *outbound* (§2b–f), proved by =check-net.lisp= (§8).
+5. *Wi-Fi* (§7) and *USB Ethernet* (§7.5).
 
 * 4. QEMU test wiring (for build.sh --run)
 
-User-mode networking needs no root and no host bridge — ideal for our setup:
-
-This is now live in [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]], forwarding the REPL port:
+User-mode networking needs no root and no host bridge. It's in
+[[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]], forwarding the REPL port:
 
 #+begin_src sh
   QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
@@ -457,407 +442,333 @@ This is now live in [[file:../build.sh::QEMU_NET][build.sh → QEMU_NET]], forwa
 #+end_src
 
 =user= (SLIRP) gives the guest =10.0.2.15=, gateway =10.0.2.2=, DNS =10.0.2.3=,
-all in software — no privileges. =hostfwd= forwards a host port to a guest port
-so we can later reach a Lisp TCP server from the host. This keeps the whole net
-bring-up testable headless, exactly like the framebuffer screenshots.
+all in software. =hostfwd= forwards a host port to a guest port, so a Lisp TCP
+server is reachable from the host. The whole network bring-up is testable
+headless, like the framebuffer screenshots.
 
-* 5. What to NOT do (scope guards)
+* 5. Scope guards
 
-- *No Wi-Fi at first* — cfg80211/mac80211 + firmware blobs + WPA supplicant is a
-  whole subsystem; wired/virtio first. (Kept: wired came first; Wi-Fi is §7 now.)
-- *No modules* — built-in (=y=) drivers only; we have no module loader.
-- *No glibc NSS / resolver files* — prefer tiny Lisp DNS over dragging NSS in.
-  (Kept: =dns.lisp=. We do /write/ =/etc/resolv.conf= and a two-line
-  =nsswitch.conf=, for other people's glibc programs — §2c.)
-- *No IPv6 initially* — IPv4 only keeps the surface small. (Superseded in tag #26:
-  IPv6 is on, configured by the kernel alone, read-only from Lisp — §2f.)
+- *No modules.* Built-in (=y=) drivers only; there's no module loader.
+- *No glibc NSS or resolver.* A tiny Lisp DNS client instead (=dns.lisp=). We do
+  /write/ =/etc/resolv.conf= and a two-line =nsswitch.conf=, for other people's
+  glibc programs (§2c).
 - *No hand-rolled crypto on the critical path.* TLS and the WPA handshake come
   from the host's OpenSSL and =wpa_supplicant=, loaded or run from =/mnt/host= at
-  runtime, never shipped (§2e, §7); TLS in Lisp stays agent.org §9.
-- Keep it *didactic*: a hand-rolled Lisp DHCP/DNS/echo teaches the protocols and
-  fits the "Lisp machine drives the hardware via FFI" theme better than shipping
-  opaque busybox applets (though busybox is the pragmatic fallback).
+  runtime, never shipped (§2e, §7). TLS in Lisp stays agent.org §12.
+- *IPv6 by the kernel alone.* Configured by SLAAC, read-only from Lisp (§2f).
+- *Didactic over opaque.* A hand-rolled Lisp DHCP/DNS teaches the protocols and
+  fits the "Lisp machine drives the hardware via FFI" theme better than busybox
+  applets (the pragmatic fallback).
 
 * 6. Exposing the REPL over the network
 
-Once the userland half works (=sb-bsd-sockets= baked in, =eth0= has an IP), the
-SBCL REPL can be reached remotely. Two routes, in increasing cost — *(a) is now
-implemented* (=net.lisp=); (b) remains planning:
+** (a) Raw TCP REPL (=net.lisp= + a host client)
 
-** (a) Raw TCP REPL — *IMPLEMENTED* (=net.lisp= + a host client)
-A listening socket whose stream is bound to =*standard-input*= / =*standard-output*=
-turns the REPL into a network REPL. How it actually ships:
+A listening socket whose stream is bound to =*standard-input*= /
+=*standard-output*= turns the REPL into a network REPL.
 
-- *OFF at boot unless asked (tag #26: QEMU's =fw_cfg= or =lol.netrepl=1=, see the STATUS line); a menu toggle.* [[file:../initramfs/net.lisp::defun start-net-repl][=start-net-repl=]] / [[file:../initramfs/net.lisp::defun stop-net-repl][=stop-net-repl=]] /
-  [[file:../initramfs/net.lisp::defun toggle-net-repl][=toggle-net-repl=]] manage a background accept thread (the loop itself is
-  [[file:../initramfs/net.lisp::defun %serve-net-repl][=%serve-net-repl=]]); =supervisor-main= starts it
-  at boot, and the menu's =t= toggles it, showing =[RUNNING]= / =[stopped]=. (It is
-  remote root — see the warning below — but acceptable here because the only wire
-  that reaches it is the trusted QEMU =hostfwd=.) =stop-net-repl= must =shutdown=
-  the listening socket and =join= the accept thread before returning, or a later
-  re-enable hits =EADDRINUSE= (closing a socket does not wake a blocked
-  =socket-accept= in another thread).
-- *It serves the FULL line editor*, not =plain-repl=. The earlier worry was "a
-  socket peer is not a terminal we can put in raw mode" — true, but it does not
-  have to be: a tiny *host-side raw-forwarding client*
+- *Off unless asked.* It starts only when the boot asks: QEMU's =fw_cfg=
+  (=-fw_cfg name=opt/lol/netrepl,string=1=, which =build.sh=,
+  =refresh-screenshot.sh= and every =check-*.lisp= pass; real hardware has no
+  =fw_cfg=) or =lol.netrepl=1= on the kernel cmdline — see
+  [[file:../initramfs/net.lisp::defun net-repl-wanted-p][=net-repl-wanted-p=]]. The supervisor menu's =t= toggles it, showing
+  =[RUNNING]= / =[stopped]=.
+- *An accept thread.* [[file:../initramfs/net.lisp::defun start-net-repl][=start-net-repl=]] / [[file:../initramfs/net.lisp::defun stop-net-repl][=stop-net-repl=]] /
+  [[file:../initramfs/net.lisp::defun toggle-net-repl][=toggle-net-repl=]] manage it; the loop is [[file:../initramfs/net.lisp::defun %serve-net-repl][=%serve-net-repl=]].
+  =stop-net-repl= must =shutdown= the listening socket and =join= the thread before
+  returning: closing a socket doesn't wake a blocked =socket-accept= in another
+  thread, and a later re-enable would hit =EADDRINUSE=.
+- *The full line editor, no guest PTY.* A socket peer isn't a terminal we can put
+  in raw mode, but it needn't be. A host-side raw-forwarding client
   ([[file:../host-client/lol-repl-client.c][=host-client/lol-repl-client.c=]], ~120 lines, any libc) puts the *host* terminal
-  in raw mode and forwards keystrokes byte-by-byte, so [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] receives
-  escapes and drives history/editing remotely; the redraw escapes go back to the
-  client. So we get full editing over a bare socket *with no PTY on the guest*
-  (this is the design worked out in the discussion behind §6 — the client owns
-  raw mode; the guest only needs a terminal if it runs *unmodified* programs,
-  which our custom editor is not).
-- *Ctrl-C / Ctrl-D* are forwarded raw and handled in =read-line-edited=: Ctrl-C
-  aborts the current line (=:cancel=, fresh prompt — it never reaches the editor
-  as a byte on the *local* console, where ISIG turns it into SIGINT), Ctrl-D on an
-  empty line ends the session and the client disconnects cleanly.
+  in raw mode and forwards keystrokes byte by byte, so
+  [[file:../initramfs/line-editor.lisp::defun read-line-edited][=read-line-edited=]] receives escapes and the redraw escapes go back. The guest
+  would need a PTY only to run *unmodified* programs.
+- *Ctrl-C / Ctrl-D.* Forwarded raw and handled in =read-line-edited=: Ctrl-C
+  aborts the current line (=:cancel=, fresh prompt — on the *local* console it
+  never reaches the editor as a byte, since ISIG turns it into SIGINT); Ctrl-D on
+  an empty line ends the session and the client disconnects.
 
 Connect from the host: build the client once (=cc -O2 -o host-client/lol-repl-client
-host-client/lol-repl-client.c=) then run =host-client/lol-repl-client= (defaults to
-the =hostfwd= =127.0.0.1:4005=). Pure Lisp + syscalls on the guest; *no new kernel
-option and no native binary in the image* — the client is host-only tooling (C, so
-it needs no host runtime at all; deliberately a different language from the guest).
+host-client/lol-repl-client.c=), then run =host-client/lol-repl-client= (defaults
+to the =hostfwd= =127.0.0.1:4005=). No new kernel option and no native binary in
+the image; the client is host-only tooling, in C so it needs no host runtime.
 
-*The catch — this is plaintext and unauthenticated.* Anyone who can reach the
-port gets a remote =eval= (i.e. remote root, since the REPL is PID 1). It is
-only acceptable when *every wire that reaches the box is already trusted* — the
-QEMU =hostfwd= case (bound to the host loopback) or a direct cable to a dev
-machine. *Never bind it to an untrusted LAN.* Encryption cannot be added "for
-free": it must run on whatever machine the untrusted wire touches — which leads
-to (b).
+*Security: plaintext and unauthenticated.* Anyone who reaches the port gets a
+remote =eval= in PID 1. It's acceptable only when *every wire that reaches the box
+is trusted* — the QEMU =hostfwd= case (bound to the host loopback) or a direct
+cable to a dev machine. *Never bind it to an untrusted LAN.* Encryption has to run
+on whatever machine the untrusted wire touches, which leads to (b).
 
-** (b) Dropbear — an authenticated/encrypted alternative
-If the box must sit on a network we do *not* control, the REPL needs real SSH in
-front of it. *OpenSSH is too heavy* (drags in OpenSSL/libcrypto, PAM, NSS — all
-against this project's spirit). The realistic choice is *Dropbear*: a tiny SSH
-server built for embedded systems that *statically links its own bundled crypto*
-into a single small binary (the "busybox of ssh"). What adopting it would cost:
+** (b) Dropbear — an authenticated, encrypted alternative (not built)
 
-- A new *static third-party binary* in the initramfs (a C program, not a library
-  — consistent with our "no new native *libraries*" rule; links musl static like
-  =preinit=).
-- Kernel: *PTY support is already present* — =CONFIG_UNIX98_PTYS=y= is on (and
-  devpts is folded into it on modern kernels), so =/dev/ptmx= exists. The only
-  missing piece is *mounting devpts* (=mount -t devpts devpts /dev/pts=, plus a
-  =/dev/pts= dir) in =preinit=, so a session can get a slave tty. No kernel
-  rebuild needed for this. (The old *legacy* BSD PTYs were removed in tag #22 —
-  =CONFIG_LEGACY_PTYS= off — to declutter =/dev=; Unix98 is what anything modern
-  wants anyway.)
-- A minimal *accounts / host-key* setup: a host key generated at first boot, and
-  one user (SSH authenticates *something*).
-- Point Dropbear's login program at =/sbin/lisp= instead of a shell — so logging
-  in drops you straight into the SBCL REPL, encrypted and authenticated.
+On a network we don't control, the REPL needs real SSH in front. *OpenSSH is too
+heavy* (OpenSSL/libcrypto, PAM, NSS). *Dropbear* is a tiny SSH server for embedded
+systems that statically links its own bundled crypto into one small binary. What
+adopting it would cost:
 
-Sequencing: ship (a) first (it costs nothing beyond the socket work already in
-the plan and is perfect for QEMU/dev), and only take on (b) when a real,
-untrusted network is actually in play.
+- *A static binary.* A new third-party C program in the initramfs (not a library,
+  so consistent with "no new native libraries"), linked musl-static like
+  =preinit=.
+- *PTYs: already there.* =CONFIG_UNIX98_PTYS=y= is on and preinit mounts devpts at
+  =/dev/pts= (for the terminal pane, [[file:terminal.org][terminal.org]]). Legacy BSD PTYs are off
+  (=CONFIG_LEGACY_PTYS=, tag #22).
+- *Accounts and a host key.* A host key generated at first boot, and one user.
+- *Login into Lisp.* Dropbear's login program pointed at =/sbin/lisp=, so logging
+  in drops you into the SBCL REPL, encrypted and authenticated.
 
-* 7. Wi-Fi — built (2026-10-12), in use on the laptop
+Take it on only when a real, untrusted network is in play; (a) covers QEMU and
+development.
 
-*STATUS: implemented; every part QEMU can reach is tested (§8); the radio itself
-is in use on the laptop (confirmed by the user, 2026-10-16). §7.4's checklist is
-kept as the procedure for diagnosing a new machine or a regression.* The kernel half
-landed in tag #26 (=CFG80211=, =MAC80211=, =IWLWIFI=, =IWLMVM=, =RFKILL=). The plan
-below was written first and is kept, with its two constraints, because the
-implementation (§7.1–7.3) follows it; the =kernel/wifi-intel-ax201.config=
-fragment it imagined was not needed — the orchestrator turned the options on in
-the shared #26 config instead.
+* 7. Wi-Fi
 
-We *will* need this. "Minimal" must not collide with "useful": a machine that
-can't reach a network is almost a toy, and — see §1 — this laptop has no wired
-port, so Wi-Fi is its only real link.
+The kernel half is tag #26 (=CFG80211=, =MAC80211=, =IWLWIFI=, =IWLMVM=, =RFKILL=).
+Everything QEMU can reach is tested (§8); the radio is in use on the tested laptop.
+§7.4 is the procedure for a new machine or a regression.
 
-** This machine's card (concrete)
+** The tested card
 
 =lspci -nnk=: =00:14.3 [8086:34f0] Intel Ice Lake-LP PCH CNVi WiFi=, driver
-=iwlwifi= + op-mode =iwlmvm=, host interface =wlp0s20f3=. It is an *AX201 (Wi-Fi
-6)*; because it is *CNVi* (the MAC is integrated into the PCH, the RF is a
-companion module) it appears as a chipset device, not an M.2 card. Its firmware
-on the host is the =iwlwifi-Qu*-hr-b0-<api>.ucode= family plus a =.pnvm= blob and
-the signed =regulatory.db= / =regulatory.db.p7s=.
+=iwlwifi= + op-mode =iwlmvm=, an *AX201 (Wi-Fi 6)*. It's *CNVi*: the MAC is
+integrated into the PCH and the RF is a companion module, so it appears as a
+chipset device, not an M.2 card. Its firmware is the
+=iwlwifi-Qu*-hr-b0-<api>.ucode= family plus the signed =regulatory.db= /
+=regulatory.db.p7s=.
 
 ** What it needs (four layers)
 
-- *Kernel 802.11 stack*, all built-in (=y=; we ship no modules): =CONFIG_CFG80211=
-  (config plane, driven over *nl80211 netlink*), =CONFIG_MAC80211= (soft-MAC — the
-  CPU runs the 802.11 MAC; Intel cards need it), =CONFIG_WLAN= +
-  =CONFIG_WLAN_VENDOR_INTEL=, =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=; pulls in crypto
-  (CCMP/=libarc4=) and =CONFIG_RFKILL=.
-- *Firmware blob* — the radio will not come up without the =.ucode= (+ =.pnvm= +
-  =regulatory.db=) loaded at probe. ~1–2 MB, proprietary, *binary only*.
-- *Userland supplicant* — any WPA2/WPA3 join needs the EAPOL 4-way handshake +
-  key management, i.e. =wpa_supplicant=. We ship none; hand-rolling it in Lisp is
-  unrealistic (association + handshake + AES-CCMP). nl80211 is *netlink*, much
-  heavier to drive than the wired static-IP ioctls of §2 — realistically shell out
-  to =iw= + =wpa_supplicant=. (An *open* network could skip the supplicant.)
-- *Then the §2–3 top of stack* — an IP (DHCP, since APs lease) and DNS, just over
-  =wlan0= instead of =eth0=.
+- *Kernel 802.11 stack*, all built in: =CONFIG_CFG80211= (the configuration plane,
+  driven over *nl80211 netlink*), =CONFIG_MAC80211= (soft-MAC — the CPU runs the
+  802.11 MAC; Intel cards need it), =CONFIG_WLAN= + =CONFIG_WLAN_VENDOR_INTEL=,
+  =CONFIG_IWLWIFI= + =CONFIG_IWLMVM=; these pull in crypto and =CONFIG_RFKILL=.
+- *Firmware blob.* The radio won't come up without its =.ucode= (and
+  =regulatory.db=) loaded at probe. Proprietary, binary only.
+- *A supplicant.* Any WPA2/WPA3 join needs the EAPOL 4-way handshake and key
+  management, i.e. =wpa_supplicant=. Hand-rolling that in Lisp is unrealistic. (An
+  *open* network could skip it.)
+- *Then §2's top of stack.* DHCP and DNS, over =wlan0= instead of =eth0=.
 
-** The two design constraints we settled (so it stays honest)
+** Two design constraints
 
-1. *Licensing — keep it out-of-tree, exactly like the kernel.* There is *no
-   source to vendor*: =iwlwifi= the driver is in-tree GPL (comes with the kernel
-   we already fetch); the proprietary part is the *firmware*, which is *data, not
-   code*. Intel's licence *permits binary redistribution* (that is why distros
-   ship =firmware-iwlwifi=), so we *could* legally commit it — we choose not to,
-   to keep this repo MIT and source-only. Instead the firmware is *fetched* (from
-   =linux-firmware=, or copied from the host's =/lib/firmware=) and copied into the
-   initramfs at pack time, *never committed* — one more row in the README
-   licensing table, alongside =Linux kernel | GPLv2 | fetched by deps.sh; never
-   redistributed here=. (Or embed it in the bzImage via =CONFIG_EXTRA_FIRMWARE= +
-   =CONFIG_EXTRA_FIRMWARE_DIR=, which never touches git either.)
-2. *Portability — make it opt-in and parameterized, not baked in.* In a
-   no-=modprobe=, everything-=y=, frozen-image distro, Wi-Fi is *inherently*
-   machine-specific — that is not a betrayal of "minimal", it is the same
-   per-machine specialisation the project already does (PCI added for *this*
-   laptop's keyboard in #19; the Terminus font for *this* screen). To keep the
-   default build card-agnostic: put the driver options in a *separate, opt-in
-   kernel config fragment* (e.g. =kernel/wifi-intel-ax201.config=) merged only on
-   request; fetch the firmware *keyed by card*; and keep *credentials out of git
-   entirely* — SSID/PSK live in a file on the USB's ESP or a build-time env var
-   (gitignored, with a committed =*.example=), never machine- or repo-bound. The
-   *pattern* is portable even though any one fragment/firmware/credential is not;
-   the doc says "for a different card, swap the fragment + firmware names."
-
-** Decision (2026-08, kept)
-
-Implement *after* the wired path (§2–3) is finished and proven in QEMU, following
-the two constraints above so the repo stays MIT/source-only and the Wi-Fi bits
-remain a documented, swappable overlay rather than a one-laptop hack. That is what
-§7.1–7.3 did.
+1. *Licensing: firmware stays out of the repo.* The driver is in-tree GPL; the
+   proprietary part is the *firmware*, which is data, not code. Intel's licence
+   permits binary redistribution (distros ship =firmware-iwlwifi=), but this repo
+   stays MIT and source-only. So the firmware is copied from the build host's
+   =/lib/firmware= into the initramfs at pack time, never committed — like the
+   kernel, fetched and never redistributed here.
+2. *Portability: per card, opt-out, no credentials in git.* In an everything-=y=,
+   no-=modprobe= image, Wi-Fi is inherently machine-specific. The build picks the
+   firmware *by card*, a different card is one more =case= arm, and credentials
+   live only in the user's home (§7.2).
 
 ** 7.1 Firmware: copied from the host, keyed by card, never committed
 
 [[file:../build.sh][=build.sh=]] (step 2c) writes a =gen_init_cpio= fragment, =initramfs/firmware.list=
-(gitignored), naming files in the *build host's* =/lib/firmware= — the host is the
-laptop — and appends it to the list when packing. Nothing is copied into the tree.
+(gitignored), naming files in the *build host's* =/lib/firmware=, and appends it
+to the list when packing. Nothing is copied into the tree.
 
-- *Which files*, read from the kernel rather than guessed: =pcie/drv.c= maps
-  =8086:34f0= to the Qu family; =cfg/22000.c= has =IWL_22000_UCODE_API_MIN= *=*
-  =MAX= = 77, so this kernel requests exactly =…-77.ucode= — =build.sh= reads that
-  number out of =./linux= at build time. The file prefix depends on the chip's
-  silicon step, decided at probe time from a register (=Qu-b0=, =Qu-c0=, =QuZ-a0=,
-  all with the =hr-b0= radio), so all three go in, 1,406,576–1,406,720 bytes each.
-  No =.pnvm=: that blob is for AX210 and later (none exists for Qu on the host).
-  Debian keeps the real files under =intel/iwlwifi/= with top-level symlinks; the
-  build follows them (=readlink -f=).
-- *The regulatory database* must be the *upstream-signed* one. Our kernel has
+- *Which files, read from the kernel.* =pcie/drv.c= maps =8086:34f0= to the Qu
+  family; =cfg/22000.c= has =IWL_22000_UCODE_API_MIN= *=* =MAX= = 77, so this
+  kernel requests exactly =…-77.ucode=, and =build.sh= reads that number out of
+  =./linux=. The file prefix depends on the chip's silicon step, read from a
+  register at probe (=Qu-b0=, =Qu-c0=, =QuZ-a0=, all with the =hr-b0= radio), so
+  all three go in, 1,406,576–1,406,720 bytes each. No =.pnvm=: that blob is for
+  AX210 and later. Debian keeps the files under =intel/iwlwifi/= with top-level
+  symlinks; the build follows them (=readlink -f=).
+- *The upstream-signed regulatory database.* Our kernel has
   =CFG80211_REQUIRE_SIGNED_REGDB= + =CFG80211_USE_KERNEL_REGDB_KEYS=, trusting only
   the keys in =linux/net/wireless/certs/= (=sforshee.hex=, =wens.hex=). Debian's
-  default =regulatory.db= is the =-debian= variant, re-signed by
-  =benh@debian.org= — the kernel would refuse it. =regulatory.db.p7s-upstream= is
-  signed by =wens= (checked with =openssl pkcs7 -inform DER -print=), so that pair
-  is copied in as =regulatory.db= / =regulatory.db.p7s=.
-- *Found at probe time:* the driver is built in and probes during boot, before
-  =/init= runs — but the firmware loader calls =wait_for_initramfs()= before
-  searching =/lib/firmware= (=drivers/base/firmware_loader/main.c=), so the cpio's
-  files are there; no user-mode helper is involved (=FW_LOADER_USER_HELPER= off).
-- *Card-keyed and opt-out:* =LOL_WIFI_CARD=auto= picks =ax201= when the build
-  host has one of the Qu PCI ids; =LOL_WIFI_FIRMWARE=0= leaves Wi-Fi out. A
-  different card is one more =case= arm in =build.sh=. ~4.2 MB of the cpio.
+  default =regulatory.db= is re-signed by Debian and would be refused.
+  =regulatory.db.p7s-upstream= is signed by =wens= (checked with
+  =openssl pkcs7 -inform DER -print=), so that pair is copied in as =regulatory.db=
+  / =regulatory.db.p7s=.
+- *Present at probe.* The built-in driver probes before =/init= runs, but the
+  firmware loader calls =wait_for_initramfs()= before searching =/lib/firmware=
+  (=drivers/base/firmware_loader/main.c=), so the cpio's files are there. No
+  user-mode helper (=FW_LOADER_USER_HELPER= off).
+- *Card-keyed and opt-out.* =LOL_WIFI_CARD=auto= picks =ax201= when the build host
+  has one of the Qu PCI ids; =LOL_WIFI_FIRMWARE=0= leaves Wi-Fi out. About 4.2 MB
+  of the cpio.
 
 ** 7.2 The supplicant: the host's =wpa_supplicant=, driven from Lisp
 
-Joining WPA2/WPA3 is a cryptographic handshake no one should hand-roll, so
 [[file:../initramfs/wifi.lisp][=wifi.lisp=]] runs the *host's* =/usr/sbin/wpa_supplicant= from =/mnt/host=. Its ELF
 header names =/lib64/ld-linux-x86-64.so.2= — *our* loader, which would search *our*
-=/lib= for =libnl=, =libdbus=… — so [[file:../initramfs/wifi.lisp::defun host-program-argv][=host-program-argv=]] runs the host's loader
-explicitly with =--library-path= pointing into =/mnt/host=. (Not a chroot: that
-needs =CAP_SYS_CHROOT=, and the supplicant must still see our =/dev=, =/tmp= and
-network. Not a container either: =lol-ct= runs its command with *zero*
-capabilities and =NO_NEW_PRIVS=, and the supplicant needs =CAP_NET_ADMIN= +
-=CAP_NET_RAW= — which it inherits from PID 1's *ambient* set across =execve=.)
+=/lib= for =libnl=, =libdbus=… So [[file:../initramfs/wifi.lisp::defun host-program-argv][=host-program-argv=]] runs the host's loader
+explicitly with =--library-path= pointing into =/mnt/host=.
 
-We talk to it over its *control interface*: a Unix-domain *datagram* socket per
-interface (=/tmp/lol-wifi/ctrl/wlan0=). A request is one datagram of text
-(=SCAN=, =STATUS=, =ADD_NETWORK=, =SET_NETWORK 0 ssid 486f6d65=…) and the reply goes
-back to the sender's *address* — so the client binds its own socket to a path too
-([[file:../initramfs/wifi.lisp::defun call-with-ctrl-socket][=call-with-ctrl-socket=]], fresh per request). One more socket sends =ATTACH= and
-then receives *events*; [[file:../initramfs/wifi.lisp::defun on-wifi-event][=on-wifi-event=]] runs DHCP on =CTRL-EVENT-CONNECTED=, drops
-the lease on =DISCONNECTED=, says "wrong passphrase" on =reason=WRONG_KEY=, and
-refreshes the scan table on =SCAN-RESULTS=. SSIDs are bytes: sent as hex, read
-back through the supplicant's =\xNN= escapes, kept as UTF-8 strings.
+- *Not a chroot.* That needs =CAP_SYS_CHROOT=, and the supplicant must still see
+  our =/dev=, =/tmp= and network.
+- *Not a container.* =lol-ct= runs its command with *zero* capabilities and
+  =NO_NEW_PRIVS=; the supplicant needs =CAP_NET_ADMIN= + =CAP_NET_RAW=, which it
+  inherits from PID 1's *ambient* set across =execve=.
 
-[[file:../initramfs/wifi.lisp::defun wifi-tick][=wifi-tick=]] is a =netd= hook: when a wireless interface exists and Wi-Fi is not
-running it clears a *soft* rfkill block (one 8-byte =struct rfkill_event= written
-to =/dev/rfkill=, which preinit now gives to the user — the kernel checks nothing
-else, =net/rfkill/core.c=), raises the interface, imports the host's profiles,
-starts the supplicant, and hands it *every known network*; the supplicant then
-picks the strongest one in range and roams — the job it is good at. Otherwise it
-caches =STATUS= + =SIGNAL_POLL= in =*wifi-state*=, which is all the systray reads.
+*The control interface.* A Unix-domain *datagram* socket per interface
+(=/tmp/lol-wifi/ctrl/wlan0=). A request is one datagram of text (=SCAN=, =STATUS=,
+=ADD_NETWORK=, =SET_NETWORK 0 ssid 486f6d65=…). The reply goes back to the sender's
+*address*, so the client binds its own socket to a path too
+([[file:../initramfs/wifi.lisp::defun call-with-ctrl-socket][=call-with-ctrl-socket=]], fresh per request).
+
+- *Events.* One more socket sends =ATTACH= and receives events.
+  [[file:../initramfs/wifi.lisp::defun on-wifi-event][=on-wifi-event=]] runs DHCP on =CTRL-EVENT-CONNECTED=, drops the lease on
+  =DISCONNECTED=, says "wrong passphrase" on =reason=WRONG_KEY=, and refreshes the
+  scan table on =SCAN-RESULTS=.
+- *SSIDs are bytes.* Sent as hex, read back through the supplicant's =\xNN=
+  escapes, kept as UTF-8 strings.
+
+*The tick.* [[file:../initramfs/wifi.lisp::defun wifi-tick][=wifi-tick=]] is a =netd= hook. When a wireless interface exists and
+Wi-Fi isn't running, it clears a *soft* rfkill block (one 8-byte
+=struct rfkill_event= written to =/dev/rfkill=, which preinit gives to the user —
+the kernel checks nothing else, =net/rfkill/core.c=), raises the interface,
+imports the host's profiles, starts the supplicant and hands it *every known
+network*. The supplicant picks the strongest in range and roams. Otherwise the
+tick caches =STATUS= + =SIGNAL_POLL= in =*wifi-state*=, which is all the systray
+reads.
 
 *Known networks*, never in git or the image:
-- =~/.lol/wifi/<SSID in hex>.net= (=~/.config/lol/wifi/= until 2026-10-17; moved at
-  boot by =migrate-lol-home=, [[file:session-persistence.org][session-persistence.org]] §3), one readable plist each, created 0600
-  by =open(2)= itself in a 0700 directory, and written *only after* a typed
-  passphrase actually connects;
-- the host's NetworkManager keyfiles. They are root-only (0600) on the host, so
-  =lol-rootd= copies them on request — signal 41, [[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]] — to
-  =/tmp/lol-nm-import/= (tmpfs: gone at power-off). It reads as root but *writes as
-  the user*: =setfsuid(2)= changes only the identity used for file access, so
-  whatever that path turns out to be (a symlink planted by the user, say) the
-  write can reach nothing the user could not write anyway. Should =lol-rootd= do
-  this at all? The secrets are the user's own Wi-Fi passwords, which
-  NetworkManager will normally show the logged-in desktop user anyway
-  (=nmcli --show-secrets=, subject to polkit); the request is ~40
-  lines of C with no parsing in the root process. We judged that small and
-  delimited enough. [[file:../initramfs/wifi.lisp::defun parse-nmconnection][=parse-nmconnection=]] reads both SSID spellings (text, and older
-  NM's =72;111;…= byte list) and skips a =psk-flags=1= profile (its secret lives in
-  a keyring agent, not the file).
+
+- *Saved by us.* =~/.lol/wifi/<SSID in hex>.net=, one readable plist each,
+  created 0600 by =open(2)= itself in a 0700 directory, written *only after* a
+  typed passphrase actually connects.
+- *Imported from NetworkManager.* Its keyfiles are root-only (0600) on the host,
+  so =lol-rootd= copies them on request — signal 41,
+  [[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]] — to =/tmp/lol-nm-import/= (tmpfs: gone at power-off). It reads
+  as root but *writes as the user*: =setfsuid(2)= changes only the identity used
+  for file access, so whatever that path turns out to be (a symlink planted by the
+  user, say) the write reaches nothing the user couldn't write anyway.
+- *Why root does this.* The secrets are the user's own Wi-Fi passwords, which
+  NetworkManager normally shows the logged-in desktop user anyway
+  (=nmcli --show-secrets=, subject to polkit), and the request is ~40 lines of C
+  with no parsing in the root process.
+- *Parsing.* [[file:../initramfs/wifi.lisp::defun parse-nmconnection][=parse-nmconnection=]] reads both SSID spellings (text, and older NM's
+  =72;111;…= byte list) and skips a =psk-flags=1= profile (its secret lives in a
+  keyring agent, not the file).
 
 =wpa_supplicant='s config file holds no networks — they arrive over the socket —
 so no secret is ever written to it.
 
 ** 7.3 In the environment
 
-- *=SuperL-n=* (or =network= / =wifi= in the Spotter) opens [[file:../initramfs/net-views.lisp][=net-views.lisp=]]'s view:
-  the Wi-Fi state and message; the scan results with signal %, security, band
+- *=SuperL-n=* (or =network= / =wifi= in the Spotter) opens [[file:../initramfs/net-views.lisp][=net-views.lisp=]]'s
+  view: the Wi-Fi state and message; scan results with signal %, security, band
   and "known"; when not connected, the last kernel-log lines about iwlwifi /
-  cfg80211 / firmware ([[file:../initramfs/wifi.lisp::defun kernel-log][=kernel-log=]] reads =/dev/kmsg= — this kernel has no
+  cfg80211 / firmware ([[file:../initramfs/wifi.lisp::defun kernel-log][=kernel-log=]] reads =/dev/kmsg=; this kernel has no
   =DMESG_RESTRICT=); then interfaces with their IPv4 and IPv6 addresses, leases
   with their renewal time, the v4 and v6 default routes, DNS servers, the clock,
   and what =netd= and the supplicant did recently.
-- Keys: =c=/=Enter= connect (a *masked* passphrase prompt when needed — the
-  minibuffer grew a =:secret= flag in =poc/shell.lisp=), =s= scan, =g= refresh,
+- *Keys.* =c=/=Enter= connect (a *masked* passphrase prompt when needed — the
+  minibuffer's =:secret= flag in =poc/shell.lisp=), =s= scan, =g= refresh,
   =d= disconnect, =f= forget, =i= import NetworkManager profiles, =w= Wi-Fi on/off,
   =r= renew the lease, =t= check the clock.
-- The *systray* shows the SSID and signal (=Home 72%=, coloured like the battery),
-  =Not connected!= as the host's mode line does, or the wired link
-  (=eth0 10.0.2.15=) — [[file:../initramfs/wifi.lisp::defun network-tray-item][=network-tray-item=]], via =sysinfo.lisp='s =tray-items=.
+- *The systray* shows the SSID and signal (=Home 72%=, coloured like the battery),
+  =Not connected!=, or the wired link (=eth0 10.0.2.15=) —
+  [[file:../initramfs/wifi.lisp::defun network-tray-item][=network-tray-item=]], via =sysinfo.lisp='s =tray-items= ([[file:systray.org][systray.org]]).
 
-** 7.4 On the laptop: the checklist (run this, send back what differs)
+** 7.4 On a new machine: the checklist
 
-Wi-Fi now works on the laptop; keep this for a new machine or a regression. Each step says what you should
-see; the first one that differs is the one to report.
+Each step says what you should see; the first one that differs is the one to
+report.
 
-1. *Build on the laptop.* =./build.sh= must print
+1. *Build on the machine.* =./build.sh= must print
    =Wi-Fi firmware: card=ax201, 5 file(s) from /lib/firmware=. Fewer files →
    =apt install firmware-iwlwifi wireless-regdb=. Then =./build.sh --install-host=
    (GRUB) or copy to the USB stick ([[file:micro-distro.org][micro-distro.org]]).
-2. *Boot it.* The environment comes up as usual. Within ~10 s the systray (top
-   right, before the clock) shows *=Not connected!=* and then, if a network
-   NetworkManager knows is in range, its *SSID and a percentage*.
-   - Nothing at all in that spot → there is no wireless interface; go to 5.
-3. *=SuperL-n=.* The first row should read =wlan0: connected to …= or
-   =wlan0: scanning= / =disconnected=. The second row is the last message
+2. *Boot it.* Within ~10 s the systray (top right, before the clock) shows
+   *=Not connected!=* and then, if a network NetworkManager knows is in range, its
+   *SSID and a percentage*.
+   - Nothing at all in that spot → no wireless interface; go to 5.
+3. *=SuperL-n=.* The first row reads =wlan0: connected to …= or
+   =wlan0: scanning= / =disconnected=; the second is the last message
    (=Wi-Fi up on wlan0, N known networks=). Press *=s=*, wait 3 s, press *=g=*: the
-   networks around you, strongest first, with =known= on the ones it can join.
-4. *Join one it does not know:* select it, *=c=*, type the passphrase (shown as
-   =*=), Enter, wait, *=g=*. Expected: the first row says =connected to …=, a
-   =leases= row =wlan0 192.168.x.y/… gw … dns …=, and a =routes= row
-   =default via … dev wlan0=. Then, in the Workspace, =Print it= on
-   =(http-get "https://example.com/")= — the page's HTML. And
-   =(describe-clock)= — =clock: 0.0xx s …=.
-   - A message =wrong passphrase for …= → retype; nothing is saved until it works.
+   networks around you, strongest first, =known= on the ones it can join.
+4. *Join one it doesn't know.* Select it, *=c=*, type the passphrase (shown as
+   =*=), Enter, wait, *=g=*. Expected: =connected to …=, a =leases= row
+   =wlan0 192.168.x.y/… gw … dns …=, and a =routes= row =default via … dev wlan0=.
+   Then in the Workspace, =Print it= on =(http-get "https://example.com/")= gives
+   the page's HTML, and =(describe-clock)= gives =clock: 0.0xx s …=.
+   - =wrong passphrase for …= → retype; nothing is saved until it works.
    - Connected but no lease row → DHCP got no answer (it retries every 20 s).
-     Send the =recent= rows, or, from Debian afterwards, =~/.lol/log/network.log=:
-     its =DHCP … sent N, M packets seen, K DHCP replies= lines say which half failed.
-5. *If something failed*, the view shows a *kernel log* section while Wi-Fi is not
-   connected. Send back: those rows (or, from the Workspace,
-   =(wifi-kernel-log)=), plus =(rfkill-radios)=, =(wireless-interfaces)=,
-   =*wifi-message*=, and the file =/tmp/lol-wifi/wpa_supplicant.log=. What they
-   usually mean:
-   - =iwlwifi … no suitable firmware found= / =Direct firmware load … failed= → the
-     file name the kernel wanted is in the line; check it is in
+     Check the =recent= rows, or later from the host OS =~/.lol/log/network.log=:
+     its =DHCP … sent N, M packets seen, K DHCP replies= lines say which half
+     failed (§2b).
+5. *If something failed*, the view shows a *kernel log* section while Wi-Fi isn't
+   connected. Collect those rows (or =(wifi-kernel-log)= from the Workspace), plus
+   =(rfkill-radios)=, =(wireless-interfaces)=, =*wifi-message*=, and
+   =/tmp/lol-wifi/wpa_supplicant.log=. What they usually mean:
+   - =iwlwifi … no suitable firmware found= / =Direct firmware load … failed= →
+     the file name the kernel wanted is in the line; check it's in
      =initramfs/firmware.list=.
    - =cfg80211: loaded regulatory.db is malformed or signature is missing/invalid=
-     → the Debian-signed database got in (see §7.1).
-   - =rfkill-radios= shows =:hard t= → the hardware switch / BIOS setting is off.
-   - no =wlan0= and no iwlwifi lines at all → the driver never probed: send
+     → the Debian-signed database got in (§7.1).
+   - =rfkill-radios= shows =:hard t= → the hardware switch or BIOS setting is off.
+   - No =wlan0= and no iwlwifi lines → the driver never probed:
      =(kernel-log "0000:00:14.3")=.
-6. *Optional:* =i= in the view imports NetworkManager's profiles again; the
+6. *Optional.* =i= in the view imports NetworkManager's profiles again; the
    =preinit: lol-rootd: nm import: N profile(s)= line in =(kernel-log "nm import")=
-   says how many were copied. Expect 19 on this laptop (the files in
-   =/etc/NetworkManager/system-connections= on 2026-10-12).
+   should match the number of files in =/etc/NetworkManager/system-connections=.
 
-** 7.5 Kernel options worth considering (not needed for the above)
+** 7.5 Related kernel options
 
-Checked against the #26 config; none blocks §7.1–7.4:
-- =CONFIG_USB_RTL8152= (=drivers/net/usb/Kconfig=) — the user's USB Ethernet
-  dongle is a Realtek RTL8153 (=0bda:8153=, bound to =r8152= on the host). With it,
-  =network-up= would lease on it like =eth0= in QEMU: a wired fallback for the
-  laptop.
-- =CONFIG_MAC80211_HWSIM= (=drivers/net/wireless/virtual/Kconfig=) — simulated
-  radios, which would let QEMU test the *whole* Wi-Fi path (the host's
-  =wpa_supplicant= can play the access point in =mode=2=; there is no =hostapd= on
-  the host). But built in it creates two fake radios at every boot, on the laptop
-  too; it would need =mac80211_hwsim.radios=0= on the command line and radios
-  created at test time. A decision for the user, not taken here.
-- Not needed, though it looked like it: =CRYPTO_CMAC= (off) — mac80211 now selects
-  =CRYPTO_LIB_AES_CBC_MACS= instead (=net/mac80211/Kconfig=), and =IWLMLD= (off) is
-  the op-mode for newer cards, not the AX201 (=IWLMVM=).
+- *=CONFIG_USB_RTL8152=* (=drivers/net/usb/Kconfig=) — on since tag #27: a Realtek
+  RTL8153 USB Ethernet dongle (=0bda:8153=). =network-up= leases on it like =eth0=
+  in QEMU, a wired fallback for a laptop with no port.
+- *=CONFIG_MAC80211_HWSIM=* (=drivers/net/wireless/virtual/Kconfig=) — off.
+  Simulated radios would let QEMU test the *whole* Wi-Fi path (the host's
+  =wpa_supplicant= can play the access point in =mode=2=). But built in, it creates
+  two fake radios at every boot, on real hardware too; it would need
+  =mac80211_hwsim.radios=0= on the command line and radios created at test time.
+- *Ruled out, though they looked needed.* =CRYPTO_CMAC= (off): mac80211 now
+  selects =CRYPTO_LIB_AES_CBC_MACS= instead (=net/mac80211/Kconfig=). =IWLMLD=
+  (off): the op-mode for newer cards, not the AX201 (=IWLMVM=).
 
 * 8. Testing it
 
-- [[file:../check-net.lisp][=check-net.lisp=]] — =LOL_GUEST_HOSTROOT=1 sbcl --script check-net.lisp=. 34
-  checks in the guest, all passing on 2026-10-12: the lease and default route,
-  =netd= alive, PID 1 as uid 1000, =/etc/resolv.conf= written and owned by the
-  user, DNS (A, CNAME, NXDOMAIN, cache), plain HTTP to a server on the host
-  ([[file:../host-client/http-test-server.lisp][=host-client/http-test-server.lisp=]], reached at =10.0.2.2=: =Content-Length=,
-  chunked in three pieces through =on-chunk=, a redirect), HTTPS to example.com and
-  an expired certificate refused, SNTP and =lol-rootd= stepping the clock +100 s
-  and back, IPv6 SLAAC and the AAAA rule, and Wi-Fi without a radio: the view and
-  the tray cope, the host's =wpa_supplicant= runs from =/mnt/host= — and, started
-  with its *wired* driver on =eth0=, answers every control request the UI makes
-  (=ADD_NETWORK= with a non-ASCII SSID, events, stop), the NM-import directory
-  appears owned by the user (and the user can read =lol-rootd='s line about it in
-  the kernel log), keyfiles parse, saved credentials are 0600.
-  *Ruled out under QEMU:* importing the host's real NM profiles — QEMU runs as the
-  user and 9p cannot read root-only files, so the copy finds 0 profiles there. The
-  copy path is tested; the real import is checklist step 6.
-- [[file:../poc/http-test.lisp][=poc/http-test.lisp=]] — the same network modules on the host: every body
-  framing against the loopback test server, DNS, HTTPS, and three badssl
-  certificates (wrong host, expired, self-signed) each refused *with its reason*.
-- [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] — =dhcp.lisp= against a real kernel, without root. It
-  re-runs itself under =unshare -rn= (a user namespace that owns a private network
-  namespace) and builds a veth pair. Its far end goes into a *second* namespace,
-  where a child copy of the script plays a router that answers by broadcast or by
-  unicast. 10 checks, all passing on 2026-10-12. The decisive pair: a unicasting
-  router with the UDP socket alone gives *no lease* (the laptop's failure,
-  reproduced), and with the packet socket gives a lease. Two setup traps are
-  recorded in the file. With both veth ends in *one* namespace, the kernel gives
-  the DISCOVER the router's own address as its source and the router drops it.
-  And a new namespace copies Debian's =rp_filter=2=, which drops every reply before
-  the lease; the image runs with the kernel default of 0, and the test sets that.
-  [[file:../check-net.lisp][=check-net.lisp=]] also asserts the guest's lease came through the packet socket,
-  i.e. that =CAP_NET_RAW= reaches it.
+- [[file:../check-net.lisp][=check-net.lisp=]] — =LOL_GUEST_HOSTROOT=1 sbcl --script check-net.lisp=, 34
+  checks in the guest:
+  - *Lease and route.* The lease and default route, =netd= alive, PID 1 as uid
+    1000, =/etc/resolv.conf= written and owned by the user, the lease received
+    through the packet socket (i.e. =CAP_NET_RAW= reaches it).
+  - *DNS.* A, CNAME, NXDOMAIN, cache.
+  - *HTTP.* To [[file:../host-client/http-test-server.lisp][=host-client/http-test-server.lisp=]] at =10.0.2.2=:
+    =Content-Length=, chunked in three pieces through =on-chunk=, a redirect.
+  - *HTTPS.* example.com, and an expired certificate refused.
+  - *Clock.* SNTP and =lol-rootd= stepping the clock +100 s and back.
+  - *IPv6.* SLAAC and the AAAA rule.
+  - *Wi-Fi without a radio.* The view and the tray cope; the host's
+    =wpa_supplicant= runs from =/mnt/host= and, started with its *wired* driver on
+    =eth0=, answers every control request the UI makes (=ADD_NETWORK= with a
+    non-ASCII SSID, events, stop); the NM-import directory appears owned by the
+    user (who can read =lol-rootd='s line about it in the kernel log); keyfiles
+    parse; saved credentials are 0600.
+  - *Ruled out under QEMU:* importing the host's real NM profiles. QEMU runs as
+    the user and 9p can't read root-only files, so the copy finds 0 profiles. The
+    copy path is tested; the real import is checklist step 6.
+- [[file:../poc/http-test.lisp][=poc/http-test.lisp=]] — the same modules on the host: every body framing against
+  the loopback test server, DNS, HTTPS, three badssl certificates (wrong host,
+  expired, self-signed) each refused *with its reason*, credential stripping, and
+  the EINTR premise (§2e).
+- [[file:../poc/dhcp-test.lisp][=poc/dhcp-test.lisp=]] — =dhcp.lisp= against a real kernel, without root, 10
+  checks. It re-runs itself under =unshare -rn= (a user namespace owning a private
+  network namespace) and builds a veth pair whose far end is in a *second*
+  namespace, where a child copy of the script plays a router answering by
+  broadcast or unicast. The decisive pair: a unicasting router with the UDP socket
+  alone gives *no lease*; with the packet socket, a lease. Two setup traps:
+  - *Both ends in one namespace.* The kernel gives the DISCOVER the router's own
+    address as its source, and the router drops it.
+  - *=rp_filter=.* A new namespace copies Debian's =rp_filter=2=, which drops every
+    reply before the lease. The image runs with the kernel default of 0, and the
+    test sets that.
 - [[file:../poc/wifi-test.lisp][=poc/wifi-test.lisp=]] — =wifi.lisp='s pure parts: keyfiles, SSID escapes, flags,
   passphrase quoting, the tray item in each state.
 - =sbcl --script poc/render-frame.lisp network= renders the view headless (it
   shows the *host's* interfaces and routes).
 
-* Open questions — RESOLVED (kept for the record)
-
-- Static-IP-via-ioctl vs =busybox ip/udhcpc=? → *ioctl from Lisp* (=net.lisp=),
-  self-contained and didactic, no binary.
-- =sb-bsd-sockets= baked vs raw =sb-alien socket()=? → *baked the contrib* — the
-  clean documented API, still pure Lisp + syscalls.
-- Can this SBCL =require :sb-bsd-sockets= at build time? → *yes*, with
-  =SBCL_HOME=$SBCL/obj/sbcl-home= so the contrib fasl resolves (=build.sh=).
-
-- DHCP vs a hard-coded static address? → *DHCP* ([[file:../initramfs/dhcp.lisp][dhcp.lisp]]), with the static
-  =bring-up-interface= path kept as the fallback when no server answers.
-
-- Default route by =SIOCADDRT= or rtnetlink? → *the ioctl* (§2c): one route, the
-  file's existing idiom; v6 routes come from SLAAC.
-- DNS: a Lisp resolver or raw IPs? → *a Lisp stub resolver* (§2c).
-- Is the RTC enough, or must the clock be set? → *both*: the RTC is right at boot,
-  SNTP reports drift and steps it through =lol-rootd= when it is not (§2d).
-- TLS: wait for agent.org §9, a broker, or the host's library? → *the host's
-  OpenSSL at runtime* (§2e), until §9.
-- Supplicant: write one, or run the host's? → *the host's*, through its own
-  loader, with PID 1's ambient capabilities (§7.2).
-
-Still open: real-hardware Ethernet over the USB dongle (§7.5), and whatever the
-first laptop run of §7.4 turns up.
-
 * See also
   - [[file:kernel-config.org][kernel-config.org]] §7 — the networking options, all =y= since tag #21.
-  - [[file:sbcl-init.org][sbcl-init.org]] — the supervisor + the frozen-heap build where the socket
+  - [[file:sbcl-init.org][sbcl-init.org]] — the supervisor and the frozen-heap build where the socket
     contrib must be baked in.
-  - [[file:line-editing.org][line-editing.org]] — same FFI-to-shipped-libc pattern (termios) that the
-    static-IP ioctls and raw sockets would use.
-  - [[file:agent.org][agent.org]] — the first consumer of the *outbound* path: an LLM client living
-    in the image. Its §10/§12 network track is what finally closed §2c.
+  - [[file:line-editing.org][line-editing.org]] — the same FFI-to-libc pattern (termios) as the ioctls here.
+  - [[file:agent.org][agent.org]] — the first consumer of the outbound path: an LLM client in the
+    image.
   - [[file:storage.org][storage.org]] — =lol-rootd=, the capabilities PID 1 keeps, and why.
   - [[file:systray.org][systray.org]] — the tray's Wi-Fi field.

@@ -1,4 +1,4 @@
-;;;; agent-tools.lisp — the rest of the agent's tool surface (doc/agent.org §2.2, §8.5):
+;;;; agent-tools.lisp — the rest of the agent's tool surface (doc/agent.org §7.2, §8.5):
 ;;;; inspect a live object, preview a generic function's dispatch, read the stack the
 ;;;; debugger stood on, show the user a subject, and fetch a web page.
 ;;;;
@@ -20,7 +20,7 @@
 ;;;; panes — always through FBOUNDP / BOUNDP guards, so the host test (which loads no
 ;;;; shell) runs them too.
 ;;;;
-;;;; One rule holds for all of them (doc/agent.org commit 803f7f4, §14.8½): a
+;;;; One rule holds for all of them (doc/agent.org §7.4): a
 ;;;; conversation's tools are frozen at its first request. These reach the model in
 ;;;; conversations started after this file is loaded — or, on a running image, after
 ;;;; C-c C-c on one of them.

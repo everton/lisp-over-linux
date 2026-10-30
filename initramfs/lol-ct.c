@@ -2,9 +2,9 @@
  *
  *   lol-ct [-n NAME] [-s STATEDIR] [-r HOSTROOT] [-C DIR] [-e VAR=VALUE]... [-N] [-v]
  *          [--] PROGRAM [ARG...]
- *   lol-ct --probe-root [-r HOSTROOT]      (the doc/containers.org §3.3 question)
+ *   lol-ct --probe-root [-r HOSTROOT]      (the doc/containers.org §9 question)
  *
- * The design is doc/containers.org; this is §5.1 of it, built. In one sentence:
+ * The design is doc/containers.org; this is §5 of it. In one sentence:
  * make /mnt/host look like / to one process tree and to nobody else, with
  * writable overlays on top, WITHOUT any privilege the user does not already have.
  *
@@ -503,7 +503,7 @@ static int reap_until(pid_t main_pid) {
     }
 }
 
-/* ---- the §3.3 question: can the WHOLE root be the lower layer? ----------- */
+/* ---- the whole-root question (doc/containers.org §9): can the WHOLE root be lower? */
 
 static int probe_root(void) {
     char base[] = "/tmp/lol-ct-probe.XXXXXX";

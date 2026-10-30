@@ -1,6 +1,6 @@
 ;;;; web.lisp — the web pane: a Chrome tab as a subject in the shell.
 ;;;;
-;;;; doc/web-browser.org is the design and the story; this is the code. In one
+;;;; doc/web-browser.org is the design; this is the code. In one
 ;;;; paragraph: a headless Google Chrome renders the page; Page.startScreencast makes
 ;;;; it send us a JPEG every time the page's pixels change; we decode the JPEG
 ;;;; (lol.image, through stb_image) and blit it into the pane like any other picture.

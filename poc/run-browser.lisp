@@ -17,7 +17,7 @@
 ;;;; value prompt, the clipboard manager, the cheatsheet, the debugger — because they
 ;;;; are morphs in the same world, and the ones that wait for an answer turn THIS
 ;;;; backend's loop while they wait: HOST-CYCLE, one turn of it, is installed as
-;;;; *WORLD-CYCLE*, the X11 twin of the guest's FB-CYCLE (doc/morphic.org §13, doc/x11.org).
+;;;; *WORLD-CYCLE*, the X11 twin of the guest's FB-CYCLE (doc/morphic.org §10, doc/x11.org).
 ;;;; fb-browser.lisp is loaded for the debugger and the cheatsheet it defines; nothing
 ;;;; in it touches /dev/fb0 until RUN-BROWSER-FB, which this file never calls.
 ;;;;

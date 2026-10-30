@@ -14,7 +14,7 @@
 ;;;; recorded, owned by uid 1000 — so file-out has a real file to fold into.
 ;;;;
 ;;;;   boot 1  Accept (defun zz-persist () 42) and an edit to lol.examples::make-counter
-;;;;           (the Accept-package fix, §1.2); type into the Workspace; open a second
+;;;;           (the Accept-package fix, §4); type into the Workspace; open a second
 ;;;;           tab and tear it off into a window (SuperL-g, moved); copy to the clipboard
 ;;;;           (with :desk-clipboard on); File out; then SuperL-q, "Save and shut down"
 ;;;;           — QEMU must exit by itself.
@@ -35,7 +35,7 @@
 ;;;;           journal replayed from its new place.
 ;;;;   boot 6  DISKLESS: persistence off, an Accept writes nothing under /.lol or /.local.
 ;;;;
-;;;; doc/session-persistence.org §5. All original code, under this project's MIT licence.
+;;;; doc/session-persistence.org §8. All original code, under this project's MIT licence.
 
 (load (merge-pathnames "host-client/guest-harness.lisp"
                        (make-pathname :directory (pathname-directory *load-truename*))))

@@ -1,5 +1,5 @@
 ;;;; clip-test.lisp — host test for the canvas's clip rectangle (poc/canvas.lisp,
-;;;; doc/morphic.org §4.1, Morphic step 0).
+;;;; doc/morphic.org §4.1).
 ;;;;
 ;;;;     sbcl --script poc/clip-test.lisp          ; exits 0 if every check passes
 ;;;;

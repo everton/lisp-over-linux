@@ -2,7 +2,7 @@
 ;;;;
 ;;;;   sbcl --script poc/run-editor.lisp
 ;;;;
-;;;; What this is testing (doc/code-browser.org §9's "riskiest piece"):
+;;;; What this is testing (doc/code-browser.org §9's "hardest" piece):
 ;;;;   - a caret you can place with the MOUSE, in pixels
 ;;;;   - drag-SELECTION across lines
 ;;;;   - real typing, with syntax colour and auto-indent

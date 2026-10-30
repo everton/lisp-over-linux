@@ -16,7 +16,7 @@
 ;;;;      chooser; key 1 (Allow) runs it, and the result goes back to the model.
 ;;;;   3. A slow answer is stopped with C-g.
 ;;;;   3b. Every failure is said IN THE PANE, as a red ;; !! block with the cause and
-;;;;      what to do (doc/agent.org §14.8): a 401, a 529 after its retries, a stream
+;;;;      what to do (doc/agent.org §9): a 401, a 529 after its retries, a stream
 ;;;;      cut mid-answer (its partial text kept), no route to the endpoint, no lease
 ;;;;      and no resolv.conf, https on a diskless boot, an error inside the transport;
 ;;;;      C-c C-a on an empty draft asks the failed question again, not twice.
@@ -98,7 +98,7 @@
          (string= (row "last marker present" (probe (pane-has "--- your turn"))) "T"))
   (check "usage and cost were counted"
          (string= (row "session cost > 0" (probe "(and (plusp (session-cost)) t)")) "T"))
-  ;; the word "agent" became the creature (DRAW-AGENT-ICON, §14.8¾): the text is "ask $0.01"
+  ;; the word "agent" became the creature (DRAW-AGENT-ICON, doc/agent.org §8.9): the text is "ask $0.01"
   (check "the tray shows the agent"
          (string= (row "tray item" (probe "(let ((it (agent-tray-item))) (and (eq (getf it :icon) :agent) (search \"ask $\" (getf it :text)) t))")) "T"))
   (shot "agent-answer")
@@ -116,7 +116,7 @@
   (check "the model saw the result"
          (string= (row "pane quotes the tool's answer" (wait-until (pane-has "The tool answered: values: 42"))) "T"))
   ;; folded into one steps line since the Activity panel (*agent-steps-detail*
-  ;; :concise, doc/agent.org §14.8¾); this asserted a ;; #0 line until then
+  ;; :concise, doc/agent.org §8.3); this asserted a ;; #0 line until then
   (check "the call shows in the pane's steps line"
          (string= (row "a steps line: evaluated 1" (probe (pane-has "evaluated 1"))) "T"))
 
