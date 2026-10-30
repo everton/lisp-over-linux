@@ -208,6 +208,24 @@
 (at 0) (keys "C-c C-o")
 (check "C-c C-o where there is no link says so" (search "no link" *browser-status*))
 
+(format t "~&== a link in a code comment ==~%")
+;; Code cites a doc section as file:REL::#id (check-links.sh); C-c C-o follows it from
+;; a Lisp pane as Emacs's org-open-at-point-global does, landing on the heading.
+(defparameter *cited*
+  (put "cited.org" "* Intro" "x" "* Decoy" ":PROPERTIES:" ":CUSTOM_ID: tgt-long" ":END:"
+       "* Target" ":PROPERTIES:" ":CUSTOM_ID: tgt" ":END:" "body"))
+(defparameter *code* (put "code.lisp" ";; see file:cited.org::#tgt for why" "(defun zz () 1)"))
+(open-file *code*)
+(at 0 12) (keys "C-c C-o")
+(check "C-c C-o on file:…::#id in a Lisp file opens the doc"
+       (equal (org-pane-path (current-pane)) *cited*))
+(check "on the heading that owns the CUSTOM_ID (not one whose id merely starts the same)"
+       (= (first (point)) 6))
+(open-file *code*)
+(at 1 3) (keys "C-c C-o")
+(check "no link at the caret: C-c C-o leaves a Lisp pane alone"
+       (equal (org-pane-path (current-pane)) *code*))
+
 (format t "~&== the outline subject ==~%")
 (let ((v (present (subj-org *fx*))))
   (check "the outline lists the file's top headings"

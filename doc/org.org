@@ -255,6 +255,27 @@ A target into =./linux= or =./sbcl= works when the tree is reachable (e.g. under
 mounted =/home=; [[file:storage.org][storage.org]]). A link that doesn't resolve says so in the
 status line. Implementation: =org-follow-link=.
 
+*** Links outside Org files
+
+Code cites a doc section with a *plain link* — no brackets, the way Org itself reads
+=file:...= in running text:
+
+#+begin_src lisp
+;;; The layout is in file:../doc/containers.org::#layout
+#+end_src
+
+- *Any text pane.* =C-c C-o= on such a link in a Lisp or C file, or in a definition's
+  source pane, follows it like Emacs's =org-open-at-point-global=. Without a link
+  under the caret the chord stays the pane's own (a conversation opens a tool call).
+- *Relative to the source.* The path resolves from the file the text came from: a
+  file pane's file, or for a definition the source file it was built from
+  (=pane-source-file=). The Workspace has no file, and says so.
+- *Ids, not numbers.* A section is cited by its =CUSTOM_ID=, so reorganising a doc
+  never breaks the citation; =check-links.sh= resolves every one and refuses a
+  section number (=x.org §4=) in code.
+- *Plain links end* at a blank or a closing bracket or quote; trailing punctuation
+  belongs to the sentence (=line-file-links= in [[file:../poc/org.lisp][=poc/org.lisp=]]).
+
 * 5. Folding — the one change to the text view
 :PROPERTIES:
 :CUSTOM_ID: folding-change-text-view
@@ -448,8 +469,8 @@ On the bare framebuffer the keys come through the Linux console's keymap
 
 | test | checks | what |
 |------+--------+------|
-| [[file:../poc/org-test.lisp][poc/org-test.lisp]] | 87 | the reader, objects, links, and Emacs's answers for every fold cycle, =#+STARTUP=, move / promote / demote / =M-RET= / TODO; every project =.org= read |
-| [[file:../poc/org-mode-test.lisp][poc/org-mode-test.lisp]] | 58 | the real shell: the keys in a pane (Emacs's answers again, heading motion included), folds through edits, undo and =M-<down>=, =C-s= into a fold, the smart guard, links (same file, another file, a missing one, the live definition), the outline subject, the Spotter's headings, =#+STARTUP=; the repaired screen equals a fresh paint |
+| [[file:../poc/org-test.lisp][poc/org-test.lisp]] | 92 | the reader, objects, links, and Emacs's answers for every fold cycle, =#+STARTUP=, move / promote / demote / =M-RET= / TODO; every project =.org= read |
+| [[file:../poc/org-mode-test.lisp][poc/org-mode-test.lisp]] | 61 | the real shell: the keys in a pane (Emacs's answers again, heading motion included), folds through edits, undo and =M-<down>=, =C-s= into a fold, the smart guard, links (same file, another file, a missing one, the live definition), the outline subject, the Spotter's headings, =#+STARTUP=; the repaired screen equals a fresh paint |
 | [[file:../poc/journal-test.lisp][poc/journal-test.lisp]] | +4 | an outline tab and a heading tab through the desk; a vanished file refused |
 | [[file:../check-org.lisp][check-org.lisp]] | 22 | in the guest, by QMP keys: S-TAB, TAB, =C-c C-n= / =C-u=, =M-RET=, =M-<up>= / =<down>=, =M-S-<right>= once, Alt-Left / Right promote and demote with the VT unchanged, =C-c C-o=, the outline drilled |
 

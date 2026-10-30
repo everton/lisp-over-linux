@@ -423,6 +423,25 @@
                 (setf i e))
               (setf i (+ a 4))))))))
 
+;;; A plain file: link — Org's "plain link" for the file type, no brackets. Code
+;;; comments cite the docs this way (file:../doc/org.org::#links): it ends at a blank
+;;; or a closing bracket or quote, and trailing punctuation belongs to the sentence.
+(defun line-file-links (s taken)
+  (let ((out '()) (i 0))
+    (loop
+      (let ((a (search "file:" s :start2 i)))
+        (unless a (return (nreverse out)))
+        (if (and (not (inside-any-p a taken))
+                 (or (zerop a) (not (alphanumericp (char s (1- a)))))
+                 (< (+ a 5) (length s)) (not (blank-char-p (char s (+ a 5)))))
+            (let ((e (or (position-if (lambda (c) (or (blank-char-p c) (find c "]>)\"'")))
+                                      s :start a)
+                         (length s))))
+              (loop while (and (> e a) (find (char s (1- e)) ".,;:!?")) do (decf e))
+              (push (list a e :url :target (subseq s a e)) out)
+              (setf i e))
+            (setf i (+ a 5)))))))
+
 (defun line-emphasis (s taken)
   (let ((out '()) (n (length s)) (i 0))
     (loop while (< i n)
@@ -450,7 +469,7 @@
    is not bold. On a tie a link wins. (Org also nests — a link inside bold — which
    this flat list does not: the outer object wins.)"
   (let* ((links (line-links s))
-         (urls (line-urls s links))
+         (urls (append (line-urls s links) (line-file-links s links)))
          (emph (line-emphasis s '()))
          (rank (lambda (o) (case (third o) (:link 0) (:url 1) (t 2))))
          (all (sort (append links urls emph)

@@ -363,7 +363,11 @@
       (:line (max 0 (min (1- (second search)) (1- (length lines)))))
       (:heading (let* ((doc (lol.org:analyze lines)) (k (lol.org:find-head-by-title doc (second search))))
                   (and k (lol.org:head-line (aref (lol.org:doc-heads doc) k)))))
-      (:custom-id (position-if (lambda (s) (search (format nil ":CUSTOM_ID: ~a" (second search)) s)) lines))
+      ;; the heading that owns the :CUSTOM_ID: property, as Org lands on it
+      (:custom-id (let ((p (position-if (lambda (s) (string= (string-trim " " s)
+                                                             (format nil ":CUSTOM_ID: ~a" (second search))))
+                                        lines)))
+                    (and p (or (position-if #'lol.org:headline-line-p lines :end (1+ p) :from-end t) p))))
       (:text (position-if (lambda (s) (search (second search) s)) lines)))))
 
 (defun registry-definition (text)
@@ -567,9 +571,39 @@
          nil)                                   ; then the newline happens as usual
         (t nil)))))
 
+(defun pane-source-file (pane)
+  "The file PANE's text came from, which a relative link in it is relative to: the
+   file a file pane shows, or the source file a definition was built from. NIL when
+   there is none (the Workspace)."
+  (or (org-pane-path pane)
+      (let ((s (pane-subject pane)))
+        (and (subj-defn-p s)
+             (some #'defn-file (definitions-of (subj-defn-name s) (subj-defn-kind s)))))))
+
+(defun follow-link-anywhere (p)
+  "C-c C-o outside an Org pane: follow the Org link under the caret — in a Lisp or C
+   comment, file:../doc/org.org::#links — as Emacs's org-open-at-point-global does.
+   -> T when there was a link to follow; NIL leaves the chord to the pane (a
+   conversation's C-c C-o opens a tool call)."
+  (let* ((tv (pane-tv p))
+         (o (lol.org:link-at (aref (lol.textview:tv-lines tv) (lol.textview:tv-point-line tv))
+                             (lol.textview:tv-point-col tv))))
+    (when o
+      (let ((base (pane-source-file p)))
+        (if base
+            (org-follow-link (getf (cdddr o) :target) base)
+            (setf *browser-status* "C-c C-o: this pane has no file to resolve the link from")))
+      t)))
+
 (defun org-key (p key state)
   "An Org pane's own keys, offered every key first (EDIT-PANE-COMMAND). -> T when it
-   took the key; NIL lets the editor have it."
+   took the key; NIL lets the editor have it. In any other text pane it takes only
+   C-c C-o on a link (FOLLOW-LINK-ANYWHERE)."
+  (when (and (not (org-pane-p p)) (pane-tv p) (eq *pending-prefix* :c-c)
+             (lol.canvas:ctrl-p state) (eql (and (characterp key) (char-downcase key)) #\o)
+             (follow-link-anywhere p))
+    (setf *pending-prefix* nil)
+    (return-from org-key t))
   (when (org-pane-p p)
     (org-prepare-pane p)
     (let* ((tv (pane-tv p))

@@ -91,6 +91,12 @@
 (check "the link at a column" (third (link-at "go [[*Top]] now" 5)) :link)
 (check "and just after its ]]" (third (link-at "go [[*Top]] now" 11)) :link)
 (check "nothing elsewhere" (link-at "go [[*Top]] now" 13) nil)
+;; a plain file: link, the way code comments cite the docs (Org reads it as a link too)
+(let ((objs (line-objects ";; see file:../doc/org.org::#links, then")))
+  (check "a plain file: link is a link" (mapcar #'third objs) '(:url))
+  (check "and the comma is the sentence's" (getf (cdddr (first objs)) :target) "file:../doc/org.org::#links"))
+(check "profile:x is not a file: link" (line-objects "a profile:x here") nil)
+(check "a bare file: is not a link" (line-objects "the file: prefix") nil)
 
 (check "file link" (parse-link "file:../poc/x.lisp") '(:type :file :path "../poc/x.lisp"))
 (check "file link with a text search"
@@ -99,6 +105,8 @@
 (check "file link with a heading search" (parse-link "file:a.org::*Two")
        '(:type :file :path "a.org" :search (:heading "Two")))
 (check "file link with a line number" (parse-link "file:a.txt::12") '(:type :file :path "a.txt" :search (:line 12)))
+(check "file link to a CUSTOM_ID" (parse-link "file:x.org::#why")
+       '(:type :file :path "x.org" :search (:custom-id "why")))
 (check "a relative path is a file link" (parse-link "./b.org") '(:type :file :path "./b.org"))
 (check "a heading in this file" (parse-link "*What we shipped") '(:type :heading :title "What we shipped"))
 (check "a web link" (parse-link "https://orgmode.org") '(:type :url :url "https://orgmode.org"))
