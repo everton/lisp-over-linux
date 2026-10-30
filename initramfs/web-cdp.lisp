@@ -3,7 +3,7 @@
 ;;;; The web pane (web.lisp) does not contain a web engine. It drives one: Google
 ;;;; Chrome, started HEADLESS, so it owns no window and no screen, and every pixel it
 ;;;; renders comes back to us as a JPEG we decode and blit ourselves. Lisp stays the
-;;;; only process writing /dev/fb0 (doc/processes.org §1); a web page becomes one more
+;;;; only process writing /dev/fb0 (file:../doc/processes.org::#invariant-exactly-process-writes); a web page becomes one more
 ;;;; thing the environment DRAWS. doc/web-browser.org tells the whole story; this file
 ;;;; is the wire underneath it, and knows nothing about panes, canvases or keys.
 ;;;;
@@ -31,7 +31,7 @@
 ;;;; FROM that tab carries it too. One pipe, many tabs, multiplexed by one string.
 ;;;;
 ;;;; Everything here is pure Lisp over sb-unix/sb-alien (no sb-posix, per
-;;;; doc/processes.org §6) and runs unchanged on the host — poc/web-test.lisp drives
+;;;; file:../doc/processes.org::#sb-posix-audit-nothing) and runs unchanged on the host — poc/web-test.lisp drives
 ;;;; the host's Chrome with it.
 ;;;;
 ;;;; All original code, under this project's MIT licence.
@@ -332,7 +332,7 @@
    The wait used to be a deadline for the whole message, which a busy Chrome reading
    a big one (a shared screen's 8.8 MB frame, during a video call) missed while
    reading steadily: the laptop's first shared call lost its Chrome that way
-   (2026-10-20, doc/web-browser.org §4.8). Now each octet taken restarts it.
+   (2026-10-20, file:../doc/web-browser.org::#video-calls-google-meet). Now each octet taken restarts it.
    Past the wait the pipe is CLOSED (half a message has corrupted the stream
    anyway) and Chrome is told to quit (SIGTERM): a Chrome left running without its
    command pipe did not exit, and every tab stopped answering. Its exit reaches the

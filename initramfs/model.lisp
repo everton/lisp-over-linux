@@ -6,7 +6,7 @@
 ;;;; wrappers. It is all pure introspection — sb-mop (the Metaobject Protocol,
 ;;;; built into SBCL, no require) plus sb-introspect — and it is deliberately
 ;;;; HEADLESS: every function here is callable and testable from the REPL, long
-;;;; before any pixels. The eventual (present ...) methods (§4½) are thin renderers
+;;;; before any pixels. The eventual (present ...) methods (file:../doc/code-browser.org::#drill-down-protocol-present) are thin renderers
 ;;;; over exactly these accessors.
 ;;;;
 ;;;; Convention, as in registry.lisp: FOO-INFO / *-OF return DATA (plists/lists the
@@ -157,7 +157,7 @@
   "The CLASS SIDE of dispatch: every method with CLASS-NAME anywhere in its
    specializer tuple (sb-mop:specializer-direct-methods). Each as method-info — so
    a multi-method appears under EVERY class it dispatches on. That is multiple
-   dispatch, shown honestly (doc/code-browser.org §3)."
+   dispatch, shown honestly (file:../doc/code-browser.org::#smalltalk-lisp-concept-map)."
   (let ((c (as-class class-name)))
     (and c (mapcar #'method-info (sb-mop:specializer-direct-methods c)))))
 
@@ -209,7 +209,7 @@
         when (remove t ax) collect i))
 
 (defun dispatch-matrix (gf-name)
-  "Coverage of GF-NAME across the class space (doc/code-browser.org §3). A plist:
+  "Coverage of GF-NAME across the class space (file:../doc/code-browser.org::#smalltalk-lisp-concept-map). A plist:
      :mode  :matrix (exactly 2 active axes — the grid) | :list (0 or 1) | :multi (3+)
      :name  the GF name
    For :matrix — :row-pos/:col-pos the two positions, :rows/:cols their specializer
@@ -252,7 +252,7 @@
 
 (defun effective-method-onion (gf-name &rest class-names)
   "The standard-method-combination structure of a call to GF-NAME dispatching on
-   CLASS-NAMES, as a plist the onion view renders (doc/code-browser.org §3):
+   CLASS-NAMES, as a plist the onion view renders (file:../doc/code-browser.org::#smalltalk-lisp-concept-map):
      :around   most-specific-first, each wraps the next (outer -> inner)
      :before   most-specific-first (all run, before the primary chain)
      :primary  most-specific-first (the call-next-method chain, threaded inward)
@@ -289,7 +289,7 @@
     name))
 
 ;;; ======================================================================
-;;; Categories — the "protocol" metadata Lisp lacks, reintroduced (§3)
+;;; Categories — the "protocol" metadata Lisp lacks, reintroduced (file:../doc/code-browser.org::#categories)
 ;;; ======================================================================
 
 (defun category-of (defn &optional (scheme :file))
@@ -714,7 +714,7 @@
   (apply fn (read-from-string (concatenate 'string "(" args-text ")"))))
 
 ;;; ======================================================================
-;;; The condition system — the live debugger's two stacks (§3)
+;;; The condition system — the live debugger's two stacks (file:../doc/code-browser.org::#condition-system)
 ;;; ======================================================================
 ;;; A signal rises the HANDLER side with the stack intact; invoking a RESTART drops
 ;;; the RESTART side and unwinds. compute-restarts gives the restart column (already
@@ -815,7 +815,7 @@
                             :value (frame-var-value v loc frame)))))))
 
 ;;; ---- frame locals as PLACES: setting a variable in a standing frame ------
-;;; (doc/inspector-history.org §5.4.) INSPECT-PLACES turned an object's fields from
+;;; (file:../doc/inspector-history.org::#set-local-debugger-frame.) INSPECT-PLACES turned an object's fields from
 ;;; values into places; this does the same for a stack frame's locals, so the
 ;;; debugger can write a new value into a frame that is still waiting for ERROR (or
 ;;; CERROR) to return — and then CONTINUE, or re-enter the frame, and watch the
@@ -1011,7 +1011,7 @@
      frame (lambda () (apply (fdefinition name) args)))))
 
 ;;; ======================================================================
-;;; The condition system — the STATIC face (§3, phase 4a)
+;;; The condition system — the STATIC face (file:../doc/code-browser.org::#condition-system, phase 4a)
 ;;; ======================================================================
 ;;; The live half above is the debugger: a real stack, real restarts. This half is
 ;;; what the BROWSER can say about a condition type when nothing is signalling —
@@ -1028,7 +1028,7 @@
 ;;; HONEST LIMIT, stated once and surfaced in the view: this is a STATIC
 ;;; approximation. It sees the lexically apparent forms in the code we recorded. It
 ;;; cannot see a handler established by a function it calls, a type computed at
-;;; runtime, or anything inside SBCL itself (whose source we do not ship — §0.1).
+;;; runtime, or anything inside SBCL itself (whose source we do not ship — file:../doc/code-browser.org::#source-code-image).
 ;;; The live debugger remains the authority on what is actually established.
 
 (defun condition-class-p (name)

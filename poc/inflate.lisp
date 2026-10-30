@@ -5,7 +5,7 @@
 ;;;; other half: reading it. It exists because a file manager wants to preview a PNG,
 ;;;; and every PNG's pixels are a ZLIB stream — and because the image is a frozen SBCL
 ;;;; heap with no zlib.so to call. So: pure Lisp, no FFI, no dependencies, loadable
-;;;; into the image and into a bare host SBCL alike. Design notes: doc/previews.org §2.
+;;;; into the image and into a bare host SBCL alike. Design notes: file:../doc/previews.org::#deflate-decompressor-everything-else.
 ;;;;
 ;;;; What a DEFLATE stream is, in one paragraph. A sequence of BLOCKS. Each starts
 ;;;; with 3 header bits: BFINAL (is this the last block?) and BTYPE — 00 stored

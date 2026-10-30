@@ -12,7 +12,7 @@
 ;;;;
 ;;;; Under QEMU user-mode (SLIRP) networking the guest is 10.0.2.15, gateway
 ;;;; 10.0.2.2 — so the address below is hard-coded for that first test (static IP;
-;;;; DHCP is a later stage, see networking.org §2).
+;;;; DHCP is a later stage, see file:../doc/networking.org::#userland-half-reaching-network).
 
 ;;; ---- interface configuration via ioctl (no `ifconfig` binary) ------------
 
@@ -346,7 +346,7 @@
 ;;; SECURITY: this is plaintext, unauthenticated remote =eval= — i.e. remote
 ;;; ROOT, since the REPL is PID 1. Only safe when every wire that can reach the
 ;;; port is trusted: the QEMU hostfwd (host loopback) or a direct dev cable.
-;;; NEVER expose it to an untrusted LAN. (networking.org §6.) It starts ON at boot
+;;; NEVER expose it to an untrusted LAN. (file:../doc/networking.org::#exposing-repl-over-network.) It starts ON at boot
 ;;; for convenience and can be toggled off from the menu ('t') — acceptable only
 ;;; because the one wire that can reach it is the trusted QEMU hostfwd.
 ;;;
@@ -354,7 +354,7 @@
 ;;; client (host-client/lol-repl-client.c) puts the *host* terminal in raw mode
 ;;; and forwards keystrokes byte-by-byte, so the editor here receives arrows etc.
 ;;; and drives history/editing remotely — the redraw escapes go back to the
-;;; client's terminal. No PTY needed (see networking.org §6a).
+;;; client's terminal. No PTY needed (see file:../doc/networking.org::#exposing-repl-over-network).
 
 (defparameter +net-repl-port+ 4005)
 (defvar *net-repl-server* nil "Listening socket while the network REPL is enabled, else NIL.")

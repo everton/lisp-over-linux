@@ -49,7 +49,7 @@ Lisp as PID 1**. The user is here to *understand* the system, so prefer
 | `doc/background/learn-clos.org` | From-scratch CLOS + MOP tutorial (same shape as `learn-networking.org`). The Lisp background the browser assumes: multiple dispatch, specificity, method combination, conditions/restarts, and the `sb-mop` accessors `model.lisp` is built from. |
 | `build.sh` | One-step rebuild of userland (+ `--kernel`, `--run`, `--interactive`, `--install-host`). Location-independent; uses the `./linux`/`./sbcl` symlinks. `--install-host` copies kernel+cpio to `/boot/lisp` for the host's GRUB entry, so the laptop boots the image without a USB stick — the menuentry itself is a one-time manual step (`doc/micro-distro.org`, "Booting from the host's GRUB"). |
 | `deps.sh` | Fetch / link / update the external `./linux` (kernel) and `./sbcl` trees; create the gitignored symlinks. |
-| `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included. Run before committing doc changes. |
+| `check-links.sh` | Verify every `[[file:...]]` link in the `.org` docs resolves, anchors included (`::#id` = an Org `CUSTOM_ID`), and every `file:…doc/x.org::#id` citation in code; refuses a section number (`x.org §4`) in code. Run before committing doc or comment changes. |
 | `check-scroll.lisp` | Boot the image under QEMU and **assert the browser's scrolling behaviour** — drives it over QMP (keys, and real evdev `REL_WHEEL` via QEMU's wheel buttons) while reading `pane-top` / `pane-sel` / `tv-scroll` back over the net REPL. Exits non-zero on any failure. |
 | `check-clipboard.lisp` | Boot the image under QEMU and **assert the desk around the editor**: the Workspace-only start, the Emacs/PC clipboard keys (`C-k` accumulation, `C-y`, Shift-Insert), drag → PRIMARY + history, double/triple click → the word/line, middle-click paste, `C-x r k`, the right-button menu, the middle-button halo (walking its layers out to a `PANE`, Inspect on the instance, `Code: tv-draw` from the text view), `SuperL-h`, the idle pointer hiding, the systray, `C-n`/`C-p` in the Spotter, `SuperL-q`'s leave menu, undo (`C-_`, `C-/`, `C-x u` as redo after a motion), and `C-s` / `C-q` reaching the environment as keys (raw mode clears `IXON`: a `C-s` once stopped the console and froze the environment on its next write — `doc/diagnostics.org` §1). `LOL_SHOTS=DIR` keeps screendumps of the overlays. |
 | `check-isearch.lisp` | Boot the image and **drive the incremental search with QMP keys** (`doc/clipboard.org` §6¾): `C-s` reaching the Workspace, the prompt in the status line, typing to a match, `C-s` to the next, Enter leaving the mark at the start, `C-x C-x`, `C-r`, `C-g` cancelling, `C-a` ending the search and acting, `C-x C-s` still save. 17 checks. The semantics (in `poc/textview.lisp`, "Incremental search") are host-tested against Emacs's own answers by `poc/isearch-test.lisp` (77). |
@@ -249,6 +249,17 @@ Prefer a few well-placed sections over one-liners scattered about.
   only `README.org` stays in the repo root. Cross-link with **relative** paths:
   within `doc/` it's `[[file:other.org]]`; from `doc/background/` up to a sibling
   doc it's `[[file:../other.org]]`; to code it's `[[file:../../initramfs/foo.lisp]]`.
+- **Cite sections by id, never by number.** A section that is cited gets a stable
+  Org `CUSTOM_ID` (`:PROPERTIES:` / `:CUSTOM_ID: layout` / `:END:` under its
+  heading). Docs link `[[file:containers.org::#layout][…]]`, or `[[#layout][…]]`
+  within the same doc; code comments write the plain link
+  `file:../doc/containers.org::#layout`, relative to the citing file (Emacs's
+  `org-open-at-point-global` and the environment's `C-c C-o` follow it). Never
+  write `containers.org §3`: numbers move whenever a doc is reorganised. Renaming
+  or renumbering a heading is free; changing or deleting an id means fixing every
+  citation, which `./check-links.sh` lists. Write docs neutrally, for any reader:
+  the subject, not the story of how it was built (dated narrative and
+  machine-specific detail out; ruled-out findings kept, as "Pitfalls").
 - Kernel build tags are `#NN` (currently **#32**). Always say which tag a claim
   refers to.
 - The external trees are **gitignored symlinks** (`./linux`, `./sbcl`); reference

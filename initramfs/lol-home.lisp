@@ -15,7 +15,7 @@
 ;;;;
 ;;;; Until 2026-10-17 these were spread over three trees — XDG's ~/.config/lol/,
 ;;;; ~/.local/share/lol/ and ~/.local/state/lol/ — beside ~/.lol/ for the logs and the
-;;;; containers. The user chose one tree on reviewing doc/session-persistence.org (now its §3):
+;;;; containers. The user chose one tree on reviewing doc/session-persistence.org (now file:../doc/session-persistence.org::#where-things-live-when):
 ;;;; everything the environment writes about you is in one folder you can back up,
 ;;;; read from Debian, or delete. MIGRATE-LOL-HOME (below) moves an older layout over.
 ;;;;

@@ -42,7 +42,7 @@
 ;;;; a definition the sandbox refuses that you mean anyway. On the host there is no
 ;;;; /sbin/lisp: Accept is unsandboxed there and *LAST-SANDBOX* says so.
 ;;;;
-;;;; See doc/processes.org §7¾. All original code, MIT.
+;;;; See file:../doc/processes.org::#accept-tries-definition-child. All original code, MIT.
 
 (in-package :cl-user)
 

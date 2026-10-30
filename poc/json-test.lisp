@@ -5,7 +5,7 @@
 ;;;; The cases are the ones a Messages-API client actually meets: nested objects with
 ;;;; arrays, every string escape, a surrogate pair (an emoji in a model's reply), the
 ;;;; four values NIL must never stand for, numbers in each grammar form, key ORDER
-;;;; surviving a round trip (prompt caching depends on it, doc/agent.org §5), and the
+;;;; surviving a round trip (prompt caching depends on it, file:../doc/agent.org::#json-decision-earns-keep), and the
 ;;;; malformed inputs that must fail loudly rather than half-parse.
 ;;;;
 ;;;; Prints one line per check and exits non-zero on any failure.

@@ -1,12 +1,12 @@
 ;;;; worker-live.lisp — a second process whose view stays LIVE.
 ;;;;
-;;;; worker.lisp proved the cheap half of doc/processes.org §2: a child computes a
+;;;; worker.lisp proved the cheap half of file:../doc/processes.org::#scenario-peer-sends-view: a child computes a
 ;;;; view, prints it down a pipe, exits, and our toolkit draws it. That child is a
 ;;;; function call that happens to run elsewhere — synchronous, one answer, and the
 ;;;; answer can only name things (symbols), because the child is gone by the time
 ;;;; you drill.
 ;;;;
-;;;; This file is the other half, the one §2 said would "actually need designing".
+;;;; This file is the other half, the one file:../doc/processes.org::#four-things-need-designing said would "actually need designing".
 ;;;; The child stays alive, keeps its own objects, and the screen follows it:
 ;;;;
 ;;;;   1. HANDLES, NOT SUBJECTS. Every subject the child shows us is filed in a
@@ -27,7 +27,7 @@
 ;;;;      poll(2) through the *FB-SERVICES* hook web.lisp already uses (a service is
 ;;;;      :fd + :run). The browser sleeps until a key, a click — or the child
 ;;;;      writing. Idle stays idle: no timer, no polling, zero CPU while nothing
-;;;;      changes. That is the property §2 claimed this design keeps, and it is the
+;;;;      changes. That is the property file:../doc/processes.org::#four-things-need-designing claimed this design keeps, and it is the
 ;;;;      reason this is not runs.lisp's shape (a reader thread + a 100 ms tick).
 ;;;;
 ;;;;   4. INTERNING, OR EQ BREAKS. The shell compares subjects with EQ — the
@@ -35,9 +35,9 @@
 ;;;;      per refresh would never be EQ to the last one, so the preview would rebuild
 ;;;;      on every update and ⇧↵ would never toggle closed. REMOTE-SUBJECT therefore
 ;;;;      hands out ONE struct per (connection, handle), forever. The child does the
-;;;;      mirror image: the same subject gets the same handle (§2, point 3).
+;;;;      mirror image: the same subject gets the same handle (file:../doc/processes.org::#four-things-need-designing, point 3).
 ;;;;
-;;;; Why still a PIPE PAIR and not the AF_UNIX socket §2 sketched: the child is
+;;;; Why still a PIPE PAIR and not the AF_UNIX socket file:../doc/processes.org::#transport-security-foreign-peer sketched: the child is
 ;;;; ours. run-program gives us both directions as pipes, no listening socket, no
 ;;;; accept loop, no file in /tmp for someone else to connect to. A socket earns its
 ;;;; place when the peer is a process we did NOT start; that is still nobody.
@@ -45,19 +45,19 @@
 ;;;; The wire is NUL-framed READable forms — the same framing web-cdp.lisp uses for
 ;;;; Chrome's DevTools pipe, with s-expressions where Chrome has JSON. Read with
 ;;;; *READ-EVAL* nil (READ-WORKER-FORM) and only keyword heads from a fixed list are
-;;;; accepted: a presentation channel that cannot eval (§2, "Security").
+;;;; accepted: a presentation channel that cannot eval (file:../doc/processes.org::#transport-security-foreign-peer).
 ;;;;
 ;;;; Not here: the closures. ITEM-EDIT (an inspector row's setter) and ITEM-ACTION
 ;;;; are functions in the child's heap and are dropped at the boundary, so a remote
 ;;;; inspector is read-only. Making them travel means naming them — a declarative
-;;;; tag the child resolves — which is §2's point 2 and still owed.
+;;;; tag the child resolves — which is point 2 of file:../doc/processes.org::#four-things-need-designing and still owed.
 ;;;;
 ;;;; On the host there is no /sbin/lisp to exec, so the "child" is a THREAD of this
 ;;;; process speaking the same protocol over two real pipes — and its views say so.
 ;;;; poc/worker-live-test.lisp tests the protocol that way; check-worker.lisp boots
 ;;;; the image and proves the real thing.
 ;;;;
-;;;; See doc/processes.org §7½. All original code, MIT.
+;;;; See file:../doc/processes.org::#live-worker-handles-pipe. All original code, MIT.
 
 (in-package :cl-user)
 
@@ -213,7 +213,7 @@
 (defparameter +wire-list-kinds+ '(:list :inspector)
   "View kinds that are rows, and so cross as rows. Everything else is text, or is
    :DATA the renderer reads — a matrix grid, the stage's live structs — and that
-   last kind does not cross at all (doc/processes.org §7, 'Why the stage was the
+   last kind does not cross at all (file:../doc/processes.org::#worked-example-shot-worker, 'Why the stage was the
    wrong candidate').")
 
 (defun wire-string (x)

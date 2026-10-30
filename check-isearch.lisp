@@ -4,7 +4,7 @@
 ;;;;
 ;;;; The semantics are host-tested key for key against Emacs (poc/isearch-test.lisp);
 ;;;; this proves the KEYS: that C-s and C-r arrive from the console (raw mode has IXON
-;;;; off, or the tty would eat C-s as XOFF — doc/diagnostics.org §1), reach the search,
+;;;; off, or the tty would eat C-s as XOFF — file:doc/diagnostics.org::#four-ways-screen-freezes), reach the search,
 ;;;; and that the keys after it do what the search says. Driven by QMP key events; the
 ;;;; guest's state is read back over the net REPL (host-client/guest-harness.lisp).
 ;;;;

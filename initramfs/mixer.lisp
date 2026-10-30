@@ -1,6 +1,6 @@
 ;;;; mixer.lisp — the sound card's mixer, from Lisp: ALSA "controls" through ioctl.
 ;;;;
-;;;; Tag #29 gave the kernel sound (doc/screencast.org §3). A sound card is more than
+;;;; Tag #29 gave the kernel sound (file:../doc/screencast.org::#kernel-tag-29). A sound card is more than
 ;;;; the PCM devices that play and record (/dev/snd/pcmC0D0p, pcmC0D0c): its codec has
 ;;;; amplifiers, switches and selectors, and the kernel shows each one as a CONTROL on
 ;;;; /dev/snd/controlC0 — a numbered element with a name ("Master Playback Volume"), a
@@ -385,7 +385,7 @@
           (set-volume-percent (if (integerp level) level *default-volume*)))
         (when (and (fboundp 'setting) (funcall 'setting :muted nil))
           (set-muted t))
-        ;; the mic: the saved gain (not the maximum — §mic above), the headset if plugged
+        ;; the mic: the saved gain (not the maximum — see "the microphone" above), the headset if plugged
         (let ((db (if (fboundp 'setting) (funcall 'setting :capture-db *default-capture-db*) *default-capture-db*)))
           (set-capture-db (if (realp db) db *default-capture-db*)))
         (choose-mic)

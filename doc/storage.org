@@ -2,7 +2,7 @@
 #+STARTUP: showall
 
 Parent docs: [[file:sbcl-init.org][sbcl-init.org]] (the boot sequence this extends) ·
-[[file:kernel-config.org][kernel-config.org]] (the options, §5) · sibling: [[file:file-manager.org][file-manager.org]] (what you
+[[file:kernel-config.org][kernel-config.org]] (the options, [[file:kernel-config.org::#filesystems-userland-glue][Filesystems & userland glue]]) · sibling: [[file:file-manager.org][file-manager.org]] (what you
 do with the disk once it's there).
 
 STATUS (kernel tag #25 onward): *built*, tested in QEMU against a stand-in disk
@@ -11,6 +11,9 @@ privately, shares only =/home=, and runs the whole Lisp environment as the user
 with five named capabilities.
 
 * 1. The goal
+:PROPERTIES:
+:CUSTOM_ID: goal
+:END:
 
 Without storage, the root filesystem is the initramfs in RAM and nothing else
 exists. The image should reach the machine's NVMe drive, but our =/= must stay
@@ -31,10 +34,13 @@ The process tree:
 | PID | Program      | Runs as                           | Why                                                                                    |
 |-----+--------------+-----------------------------------+----------------------------------------------------------------------------------------|
 | 1   | =/sbin/lisp= | the user + 5 capabilities         | the whole environment                                                                  |
-| ~28 | =lol-rootd=  | root (real uid the user's, §6)    | chown hotplugged devices; remount ro at exit; clock, NM profiles, new build on request |
+| ~28 | =lol-rootd=  | root (real uid the user's, [[#lol-rootd-process-stays][=lol-rootd=: the one process that stays root]])    | chown hotplugged devices; remount ro at exit; clock, NM profiles, new build on request |
 | any | =lol-ct=     | the user; inside: no capabilities | a container run ([[file:containers.org][containers.org]]), only while one runs                                  |
 
 * 2. The kernel half (tag #25)
+:PROPERTIES:
+:CUSTOM_ID: kernel-half
+:END:
 
 Four options, chosen by asking "what is between the NVMe and an =open(2)=?":
 
@@ -43,7 +49,7 @@ Four options, chosen by asking "what is between the NVMe and an =open(2)=?":
 | =BLK_DEV_NVME=      | The target laptop's disk is NVMe (=nvme0n1=). Pulls in =NVME_CORE=. Needs =PCI= (on since #19). |
 | =EXT4_FS=           | The root partition is ext4. Pulls in =JBD2= (the journal), =FS_MBCACHE=, =CRC16=.               |
 | =EXT4_FS_POSIX_ACL= | Debian mounts with =acl=; without it the kernel would silently ignore ACLs on files.            |
-| =VIRTIO_BLK=        | QEMU's paravirtual disk, so the same image can be tested against a disk image (§8).             |
+| =VIRTIO_BLK=        | QEMU's paravirtual disk, so the same image can be tested against a disk image ([[#testing-under-qemu-never][Testing under QEMU — never with the real disk]]).             |
 
 =BLOCK=, =MSDOS_PARTITION= and =EFI_PARTITION= (GPT) were already on. A
 *partition table* is a small index at the start of a disk saying "bytes X to Y
@@ -112,10 +118,13 @@ disk=UUID=<uuid of the fs holding $HOME>     (findmnt -no UUID -T $HOME)
   =build.sh= detects. In a container, where =findmnt= can't see the disk, the
   build reads the UUID from the host's =/etc/fstab=.
 - *Why a file too.* Our command line is compiled into the kernel (=CONFIG_CMDLINE=,
-  §1 of [[file:kernel-config.org][kernel-config.org]]) and the USB boot passes none of its own, so a UUID
+  [[#goal][The goal]] of [[file:kernel-config.org][kernel-config.org]]) and the USB boot passes none of its own, so a UUID
   there would mean a kernel rebuild per machine. The cpio rebuilds in seconds.
 
 * 4. The mount layout: the host's / stays apart
+:PROPERTIES:
+:CUSTOM_ID: mount-layout-host-s
+:END:
 
 [[file:../initramfs/preinit.c::static int mount_storage][=mount_storage=]] does three =mount(2)= calls:
 
@@ -142,6 +151,9 @@ programs is useful, and the read-only flag makes it cost nothing in safety. It
 lives under =/mnt=, where foreign filesystems traditionally go.
 
 * 5. Running as the user: capabilities, not root
+:PROPERTIES:
+:CUSTOM_ID: running-user-capabilities-root
+:END:
 
 ** Why a different uid, not a chown afterwards
 
@@ -235,8 +247,8 @@ Preinit hands over a few more things:
 
 - *=/dev/rfkill=* — in =give_devices=, so a hotplugged radio's is handed over too
   (the Wi-Fi kill switch).
-- *=/dev/snd/*=* — tag #29, the sound card ([[file:screencast.org][screencast.org]] §3.1).
-- *=/dev/video*=* — tag #32, the webcam ([[file:web-browser.org][web-browser.org]] §4.8).
+- *=/dev/snd/*=* — tag #29, the sound card ([[file:screencast.org::#userland-card-device-nodes][screencast.org, Userland for the card: device nodes and the mixer]]).
+- *=/dev/video*=* — tag #32, the webcam ([[file:web-browser.org::#video-calls-google-meet][web-browser.org, Video calls: Google Meet, with screen sharing]]).
 - *=/etc/resolv.conf=* — the one file in our root the user owns, which =dns.lisp=
   rewrites from each DHCP lease.
 
@@ -256,6 +268,9 @@ there's no passwd to look the user up in, and preinit stays root. Nothing of the
 user's is reachable then, so there's nothing to protect.
 
 * 6. =lol-rootd=: the one process that stays root
+:PROPERTIES:
+:CUSTOM_ID: lol-rootd-process-stays
+:END:
 
 Two jobs need root /after/ the drop, and the user may do neither:
 
@@ -287,8 +302,8 @@ Each request is one signal, never a message to parse:
 | Signal  | Request                                    | Handler / details                                                         |
 |---------+--------------------------------------------+---------------------------------------------------------------------------|
 | SIGUSR1 | sync and remount read-only (power-off)     | above                                                                     |
-| 40      | set the clock                              | [[file:../initramfs/preinit.c::static void do_settime][=do_settime=]]; [[file:networking.org][networking.org]] §2d                               |
-| 41      | copy the host's NetworkManager profiles    | [[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]; [[file:networking.org][networking.org]] §7.2                             |
+| 40      | set the clock                              | [[file:../initramfs/preinit.c::static void do_settime][=do_settime=]]; [[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]                               |
+| 41      | copy the host's NetworkManager profiles    | [[file:../initramfs/preinit.c::static void do_nmimport][=do_nmimport=]]; [[file:networking.org::#supplicant-host-s-wpa][networking.org, The supplicant: the host's =wpa_supplicant=, driven from Lisp]]                             |
 | 42      | install a new build into =/boot/lisp/=     | [[file:../initramfs/preinit.c::static void do_install][=do_install=]]; below                                                     |
 
 - *Clock (40).* Queued with =sigqueue(2)=, whose one-word payload is the new time
@@ -333,6 +348,9 @@ Preinit's messages go to =/dev/kmsg= — into the kernel log — not to fd 2.
   arrives. Opening it per message loses exactly that line.
 
 * 8. Testing under QEMU — never with the real disk
+:PROPERTIES:
+:CUSTOM_ID: testing-under-qemu-never
+:END:
 
 *Never* hand QEMU the real =/dev/nvme0n1=. The host has it mounted read-write; two
 kernels writing one ext4 is how filesystems are destroyed.
@@ -373,7 +391,7 @@ copies each file's owner from the source.
 What the session keeps lives in the user's home, owned by the user: everything
 under one =~/.lol/= (settings, Wi-Fi, the agent, the journal, the desk, the
 containers, the logs), named in one place, [[file:../initramfs/lol-home.lisp][lol-home.lisp]]
-([[file:session-persistence.org][session-persistence.org]] §3). All of it is written before =release-disk= makes
+([[file:session-persistence.org::#where-things-live-when][session-persistence.org, Where things live, and when there is no disk]]). All of it is written before =release-disk= makes
 =/home= read-only, and none of it on a diskless boot.
 
 ** The host's real root, for tests that run its programs (tag #26)

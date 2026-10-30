@@ -1,4 +1,4 @@
-;;;; present.lisp — the drill-down PRESENT protocol (code browser §4½ / §4½ affordances).
+;;;; present.lisp — the drill-down PRESENT protocol (file:../doc/code-browser.org::#drill-down-protocol-present, file:../doc/code-browser.org::#content-talks-back).
 ;;;;
 ;;;; This is the browser's SPINE, built headless first (like registry.lisp and
 ;;;; model.lisp): one generic function turns any subject into a VIEW of items, and
@@ -12,8 +12,8 @@
 ;;;;
 ;;;; An ITEM that carries a SUBJECT is a drill: selecting it opens (present that).
 ;;;; Content never opens anything itself — it only DECLARES (a target, a
-;;;; disposition, an action, commands); the shell disposes. See doc/code-browser.org
-;;;; §4½ "Content that talks back". Loaded via load-recording after model.lisp.
+;;;; disposition, an action, commands); the shell disposes. See
+;;;; file:../doc/code-browser.org::#content-talks-back. Loaded via load-recording after model.lisp.
 
 ;;; ---- the data the shell renders -----------------------------------------
 
@@ -32,7 +32,7 @@
                          ; place this row shows, or NIL when the row is not settable.
                          ; Content declares HOW to write; it never asks the user for
                          ; anything and never performs the write itself — the shell
-                         ; owns the gesture and the prompt (§4½, "content that talks
+                         ; owns the gesture and the prompt (file:../doc/code-browser.org::#content-talks-back: "content that talks
                          ; back": content DECLARES, the shell disposes).
   subject                ; what drilling opens — (present subject) — or NIL
   (disposition :in-place); :in-place | :new-trail | :beside | :replace (a HINT)
@@ -72,7 +72,7 @@
 ;;; readings a symbol has, disambiguated by which subject you hand to PRESENT.
 (defstruct (subj-defn (:constructor subj-defn (name &optional kind))) name kind)
 (defstruct (subj-xref (:constructor subj-xref (relation name))) relation name)
-;; The two generic-function views (§3): coverage (the dispatch matrix) and
+;; The two generic-function views (file:../doc/code-browser.org::#classes-vs-generic-functions): coverage (the dispatch matrix) and
 ;; combination (the effective-method onion for one argument tuple). Both render as
 ;; text — no grid widget yet — so they ride the existing :reference text pane.
 (defstruct (subj-matrix (:constructor subj-matrix (name))) name)
@@ -82,18 +82,18 @@
 ;; defmethod for each specialised case, not to the combination.
 (defstruct (subj-method (:constructor subj-method (name qualifiers specializers)))
   name qualifiers specializers)
-;; The Workspace (§3a): a scratch buffer whose verbs eval — Do it / Print it /
+;; The Workspace (file:../doc/code-browser.org::#workspace-scratch-buffer-editor): a scratch buffer whose verbs eval — Do it / Print it /
 ;; Inspect it — rather than Accept a whole definition. A :workspace view is an
 ;; editable text pane the shell drives; the shell owns the eval, staying pure here.
 (defvar *stage-subject-fn* nil
-  "Set by initramfs/stage.lisp (§3b): (funcall it GF-NAME) -> a stage subject, or NIL.
+  "Set by initramfs/stage.lisp (file:../doc/code-browser.org::#stage-dispatch-happening-done): (funcall it GF-NAME) -> a stage subject, or NIL.
 
    present.lisp loads before stage.lisp and must not mention it, but the
    generic-function view is where a stage has to be offered from — so the dependency
    is inverted into this one hook rather than reordering the build for a demo.")
 
 (defstruct (subj-workspace (:constructor subj-workspace ())))
-;; The change set (§6): the definitions Accepted (edited live) this session — a
+;; The change set (file:../doc/code-browser.org::#phase-6-live-system): the definitions Accepted (edited live) this session — a
 ;; browsable list, Smalltalk's Changes. Data comes from CHANGED-DEFINITIONS.
 (defstruct (subj-change-set (:constructor subj-change-set ())))
 ;; The module index: OUR FILES ARE OUR CATEGORIES (model.lisp's CATEGORIZE :file).
@@ -104,7 +104,7 @@
 ;; definitions. Provenance comes from DEFN-FILE, captured by LOAD-RECORDING.
 (defstruct (subj-modules (:constructor subj-modules ())))
 (defstruct (subj-module  (:constructor subj-module (category))) category)
-;; A condition type's STATIC face (§3, phase 4a). The LIVE face is the debugger —
+;; A condition type's STATIC face (file:../doc/code-browser.org::#condition-system, file:../doc/code-browser.org::#phase-4a-lisp-native-views). The LIVE face is the debugger —
 ;; a real stack with real restarts. This is what the browser can say when nothing
 ;; is signalling, and it deliberately mirrors Senders/Implementors: anatomy (the
 ;; class DAG, slots, the report string), Signallers, Handlers, and the restarts
@@ -175,7 +175,7 @@
     (maphash (lambda (c n) (push (cons c n) out)) counts)
     (sort out #'string-lessp :key (lambda (e) (princ-to-string (car e))))))
 
-;;; ---- the Spotter: fuzzy-find anything, open it in a trail (§4¾) -----------
+;;; ---- the Spotter: fuzzy-find anything, open it in a trail (file:../doc/code-browser.org::#spotter) -----------
 ;;; Pure data + ranking; the shell owns the overlay and the open-in-new-trail. A
 ;;; candidate is a plist (:label :detail :subject) — the same shape a list item
 ;;; carries, so opening one is just (present (getf c :subject)).
@@ -227,7 +227,7 @@
    (BUILTIN-SPOTTER-CANDIDATES). Every row is guarded, since this feeds a live
    finder in PID 1 and one malformed entry must not break the list.
 
-   GROUP is the design mock-up's banding (media/browser-views-design.html §1):
+   GROUP is the design mock-up's banding (media/browser-views-design.html, \"The environment — one tiled screen\"):
    \"definitions\", \"packages & files\", \"surfaces\" — nine matches spread over three
    kinds of thing read very differently from nine matches in a heap."
   (let ((out '()))
@@ -336,7 +336,7 @@
 
 (defvar *spotter-recents* '()
   "The subjects most recently opened, newest first, as Spotter candidate plists. The
-   design mock-up (§1) says the thing you were just reading is always one click away
+   design mock-up (\"The environment — one tiled screen\") says the thing you were just reading is always one click away
    \"as a tab, a breadcrumb crumb, or in the Spotter's recents\" — this is that third
    answer. Filled by the shell as it opens panes; capped, because a finder's job is to
    be short.")
@@ -668,12 +668,12 @@
     (make-view
      :title (format nil "~(~a~) ~(~a~)" (getf i :kind) (getf i :name))
      :kind :class :subject c
-     ;; labels stay within the font's coverage (§6.2): the detail distinguishes
+     ;; labels stay within the font's coverage (file:../doc/code-browser.org::#must-write-ourselves): the detail distinguishes
      ;; super- from sub-class, so no >255 arrow glyphs in the text.
      :items (append
              ;; A condition IS a class, so it lands here — but the interesting half
              ;; of a condition is not its shape, it is who signals and who handles
-             ;; it, and that is a different subject (§3). Offer the door.
+             ;; it, and that is a different subject (file:../doc/code-browser.org::#condition-system). Offer the door.
              (when (condition-class-p (class-name c))
                (list (make-item :label "signallers, handlers & restarts"
                                 :detail "the condition's control flow"
@@ -701,7 +701,7 @@
                                              :kind :slot :group "slots"))
                      (getf i :direct-slots))))))
 
-;;; ---- conditions: the static face of the debugger (§3, phase 4a) ----------
+;;; ---- conditions: the static face of the debugger (file:../doc/code-browser.org::#condition-system, phase 4a) ----------
 ;;; The generic-function views answer "where do methods live" and "what actually
 ;;; runs". The condition view answers the two questions CODE CANNOT SHOW, because
 ;;; the condition system is control flow and control flow is invisible in a class:
@@ -940,7 +940,7 @@
       (dolist (m (getf o :after))   (add m))
       ;; The RETURN leg. An :around method is the only layer that runs TWICE — once on
       ;; the way in and once on the way out, around its own call-next-method — and a
-      ;; list that shows it once cannot say so. The design mock-up (§2) draws the same
+      ;; list that shows it once cannot say so. The design mock-up ("Generic functions & methods") draws the same
       ;; closing row. Outermost-last on the way out, so the order really is a loop.
       (dolist (m (reverse (getf o :around)))
         (push (make-item :label (method-tuple-label m)
@@ -1011,7 +1011,7 @@
                         :disposition :new-trail
                         :subject (subj-matrix name))
              (append
-              ;; a GF with a stage (§3b) offers it right under the matrix: the matrix
+              ;; a GF with a stage (file:../doc/code-browser.org::#stage-dispatch-happening-done) offers it right under the matrix: the matrix
               ;; says which pairs HAVE a rule, the stage shows the rules running.
               (let ((stage (and *stage-subject-fn* (funcall *stage-subject-fn* name))))
                 (when stage
@@ -1030,7 +1030,7 @@
                          :subject (subj-method name (getf m :qualifiers) (getf m :specializers))))
                       methods))))))
 
-;;; ---- the Workspace: a scratch buffer with the editor's hands (§3a) --------
+;;; ---- the Workspace: a scratch buffer with the editor's hands (file:../doc/code-browser.org::#workspace-scratch-buffer-editor) --------
 
 (defmethod present ((s subj-workspace))
   (make-view

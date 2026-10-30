@@ -1,12 +1,12 @@
 ;;;; recorder.lisp — screencasts of the environment, with sound, recorded from inside it.
 ;;;;
-;;;; doc/screencast.org is the design; this is its §4–§7, built. The idea in
+;;;; doc/screencast.org is the design; this is its file:../doc/screencast.org::#recording-frames through file:../doc/screencast.org::#interface, built. The idea in
 ;;;; two sentences: the environment already draws every frame into a canvas in Lisp
 ;;;; memory and copies rects of it to /dev/fb0 (fb-browser.lisp's PRESENT-REPAIR), so a
 ;;;; recording is "copy the canvas 30 times a second", not "read the screen back"; and
 ;;;; the encoder is the HOST's ffmpeg, run in the default container (containers.lisp),
 ;;;; which also records the microphone through ALSA (plughw:0,0 — never ALSA's
-;;;; `default`, which the host's configuration points at PipeWire, §2).
+;;;; `default`, which the host's configuration points at PipeWire, file:../doc/screencast.org::#sound-hardware).
 ;;;;
 ;;;;   SuperL-r          start; while recording, pause; while paused, resume
 ;;;;   SuperL-S-r        stop: finish, join the segments, show the result
@@ -23,7 +23,7 @@
 ;;;;                     if nothing changed, the last frame is queued AGAIN. So the
 ;;;;                     number of frames is always 30 x the time recorded — the video's
 ;;;;                     clock is the frame count, exact, which is what keeps it in step
-;;;;                     with the sound (§5.1: measured on the host, a constant 32 ms
+;;;;                     with the sound (file:../doc/screencast.org::#live-encoding: measured on the host, a constant 32 ms
 ;;;;                     and no drift over 3 minutes).
 ;;;;   the WRITER        a thread: pops (buffer . copies) and writes the raw pixels to
 ;;;;                     ffmpeg's stdin. The environment's thread NEVER writes to the
@@ -52,7 +52,7 @@
 
 ;;; ---- settings -------------------------------------------------------------------
 
-(defparameter *rec-fps* 30 "Frames per second of a recording (doc/screencast.org §12).")
+(defparameter *rec-fps* 30 "Frames per second of a recording (file:../doc/screencast.org::#defaults).")
 (defparameter *rec-pool-size* 4 "Frame buffers the sampler and the writer share.")
 (defparameter *rec-audio-device* "plughw:0,0"
   "The ALSA capture device: card 0, device 0 (the ALC289's analog input on the laptop).
@@ -83,7 +83,7 @@
   message                ; the last thing to tell the user
   result                 ; plist from ffprobe when done
   after                  ; while :finishing, what comes next: :paused or :stop
-  (mode :live)           ; :live encodes while recording; :log keeps a damage log (§5.2)
+  (mode :live)           ; :live encodes while recording; :log keeps a damage log (file:../doc/screencast.org::#damage-log)
   (logs '())            ; :log — the finished segments: (:dmg :audio :alog :t0 :seconds)
   log-wall               ; :log — the running segment's start, wall-clock seconds
   (seg-seconds 0)        ; the length of the segment closed last
@@ -108,7 +108,7 @@
 (defvar *rec-log-thread* nil)
 (defparameter *rec-mode* :live
   "How the next recording is made: :LIVE (encoded as it goes) or :LOG (a damage log,
-   encoded after the stop — doc/screencast.org §5.2). The recorder pane's m switches.")
+   encoded after the stop — file:../doc/screencast.org::#damage-log). The recorder pane's m switches.")
 
 (defconstant +o-nonblock+ #o4000 "O_NONBLOCK on x86-64 Linux (asm-generic/fcntl.h); sb-unix has no name for it.")
 

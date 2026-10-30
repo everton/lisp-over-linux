@@ -26,14 +26,14 @@ messages we actually need.
 "We can't do X, that needs drivers." That confuses the two halves of X11:
 
 - The *server* owns the hardware — modesetting, GPU drivers, input devices,
-  keyboard layouts. Writing one would need everything [[file:framebuffer.org][framebuffer.org §6½]] says
+  keyboard layouts. Writing one would need everything [[file:framebuffer.org][[[file:framebuffer.org::#gpu-give-up-real][framebuffer.org, No GPU — what we give up, and what a real driver would cost]]]] says
   we are deliberately not doing.
 - The *client* owns nothing. It opens a Unix socket, says hello, asks for a
   window, and sends pixels. That is all.
 
 Your desktop already runs a server. We only ever need to be a client, and a
 client is *just bytes on a socket* — which we have, because =sb-bsd-sockets= is
-baked into the image ([[file:networking.org][networking.org §2a]]).
+baked into the image ([[file:networking.org][[[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]]]).
 
 * 2. Why our slice of the protocol is so small
 
@@ -66,7 +66,7 @@ shrinks to almost nothing.
 
 1. *Little-endian, declared by us.* The first byte of the connection is =#x6c= —
    ASCII =l= — telling the server to expect little-endian. (=B= would mean big.)
-   That matches x86 *and* it matches our canvas, which is the point of §6 below.
+   That matches x86 *and* it matches our canvas, which is the point of [[#drawing-putimage-entire-renderer][Drawing: =PutImage= is the entire renderer]] below.
 2. *Everything is padded to 4 bytes.* Strings, request bodies, all of it. Hence
    =pad4= in the source: =(mod (- 4 (mod n 4)) 4)=.
 3. *A request is: opcode, one data byte, then a length in 32-bit WORDS.* Not
@@ -101,7 +101,7 @@ first and then sends everything else least-significant-byte first:
 
 Compare =u16= at the top of the same file, which does the opposite. This is the
 one place in the whole project where the little-endian assumption of
-[[file:framebuffer.org][framebuffer.org §9.2]] is *inverted*, and it is a good reminder that endianness is
+[[file:framebuffer.org][[[file:framebuffer.org::#pixel-format-lines-up][framebuffer.org, The pixel format lines up for free]]]] is *inverted*, and it is a good reminder that endianness is
 a property of each format you meet, never of "the machine".
 
 (If no cookie is found we send empty auth. That works for a server started with
@@ -115,7 +115,7 @@ describes the whole display. =build-display= parses just enough of it:
 - =id-base= — see below.
 - =root= and its =visual= — the root window and its pixel format, which our
   window inherits. We do not go shopping for a visual; we take the root's.
-- =max-request= — the request size cap. §7 is entirely about this.
+- =max-request= — the request size cap. [[#complication-request-size-banding][The one complication: request size, and banding]] is entirely about this.
 - The screen record does not sit at a fixed offset: it comes after a 32-byte
   fixed part, the vendor string (padded), and 8 bytes per pixmap format. Hence
   the =soff= arithmetic — the one genuinely fiddly line in the file.
@@ -137,6 +137,9 @@ It is why our whole setup — CreateWindow, ChangeProperty, CreateGC, MapWindow 
 is one unbroken run of writes with a single =finish-output= at the end.
 
 * 6. Drawing: =PutImage= is the entire renderer
+:PROPERTIES:
+:CUSTOM_ID: drawing-putimage-entire-renderer
+:END:
 
 #+begin_src lisp
   (defun present (d canvas) …)     ; opcode 72, format ZPixmap
@@ -145,7 +148,7 @@ is one unbroken run of writes with a single =finish-output= at the end.
 =ZPixmap= means "pixels laid out one after another, in the visual's format",
 which is exactly how [[file:../poc/canvas.lisp][=canvas.lisp=]] already stores them.
 
-And here the same happy accident from [[file:framebuffer.org][framebuffer.org §9.2]] pays off a *second*
+And here the same happy accident from [[file:framebuffer.org][[[file:framebuffer.org::#pixel-format-lines-up][framebuffer.org, The pixel format lines up for free]]]] pays off a *second*
 time. The canvas stores =#x00RRGGBB= per pixel; little-endian puts that in memory
 as bytes =B,G,R,0=; and that is what the server wants. So the inner loop is a
 byte shuffle with no conversion table, no swizzle, no format negotiation — the
@@ -162,6 +165,9 @@ One canvas format, chosen once, satisfies both the panel and the X server. That
 is not luck — it is why =#x00RRGGBB= was chosen.
 
 * 7. The one complication: request size, and banding
+:PROPERTIES:
+:CUSTOM_ID: complication-request-size-banding
+:END:
 
 A single X request cannot exceed =max-request= *words* (typically 65535 words =
 256 KB). A 1280×800 frame is 4 MB. So a full-screen present *cannot* be one
@@ -180,7 +186,7 @@ should ship the 200×20 pixels that changed, not four megabytes because a cursor
 blinked. The world (Morphic) already repairs only the damaged rects *into the
 canvas*, but =present= still ships the whole canvas to the server. For a dev
 backend that's fast enough — the same "correct and obvious beats clever" call as
-the row-at-a-time framebuffer blit ([[file:framebuffer.org][framebuffer.org §9.1]]).
+the row-at-a-time framebuffer blit ([[file:framebuffer.org][[[file:framebuffer.org::#present-fb-draw-alien][framebuffer.org, =present-fb= — =draw-alien= generalised]]]]).
 
 * 8. The keyboard — why a keymap is not optional
 
@@ -245,14 +251,17 @@ bytes, look at the opcode, decode the kinds we care about, discard the rest.
 The high bit of byte 0 marks a *synthetic* (client-sent) event, which is why the
 code masks with =#x7f=.
 
-=Expose= becomes damage of just the exposed rect in the world (§9½); the world
+=Expose= becomes damage of just the exposed rect in the world ([[#host-s-loop-world][The host's loop is the world's cycle]]); the world
 repairs it, and the next present sends the canvas.
 
 * 9½. The host's loop is the world's cycle
+:PROPERTIES:
+:CUSTOM_ID: host-s-loop-world
+:END:
 
 The client above only moves bytes; what turns X events into the environment is
 [[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]]'s loop, which has the same shape as the guest's
-([[file:morphic.org][morphic.org]] §10). One turn, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]], repairs what the world says is damaged and
+([[file:morphic.org::#backends][morphic.org, Backends]]). One turn, [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]], repairs what the world says is damaged and
 presents the canvas, waits for an X event — or for the earliest step deadline, when
 something steps (a running stage) — turns what came into the world's events
 ([[file:../poc/run-browser.lisp::defun x11-world-events][=x11-world-events=]]: a key, the buttons, Button1Mask motion as a drag, buttons 4/5 as
@@ -280,7 +289,7 @@ developed at desktop speed and then simply *runs* on the machine.
 
 *Omitted, on purpose:*
 
-- *Sending only damage* — the canvas goes to the server whole (§7).
+- *Sending only damage* — the canvas goes to the server whole ([[#complication-request-size-banding][The one complication: request size, and banding]]).
 - *Window-manager conversation* — no =WM_PROTOCOLS=, so clicking the ✕ kills the
   connection rather than asking us politely to close. Fine for a dev harness.
 - *Modifier tracking beyond the event's =state= field*, no =xkb=, no compose key,
@@ -295,4 +304,4 @@ developed at desktop speed and then simply *runs* on the machine.
 - [[file:../poc/run-host.lisp][=poc/run-host.lisp=]] / [[file:../poc/run-browser.lisp][=poc/run-browser.lisp=]] — the host entry points that use it.
 - [[file:../poc/README.org][poc/README.org]] — what the prototype settles, and its known rough edges.
 - [[file:framebuffer.org][framebuffer.org]] — the other backend, and the shared pixel-format reasoning.
-- [[file:code-browser.org][code-browser.org]] §6.1 — the host dev loop this client exists to make possible.
+- [[file:code-browser.org::#host-dev-loop][code-browser.org, The host dev loop (build this first)]] — the host dev loop this client exists to make possible.

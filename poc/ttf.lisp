@@ -443,7 +443,7 @@
    without hinting a 1-pixel stem often lands half on each of two pixels, i.e. two
    half-lit greys. Pushing mid coverage up darkens (here: brightens) stems. 1.0 is
    'mathematically exact'; 1.45 was chosen by looking at frames at 12, 18 and 28 px
-   (doc/fonts.org §4). Changing it needs the glyph caches cleared.")
+   (file:../doc/fonts.org::#coverage-signed-area-accumulator). Changing it needs the glyph caches cleared.")
 
 (defun rasterize-glyph (face glyph px &key (dx 0.0))
   "Draw GLYPH at an em size of PX pixels -> (values coverage w h left top): COVERAGE is

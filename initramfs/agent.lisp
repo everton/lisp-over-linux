@@ -2,32 +2,32 @@
 ;;;; Messages protocol, and a tool surface made of the image's own introspection.
 ;;;;
 ;;;; doc/agent.org is the design; this is its agent track (A0 + A1). The layers, from
-;;;; the bottom (doc/agent.org §3):
+;;;; the bottom (file:../doc/agent.org::#layers):
 ;;;;
 ;;;;   transport   HTTP-REQUEST (initramfs/http.lisp, the networking track: https via
 ;;;;               the host's libssl, loaded at runtime from /mnt/host)
 ;;;;   wire        JSON (json.lisp, package LOL.JSON) and SSE (agent-wire.lisp)
 ;;;;   protocol    the Messages API, streamed: request shaping, the SSE events
 ;;;;               assembled back into content blocks, retries, cancellation, usage
-;;;;   tools       §7 — LISP-SOURCE is SOURCE-OF, LISP-SENDERS is the compiler's xref,
+;;;;   tools       file:../doc/agent.org::#tool-surface — LISP-SOURCE is SOURCE-OF, LISP-SENDERS is the compiler's xref,
 ;;;;               LISP-ACCEPT is the very ACCEPT-SOURCE that C-c C-c calls
 ;;;;
-;;;; The conversation is a CLOS object (§6.1), so it can be driven from the REPL, from
+;;;; The conversation is a CLOS object (file:../doc/agent.org::#conversation-live-object), so it can be driven from the REPL, from
 ;;;; a browser tab or from the debugger without any of them owning it, and so PRESENT
 ;;;; can show it (agent-ui.lisp). Writes are GATED, and the gate is a CONDITION with
-;;;; RESTARTS (§8.4): whoever is around decides — the environment's chooser, the
+;;;; RESTARTS (file:../doc/agent.org::#approval-condition-dialog): whoever is around decides — the environment's chooser, the
 ;;;; REPL's numbered prompt, or a test's HANDLER-BIND — with no new mechanism.
 ;;;;
-;;;; The two dials of §8.9 are special variables: *AGENT-INITIATIVE* and
+;;;; The two dials of file:../doc/agent.org::#modes-because-actors-now are special variables: *AGENT-INITIATIVE* and
 ;;;; *AGENT-AUTHORITY*. Bind them with LET for a dynamic extent, SETF them globally.
 ;;;;
 ;;;; CL-USER like the other initramfs modules (the tools call SOURCE-OF, SENDERS, … by
-;;;; their plain names). doc/agent.org once asked (now §7.1) whether the agent should get its
+;;;; their plain names). doc/agent.org once asked (now file:../doc/agent.org::#model-told) whether the agent should get its
 ;;;; own package so that LISP-APROPOS can skip it; it filters by FILE instead (the
 ;;;; registry knows which file every definition came from), which needs no package.
 ;;;;
 ;;;; THE KEY. Read at RUNTIME from ~/.lol/agent/anthropic-api-key (on /home, so it
-;;;; is never in the frozen heap build.sh saves — §4.2), kept in one special variable,
+;;;; is never in the frozen heap build.sh saves — file:../doc/agent.org::#key), kept in one special variable,
 ;;;; never printed, never logged, and sent ONLY to https://api.anthropic.com. Any
 ;;;; other endpoint (a mock server, a broker) gets no key at all.
 ;;;;
@@ -54,8 +54,8 @@
   "How thinking is returned: \"summarized\" (a readable summary, shown dim in the
    conversation) or \"omitted\" (nothing to show; the same thinking happens either way).")
 (defvar *agent-endpoint* "https://api.anthropic.com"
-  "Where requests go. A http:// endpoint (a mock server, the broker of doc/agent.org
-   §2.1, never built) is spoken to without TLS and is NEVER sent the API key.")
+  "Where requests go. A http:// endpoint (a mock server, the broker of
+   file:../doc/agent.org::#alternatives, never built) is spoken to without TLS and is NEVER sent the API key.")
 (defvar *agent-fallbacks* t
   "Ask for server-side fallbacks (fallbacks: \"default\"): if the model's safety
    classifiers decline a request, the API re-runs it on the model Anthropic
@@ -70,12 +70,12 @@
    money, and on this machine nobody else is watching the meter.")
 
 (defvar *agent-initiative* :reacting
-  "§8.9's first dial — may the agent act unasked? :OFF (inert: no sockets, no tokens),
+  "The first dial of file:../doc/agent.org::#modes-because-actors-now — may the agent act unasked? :OFF (inert: no sockets, no tokens),
    :REACTING (it answers when asked: the default), :INTERACTING (it may offer on its
    own; nothing does so yet — the dial and its indicator exist so that when something
    does, it is already visible).")
 (defvar *agent-authority* :ask
-  "§8.9's second dial (§7.3's policy) — what may it touch? :READ-ONLY (write tools
+  "The second dial of file:../doc/agent.org::#modes-because-actors-now (the policy of file:../doc/agent.org::#gating-writes) — what may it touch? :READ-ONLY (write tools
    are not even offered), :ASK (each write is a TOOL-APPROVAL-REQUEST you answer: the
    default), :ALLOW (writes run).")
 
@@ -219,7 +219,7 @@
   (unless *agent-settings-loaded* (ignore-errors (load-agent-settings))))
 
 ;;; ===========================================================================
-;;; The conversation as a live object (§6.1)
+;;; The conversation as a live object (file:../doc/agent.org::#conversation-live-object)
 ;;; ===========================================================================
 
 (defclass agent-message ()
@@ -250,7 +250,7 @@
    (subject :initform nil :accessor call-subject)         ; what it was about — a browser subject
    (summary :initform nil :accessor call-summary))        ; one line for the transcript
   (:documentation "A tool call made by the model: what was asked, what came back, and
-   the SUBJECT it was about — so 'how do you know that?' is one keystroke (§8.6)."))
+   the SUBJECT it was about — so 'how do you know that?' is one keystroke (file:../doc/agent.org::#do-know-keystroke)."))
 
 (defmethod print-object ((c tool-call) s)
   (print-unreadable-object (c s :type t)
@@ -293,7 +293,7 @@
    (thread :initform nil :accessor conversation-thread)
    (cancel :initform nil :accessor conversation-cancel)
    (jobs :initform '() :accessor conversation-jobs))       ; tool calls waiting for the UI thread
-  (:documentation "A conversation with the model (doc/agent.org §6.1). Several coexist;
+  (:documentation "A conversation with the model (file:../doc/agent.org::#conversation-live-object). Several coexist;
    *CONVERSATION* is the one a bare ? or Ask continues."))
 
 (defmethod print-object ((c conversation) s)
@@ -382,7 +382,7 @@
         (t (format nil "$~,2f" dollars))))
 
 ;;; ===========================================================================
-;;; The tool surface (§7): a table of schemas over functions that already exist
+;;; The tool surface (file:../doc/agent.org::#tool-surface): a table of schemas over functions that already exist
 ;;; ===========================================================================
 
 (defstruct agent-tool
@@ -416,7 +416,7 @@
 
 (defun offered-tools (conv)
   "The tools this request offers: all of them, minus the write tools under
-   :READ-ONLY (§7.3: not offered at all), minus any whose AVAILABLE-P says no."
+   :READ-ONLY (file:../doc/agent.org::#gating-writes: not offered at all), minus any whose AVAILABLE-P says no."
   (remove-if (lambda (tool)
                (or (and (agent-tool-write-p tool) (eq (conversation-authority* conv) :read-only))
                    (and (agent-tool-available-p tool) (not (funcall (agent-tool-available-p tool))))))
@@ -779,7 +779,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
                                (fentry-type e) (human-size (fentry-size e)) (format-mtime (fentry-mtime e))))
                      entries)))))
 
-;;; ---- write tools: gated (§7.3, §8.4) --------------------------------------
+;;; ---- write tools: gated (file:../doc/agent.org::#gating-writes, file:../doc/agent.org::#approval-condition-dialog) --------------------------------------
 
 (defun read-in-package (text package-name)
   "Read the first form of TEXT in PACKAGE-NAME (default CL-USER) with *READ-EVAL* off:
@@ -837,7 +837,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
          ;; it runs on the environment's thread (the image is touched by one thread at
          ;; a time), where C-g cannot reach it: a form that never returns would freeze
          ;; the screen for good — the likeliest cause of the 2026-10-16 freeze
-         ;; (doc/diagnostics.org §9). The timeout unwinds it like C-c would.
+         ;; (file:../doc/diagnostics.org::#should-agent-run-own). The timeout unwinds it like C-c would.
          (values (handler-case
                      (sb-ext:with-timeout *lisp-eval-seconds*
                        (let ((*standard-output* out) (*trace-output* out))
@@ -967,7 +967,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
      300)))
 
 ;;; ===========================================================================
-;;; Approval is a condition, not a dialog (§8.4)
+;;; Approval is a condition, not a dialog (file:../doc/agent.org::#approval-condition-dialog)
 ;;; ===========================================================================
 
 (define-condition tool-approval-request (condition)
@@ -994,7 +994,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
    TOOL-APPROVAL-REQUEST with three restarts — ALLOW, DENY, EDIT — and whoever handles
    it decides: the environment's chooser, the REPL's numbered prompt, a test's
    HANDLER-BIND. Nobody handling it means nobody was there to say yes, so it is
-   declined; a denial goes back to the model as a result, never as an error (§7.3)."
+   declined; a denial goes back to the model as a result, never as an error (file:../doc/agent.org::#gating-writes)."
   (ecase (conversation-authority* conv)
     (:allow (funcall thunk))
     (:read-only (setf (call-status call) :denied)
@@ -1073,7 +1073,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 
 ;;; How a call reaches the thread that runs it. In the REPL a call runs where the turn
 ;;; runs. In the environment the turn streams on its own thread (so the screen keeps
-;;; moving, §8.7), but TOOLS run on the environment's thread: the image's state is
+;;; moving, file:../doc/agent.org::#ask-keep-working), but TOOLS run on the environment's thread: the image's state is
 ;;; touched by one thread at a time, and an approval has a screen to ask on. The turn
 ;;; posts a JOB and waits; the environment's frame tick (agent-ui.lisp) runs it.
 
@@ -1857,7 +1857,7 @@ lines — that starts with \"✔ Report:\" and gives what you found, with exact 
 
 ;;; ===========================================================================
 ;;; The system prompt — a definition in the registry, so it is browsable, editable
-;;; and Accept-able like everything else (doc/agent.org §7.1)
+;;; and Accept-able like everything else (file:../doc/agent.org::#model-told)
 ;;; ===========================================================================
 
 (defparameter *agent-system-prompt*
@@ -1900,11 +1900,11 @@ folded into one dim line per run, so the user reads your OUTCOMES, not your step
   \"◆ Cause: …\" or \"◆ Verified: …\" — those lines are highlighted.
 - End a piece of work with one paragraph starting \"✔ Done:\" (or \"✔ Partly done:\")
   that says what changed and what is left for the user."
-  "The system prompt: what the model is told about where it is (doc/agent.org §7.1).
+  "The system prompt: what the model is told about where it is (file:../doc/agent.org::#model-told).
    Stable text: it is the start of the cached prefix, so it must not vary per request.")
 
 ;;; ===========================================================================
-;;; The REPL doorway (§8.2): (ask "…") and the ? prefix
+;;; The REPL doorway (file:../doc/agent.org::#repl-character): (ask "…") and the ? prefix
 ;;; ===========================================================================
 
 (define-agent-tool "update-plan" ()
@@ -2062,7 +2062,7 @@ folded into one dim line per run, so the user reads your OUTCOMES, not your step
         (run-turn conv text :origin :repl)))))
 
 (defun repl-question-p (line)
-  "Is this REPL line prose for the agent? It starts with ? (§8.2)."
+  "Is this REPL line prose for the agent? It starts with ? (file:../doc/agent.org::#repl-character)."
   (let ((s (string-left-trim " " line)))
     (and (plusp (length s)) (char= (char s 0) #\?))))
 

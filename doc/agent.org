@@ -8,8 +8,8 @@ from any pane of the environment, and from inside the debugger.
 
 Status: *built and in use.* The client, the tool surface, the three doorways, the
 gate, failure reporting and saved conversations are in the image, tested end to end
-against a mock Messages API (§13) and used against the real one. What's still owed
-is in §15.
+against a mock Messages API ([[#testing][Testing]]) and used against the real one. What's still owed
+is in [[#still-owed][Still owed]].
 
 Related: [[file:networking.org][networking.org]] (the TCP, DNS and HTTPS it stands on) ·
 [[file:code-browser.org][code-browser.org]] (the environment it plugs into) ·
@@ -27,18 +27,21 @@ implement every capability an agent wants, as ordinary functions.
 
 | File                                         | Lines | What it is                                                                                                                                         |
 |----------------------------------------------+-------+----------------------------------------------------------------------------------------------------------------------------------------------------|
-| [[file:../initramfs/json.lisp][json.lisp]]        |   341 | package =LOL.JSON=: JSON in and out, objects a class, key order kept (§5)                                                                          |
+| [[file:../initramfs/json.lisp][json.lisp]]        |   341 | package =LOL.JSON=: JSON in and out, objects a class, key order kept ([[#json-decision-earns-keep][JSON, and one decision that earns its keep]])                                                                          |
 | [[file:../initramfs/agent-wire.lisp][agent-wire.lisp]]  |   109 | incremental SSE framing (a line or a UTF-8 character cut between reads is reassembled), and the URL test the key needs (is this =https://api.anthropic.com=?) |
 | [[file:../initramfs/agent.lisp][agent.lisp]]       |  2074 | settings, the conversation, the tools, the gate, the streamed Messages client, the preflight and failure descriptions, the turn loop, the system prompt, the REPL doorway |
 | [[file:../initramfs/agent-ui.lisp][agent-ui.lisp]]    |  1149 | =present= on conversations, tool calls and the agent; Ask it; the error block; the frame tick; the approval chooser; the indicators; the Activity panel; the debugger doorway |
-| [[file:../initramfs/agent-tools.lisp][agent-tools.lisp]] |   475 | =lisp-inspect=, =lisp-applicable=, =lisp-backtrace=, =browse= and the gated =web-fetch= (§7.2)                                                     |
-| [[file:../initramfs/agent-store.lisp][agent-store.lisp]] |   439 | a conversation saved to =~/.lol/agent/conversations/= after every turn and reopened from the Spotter (§10)                                         |
+| [[file:../initramfs/agent-tools.lisp][agent-tools.lisp]] |   475 | =lisp-inspect=, =lisp-applicable=, =lisp-backtrace=, =browse= and the gated =web-fetch= ([[#tools][The tools]])                                                     |
+| [[file:../initramfs/agent-store.lisp][agent-store.lisp]] |   439 | a conversation saved to =~/.lol/agent/conversations/= after every turn and reopened from the Spotter ([[#persistence][Persistence]])                                         |
 
 All six are in =LISP_SOURCES=, loaded after the shell (line counts at tag #32).
 
 * 2. Why a native client
 
 ** 2.1 The alternatives
+:PROPERTIES:
+:CUSTOM_ID: alternatives
+:END:
 
 - *The =claude= CLI in the guest.* It's a single Bun-compiled ELF (about 290 MB) that
   needs only the glibc family and a kernel we mostly already had. Making it /useful/,
@@ -48,9 +51,9 @@ All six are in =LISP_SOURCES=, loaded after the shell (line counts at tag #32).
   ([[file:terminal.org][terminal.org]]) as an ordinary program, at arm's length from the image.
 - *A host-side TLS broker.* A small host program holding the key and doing the
   handshake, with the guest speaking plain HTTP to it. Never built: HTTPS arrived first
-  through the host's own libssl (§4.1). It would also have had to be addressed as
+  through the host's own libssl ([[#https-through-http-request][HTTPS through =http-request=]]). It would also have had to be addressed as
   SLIRP's =10.0.2.2=, which exists under QEMU and nowhere else.
-- *TLS 1.3 in Lisp.* Removes the host dependency; scoped but not built (§12).
+- *TLS 1.3 in Lisp.* Removes the host dependency; scoped but not built ([[#tls-1-3-lisp][TLS 1.3 in Lisp — not built]]).
 
 The client itself — HTTP, JSON, SSE, the protocol, the tool loop — is ordinary,
 dependency-free Lisp, written for the same reason as the DHCP client and the line
@@ -77,41 +80,50 @@ If a reply is a string, everything downstream is string handling. Make it a CLOS
 that takes part in =present= / =commands-for= and a message is drillable like a class
 or a method: a tool call becomes a row that opens what it asked about, a proposed
 definition sits in a buffer where =C-c C-c= accepts it. The same argument makes JSON
-objects a class (§5).
+objects a class ([[#json-decision-earns-keep][JSON, and one decision that earns its keep]]).
 
 * 3. The layers
+:PROPERTIES:
+:CUSTOM_ID: layers
+:END:
 
 | Layer                | Where                                                    | Notes                                                 |
 |----------------------+----------------------------------------------------------+-------------------------------------------------------|
 | TCP sockets          | =sb-bsd-sockets=, baked in by =build.sh=                  |                                                       |
-| HTTP/1.1 + TLS       | =http.lisp=, =tls.lisp= (networking)                       | HTTPS through the host's libssl at runtime (§4.1)    |
-| JSON                 | =json.lisp=                                               | §5                                                    |
+| HTTP/1.1 + TLS       | =http.lisp=, =tls.lisp= (networking)                       | HTTPS through the host's libssl at runtime ([[#https-through-http-request][HTTPS through =http-request=]])    |
+| JSON                 | =json.lisp=                                               | [[#json-decision-earns-keep][JSON, and one decision that earns its keep]]                                                    |
 | SSE framing          | =agent-wire.lisp=                                         |                                                       |
-| Messages protocol    | =agent.lisp=                                              | streaming, retries, cancel, cost (§6)                 |
-| Tool surface         | =agent.lisp=, =agent-tools.lisp=                           | §7                                                    |
-| Conversation         | =agent.lisp= (object), =agent-ui.lisp= (=present=)          | §6.1, §8.3                                            |
-| Doorways             | =repl.lisp=, =agent-ui.lisp=, =fb-browser.lisp=             | REPL, Ask it, debugger (§8)                           |
-| Approval             | =agent.lisp= (condition), =agent-ui.lisp= (chooser)         | §8.4                                                  |
-| Modes and indicators | =agent.lisp=, =agent-ui.lisp=, =poc/shell.lisp=              | partly built (§8.9)                                   |
-| Persistence          | =agent-store.lisp=                                        | §10                                                   |
+| Messages protocol    | =agent.lisp=                                              | streaming, retries, cancel, cost ([[#conversation-protocol][The conversation and the protocol]])                 |
+| Tool surface         | =agent.lisp=, =agent-tools.lisp=                           | [[#tool-surface][The tool surface]]                                                    |
+| Conversation         | =agent.lisp= (object), =agent-ui.lisp= (=present=)          | [[#conversation-live-object][The conversation as a live object]], [[#conversation-workspace-chat-pane][A conversation is a Workspace, not a chat pane]]                                            |
+| Doorways             | =repl.lisp=, =agent-ui.lisp=, =fb-browser.lisp=             | REPL, Ask it, debugger ([[#talk][How you talk to it]])                           |
+| Approval             | =agent.lisp= (condition), =agent-ui.lisp= (chooser)         | [[#approval-condition-dialog][Approval is a condition, not a dialog]]                                                  |
+| Modes and indicators | =agent.lisp=, =agent-ui.lisp=, =poc/shell.lisp=              | partly built ([[#modes-because-actors-now][Modes — because there are two actors now]])                                   |
+| Persistence          | =agent-store.lisp=                                        | [[#persistence][Persistence]]                                                   |
 
 None of it needs a kernel option beyond the networking ones.
 
 * 4. Transport, key and settings
 
 ** 4.1 HTTPS through =http-request=
+:PROPERTIES:
+:CUSTOM_ID: https-through-http-request
+:END:
 
 The agent calls the networking track's =http-request= (=(transport)= in =agent.lisp=;
 a test redirects it through =*agent-transport*=). That client does HTTP/1.1, chunked
 bodies and streaming callbacks, and does TLS by loading the *host's* OpenSSL from
 =/mnt/host= at runtime — never at build time, so the image doesn't depend on it
-([[file:networking.org][networking.org]] §2e).
+([[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]).
 
 Depending on a finished network layer — a default route, a Lisp DNS resolver, SNTP for a
 clock that makes certificate dates checkable — is what lets the same image work under
 QEMU and on real hardware. The cost: a diskless boot has no =/mnt/host=, so no HTTPS.
 
 ** 4.2 The key
+:PROPERTIES:
+:CUSTOM_ID: key
+:END:
 
 - *Where.* =~/.lol/agent/anthropic-api-key=: one line, the key, mode =0600=. A key
   left at the older =~/.config/lol/anthropic-api-key= is moved there at boot by
@@ -122,7 +134,7 @@ QEMU and on real hardware. The cost: a diskless boot has no =/mnt/host=, so no H
   — not over http, not to any other host (tested both ways). A mock server gets no key.
 - *No home.* A diskless boot has no =/home=; the agent says it has no key and where it
   would look, and the environment starts as usual.
-- *Unreadable.* A key file with the wrong owner or mode is its own failure (§9),
+- *Unreadable.* A key file with the wrong owner or mode is its own failure ([[#failure-reporting][Failure reporting]]),
   quoting strerror's words and never the contents.
 
 ** 4.3 Settings
@@ -138,6 +150,9 @@ set them: =:model :max-tokens :effort :thinking-display :endpoint :fallbacks :wr
   temporary file and a rename, so a crash leaves the old file or the new one.
 
 * 5. JSON, and one decision that earns its keep
+:PROPERTIES:
+:CUSTOM_ID: json-decision-earns-keep
+:END:
 
 | JSON    | Lisp                                              | Why                                         |
 |---------+---------------------------------------------------+---------------------------------------------|
@@ -158,26 +173,32 @@ set them: =:model :max-tokens :effort :thinking-display :endpoint :fallbacks :wr
 - *The writer refuses =nil=*, so an ambiguous value never reaches the wire.
 - *Surrogate pairs* are glued back together; a lone half reads as U+FFFD.
 - *Names are qualified.* =agent.lisp= writes =lol.json:jget= in full rather than
-  =use-package=, because another module defines its own =JOBJ= in =CL-USER= (§14).
+  =use-package=, because another module defines its own =JOBJ= in =CL-USER= ([[#pitfalls-ruled-out][Pitfalls and ruled out]]).
 
 * 6. The conversation and the protocol
+:PROPERTIES:
+:CUSTOM_ID: conversation-protocol
+:END:
 
 ** 6.1 The conversation as a live object
+:PROPERTIES:
+:CUSTOM_ID: conversation-live-object
+:END:
 
 #+begin_src lisp
   (defclass conversation ()
     ((messages …)     ; newest last; each content block exactly as the API knows it
      (turns …) (calls …)  ; what the pane draws: questions, notes, tool calls
      (authority …)    ; NIL: follow *agent-authority*; else this conversation's own
-     (tools …)        ; the tools array as first sent (§7.4)
+     (tools …)        ; the tools array as first sent (see "A conversation's tools never change")
      (usage …) (cost …)
-     (lock …) (revision …) (thread …) (jobs …)))  ; shared with the UI thread (§6.4)
+     (lock …) (revision …) (thread …) (jobs …)))  ; shared with the UI thread (see "Two threads, one owner of the UI")
 #+end_src
 
 - *The turn loop is a method on it*, so the same conversation is driven from the REPL,
   a tab or the debugger without any of them owning it.
 - *=present= methods* on the conversation and its parts give the browser its view
-  (§8.3).
+  ([[#conversation-workspace-chat-pane][A conversation is a Workspace, not a chat pane]]).
 - *Several coexist.* The debugger's ASK gets its own, seeded with the backtrace, and
   leaves the one in your tab alone.
 - *It's inspectable* with the very tools it's using.
@@ -194,7 +215,7 @@ block breaks the turn.
   =;; (thinking: …)= line. Thinking blocks go back unchanged, signature included.
 - *Prompt caching.* The system prompt carries a cache breakpoint, so does the last
   tool, and the request carries the top-level automatic one, which caches the history.
-  The body is serialised field by field in a fixed order (§5).
+  The body is serialised field by field in a fixed order ([[#json-decision-earns-keep][JSON, and one decision that earns its keep]]).
 - *Tool input streams eagerly* (=eager_input_streaming=), so a long =lisp-accept=
   source arrives as it's written. The API then no longer validates it, so the client
   checks every input against its schema (=check-tool-input=) and answers unparseable
@@ -212,7 +233,7 @@ block breaks the turn.
   =retry-after=, up to =*agent-retries*= (6) attempts, each a visible note in the
   transcript. A partial reply is never kept in the history.
 - *Not retried.* 400, 401, 403, 404; a certificate that doesn't verify; OpenSSL
-  missing; a name that doesn't exist; whatever the preflight refuses (§9).
+  missing; a name that doesn't exist; whatever the preflight refuses ([[#failure-reporting][Failure reporting]]).
   [[file:../initramfs/agent.lisp::defun retryable-p][=retryable-p=]] decides.
 - *Cancellation.* =C-g= sets a flag the stream checks between chunks *and* interrupts
   the turn's thread with a =throw=, because a turn can be blocked in a read with no chunk
@@ -222,6 +243,9 @@ block breaks the turn.
   and per session.
 
 ** 6.4 Two threads, one owner of the UI
+:PROPERTIES:
+:CUSTOM_ID: threads-owner-ui
+:END:
 
 =http-request= is a blocking call with a callback, so a turn runs on a thread of its own.
 *Tools run on the environment's thread*: the turn posts a job and waits, and the frame
@@ -231,12 +255,18 @@ has a screen to ask on.
 - *What's shared.* Only the conversation object, under its mutex, with a revision
   counter the tick polls.
 - *Redraws* are budgeted at ~15 Hz while a turn runs and stop entirely when none does.
-- *Exceptions.* Off-main tools (§7.5), =await-subagents= (§7.6), and the debugger's
-  conversation (§8.8) run their work on the turn's thread.
+- *Exceptions.* Off-main tools ([[#tools-can-t-freeze][Tools that can't freeze the environment]]), =await-subagents= ([[#plans-subagents][Plans and subagents]]), and the debugger's
+  conversation ([[#debugger-where-converges][The debugger — where it converges]]) run their work on the turn's thread.
 
 * 7. The tool surface
+:PROPERTIES:
+:CUSTOM_ID: tool-surface
+:END:
 
 ** 7.1 What the model is told
+:PROPERTIES:
+:CUSTOM_ID: model-told
+:END:
 
 Not the image's source — far too large, and it would waste the semantic index. The
 system prompt, =*agent-system-prompt*=, says what the machine is (SBCL as PID 1, no
@@ -253,6 +283,9 @@ exact.
   finished piece of work with =✔ Done:=; the pane colours those lines.
 
 ** 7.2 The tools
+:PROPERTIES:
+:CUSTOM_ID: tools
+:END:
 
 | Tool                      | Behind it                                                                                  | Opens (=C-c C-o=)           |
 |---------------------------+--------------------------------------------------------------------------------------------+-----------------------------|
@@ -266,19 +299,19 @@ exact.
 | =lisp-inspect=            | =inspect-places= on a symbol's value, function or class, or an earlier call's value; =path= drills by field | the object |
 | =lisp-applicable=         | =effective-method-onion=: =:around=, =:before=, primaries, =:after=, one class per argument | the onion view              |
 | =lisp-backtrace=          | a snapshot of the debugger's stack; =frame=: N gives its locals and source                  | the frame's definition      |
-| =browse=                  | =present= on a subject, shown beside the conversation (§8.5)                                | the subject                 |
+| =browse=                  | =present= on a subject, shown beside the conversation ([[#can-show-things][It can show you things]])                                | the subject                 |
 | =file-read= / =file-list= | =files.lisp=, *under =$HOME= only*, symlinks resolved first                                | the file / folder           |
-| =update-plan=             | the conversation's task list (§7.6)                                                        | —                           |
-| =spawn-subagent=          | a read-only conversation on a goal (§7.6)                                                  | —                           |
-| =await-subagents=         | waits for subagents, returns their answers (§7.6)                                          | —                           |
-| =lisp-eval= (gated)       | =eval=, read with =*read-eval*= off; stopped after 60 s (§7.5)                              | the value                   |
+| =update-plan=             | the conversation's task list ([[#plans-subagents][Plans and subagents]])                                                        | —                           |
+| =spawn-subagent=          | a read-only conversation on a goal ([[#plans-subagents][Plans and subagents]])                                                  | —                           |
+| =await-subagents=         | waits for subagents, returns their answers ([[#plans-subagents][Plans and subagents]])                                          | —                           |
+| =lisp-eval= (gated)       | =eval=, read with =*read-eval*= off; stopped after 60 s ([[#tools-can-t-freeze][Tools that can't freeze the environment]])                              | the value                   |
 | =lisp-accept= (gated)     | =accept-source= — the very function =C-c C-c= calls                                        | the definition              |
 | =file-write= (gated)      | =write-file-atomically= (temp file + rename)                                               | the file                    |
-| =container-run= (gated)   | =run-in-container=, offered only when it's =fboundp=; off-main (§7.5)                       | —                           |
+| =container-run= (gated)   | =run-in-container=, offered only when it's =fboundp=; off-main ([[#tools-can-t-freeze][Tools that can't freeze the environment]])                       | —                           |
 | =web-fetch= (gated)       | =http-request= GET, HTML reduced to its words by =html-text=; off-main                       | —                           |
 
 Every tool is a =define-agent-tool= and goes through =execute-tool-call=: input checked
-against its schema, a gated one through the approval condition (§8.4), any error an
+against its schema, a gated one through the approval condition ([[#approval-condition-dialog][Approval is a condition, not a dialog]]), any error an
 =is_error= result.
 
 - *Name lookup never interns.* Names go through =find-symbol=, never =read=, so a typo
@@ -288,7 +321,7 @@ against its schema, a gated one through the approval condition (§8.4), any erro
   [[file:../initramfs/agent.lisp::defun redact-api-key][=redact-api-key=]], and =lisp-inspect= shows it as =[the API key — never shown]=.
 - *=lisp-backtrace= reads a copy.* An sb-di frame is a pointer into the debugger
   thread's stack, but the debugger's conversation runs its tools on another thread
-  (§8.8). So the ASK restart first copies every frame's name, definition and locals as
+  ([[#debugger-where-converges][The debugger — where it converges]]). So the ASK restart first copies every frame's name, definition and locals as
   strings, on the debugger's own thread (=note-debugger-context=). The debugger is
   modal, so the stack can't change meanwhile. Elsewhere the tool says there's no
   condition and lists the image's threads.
@@ -298,14 +331,17 @@ against its schema, a gated one through the approval condition (§8.4), any erro
 - *=lisp-eval= exists* though it subsumes every other tool. The gate carries the weight.
 
 ** 7.3 Gating writes
+:PROPERTIES:
+:CUSTOM_ID: gating-writes
+:END:
 
-The gated tools can change the world or send data out. The *authority* dial (§8.9)
+The gated tools can change the world or send data out. The *authority* dial ([[#modes-because-actors-now][Modes — because there are two actors now]])
 decides what happens to them:
 
 | Authority    | Behaviour                                                       |
 |--------------+-----------------------------------------------------------------|
 | =:read-only= | gated tools aren't offered                                      |
-| =:ask=       | each call raises an approval request (§8.4) — the default       |
+| =:ask=       | each call raises an approval request ([[#approval-condition-dialog][Approval is a condition, not a dialog]]) — the default       |
 | =:allow=     | run it                                                          |
 
 - *A denial isn't an error.* It goes back as a =tool_result= saying the user declined,
@@ -316,10 +352,13 @@ decides what happens to them:
   [[file:../initramfs/agent.lisp::defun ask-before-writes][=ask-before-writes=]] undoes it. The agent's commands offer "Allow all writes
   (stop asking, this session)", "… always (save …)" and "Ask before writes again"; at
   the REPL's approval prompt, =a= allows this call and every later one.
-- *The dial is checked when a call runs*, not only when the request is built (§7.4):
+- *The dial is checked when a call runs*, not only when the request is built ([[#conversation-s-tools-never][A conversation's tools never change]]):
   =gated-run= declines a write under =:read-only=.
 
 ** 7.4 A conversation's tools never change
+:PROPERTIES:
+:CUSTOM_ID: conversation-s-tools-never
+:END:
 
 A thinking block's signature covers the request that produced it, and the tools array
 is part of that request. Change one byte of it mid-conversation and the API refuses
@@ -331,7 +370,7 @@ left =:read-only=, a tool's =AVAILABLE-P= changed, or =C-c C-c= on a =define-age
 moved it to the end of =*agent-tools*=. Now:
 
 - *Frozen at the first request.* [[file:../initramfs/agent.lisp::defun conversation-tools][=conversation-tools=]] computes the array once and
-  sends the same bytes for the rest of the conversation (and saves them, §10).
+  sends the same bytes for the rest of the conversation (and saves them, [[#persistence][Persistence]]).
 - *Enforced at call time.* =gated-run= declines a write under =:read-only=;
   =execute-tool-call= answers a tool whose =AVAILABLE-P= has turned false with an error
   result.
@@ -339,10 +378,13 @@ moved it to the end of =*agent-tools*=. Now:
   A conversation that already hit the 400 can't be repaired; start a new one.
 
 ** 7.5 Tools that can't freeze the environment
+:PROPERTIES:
+:CUSTOM_ID: tools-can-t-freeze
+:END:
 
-Tools run on the environment's thread (§6.4), and =C-g= is read by that same thread. A
+Tools run on the environment's thread ([[#threads-owner-ui][Two threads, one owner of the UI]]), and =C-g= is read by that same thread. A
 =lisp-eval= that never returns, or a =container-run= whose program never exits, used to
-stop the screen for good ([[file:diagnostics.org][diagnostics.org]] §9). Three limits:
+stop the screen for good ([[file:diagnostics.org::#should-agent-run-own][diagnostics.org, Should the agent run in its own process?]]). Three limits:
 
 - *Off-main tools.* A tool defined with =:off-main t= ([[file:../initramfs/agent.lisp::defun post-job-and-wait][=post-job-and-wait=]]) sends only
   its *approval* to the environment's thread; the work runs on the turn's thread, where
@@ -363,6 +405,9 @@ stop the screen for good ([[file:diagnostics.org][diagnostics.org]] §9). Three 
 at a time. A looping form is now stopped, but the screen still waits up to 60 s.
 
 ** 7.6 Plans and subagents
+:PROPERTIES:
+:CUSTOM_ID: plans-subagents
+:END:
 
 - *=update-plan=* takes the whole task list each time, one task per line with a mark:
   =[x]= done, =[>]= active, =[ ]= pending, =[!]= failed ([[file:../initramfs/agent.lisp::defun parse-plan][=parse-plan=]]).
@@ -377,11 +422,17 @@ The tools find their conversation through =*tool-conversation*=, bound by
 =execute-tool-call=. A conversation's plan and subagents live in a weak side table
 (=*conversation-activities*=) rather than a new slot, so a running image could take the
 change without redefining the =conversation= class under live instances. Both show in
-the Activity panel (§8.3).
+the Activity panel ([[#conversation-workspace-chat-pane][A conversation is a Workspace, not a chat pane]]).
 
 * 8. How you talk to it
+:PROPERTIES:
+:CUSTOM_ID: talk
+:END:
 
 ** 8.0 The constraint: no fifth idiom
+:PROPERTIES:
+:CUSTOM_ID: constraint-fifth-idiom
+:END:
 
 Everything you can already do in the environment is one of four moves:
 
@@ -392,11 +443,14 @@ Everything you can already do in the environment is one of four moves:
 
 The agent expresses itself entirely in those four moves. A chat pane with a text box, a
 modal approval dialog, an "agent mode" you enter and leave — each would be a fifth idiom
-and a foreign body, however familiar from other tools. §8.10 lists what this rejects;
-§8.9 refines it: ambient *state* isn't modal capture. The reward is that almost none of
+and a foreign body, however familiar from other tools. [[#deliberately-doesn-t-have][What it deliberately doesn't have]] lists what this rejects;
+[[#modes-because-actors-now][Modes — because there are two actors now]] refines it: ambient *state* isn't modal capture. The reward is that almost none of
 the interaction had to be written — it already existed.
 
 ** 8.1 "Ask it" — the sixth verb
+:PROPERTIES:
+:CUSTOM_ID: ask-sixth-verb
+:END:
 
 The environment's verbs are Smalltalk's — Accept (=C-c C-c=), Do it, Print it, Inspect it
 (=C-c C-i=), Debug it (=C-c C-d=). The agent adds one:
@@ -417,6 +471,9 @@ The environment's verbs are Smalltalk's — Accept (=C-c C-c=), Do it, Print it,
   =commands-for=), so it's in the right-button menu and the halo.
 
 ** 8.2 The REPL: one character
+:PROPERTIES:
+:CUSTOM_ID: repl-character
+:END:
 
 #+begin_src
   lisp> ?why does draw-alien flip the rows?      ; prose — no quotes, no parens
@@ -431,9 +488,12 @@ The environment's verbs are Smalltalk's — Accept (=C-c C-c=), Do it, Print it,
 - *Writes ask right there*: the same restarts as the environment's chooser, numbered.
 - *It works over the network REPL* unchanged, so the agent is reachable from a host
   terminal (tested).
-- *Not built:* the prompt's agent mark (§15).
+- *Not built:* the prompt's agent mark ([[#still-owed][Still owed]]).
 
 ** 8.3 A conversation is a Workspace, not a chat pane
+:PROPERTIES:
+:CUSTOM_ID: conversation-workspace-chat-pane
+:END:
 
 A conversation is literally a =:workspace= view. In a chat pane a code suggestion is
 text in a bubble you copy somewhere; here the model's proposed definition is already in
@@ -462,6 +522,9 @@ change set. Conversations are Spotter entries, so =Super-Space= finds the one yo
   the static mock =doc/design/agent-workbench.html= (layout A).
 
 ** 8.4 Approval is a condition, not a dialog
+:PROPERTIES:
+:CUSTOM_ID: approval-condition-dialog
+:END:
 
 #+begin_src lisp
   (restart-case (signal 'tool-approval-request :call call)
@@ -480,12 +543,15 @@ Whoever is around decides, with machinery that already exists:
   on a stack; the chooser is the environment's existing "choose from what's offered".
 - *Esc denies*, because the turn's thread is waiting on an answer.
 - *Only asked while you look at the conversation.* Elsewhere the status line says the
-  agent waits, the tab's dot turns amber, and =SuperL-a= takes you there (§8.5's "never
+  agent waits, the tab's dot turns amber, and =SuperL-a= takes you there ([[#can-show-things][It can show you things]]'s "never
   steal focus").
 - *You see what you approve.* A write's full input — the form, the source, the file
   body — is in the transcript above the card.
 
 ** 8.5 It can show you things
+:PROPERTIES:
+:CUSTOM_ID: can-show-things
+:END:
 
 The =browse= tool asks the shell to =present= a subject, so the answer to /where is this
 used?/ is the senders view, live and drillable, not a list of names in prose. It isn't a
@@ -497,21 +563,30 @@ web browser; fetching a URL is =web-fetch=.
 - *Main thread only.* It touches the screen only from the environment's thread.
 
 ** 8.6 "How do you know that?" is one keystroke
+:PROPERTIES:
+:CUSTOM_ID: do-know-keystroke
+:END:
 
 Every claim the agent makes about this system came from a tool call, and every tool call
 has a subject. Under =:verbose= each call is a =;; #N name argument -> summary= line;
 =C-c C-o= on it opens the subject it was about — the same view you'd have reached by
-hand (the last column of §7.2). Verifying the oracle is the same motion as browsing.
+hand (the last column of [[#tools][The tools]]). Verifying the oracle is the same motion as browsing.
 
 ** 8.7 Ask and keep working
+:PROPERTIES:
+:CUSTOM_ID: ask-keep-working
+:END:
 
-Asking never blocks: the turn runs on its own thread (§6.4), you keep browsing, and the
+Asking never blocks: the turn runs on its own thread ([[#threads-owner-ui][Two threads, one owner of the UI]]), you keep browsing, and the
 conversation's tab fills in behind you, its dot pulsing while it works. =C-g= in a
 conversation that's answering stops the turn, because =C-g= already means "get me out of
 this" everywhere else. Deltas arrive faster than the framebuffer should redraw, so the
 tick redraws on a ~15 Hz budget.
 
 ** 8.8 The debugger — where it converges
+:PROPERTIES:
+:CUSTOM_ID: debugger-where-converges
+:END:
 
 =run-debugger-fb= establishes one more restart around the rail:
 
@@ -531,11 +606,14 @@ other, and listed *last* so Enter still means the condition's own first restart.
   =continue= aren't the same thing.
 - *Read-only, its tools on its own thread.* The debugger is modal and runs no frame tick
   to hand tools to, and it's the highest-stakes place to let a model write. The one
-  write here is your =C-c C-c=. =lisp-backtrace= reads a copy of the stack (§7.2).
+  write here is your =C-c C-c=. =lisp-backtrace= reads a copy of the stack ([[#tools][The tools]]).
 
 ** 8.9 Modes — because there are two actors now
+:PROPERTIES:
+:CUSTOM_ID: modes-because-actors-now
+:END:
 
-*Modal capture* — a mode that changes what your keys mean — is what §8.0 rejects.
+*Modal capture* — a mode that changes what your keys mean — is what [[#constraint-fifth-idiom][The constraint: no fifth idiom]] rejects.
 *Ambient state* — something that changes what the environment may do without being asked
 — is a different thing, and Lisp is full of it: =*package*=, =*print-base*=, a
 read-only buffer.
@@ -551,7 +629,7 @@ Initiative and authority are orthogonal; one on/off switch conflates "proactive 
 powerless" with "reactive but dangerous".
 
 - *Initiative* — =:off= · =:reacting= · =:interacting= (=*agent-initiative*=)
-- *Authority* — =:read-only= · =:ask= · =:allow= (=*agent-authority*=, §7.3)
+- *Authority* — =:read-only= · =:ask= · =:allow= (=*agent-authority*=, [[#gating-writes][Gating writes]])
 
 |                | =:read-only=                          | =:ask=                                       | =:allow=           |
 |----------------+---------------------------------------+----------------------------------------------+--------------------|
@@ -559,7 +637,7 @@ powerless" with "reactive but dangerous".
 | =:interacting= | an observer that may offer opinions   | *pairing* — it notices, proposes, you accept | delegated autonomy |
 
 =:off= makes asking inert: no sockets, no tokens. =:interacting= exists and shows (a
-filled dot), but nothing acts unasked yet (§15).
+filled dot), but nothing acts unasked yet ([[#still-owed][Still owed]]).
 
 *** Local modes are dynamic bindings
 
@@ -581,7 +659,7 @@ one.
 |----------+----------------------------------------------------------------------------------------------------------------------------|
 | global   | the tray item: an orange creature (=draw-agent-icon=, dimmed when =:off=), the authority and the session's cost, e.g. =ask $0.01=; =...= while working, =?= while waiting |
 | per tab  | a dot over the =·= of a conversation's tab: hollow =:reacting=, filled =:interacting=, pulsing while working, solid amber while waiting |
-| the REPL | the prompt — not built (§15)                                                                                              |
+| the REPL | the prompt — not built ([[#still-owed][Still owed]])                                                                                              |
 
 - *No new palette entries.* Colour is authority, mapped onto meanings the shell already
   carries: teal =*ui-accent*= = safe (read-only), amber =*ui-amber*= = "something wants
@@ -602,18 +680,24 @@ whose commands set the dials. From the REPL they're variables, so you set them. 
 no preferences screen.
 
 ** 8.10 What it deliberately doesn't have
+:PROPERTIES:
+:CUSTOM_ID: deliberately-doesn-t-have
+:END:
 
 | Not this                                   | Because                                                 |
 |--------------------------------------------+---------------------------------------------------------|
-| a chat tab with an input box at the bottom | a fifth idiom (§8.0); the Workspace already is one      |
-| a modal approval dialog                    | a condition and the chooser do it (§8.4)                |
-| a mode that captures input                 | ambient state yes, modal capture no (§8.9)              |
+| a chat tab with an input box at the bottom | a fifth idiom ([[#constraint-fifth-idiom][The constraint: no fifth idiom]]); the Workspace already is one      |
+| a modal approval dialog                    | a condition and the chooser do it ([[#approval-condition-dialog][Approval is a condition, not a dialog]])                |
+| a mode that captures input                 | ambient state yes, modal capture no ([[#modes-because-actors-now][Modes — because there are two actors now]])              |
 | a permanent sidebar / assistant panel      | the indicators are the chrome budget; the Activity panel is a drilled-into view, not furniture |
 | suggestions while =:reacting=              | in that mode, pull never push — and the mode is visible |
-| a preferences screen                       | modes are variables and a subject (§8.9)                |
+| a preferences screen                       | modes are variables and a subject ([[#modes-because-actors-now][Modes — because there are two actors now]])                |
 | a second completion mechanism              | =Tab= completion belongs to the editor, not the oracle  |
 
 * 9. Failure reporting
+:PROPERTIES:
+:CUSTOM_ID: failure-reporting
+:END:
 
 Every failure says what went wrong and what to do, in the pane, at once. A question
 asked with no network used to produce *nothing* in the pane; three causes were found:
@@ -693,6 +777,9 @@ would say it twice. A /new/ question typed instead is folded into the unanswered
 the model sees both.
 
 * 10. Persistence
+:PROPERTIES:
+:CUSTOM_ID: persistence
+:END:
 
 A conversation is written to =~/.lol/agent/conversations/<UTC stamp>-<id>.json= at the
 end of every turn, however the turn ended (=*turn-end-hooks*=, called in =run-turn='s
@@ -702,7 +789,7 @@ it:
 - *Every message*, each content block as the API knows it, thinking signatures byte for
   byte.
 - *The tools array as first sent.* A thinking signature is bound to its request, tools
-  included (§7.4), so a reopened conversation must send the same tools, not today's.
+  included ([[#conversation-s-tools-never][A conversation's tools never change]]), so a reopened conversation must send the same tools, not today's.
 - *The turns* (question, notes, failure, cost), the tool calls (input, result, summary)
   and the plan.
 
@@ -727,23 +814,29 @@ file. Its earlier spend is kept apart, so the tray's cost stays this session's; 
 =cost= is the total.
 
 * 11. Security
+:PROPERTIES:
+:CUSTOM_ID: security
+:END:
 
-- *Never bake the key* (§4.2). It's read at runtime from =/home= and lives in one special
+- *Never bake the key* ([[#key][The key]]). It's read at runtime from =/home= and lives in one special
   variable.
 - *Prompt injection is real here.* The model reads =source-of= output, content from the
   image. If it can also =accept-source=, anything that can write a definition can steer the
   agent; that's why =:ask= is the default. The same goes for files, web pages and
   container output it reads.
 - *Data out.* =web-fetch= is gated because a URL can carry anything the conversation has
-  read (§7.2).
+  read ([[#tools][The tools]]).
 - *The clock.* Certificate dates depend on SNTP, which is unauthenticated: bootstrapping a
   trust decision from an unauthenticated time source is a known chicken-and-egg,
   universally accepted, and still a reason to want an RTC.
 - *No backpressure into the framebuffer.* If redraw can't keep up, drop frames, never
   deltas.
-- *Token cost is invisible unless shown* — hence the tray meter (§8.9).
+- *Token cost is invisible unless shown* — hence the tray meter ([[#modes-because-actors-now][Modes — because there are two actors now]]).
 
 * 12. TLS 1.3 in Lisp — not built
+:PROPERTIES:
+:CUSTOM_ID: tls-1-3-lisp
+:END:
 
 The sub-project that would drop the host's libssl. Nothing above changes when it lands:
 =http.lisp= gets an encrypted stream from Lisp instead of from OpenSSL. Scoped as one
@@ -773,22 +866,25 @@ Trust would come in three stages, each stated out loud:
    validity dates — which need a trustworthy clock.
 
 * 13. Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
 
 - *[[file:../poc/json-test.lisp][poc/json-test.lisp]]* (49 checks): the mapping, surrogates, key order surviving a
   round trip.
 - *[[file:../poc/agent-test.lisp][poc/agent-test.lisp]]* (140 checks, 13 of them "bounded tools"): the whole client against the
   mock on loopback, with =HOME= pointed at a scratch directory. It loads =net=, =dhcp=,
   =dns=, =sntp=, =tls= and =http= as =poc/http-test.lisp= does, so every request goes
-  through the real =http-request=. Covers byte-equal serialisations, failures (§9, steered
+  through the real =http-request=. Covers byte-equal serialisations, failures ([[#failure-reporting][Failure reporting]], steered
   by the mock's words =badkey=, =busy=, =cutoff=, plus a stubbed-empty routing table, an
-  error in the transport, an unreadable key), frozen tools (§7.4: begun read-only, moved to
+  error in the transport, an unreadable key), frozen tools ([[#conversation-s-tools-never][A conversation's tools never change]]: begun read-only, moved to
   =:allow=, same tools sent), key redaction (=showkey=), save → forget → reopen → ask again
-  (§10), and the bounded tools (§7.5: the cap, a timeout, an output flood, an off-main tool
+  ([[#persistence][Persistence]]), and the bounded tools ([[#tools-can-t-freeze][Tools that can't freeze the environment]]: the cap, a timeout, an output flood, an off-main tool
   approved by a stand-in environment thread and stopped by =C-g=).
 - *[[file:../check-agent.lisp][check-agent.lisp]]* (50 assertions diskless, 56 with =LOL_GUEST_DISK=test-disk.img=):
   the guest, end to end over QMP. The transport *is* =HTTP-REQUEST=; asking from a
   conversation pane; a gated =lisp-eval= approved with key 1; =C-g= stopping a slow
-  answer; every failure of §9 in the real pane (401 with its tint and status line, =C-c
+  answer; every failure of [[#failure-reporting][Failure reporting]] in the real pane (401 with its tint and status line, =C-c
   C-a= on an empty draft, 529, a cut stream, no route to =192.0.2.1=, no lease and no
   =resolv.conf=, https on a diskless boot, an error in the transport) then a normal answer;
   =?prose= over the net REPL; the debugger's ASK restart; one Activity row and one folded
@@ -802,9 +898,12 @@ Trust would come in three stages, each stated out loud:
   a test fixture and never a transport.
 
 Not covered: the plan, the steps toggle and a subagent round trip; a reopen across a real
-reboot; the real =container-run= process ending on =C-g= in the guest (§15).
+reboot; the real =container-run= process ending on =C-g= in the guest ([[#still-owed][Still owed]]).
 
 * 14. Pitfalls and ruled out
+:PROPERTIES:
+:CUSTOM_ID: pitfalls-ruled-out
+:END:
 
 - *Name collisions in =CL-USER=.* Every module shares it. =web-cdp.lisp= defines its own
   =JOBJ= / =JGET= / =WRITE-JSON=, so =(use-package :lol.json)= followed by loading it would
@@ -830,7 +929,7 @@ reboot; the real =container-run= process ending on =C-g= in the guest (§15).
   occasional "no stopped note" was the harness typing into a pane still read-only while a
   turn streamed; it now waits (=ready-to-type=).
 - *Interrupted is not timed out.* Many apparent TLS "timeouts" were an interrupted read,
-  fixed in =tls.lisp= ([[file:networking.org][networking.org]] §2e).
+  fixed in =tls.lisp= ([[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]).
 - *Not reproduced, kept so it's recognised:* once, after the failure-reporting changes, an
   approved =lisp-eval= ran but the pane never showed the model's follow-up, the next =C-c
   C-a= took the half-rendered turn's lines as its draft, and the chooser it raised blocked
@@ -838,6 +937,9 @@ reboot; the real =container-run= process ending on =C-g= in the guest (§15).
   chooser's loop and the tick's refresh of a turn.
 
 * 15. Still owed
+:PROPERTIES:
+:CUSTOM_ID: still-owed
+:END:
 
 - *The REPL prompt's agent mark.* The line editor colours the whole prompt with one SGR, so
   a mark in another colour needs a change to =refresh-line=.
@@ -851,4 +953,4 @@ reboot; the real =container-run= process ending on =C-g= in the guest (§15).
   because =test-disk.img= is attached =snapshot=on=; a two-boot test needs a writable copy
   of the disk, as [[file:session-persistence.org][session-persistence.org]] does for its own.
 - *The guest =container-run= path on =C-g=* (lol-ct's process ending) isn't asserted.
-- *TLS in Lisp* (§12) — an idea, not planned.
+- *TLS in Lisp* ([[#tls-1-3-lisp][TLS 1.3 in Lisp — not built]]) — an idea, not planned.

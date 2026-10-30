@@ -68,7 +68,7 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 <code>render-frame.lisp</code> shows exactly what the guest shows.</figcaption>
 </figure>
 <ul>
-  <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, §5): an object with bounds that
+  <li>Everything on screen is a <em>morph</em> (<a href="../morphic.org">morphic.org</a>, “The shell as a tree of morphs”): an object with bounds that
     draws itself. <a class="ref" data-ref="poc/morph.lisp#world-repair" href="../../poc/morph.lisp"><code>world-repair</code><span class="loc">poc/morph.lisp:647</span></a> redraws only what is damaged, and in each damaged rect only the
     morphs over it, back to front from the topmost opaque one. A pane is one of them: a breadcrumb bar
     (<a class="ref" data-ref="poc/shell.lisp#draw-crumb" href="../../poc/shell.lisp"><code>draw-crumb</code><span class="loc">poc/shell.lisp:1704</span></a>), the expanded pane's panel (<a class="ref" data-ref="poc/shell.lisp#draw-pane-expanded" href="../../poc/shell.lisp"><code>draw-pane-expanded</code><span class="loc">poc/shell.lisp:1875</span></a>), or the
@@ -88,7 +88,7 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
     (<a class="ref" data-ref="poc/textview.lisp#lex-line" href="../../poc/textview.lisp"><code>lex-line</code><span class="loc">poc/textview.lisp:1019</span></a>). The editing keys are in
     <a class="ref" data-ref="poc/textview.lisp#tv-key" href="../../poc/textview.lisp"><code>tv-key</code><span class="loc">poc/textview.lisp:1314</span></a>. The buffer is a vector of line strings that is
     <em>replaced</em> on each edit, never mutated in place, so undo just keeps the old vectors
-    (<a href="../clipboard.org">clipboard.org</a> §6½).</li>
+    (<a href="../clipboard.org">clipboard.org</a>, “Undo — the other history beside the kill ring”).</li>
   <li><a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a> pins the pixel vector (so the GC cannot move it during the
     syscall) and issues one <code>pwrite</code> for a full frame. <a class="ref" data-ref="poc/fb.lisp#with-graphics-console" href="../../poc/fb.lisp"><code>with-graphics-console</code><span class="loc">poc/fb.lisp:41</span></a>
     puts the VT in <code>KD_GRAPHICS</code> so the kernel console stops drawing over us.</li>
@@ -100,7 +100,7 @@ pixel itself into a Lisp vector and copies that vector to the screen. Input arri
 </ul>
 
 <h2>Input: from a finger to a command</h2>
-<p>As of the multi-device input work (<a href="../input.org">input.org</a> §4¾, merged 2026-10-12), every keyboard and every
+<p>As of the multi-device input work (<a href="../input.org">input.org</a>, “Every device at once, and the ones plugged in later”, merged 2026-10-12), every keyboard and every
 pointer is open at once, and devices plugged in later are picked up.</p>
 <figure>
 <svg viewBox="0 0 960 430" role="img" aria-label="Input pipeline: keyboards produce cooked bytes on the console tty, fd 0, merged across all keyboards by the kernel, and separately evdev events on one node each; mice and touchpads produce evdev events on their own nodes. An inotify watch on /dev/input reports nodes appearing. poll-input-once polls the tty, the watch and every open device. Tty bytes go through fb-read-key to a key and state; ready keyboards are drained by read-keyboards into per-device modifier state, ORed into shared flags; ready pointers are drained by read-pointers, each through read-mouse with its own state, all moving one cursor. A watch event or a hung-up device is housekeeping: rescan-input-devices or drop-input-dev. All of it becomes events the world routes: keys to the focused pane's browser-key; a press to the morph under the pointer, a pane's pane-click; the wheel to the pane under it, browser-scroll; right and middle buttons to the context menu and the halo.">

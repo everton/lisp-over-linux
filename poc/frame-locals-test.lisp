@@ -3,7 +3,7 @@
 ;;;;   sbcl --script poc/frame-locals-test.lisp      ; exits 0 if all pass
 ;;;;
 ;;;; initramfs/model.lisp's FRAME-LOCAL-PLACES / SET-FRAME-VAR / RESTART-FRAME, the
-;;;; model half of doc/inspector-history.org §5.4. Each case signals an error from a
+;;;; model half of file:../doc/inspector-history.org::#set-local-debugger-frame. Each case signals an error from a
 ;;;; small function, and the HANDLER-BIND handler plays the debugger: it finds the
 ;;;; function's frame on the still-standing stack, writes a local through the place,
 ;;;; then CONTINUEs (or restarts the frame) — and the check is what the function

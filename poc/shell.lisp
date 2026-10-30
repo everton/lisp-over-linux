@@ -5,7 +5,7 @@
 ;;;; pane holds a subject and its (present subject) VIEW; the accordion shows the
 ;;;; ancestors as collapsed breadcrumb bars and the deepest pane expanded. Drilling
 ;;;; an item pushes a pane; clicking a breadcrumb pops back. The shell is the ONE
-;;;; stateful layer — present/commands-for stay pure (doc/code-browser.org §4½).
+;;;; stateful layer — present/commands-for stay pure (file:../doc/code-browser.org::#drill-down-protocol-present).
 ;;;;
 ;;;; CL-USER (like the initramfs modules), using lol.canvas for drawing and
 ;;;; lol.textview for source panes. Loaded by run-browser.lisp after those + the
@@ -24,7 +24,7 @@
             lol.widgets:*ui-accent* lol.widgets:*ui-sel* lol.widgets:*ui-amber*
             lol.widgets:concept-color lol.widgets:*concept-colors*
             lol.widgets:+row-h+ lol.widgets:+bar-h+ lol.widgets:clip-text
-            ;; text metrics, read from the CURRENT font at draw time (doc/fonts.org §5)
+            ;; text metrics, read from the CURRENT font at draw time (file:../doc/fonts.org::#font-object-glyph-cache)
             lol.widgets:char-w lol.widgets:line-h lol.widgets:text-dy)))
 
 (defvar *bfont* nil
@@ -36,7 +36,7 @@
    (run-browser.lisp, run-browser-fb, render-frame.lisp) goes through here, so there
    is exactly one place the two can get out of sync — namely none."
   (setf *bfont* font lol.widgets:*font* font))
-;; The cohesive environment (§4¾): several concurrent TRAILS, shown as tabs, one
+;; The cohesive environment (file:../doc/code-browser.org::#environment-trails-spotter-tiled): several concurrent TRAILS, shown as tabs, one
 ;; active. A trail is a list of PANEs (root first, deepest last) — one investigation,
 ;; or a pinned surface (Workspace, change set). *ACTIVE* indexes the focused trail;
 ;; all the trail-* ops act on it. SuperL-n / SuperL-Tab switch; a spotter hit or
@@ -49,7 +49,7 @@
    by each entry point (run-browser-fb, run-browser.lisp, render-frame.lisp) for its
    canvas size.")
 
-;;; A PANE is a MORPH (doc/morphic.org §5.2): the object that holds a subject and its
+;;; A PANE is a MORPH (file:../doc/morphic.org::#pane-morph): the object that holds a subject and its
 ;;; view IS the thing on screen that draws it and takes its events. It used to be a
 ;;; DEFSTRUCT drawn by one big function that left what it drew where in specials
 ;;; (*LIST-ROWS*, *CONTENT-TOP* …), which every window then had to keep its own copy
@@ -117,7 +117,7 @@
    (split-plan :initform nil :accessor pane-split-plan
             :documentation "An expanded pane's split, as EXPANDED-COLUMNS laid it out.")
    (sig :initform nil :accessor pane-sig
-        :documentation "What its picture was last a function of (doc/morphic.org §4.4)."))
+        :documentation "What its picture was last a function of (file:../doc/morphic.org::#damage-per-morph)."))
   (:documentation "A subject, presented: its view, where you are in it, and — being a
    morph — where it is on screen and what it drew there."))
 
@@ -128,7 +128,7 @@
 
 (defun pane-p (x) (typep x 'pane))
 
-;;; A pane's BODY is a morph too (doc/morphic.org §5.4): the list, the text view, the
+;;; A pane's BODY is a morph too (file:../doc/morphic.org::#pane-s-body-morph): the list, the text view, the
 ;;; grid, the stage, the image, the page, the terminal — whatever the view kind paints
 ;;; under the pane's header. The pane draws only its panel (title, tint, badge, the
 ;;; divider and header of a split); its body is its child, laid out by the pane at the
@@ -221,7 +221,7 @@
 
 (defun screen-to-pane (pane x y)
   "The screen point X,Y in the coordinates PANE draws and records in — a window's,
-   when PANE is in one (doc/morphic.org §3.4) -> (values X Y). A backend that knows
+   when PANE is in one (file:../doc/morphic.org::#surfaces) -> (values X Y). A backend that knows
    only where the pointer is on the screen (the web page's hover, its wheel) asks this."
   (if (and pane (lol.morph:morph-owner pane))
       (multiple-value-bind (ox oy) (lol.morph:surface-origin pane)
@@ -451,14 +451,14 @@
 (defvar *restore-desk-fn* nil
   "A function of no arguments that rebuilds *TRAILS* from the saved desk and returns
    true, or returns NIL when there is none. Set by initramfs/desk.lisp, which loads
-   after this file (doc/session-persistence.org §6).")
+   after this file (file:../doc/session-persistence.org::#desk-tabs-workspaces-clipboard).")
 
 (defun open-environment (&optional root)
-  "Seed the cohesive environment (§4¾), WITHOUT throwing away what is already open.
+  "Seed the cohesive environment (file:../doc/code-browser.org::#environment-trails-spotter-tiled), WITHOUT throwing away what is already open.
 
    With no ROOT: the trails as they were, when there are any — leaving to the
    supervisor's console and coming back with 'b' used to replace them with one fresh
-   Workspace, losing every tab (doc/session-persistence.org §10); else the desk
+   Workspace, losing every tab (file:../doc/session-persistence.org::#pitfalls-known-limits); else the desk
    saved by the last session (*RESTORE-DESK-FN*); else the Workspace alone.
 
    With a ROOT (the menu's 'p', 'c', 'l'; a host entry point): focus a tab already
@@ -500,7 +500,7 @@
   "Lines the current pane scrolls per mouse-wheel notch. Lives here, not in a
    backend, because BOTH backends need it and they learn about the wheel very
    differently: the guest decodes an evdev REL_WHEEL record, the X11 host receives
-   a ButtonPress on button 4/5 (doc/input.org §6-7).")
+   a ButtonPress on button 4/5 (file:../doc/input.org::#wheel-end-end, file:../doc/input.org::#same-gesture-host-x11).")
 (defvar *pending-prefix* nil
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
@@ -516,7 +516,7 @@
    on the same pane closes it. Any other pane, and the warning starts over.")
 
 (defvar *pending-meta* nil
-  "T after a lone Esc — the Emacs Meta prefix (§4¾). The next key is Meta-modified,
+  "T after a lone Esc — the Emacs Meta prefix (file:../doc/code-browser.org::#keys-two-layers). The next key is Meta-modified,
    so Esc . jumps to definition just like Alt-. / M-. would. Sticky for one key,
    cleared on the next keystroke.")
 (defvar *browser-status* nil "A transient status message (e.g. Accept result), or NIL.")
@@ -656,7 +656,7 @@
   (declare (ignore state))
   (cond
     ;; <- comes back, which it can only mean HERE: in a text side pane the same key
-    ;; is the editor's, moving the caret (§4¾'s modifier split)
+    ;; is the editor's, moving the caret (file:../doc/code-browser.org::#modifier-split)
     ((eq key :left)      (unfocus-side pane))
     ((eq key :up)        (set-pane-sel side (1- (pane-sel side))))
     ((eq key :down)      (set-pane-sel side (1+ (pane-sel side))))
@@ -681,7 +681,7 @@
           (unfocus-side p)
           (setf (pane-editing-side p) t)))))
 
-;;; ---- the Workspace verbs: eval the form before point (§3a) ---------------
+;;; ---- the Workspace verbs: eval the form before point (file:../doc/code-browser.org::#workspace-scratch-buffer-editor) ---------------
 
 (defun buffer-text-to-point (tv)
   "The Workspace buffer text from the start up to the caret."
@@ -1084,7 +1084,7 @@
           (incf pen mw))))
     pen))
 
-;;; ---- the clickable dispatch matrix (§3) ----------------------------------
+;;; ---- the clickable dispatch matrix (file:../doc/code-browser.org::#classes-vs-generic-functions) ----------------------------------
 
 (defun draw-matrix-body (canvas pane x y w h)
   "Render a 2-axis dispatch matrix as a clickable grid. The widget draws the cells,
@@ -1092,7 +1092,7 @@
    (lists of methods) into the counts the grid shows — a dim mark for a real gap,
    which is the whole point of the view — and adds the line that says what a cell is
    FOR. Clicking a cell is the only way into the effective-method onion, and an
-   affordance nothing announces may as well not exist (design mock-up §2 spells the
+   affordance nothing announces may as well not exist (design mock-up, \"Generic functions & methods\", spells the
    same line out: \"effective method — select a cell…\")."
   (let* ((m (view-data (pane-view pane)))
          (rows (getf m :rows))
@@ -1108,7 +1108,7 @@
                   '(("click a cell" . "its effective-method onion")
                     (nil . "a dim dot is a real gap in the coverage"))))))
 
-;;; ---- the stage (§3b): instances, moving, dispatching for real ---------------
+;;; ---- the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): instances, moving, dispatching for real ---------------
 ;;; The one view whose body changes without input. Everything here reads the stage and
 ;;; draws; STEP-STAGE (initramfs/stage.lisp) is the only thing that advances it, driven
 ;;; by the browser's poll timeout in fb-browser.lisp. No colour is invented: a sprite is
@@ -1276,7 +1276,7 @@
    its text.
 
    The stage is the one subject whose side pane is editable rather than a read-only
-   preview (§3b) — the whole point is to type a form and watch what it does to the
+   preview (file:../doc/code-browser.org::#stage-dispatch-happening-done) — the whole point is to type a form and watch what it does to the
    world next to it. open-beside can't serve here because it works off a selected
    LIST ROW and a stage has no rows, so this is the stage's own way in."
   (unless (pane-side pane)
@@ -1338,7 +1338,7 @@
       (#\r (lol.stage:reset-collide-stage)
            (setf (pane-view pane) (present (pane-subject pane))) t)
       ;; Tab cycles the selection through the bodies. The mouse is an ACCELERATOR here,
-      ;; not the way in (doc §1's rule, and the reason every list has arrow keys): a
+      ;; not the way in (the keyboard-first rule of file:../doc/code-browser.org::#environment-trails-spotter-tiled, and the reason every list has arrow keys): a
       ;; stage you can only select on by clicking is a stage you cannot use on hardware
       ;; whose pointer has not been brought up yet.
       (:tab (let* ((bs (lol.stage:stage-bodies stage))
@@ -1395,7 +1395,7 @@
     ((:ok :charging) (concept-color :method))     ; green
     (:warn *ui-amber*)
     (:low (concept-color :condition))             ; red
-    (:safe *ui-accent*)                           ; the agent read-only (doc/agent.org §8.9)
+    (:safe *ui-accent*)                           ; the agent read-only (file:../doc/agent.org::#modes-because-actors-now)
     (t *ui-dim*)))
 
 (defun draw-clip-icon (canvas x y color)
@@ -1600,7 +1600,7 @@
    SuperL-number badge and, where its title began with a kind word (\"terminal\",
    \"journal\") or it is a web page, an icon in place of the word (TRAIL-LABEL); the active one is highlighted (brighter bg + accent top-rule +
    an × close), and a + after the last tab opens a fresh Workspace. The design mock-up
-   (media/browser-views-design.html §1) puts the × on EVERY tab, not only the focused
+   (media/browser-views-design.html, \"The environment — one tiled screen\") puts the × on EVERY tab, not only the focused
    one — closing a tab you are not in is the common case.
 
    More tabs than fit: the strip shows a run of them that holds the active one
@@ -1653,8 +1653,8 @@
                         (pen (draw-tab-icon canvas icon pen 0 (trail-kind-color trail))))
                    (lol.canvas:draw-string canvas *bfont* title pen (text-dy +bar-h+)
                                            (if active *ui-accent* *ui-text*)))
-                 ;; a conversation's tab carries the agent's dot over its " · " (doc/agent.org
-                 ;; §8.9): colour = authority, filled = :interacting, pulsing = working
+                 ;; a conversation's tab carries the agent's dot over its " · " (
+                 ;; file:../doc/agent.org::#modes-because-actors-now): colour = authority, filled = :interacting, pulsing = working
                  (multiple-value-bind (dot filled)
                      (and (fboundp 'trail-agent-dot) (funcall 'trail-agent-dot trail))
                    (when dot
@@ -1854,7 +1854,7 @@
          (let* ((side-w (max 300 (floor (* full-w 34) 100)))
                 (text-w (- full-w side-w gap)))
            (split :text-side text-w (pane-side cur) (+ l text-w gap) side-w)))
-        ;; THE STAGE with its Workspace beside (§3b): the one subject whose side pane
+        ;; THE STAGE with its Workspace beside (file:../doc/code-browser.org::#stage-dispatch-happening-done): the one subject whose side pane
         ;; is editable rather than a read-only preview. Same furniture as ⇧↵ below,
         ;; but driven by 'w' rather than a selected row, and the stage keeps the
         ;; larger half because it is the thing you are watching.
@@ -1940,7 +1940,7 @@
    front, each drawing itself — the tab strip, the tray, the breadcrumbs, the panes,
    the status line, the windows (each window's contents drawn anew, not copied).
    There is no other way to draw the browser: what used to be one function laying
-   out and painting everything is the world's tree now (doc/morphic.org §5). The name
+   out and painting everything is the world's tree now (file:../doc/morphic.org::#shell-tree-morphs). The name
    stays for its callers — checks that time a full frame, the backdrop of a card with
    no world to draw it."
   (declare (ignore w h))
@@ -1985,7 +1985,7 @@
         (t (list :hints (status-hints cur)))))
 
 (defun carried-label ()
-  "The name of what the hand carries to be dropped (doc/morphic.org §9), or NIL."
+  "The name of what the hand carries to be dropped (file:../doc/morphic.org::#hand-press-progress-drag), or NIL."
   (let ((h (the-hand)))
     (and h (getf (lol.morph:hand-payload h) :label))))
 
@@ -2051,7 +2051,7 @@
                        (list (cons nil (format nil "commands: ~{~a~^ · ~}"
                                                (mapcar #'command-label cmds))))))))
 
-;;; ---- the Spotter card (§4¾) ----------------------------------------------
+;;; ---- the Spotter card (file:../doc/code-browser.org::#spotter) ----------------------------------------------
 ;;; The DRAWING lives here, in the backend-blind layer, and only the input loop lives
 ;;; in fb-browser.lisp. That is the same split as everything else in the shell, and it
 ;;; buys something concrete: the Spotter can be rendered — and therefore looked at —
@@ -2066,7 +2066,7 @@
 
    The bands themselves come from the candidates (present.lisp gives each a :GROUP):
    recent · definitions · packages & files · surfaces, which is how the design
-   mock-up bands them (media/browser-views-design.html §1). Nine matches spread over
+   mock-up bands them (media/browser-views-design.html, \"The environment — one tiled screen\"). Nine matches spread over
    three kinds of thing read very differently from nine matches in a heap. Their
    ORDER is not hard-coded here on purpose — a fixed list would silently drop any
    band a future candidate source invents."
@@ -2246,7 +2246,7 @@
 (defvar *minibuffer-sticky* nil
   "T while the open prompt is STICKY: a press elsewhere leaves it open, only a key
    answers it — a web page's question, which a click on the page that asked must not
-   dismiss (doc/web-browser.org §4.8). A variable beside *MINIBUFFER* rather than an
+   dismiss (file:../doc/web-browser.org::#video-calls-google-meet). A variable beside *MINIBUFFER* rather than an
    MB slot: a running image can take it from a patch, while a new slot would change
    the struct under every function that reads one.")
 
@@ -2754,7 +2754,7 @@
    the text names is the one being made, so the form is the only authority and the
    fallbacks are NIL. That is what makes C-c C-c in the Workspace mean 'define this',
    which is how a method written at the stage's debugger gets into the image AND into
-   the change set (§3b, beat 4).
+   the change set (file:../doc/code-browser.org::#beat-4).
 
    Sets *browser-status* to the outcome."
   (let ((text (if (or (workspace-pane-p pane) (file-pane-p pane))
@@ -2938,10 +2938,10 @@
                  (workspace-pane-p p))
             (workspace-inspect-it p))
            ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
-           ;; C-c C-a — Ask it: the agent's verb (doc/agent.org §8.1, initramfs/agent-ui.lisp)
+           ;; C-c C-a — Ask it: the agent's verb (file:../doc/agent.org::#ask-sixth-verb, initramfs/agent-ui.lisp)
            ((and (eq prefix :c-c) (or (and c (eql key #\a)) (eql key #\?)) (fboundp 'agent-ask-at-pane))
             (funcall 'agent-ask-at-pane p))
-           ;; C-c C-o — in a conversation, open what the ;; #N tool call was about (§8.6)
+           ;; C-c C-o — in a conversation, open what the ;; #N tool call was about (file:../doc/agent.org::#do-know-keystroke)
            ((and (eq prefix :c-c) c (eql key #\o) (fboundp 'agent-open-at-point))
             (funcall 'agent-open-at-point p))
            ((and (eq prefix :c-x) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
@@ -2979,7 +2979,7 @@
     (setf *browser-status* nil)))
 
 (defun browser-key (key state)
-  "Route a decoded key by modifier + pane type (see doc/code-browser.org §4¾).
+  "Route a decoded key by modifier + pane type (see file:../doc/code-browser.org::#environment-trails-spotter-tiled).
    Returns :quit to exit. STATE is the X modifier bitmask."
   ;; an open minibuffer takes EVERY key — it is where the user is typing
   (when *minibuffer* (return-from browser-key (minibuffer-key key state)))
@@ -3026,7 +3026,7 @@
       ;; Ctrl-click. Must precede the editable branch, or the "." would self-insert.
       ((and meta (eql key #\.) (pane-tv p)) (jump-at-point (pane-tv p)))
       ;; M-, — SENDERS of the symbol at point: the other half of the pair the design
-      ;; mock-up names (§1, "M-. / M-, Senders / Implementors"), and the key
+      ;; mock-up names ("The environment — one tiled screen": "M-. / M-, Senders / Implementors"), and the key
       ;; commands-for has always advertised for it. Same resolution as the jump, so
       ;; anything you can M-. you can also ask who calls.
       ((and meta (eql key #\,) (pane-tv p)) (senders-at-point (pane-tv p)))
@@ -3043,7 +3043,7 @@
       ((and (lol.canvas:ctrl-p state) (member key '(#\g #\G)))
        (setf *pending-prefix* nil *browser-status* nil)
        (cond
-         ;; a conversation that is answering: C-g stops the turn (doc/agent.org §8.7)
+         ;; a conversation that is answering: C-g stops the turn (file:../doc/agent.org::#ask-keep-working)
          ((and (fboundp 'agent-cancel-at-pane) (funcall 'agent-cancel-at-pane p)))
          ;; focus is in the right column: hand it back to the list and STOP. Popping
          ;; the trail as well would throw away the split you are standing in, when
@@ -3072,7 +3072,7 @@
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
           (activate-trail (- (char-code key) (char-code #\1))) nil)
          ;; SuperL-⇧-n moves THIS trail to slot n, swapping with whatever is there —
-         ;; the design's binding table (§1). Shift-digit arrives as the shifted
+         ;; the design mock-up's binding table ("The environment — one tiled screen"). Shift-digit arrives as the shifted
          ;; character on any keyboard, so match those rather than a Shift bit.
          ((and (characterp key) (position key ")!@#$%^&*(" ))
           (swap-trail (position key ")!@#$%^&*(")) nil)
@@ -3126,7 +3126,7 @@
        (if (pane-tv (pane-side p))
            (edit-pane-key (pane-side p) key state)
            (side-list-key p (pane-side p) key state)))
-      ;; --- the stage (§3b): its own verbs, before the list keys, because a stage has
+      ;; --- the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): its own verbs, before the list keys, because a stage has
       ;;     no rows for up/dn to move and letters here mean "spawn one of those". ---
       ((and (eq (view-kind (pane-view p)) :stage)
             (not (lol.canvas:ctrl-p state))
@@ -3434,7 +3434,7 @@
     t))
 
 ;;; ---- a press, wherever it lands -----------------------------------------------
-;;; A left press goes to the morph under the pointer (doc/morphic.org §5.5): a tab or
+;;; A left press goes to the morph under the pointer (file:../doc/morphic.org::#routing-presses-keys): a tab or
 ;;; the + (TAB-STRIP-CLICK), a breadcrumb (back to that level), the clipboard icon, the
 ;;; minibuffer's ✕, a window's title bar or grip — and anything inside the expanded
 ;;; pane is PANE-CLICK. Every one of them that is the browser's begins the same way.
@@ -3540,7 +3540,7 @@
 
 ;; the stage: the instance under the pointer is selected (a miss clears the
 ;; selection), and focus comes back to the stage's half. That it is only the stage's
-;; OWN half is the point — a stage with its Workspace beside it (§3b) is a
+;; OWN half is the point — a stage with its Workspace beside it (file:../doc/code-browser.org::#stage-dispatch-happening-done) is a
 ;; side-by-side, and the Workspace half is the column's (COLUMN-PRESS).
 (defmethod body-press ((b stage-body) p x y ctrl super)
   (declare (ignore ctrl super))
@@ -3991,7 +3991,7 @@
                              inspect))))
          (own (if (member role '(:element)) '()
                   (and (not (stringp object)) (command-entries object :halo g)))))
-    (append (and (typep object 'lol.morph:morph)  ; a morph's own handles first (doc/morphic.org §6.3):
+    (append (and (typep object 'lol.morph:morph)  ; a morph's own handles first (file:../doc/morphic.org::#halo-s-window-handles):
                  (mapcar (lambda (a) (menu-entry (getf a :label) (getf a :action)
                                                  :group "halo" :tone :restart))
                          (lol.morph:morph-affordances object)))   ; a window's Move, Resize …
@@ -4205,7 +4205,7 @@
 (defun leave-menu ()
   "SuperL-q: ask how to leave — down to the supervisor's console menu (the REPL, the
    worker, the other roots), or shut down, saving the desk or not
-   (doc/session-persistence.org §7). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
+   (file:../doc/session-persistence.org::#leaving-power-off-path). Returns :QUIT with *LEAVE-ACTION* set (:CONSOLE,
    :SAVE-POWER-OFF, :POWER-OFF, :SAVE-RESTART, :RESTART or :UPDATE-RESTART — the
    last offered only when a finished build waits in the checkout, update.lisp), or
    NIL when the menu is dismissed. The console comes first so that a reflexive
@@ -4262,7 +4262,7 @@
   "Before shutting down: are there file panes with unsaved changes, and if so, what
    becomes of them? Asks once for all of them — save all, discard, or cancel — and
    returns true when it is fine to go on. A file you did not save used to vanish at
-   power-off without a word (doc/session-persistence.org §7, §10)."
+   power-off without a word (file:../doc/session-persistence.org::#leaving-power-off-path file:../doc/session-persistence.org::#pitfalls-known-limits)."
   (let ((dirty (loop for trail in *trails*
                      append (loop for p in trail
                                   when (file-pane-dirty-p p) collect p
@@ -4289,7 +4289,7 @@
 (defun keyboard-context-menu ()
   "The Menu key, or Shift-F10: the right-button menu without a pointer, anchored at
    the caret in a text pane or at the selected row in a list. The keyboard-first rule
-   (doc/code-browser.org §1): anything the pointer can reach, a key can too."
+   (file:../doc/code-browser.org::#framebuffer-x-question-answered): anything the pointer can reach, a key can too."
   (let* ((p (current-pane))
          (tv (cond ((and (pane-editing-side p) (pane-side p)) (pane-tv (pane-side p)))
                    (t (pane-tv p)))))
@@ -4310,7 +4310,7 @@
 
 ;;; ---- drag and drop: a subject, carried by the hand ---------------------------
 ;;; Morphic's hand carries what you pick up and offers it to whatever is under it when
-;;; you let go (doc/morphic.org §9). Here what is carried is a SUBJECT — a row's (a
+;;; you let go (file:../doc/morphic.org::#hand-press-progress-drag). Here what is carried is a SUBJECT — a row's (a
 ;;; definition, a class, a file, an inspector field's value), a sprite's instance, the
 ;;; symbol at the caret — and each kind of morph says what a drop on it means
 ;;; (ACCEPT-DROP, poc/morphic.lisp): a text you can edit inserts a READABLE REFERENCE to

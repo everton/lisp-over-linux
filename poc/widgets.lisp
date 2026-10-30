@@ -4,8 +4,8 @@
 ;;;; us an editable body of text. Between those two there was nothing: every pane
 ;;;; frame, every list, every grid and every scroll hint was drawn ad hoc inside
 ;;;; shell.lisp, and each new surface (the Spotter, the debugger, the cheatsheet)
-;;;; re-invented them slightly differently. This file is what doc/code-browser.org
-;;;; §8 phase 3 still owed — "panes, lists, scrollbars, menus" — as widgets.
+;;;; re-invented them slightly differently. This file is what
+;;;; file:../doc/code-browser.org::#phase-3-toolkit still owed — "panes, lists, scrollbars, menus" — as widgets.
 ;;;;
 ;;;; The rule that keeps them widgets and not just moved code: *a widget knows
 ;;;; nothing about the browser*. It never sees an ITEM, a VIEW, a PANE or a SUBJECT
@@ -113,7 +113,7 @@
 ;;; ---- metrics -------------------------------------------------------------
 
 ;;; Every metric that depends on text is a FUNCTION of the current font, evaluated at
-;;; draw time — because the font's size changes at run time (doc/fonts.org §5). They
+;;; draw time — because the font's size changes at run time (file:../doc/fonts.org::#font-object-glyph-cache). They
 ;;; used to be constants (+ROW-H+ was 20, for the 6x15 bitmap font). The + names are
 ;;; kept, as SYMBOL MACROS: the reader still sees +row-h+ at the hundred places that
 ;;; lay out rows, but the compiler substitutes (ROW-H) — a call — at each one. So the

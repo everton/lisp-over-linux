@@ -1,6 +1,6 @@
 ;;;; morphic-test.lisp — host test for the World: its core, the shell as a tree of
-;;;; morphs, windows, the halo's handles, the overlays and stepping (doc/morphic.org,
-;;;; §3–§8 and §5), against the real shell, headless.
+;;;; morphs, windows, the halo's handles, the overlays and stepping (
+;;;; file:../doc/morphic.org::#core-lol-morph through file:../doc/morphic.org::#stepping, and file:../doc/morphic.org::#shell-tree-morphs), against the real shell, headless.
 ;;;;
 ;;;;     sbcl --script poc/morphic-test.lisp        ; exits 0 if every check passes
 ;;;;
@@ -95,7 +95,7 @@
   "Did the last repair draw only morphs in ALLOWED (inside windows too)?"
   (every (lambda (e) (member (car e) allowed)) (drawn)))
 
-;;; ---- the core alone: a surface, with plain morphs (doc/morphic.org §3.4) ---------
+;;; ---- the core alone: a surface, with plain morphs (file:../doc/morphic.org::#surfaces) ---------
 
 (defclass box (lol.morph:morph)
   ((color :initarg :color :reader box-color)
@@ -187,7 +187,7 @@
 (setf *world* (make-desk +w+ +h+))
 (repair)
 
-(format t "~&== the shell is a tree of morphs (doc/morphic.org §5) ==~%")
+(format t "~&== the shell is a tree of morphs (file:../doc/morphic.org::#shell-tree-morphs) ==~%")
 (check "the screen starts as one full repair, every morph of the shell drawn"
        (and (getf (last-repair) :full)
             (every (lambda (m) (drew-p m))
@@ -774,7 +774,7 @@
     (keys "s-w")))
 (repair)
 ;; a terminal in a window whose program ends: a clean exit takes the window with it,
-;; a failed one keeps it, saying so (doc/terminal.org §10, *TERMINAL-CLOSE-ON-EXIT*)
+;; a failed one keeps it, saying so (file:../doc/terminal.org::#pane, *TERMINAL-CLOSE-ON-EXIT*)
 (when (probe-file "/bin/sh")
   (flet ((serve-until-ended (seconds)
            ;; the guest's :terminals service, turned by the clock: every master "ready"
@@ -798,7 +798,7 @@
             (when stays (keys "s-w"))))))))
 (repair)
 
-(format t "~&== drag and drop: the hand carries a subject (doc/morphic.org §9) ==~%")
+(format t "~&== drag and drop: the hand carries a subject (file:../doc/morphic.org::#hand-press-progress-drag) ==~%")
 (defvar zz-drop-target 1 "An inspector field to drop on: this symbol's value cell.")
 (defun hand () (lol.morph:world-hand *world*))
 (defun row-point (p index)

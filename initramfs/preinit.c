@@ -359,23 +359,23 @@ static void give_devices(uid_t uid, gid_t gid) {
     chown_dir_matching("/dev", "fb", uid, gid);
     chown_dir_matching("/dev", "tty", uid, gid);   /* tty, tty0, tty1 … (not ttyS*: harmless too) */
     chown_dir_matching("/dev/input", "event", uid, gid);
-    /* Wi-Fi's soft kill switch (doc/networking.org §7): writing an rfkill_event to
+    /* Wi-Fi's soft kill switch (file:../doc/networking.org::#wi-fi): writing an rfkill_event to
      * /dev/rfkill unblocks the radio, and the kernel checks nothing but the file's
      * permission (net/rfkill/core.c, rfkill_fop_write) — so the user owning the
      * node is all it takes. (The sysfs `soft' file would also want CAP_NET_ADMIN.) */
     chown_dir_matching("/dev", "rfkill", uid, gid);
-    /* Sound (tag #29, doc/screencast.org §3.1): controlC0 (the mixer and the jacks),
+    /* Sound (tag #29, file:../doc/screencast.org::#userland-card-device-nodes): controlC0 (the mixer and the jacks),
      * pcmC0D0p / pcmC0D0c (play / record), timer. The host's ffmpeg and mplayer open
      * them from the container, which bind-mounts our /dev. "" matches every name;
      * the S_ISCHR test above skips the by-path/ directory. */
     chown_dir_matching("/dev/snd", "", uid, gid);
-    /* The camera (tag #32, doc/web-browser.org §4.8): the webcam's V4L2 nodes
+    /* The camera (tag #32, file:../doc/web-browser.org::#video-calls-google-meet): the webcam's V4L2 nodes
      * (video0 the picture, video1 its metadata). The host's Chrome opens them from
      * the web container, which bind-mounts our /dev, for a call's getUserMedia. */
     chown_dir_matching("/dev", "video", uid, gid);
 }
 
-/* /etc/resolv.conf (doc/networking.org §2c). The Lisp rewrites it from every DHCP
+/* /etc/resolv.conf (file:../doc/networking.org::#userland-half-reaching-network). The Lisp rewrites it from every DHCP
  * lease (dns.lisp, WRITE-RESOLV-CONF) so glibc programs — the host's tools run in
  * a container — resolve through the same servers. Our /etc is root's, and the user
  * gets no write permission on it; instead we create this ONE file now and give it
@@ -426,7 +426,7 @@ static void merge_host_hosts(void) {
 static volatile sig_atomic_t want_shutdown = 0;
 static void on_usr1(int sig) { (void)sig; want_shutdown = 1; }
 
-/* ---- two more requests, each one signal (doc/networking.org §2c, §7) ------ */
+/* ---- two more requests, each one signal (file:../doc/networking.org::#userland-half-reaching-network file:../doc/networking.org::#wi-fi) ------ */
 /*
  * A request to lol-rootd is a SIGNAL, never a message to parse: the whole
  * vocabulary is a handful of signal numbers, so there is nothing for a confused or
@@ -518,7 +518,7 @@ static void do_nmimport(uid_t uid, gid_t gid) {
  * and "HdrS" at 0x202 (the x86 boot protocol, linux/Documentation/arch/x86/
  * boot.rst), a newc cpio "070701" at 0 — which catches a half-written build, not
  * a malicious one: whoever may install an image may run any code as root at the
- * next boot anyway. That is the point of the request, and doc/storage.org §6
+ * next boot anyway. That is the point of the request, and file:../doc/storage.org::#lol-rootd-process-stays
  * says so.
  *
  * Writing: /mnt/host is a read-only BIND view of a superblock that is read-write

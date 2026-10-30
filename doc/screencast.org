@@ -9,11 +9,11 @@ play the result back full screen, and only then hand the file on.
 keys ([[file:../initramfs/mixer.lisp][mixer.lisp]]), the recorder in two modes — live and damage log
 ([[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:../initramfs/damage-log.lisp][damage-log.lisp]]) — and the full-screen player ([[file:../initramfs/player.lisp][player.lisp]]). Tested in
 QEMU by =check-sound.lisp= and =check-recorder.lisp= (39 checks), and on a Dell XPS 13
-9300 with a live take and playback, with sound (§10). Not yet tried on real hardware: a
-logged take, a long take, the clap test for sync, a headset through the jack (§13).
+9300 with a live take and playback, with sound ([[#measured][Measured]]). Not yet tried on real hardware: a
+logged take, a long take, the clap test for sync, a headset through the jack ([[#open-items-risks][Open items and risks]]).
 
 Sound is a requirement, so this is kernel work as well as userland: tag #28 had no
-sound (=# CONFIG_SOUND is not set=); tag #29 adds it ([[file:kernel-config.org][kernel-config.org]] §9, snapshot
+sound (=# CONFIG_SOUND is not set=); tag #29 adds it ([[file:kernel-config.org::#sound-new-tag-29][kernel-config.org, Sound — NEW in tag #29]], snapshot
 [[file:../kernel/config-7.2.5][kernel/config-7.2.5]]).
 
 * 1. The shape
@@ -46,6 +46,9 @@ Two ideas carry it:
   few hundred lines of Lisp and a handful of kernel options.
 
 ** 1.1 What it builds on
+:PROPERTIES:
+:CUSTOM_ID: builds
+:END:
 
 | Piece                              | Where                                        | What it gives                                                                                                                                                                                              |
 |------------------------------------+----------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -60,6 +63,9 @@ Two ideas carry it:
 | Where files go                     | [[file:../initramfs/lol-home.lisp][lol-home.lisp]]                                | =lol-path=; nothing is written without a real home, so a diskless boot refuses to record.                                                                                                                  |
 
 * 2. The sound hardware
+:PROPERTIES:
+:CUSTOM_ID: sound-hardware
+:END:
 
 Tested on a Dell XPS 13 9300 (i7-1065G7):
 
@@ -74,7 +80,7 @@ Tested on a Dell XPS 13 9300 (i7-1065G7):
 
 *Why it matters.* On many Intel laptops the built-in mics are /digital/ (DMIC) and wired
 to the DSP; then only SOF works, which needs the DSP's firmware and a topology file
-copied from the host like the Wi-Fi firmware ([[file:networking.org][networking.org]] §7). Here the mic goes
+copied from the host like the Wi-Fi firmware ([[file:networking.org::#wi-fi][networking.org, Wi-Fi]]). Here the mic goes
 through the Realtek codec, which plain HD-Audio drives with no firmware. So we use the
 *legacy HDA path*, and SOF isn't even built, so =snd_intel_dspcfg= can't pick it.
 
@@ -85,6 +91,9 @@ Debian with PipeWire has =/etc/alsa/conf.d/99-pipewire-default.conf= pointing AL
 =hw:= would refuse a mismatch).
 
 ** 2.1 Choosing the mic: built-in or headset
+:PROPERTIES:
+:CUSTOM_ID: choosing-mic-built-headset
+:END:
 
 A wired headset on the 3.5 mm combo jack (one 4-pole plug for earphones and mic) is the
 better narration mic; the built-in one is the fallback. Same codec, same driver: node
@@ -116,9 +125,12 @@ and a card picker in the preflight; not built.
 
 =alc269.c= has a Dell fixup for this family (=ALC289_FIXUP_DELL_SPK1=), applied by the
 codec's PCI subsystem id (Dell 096d). On the first boot the codec reported one speaker
-line out (0x17) and one headphone out (0x21) (§10).
+line out (0x17) and one headphone out (0x21) ([[#measured][Measured]]).
 
 * 3. Kernel tag #29
+:PROPERTIES:
+:CUSTOM_ID: kernel-tag-29
+:END:
 
 No modules (=# CONFIG_MODULES is not set=), so everything is =y=. In 7.2.5, HD-Audio
 lives under =sound/hda/= and the Realtek driver is split by codec family:
@@ -129,11 +141,14 @@ lives under =sound/hda/= and the Realtek driver is split by codec family:
 | =SND_PCM=                                       | =sound/core/Kconfig= (selected)    | The PCM device ffmpeg reads and writes.                                                                                                                                                                                                     |
 | =SND_HDA_INTEL=                                 | =sound/hda/controllers/Kconfig=    | The controller. Depends on =PCI=; selects =SND_HDA= and =SND_INTEL_DSP_CONFIG=.                                                                                                                                                             |
 | =SND_HDA_CODEC_REALTEK=, =SND_HDA_CODEC_ALC269= | =sound/hda/codecs/realtek/Kconfig= | The ALC289 is handled by =alc269.c= (=case 0x10ec0289=). Selects =SND_HDA_CODEC_REALTEK_LIB=, which selects =SND_HDA_GENERIC= (+ its LEDs, =SND_HDA_SCODEC_COMPONENT=). Depends on =INPUT=. The other ALCxxx default to =y= under the menu. |
-| =SND_HDA_GENERIC=                               | =sound/hda/codecs/Kconfig=         | Also drives QEMU's =hda-duplex= / =hda-output= codecs in the checks (§9).                                                                                                                                                                   |
-| *not* SOF, *not* AVS                            |                                    | §2: the mic needs no DSP.                                                                                                                                                                                                                   |
+| =SND_HDA_GENERIC=                               | =sound/hda/codecs/Kconfig=         | Also drives QEMU's =hda-duplex= / =hda-output= codecs in the checks ([[#tests][Tests]]).                                                                                                                                                                   |
+| *not* SOF, *not* AVS                            |                                    | [[#sound-hardware][The sound hardware]]: the mic needs no DSP.                                                                                                                                                                                                                   |
 | *not* =SND_HDA_CODEC_HDMI_INTEL=                | =sound/hda/codecs/hdmi/Kconfig=    | HDMI audio wants the i915 audio component (=SND_HDA_I915=); we run on efifb with no i915. The HDMI codec is driven by the generic parser, shows no outputs and is harmless.                                                                  |
 
 ** 3.1 Userland for the card: device nodes and the mixer
+:PROPERTIES:
+:CUSTOM_ID: userland-card-device-nodes
+:END:
 
 - *Device nodes.* =give_devices= calls =chown_dir_matching("/dev/snd", "", uid, gid)=,
   which skips non-character entries, so =by-path/= is left alone.
@@ -148,10 +163,10 @@ lives under =sound/hda/= and the Realtek driver is split by codec family:
   not the volumes' longs.
 - *=restore-audio= at boot.* Every playback and capture switch on; Master at the saved
   =:volume= / =:muted= from =~/.lol/settings= (default 50 %); the capture gain in dB; the
-  mic chosen (§2.1). Its =sound:= line in =session.log= lists what it switched on.
+  mic chosen ([[#choosing-mic-built-headset][Choosing the mic: built-in or headset]]). Its =sound:= line in =session.log= lists what it switched on.
 - *The capture gain is set in dB, not raised to the top.* =Capture Volume='s TLV (the
   dB scale the driver publishes, read with =SNDRV_CTL_IOCTL_TLV_READ=) runs from -17.25
-  dB in 0.75 dB steps, so its top (63) is +30 dB — enough to clip speech (§10).
+  dB in 0.75 dB steps, so its top (63) is +30 dB — enough to clip speech ([[#measured][Measured]]).
   =set-capture-db= sets the saved =:capture-db=, else =*default-capture-db*= = +21.75 dB
   (step 52, where Debian's PipeWire keeps it).
 - *Volume keys.* =audio-key= serves volume up / down / mute / mic-mute, read from the
@@ -167,11 +182,14 @@ sound server, so =pactl= would find nobody to talk to; =mixer.lisp= writes the
 controls directly, which is where both tools end.
 
 * 4. Recording: the frames
+:PROPERTIES:
+:CUSTOM_ID: recording-frames
+:END:
 
 ** 4.1 The tap
 
 =present-repair= and =present-frame= call the functions in =*frame-taps*= (a list,
-because a screen shared to a web page taps it too: [[file:web-browser.org][web-browser.org]] §4.8). The tap
+because a screen shared to a web page taps it too: [[file:web-browser.org::#video-calls-google-meet][web-browser.org, Video calls: Google Meet, with screen sharing]]). The tap
 gets the repair's rects or "the whole frame". In live mode it only sets a flag.
 
 Copying at the rate of repairs would be wrong both ways: an idle screen makes no
@@ -187,9 +205,12 @@ the web pane) with a slot every 1/30 s (=*rec-fps*=):
 - *Unchanged slot.* Queue the last frame again — a counter, not a copy (the queue
   holds =(buffer . copies)=).
 - *Late wake-up.* Every slot that's due gets a frame, so the frame /count/ stays the
-  video's clock (§5.1).
+  video's clock ([[#live-encoding][Live encoding (the default)]]).
 
 ** 4.3 Never stall the environment
+:PROPERTIES:
+:CUSTOM_ID: never-stall-environment
+:END:
 
 A recorder that blocks the environment's thread freezes the screen, and the
 watchdog's STALL report ([[file:diagnostics.org][diagnostics.org]]) would say so.
@@ -210,10 +231,16 @@ recorder's pane shows if it's open; the usual move is =SuperL-r= from wherever y
 opening the pane only after stopping.
 
 * 5. Recording to a file
+:PROPERTIES:
+:CUSTOM_ID: recording-file
+:END:
 
 ** 5.1 Live encoding (the default)
+:PROPERTIES:
+:CUSTOM_ID: live-encoding
+:END:
 
-One ffmpeg per segment (§5.3), in the default container, from =rec-segment-argv=:
+One ffmpeg per segment ([[#pause-resume-segments][Pause and resume: segments]]), in the default container, from =rec-segment-argv=:
 
 #+begin_example
 ffmpeg -hide_banner -loglevel warning -nostats -y \
@@ -247,6 +274,9 @@ UI — piped as raw frames into =libx264 ultrafast=): *4.1× real time, ~0.95
 CPU-seconds per recorded second*, about one of the eight hardware threads.
 
 ** 5.2 The damage log (the second mode)
+:PROPERTIES:
+:CUSTOM_ID: damage-log
+:END:
 
 =m= in the recorder pane switches the next recording between =live= and =log=
 (=*rec-mode*=); the tray then says =REC LOG=. A logged take records only what changed
@@ -272,7 +302,7 @@ and encodes after stop:
   segments are joined as a live take's are. =SAVING n%= counts frames replayed over the
   total. Logs and sound files are deleted once encoded.
 
-|                                          | Live (§5.1)        | Damage log (§5.2)                                  |
+|                                          | Live ([[#live-encoding][Live encoding (the default)]])        | Damage log ([[#damage-log][The damage log (the second mode)]])                                  |
 |------------------------------------------+--------------------+----------------------------------------------------|
 | CPU while recording                      | ~1 thread          | the copies of changed rects + deflate; ~0 when idle |
 | Wait after stop                          | seconds (a concat) | the whole encode                                   |
@@ -283,6 +313,9 @@ The log is the better recording and the worse experience; live is the reverse. B
 share the sampler, the meter, the segments and the result view.
 
 ** 5.3 Pause and resume: segments
+:PROPERTIES:
+:CUSTOM_ID: pause-resume-segments
+:END:
 
 ffmpeg can't pause an ALSA input, and a paused recording shouldn't contain the pause.
 So *a pause ends a segment* and *resume starts the next* (=seg-002=, …).
@@ -322,6 +355,9 @@ A take whose loudest moment stayed under -50 dB is flagged =(silent!)= in the li
 "silent? check the mic" in its result.
 
 * 7. The interface
+:PROPERTIES:
+:CUSTOM_ID: interface
+:END:
 
 ** 7.1 Keys
 
@@ -334,6 +370,9 @@ Both are in the =SuperL-?= cheatsheet (every global key is). The status line nam
 mic when a take starts, with a warning when it's the built-in one.
 
 ** 7.2 The recorder pane and the tray
+:PROPERTIES:
+:CUSTOM_ID: recorder-pane-tray
+:END:
 
 *Tray:* =REC 01:23 ###...= (the mic's level as a bar), =REC LOG …= in log mode,
 =PAUSED 01:23=, =SAVING 42%=, in red and amber; nothing when idle.
@@ -366,12 +405,18 @@ pane's first row:
 4. containers available, and the host's =/usr/bin/ffmpeg=.
 
 * 8. Playback: the host's player
+:PROPERTIES:
+:CUSTOM_ID: playback-host-s-player
+:END:
 
 We don't build a player. Decoding, A/V sync, seeking and audio output are a player's
 whole job, and the host has players that do it well; our part is to lend the screen
 and pass the keys.
 
 ** 8.1 The host's players
+:PROPERTIES:
+:CUSTOM_ID: host-s-players
+:END:
 
 | Player                         | Picture with no X and no DRM?                                                     | How it's driven                                                                                                           |
 |--------------------------------+-----------------------------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------|
@@ -382,12 +427,15 @@ and pass the keys.
 | totem                          | no: GTK                                                                           |                                                                                                                           |
 
 ** 8.2 MPlayer full screen, the screen lent
+:PROPERTIES:
+:CUSTOM_ID: mplayer-full-screen-screen
+:END:
 
 Only one process may write =/dev/fb0= at a time ([[file:processes.org][processes.org]]): two writers overwrite
 each other and nobody owns the result. So playing is a *hand-off*, the way leaving to
 the console is. =(play-video FILE)=:
 
-1. *Lend the screen.* =*screen-lent*= turns off all five writers of =/dev/fb0= (§1.1).
+1. *Lend the screen.* =*screen-lent*= turns off all five writers of =/dev/fb0= ([[#builds][What it builds on]]).
    The world keeps running — the tray's clock, a streaming agent reply, a terminal's
    output still repair the canvas; they reach the screen after the hand-back.
 2. *Run the host's player* in the default container, where our =/dev/fb0= and
@@ -415,12 +463,15 @@ the console is. =(play-video FILE)=:
    later — then =*screen-lent*= is cleared and the whole canvas presented once.
 
 =:window t= is the interim alternative: MPlayer's =fbdev= in a terminal tab, drawing a
-640-wide window over the right edge (§8.5).
+640-wide window over the right edge ([[#playing-file-hand-checking][Playing a file by hand, and checking the sound]]).
 
 *What the hand-off costs.* Full screen only; no pointer, no overlays while it plays.
 For "watch the take before sharing it", that's the right view anyway.
 
 ** 8.3 Ruled out
+:PROPERTIES:
+:CUSTOM_ID: ruled-out
+:END:
 
 - *Our own decoder into a pane.* ffmpeg decoding to =bgra= over a pipe into a
   =video-body= (~400 lines) would let the video sit in a window, but means writing
@@ -436,7 +487,7 @@ For "watch the take before sharing it", that's the right view anyway.
 - *VLC's =fb= output.* Works the same way but takes the tty by default (=--fb-tty=);
   MPlayer's fbdev2 does less and its slave protocol is plain text. VLC is the second
   choice.
-- *ffplay, mpv.* No framebuffer output / not installed (§8.1).
+- *ffplay, mpv.* No framebuffer output / not installed ([[#host-s-players][The host's players]]).
 - *Chrome's =<video>= in the web pane.* Its screencast is JPEG at Chrome's chosen rate,
   blurrier and choppier than the file you want to judge.
 
@@ -453,6 +504,9 @@ correct colours; the environment keeps running and our =KD_GRAPHICS= tty is left
   =-nolirc= silences it.
 
 ** 8.5 Playing a file by hand, and checking the sound
+:PROPERTIES:
+:CUSTOM_ID: playing-file-hand-checking
+:END:
 
 Useful to check picture and sound on new hardware without the recorder: MPlayer in a
 terminal tab, drawing over the environment. =check-sound.lisp= uses exactly this form.
@@ -508,7 +562,7 @@ Then, each with =C-x C-e=:
   =o= clock, =q= quit; then =Return= closes the tab.
 - *What you'll see.* The environment still paints over the video (the tray's clock
   every second, a changing pane over a window), and the last frame stays after =q=
-  until something redraws it. That's what §8.2's hand-off fixes.
+  until something redraws it. That's what [[#mplayer-full-screen-screen][MPlayer full screen, the screen lent]]'s hand-off fixes.
 
 The same from a terminal (=-vo fbdev= with =-geometry X:Y=, the window's top-left in
 pixels or as a percentage of the room left over):
@@ -521,7 +575,7 @@ mplayer -really-quiet -nolirc -ao alsa:device=plughw=0.0 -vo fbdev2 \
 #+end_example
 
 =-ao alsa:device=plughw=0.0= is MPlayer's spelling of =plughw:0,0= — not ALSA's
-=default= (§2).
+=default= ([[#sound-hardware][The sound hardware]]).
 
 *If it plays without sound:*
 
@@ -534,15 +588,18 @@ mplayer -really-quiet -nolirc -ao alsa:device=plughw=0.0 -vo fbdev2 \
 - *Every control.* =C-c C-p= on =(mixer-controls)=. The ALC289 has =Master=,
   =Headphone= and =Speaker= playback volumes and switches (0–87), =Capture= volume
   (0–63) and switch, =Capture Source=, =Auto-Mute Mode=, three mic boosts (0–3), and
-  the jacks of §2.1.
+  the jacks of [[#choosing-mic-built-headset][Choosing the mic: built-in or headset]].
 - *Volume keys do nothing?* Some laptops' Fn keys arrive on a device other than the AT
   keyboard; SuperL-Space → "input devices" lists them.
 
 * 9. Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
 
 | Test                                     | Where | What it asserts                                                                                                                                                                                                                                                                                                                                                                                                                      |
 |------------------------------------------+-------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| [[file:../check-sound.lisp][check-sound.lisp]] (15)                   | guest | The card, =/dev/snd= owned by PID 1's user, the mixer and =restore-audio=, the volume keys over QMP moving the level, status line and tray, ffmpeg recording from =plughw:0,0= in the container, and the =play= form of §8.5 playing a 440 Hz tone that arrives in QEMU's WAV at ~440 Hz.                                                                                                                                             |
+| [[file:../check-sound.lisp][check-sound.lisp]] (15)                   | guest | The card, =/dev/snd= owned by PID 1's user, the mixer and =restore-audio=, the volume keys over QMP moving the level, status line and tray, ffmpeg recording from =plughw:0,0= in the container, and the =play= form of [[#playing-file-hand-checking][Playing a file by hand, and checking the sound]] playing a 440 Hz tone that arrives in QEMU's WAV at ~440 Hz.                                                                                                                                             |
 | [[file:../check-recorder.lisp][check-recorder.lisp]] (39)                | guest | The preflight (its 1 GB rule refusing QEMU's 0.3 GB tmpfs home, then lowered), =SuperL-r= start / pause / resume and =SuperL-S-r= stop by real keys, the tray, the result as long as the two spans by the host's clock, 2 segments joined, H.264 + AAC at the screen's size, 30 fps, a decoded frame's colours against the canvas, the silent flag, the pane; the player (48 grid points: none while playing, all after =q=); the same take from a damage log; =p= on a video in the file manager. |
 | [[file:../poc/damage-log-test.lisp][poc/damage-log-test.lisp]] (16)           | host  | A scripted screen logged and replayed at 10 fps equals the screen at every frame's time, pixel for pixel with the pointer; a torn log replays without error; a non-log is refused.                                                                                                                                                                                                                                                    |
 | [[file:../poc/mixer-test.lisp][poc/mixer-test.lisp]]                      | host  | The control ioctls against the host's card, read-only.                                                                                                                                                                                                                                                                                                                                                                              |
@@ -555,6 +612,9 @@ played). Both use QEMU's own codecs under =SND_HDA_GENERIC=. Silence proves the
 silent-take warning, not that the meter moves with a voice.
 
 * 10. Measured
+:PROPERTIES:
+:CUSTOM_ID: measured
+:END:
 
 | What                                  | Setup                                  | Result                                                                                                       |
 |---------------------------------------+----------------------------------------+--------------------------------------------------------------------------------------------------------------|
@@ -570,8 +630,8 @@ silent-take warning, not that the meter moves with a voice.
 (the quietest 100 ms at -41.7 dB RMS), speech around -15 dB RMS, peaks of *+2.5 dB*:
 clipped at capture, not playback. The mixer showed why: =Capture Source= was "Internal
 Mic" (the jack's sense read 0) and =Capture Volume= was 63 of 63, +30 dB, because
-=restore-audio= then raised every volume found at its minimum to the top. Hence §3.1's
-gain in dB at +21.75 (8 dB less would have put those peaks near -6 dB) and §2.1's
+=restore-audio= then raised every volume found at its minimum to the top. Hence [[#userland-card-device-nodes][Userland for the card: device nodes and the mixer]]'s
+gain in dB at +21.75 (8 dB less would have put those peaks near -6 dB) and [[#choosing-mic-built-headset][Choosing the mic: built-in or headset]]'s
 =choose-mic=. Lowering the gain removes clipping, not the mic's own hiss; a headset
 mic close to the mouth is the cure for that.
 
@@ -585,12 +645,12 @@ headphone out 0x21, inputs =Internal Mic=0x12=, =Headset Mic=0x19=, =Headphone M
 
 - *A segment doesn't end by itself.* The meter output is live mic, so =-shortest= alone
   never finishes ffmpeg: close stdin, wait a second, SIGINT; 255 is success if ffprobe
-  finds a video (§5.3).
+  finds a video ([[#pause-resume-segments][Pause and resume: segments]]).
 - *Never end a segment on the environment's thread.* Done there, pause froze the
-  screen until ffmpeg's timeout (§4.3).
+  screen until ffmpeg's timeout ([[#never-stall-environment][Never stall the environment]]).
 - *=-copyts= into Matroska doesn't keep epoch timestamps.* Tried for the log's
   alignment: ffmpeg wrote a file it couldn't read back ("Duplicate element", "End of
-  file"). Hence =-itsoffset= from =start:= (§5.2).
+  file"). Hence =-itsoffset= from =start:= ([[#damage-log][The damage log (the second mode)]]).
 - *A saved =NIL= setting read back as =:NIL=* (true), so a boot after a volume key
   started muted. =settings.lisp= now maps =:nil= / =:t= back.
 - *QEMU's home under =LOL_GUEST_HOSTROOT=1= is a tmpfs* with 0.3 GB free; the 1 GB rule
@@ -602,20 +662,26 @@ headphone out 0x21, inputs =Internal Mic=0x12=, =Headset Mic=0x19=, =Headphone M
   reading the third field as the width made a correct hand-back look wrong.
 
 * 12. Defaults
+:PROPERTIES:
+:CUSTOM_ID: defaults
+:END:
 
 | Question                    | Default                                                            | Alternative                                                         |
 |-----------------------------+--------------------------------------------------------------------+---------------------------------------------------------------------|
 | Mode                        | *Live* (no wait after stop); log with =m=                          | Log by default                                                      |
 | Frame rate                  | *30 fps* (=*rec-fps*=)                                             | 60 (smoother pointer, ~2× CPU) or 15                                |
 | Resolution                  | *Native*                                                           | Downscaled at encode (smaller files)                                |
-| Audio source                | *The headset's mic when its jack senses one*, else built-in        | Mic + system audio (§13)                                            |
+| Audio source                | *The headset's mic when its jack senses one*, else built-in        | Mic + system audio ([[#open-items-risks][Open items and risks]])                                            |
 | The REC indicator           | *Visible in the video*                                             | Masked out of the recorded copy                                     |
 | Format                      | *MP4: H.264 yuv420p + AAC 48 kHz, faststart*                       | WebM: VP9 + Opus                                                    |
 | Where the file goes         | *=~/.lol/rec/<stamp>/=* (one tree, the lol-home rule)              | =~/Videos/=                                                         |
 | Keys                        | *=SuperL-r= record/pause/resume, =SuperL-S-r= stop*                | —                                                                   |
-| The player                  | *The host's MPlayer, full screen, the screen lent* (§8.2)          | VLC's =fb= output; in a pane via libvlc =vmem= and a C helper (§8.3) |
+| The player                  | *The host's MPlayer, full screen, the screen lent* ([[#mplayer-full-screen-screen][MPlayer full screen, the screen lent]])          | VLC's =fb= output; in a pane via libvlc =vmem= and a C helper ([[#ruled-out][Ruled out]]) |
 
 * 13. Open items and risks
+:PROPERTIES:
+:CUSTOM_ID: open-items-risks
+:END:
 
 *Not yet seen on real hardware:*
 

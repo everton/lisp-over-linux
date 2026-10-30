@@ -1,6 +1,6 @@
 ;;;; worker.lisp — a second process that contributes a VIEW, not pixels.
 ;;;;
-;;;; The smallest honest demonstration of doc/processes.org §2: a peer process
+;;;; The smallest honest demonstration of file:../doc/processes.org::#scenario-peer-sends-view: a peer process
 ;;;; puts something in this environment's UI without ever touching /dev/fb0 and
 ;;;; without anything resembling X.
 ;;;;
@@ -31,7 +31,7 @@
 ;;;;   3. SUBJECTS DO NOT TRAVEL; NAMES DO. The child sends symbols, and the
 ;;;;      parent rebuilds real subjects around them. So a row computed in another
 ;;;;      process still drills into this image's own condition view. That is the
-;;;;      handle idea of §2 in its simplest possible form — good enough while the
+;;;;      handle idea of file:../doc/processes.org::#four-things-need-designing in its simplest possible form — good enough while the
 ;;;;      only subjects are named ones, and not good enough the moment a worker
 ;;;;      wants to hand back an arbitrary object.
 ;;;;
@@ -39,7 +39,7 @@
 ;;;; in-process and says so, so poc/run-browser.lisp and render-frame.lisp keep
 ;;;; working. The fallback is visible in the view, never silent.
 ;;;;
-;;;; See doc/processes.org §2 and §7. All original code, MIT.
+;;;; See file:../doc/processes.org::#scenario-peer-sends-view file:../doc/processes.org::#worked-example-shot-worker. All original code, MIT.
 
 (in-package :cl-user)
 
@@ -74,7 +74,7 @@
 (defun job-signallers ()
   "Every condition type signalled anywhere in the image, and by how many sites.
 
-   The whole-image sweep doc/processes.org §7 argues for: it reads EVERY recorded
+   The whole-image sweep file:../doc/processes.org::#worked-example-shot-worker argues for: it reads EVERY recorded
    definition's captured source back out of the registry and walks every subform
    looking for a signalling call. CLOS cannot answer this — there is no generic
    function to introspect — so it is derived from source, which is why it is both
@@ -141,7 +141,7 @@
 (defun read-worker-form (stream)
   "Read one form from a child. *READ-EVAL* nil because a pipe is untrusted input
    even when we wrote the other end — the net REPL is already remote eval and one
-   of those is enough (doc/processes.org §2)."
+   of those is enough (file:../doc/processes.org::#scenario-peer-sends-view)."
   (with-standard-io-syntax
     (let ((*read-eval* nil)
           (*package* (find-package :cl-user)))
@@ -170,7 +170,7 @@
 
 ;;; ---- the subject ---------------------------------------------------------
 ;;; One struct and one PRESENT method, which is the whole extension surface the
-;;; drill-down protocol promised (code-browser.org §4½).
+;;; drill-down protocol promised (file:../doc/code-browser.org::#drill-down-protocol-present).
 
 (defstruct (subj-worker (:constructor subj-worker (job))) job)
 

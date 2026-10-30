@@ -19,7 +19,7 @@
 ;;;;      answers the test reproduces.
 ;;;;   4. STRUCTURE EDITS — promote/demote, move a subtree, a new heading, TODO
 ;;;;      cycling — as functions from a line vector to a NEW line vector (the editor's
-;;;;      undo is free because its buffer is persistent; doc/clipboard.org §6½).
+;;;;      undo is free because its buffer is persistent; file:../doc/clipboard.org::#undo-other-history-beside).
 ;;;;
 ;;;; Text model, shared with poc/textview.lisp and poc/clipboard.lisp: a buffer is a
 ;;;; SIMPLE-VECTOR of strings, one per line, no newline inside; a line index is
@@ -84,7 +84,7 @@
 ;;; src block as a headline — which is why Org asks you to escape such lines with a
 ;;; comma (",* x"), and why a block left open by one simply ends there. Checked with
 ;;; the host's Emacs 30.2 (Org 9.7.11), 2026-10-18: org-map-entries lists it. The
-;;; design doc once claimed the opposite; it was wrong (doc/org.org §3.1).
+;;; design doc once claimed the opposite; it was wrong (file:../doc/org.org::#lines-first).
 
 (defun headline-line-p (s)
   "Is S a headline: one or more stars at column 0, then a blank?"
@@ -508,7 +508,7 @@
 ;;; ---- 3. folding --------------------------------------------------------------------
 ;;;
 ;;; What is hidden is a SIMPLE-BIT-VECTOR over the lines (1 = hidden), or NIL for
-;;; nothing hidden. The text view draws only the 0s (doc/org.org §5). Every function
+;;; nothing hidden. The text view draws only the 0s (file:../doc/org.org::#folding-change-text-view). Every function
 ;;; here takes the bits and returns NEW bits: never mutated in place, so a caller can
 ;;; keep the old ones (and compare).
 ;;;

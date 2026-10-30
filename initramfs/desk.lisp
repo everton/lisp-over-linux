@@ -8,7 +8,7 @@
 ;;;; typing in — and is gone at power-off. Most of it is not code but it is small and
 ;;;; DESCRIBABLE: a tab is a list of subjects, and most subjects are little structs
 ;;;; naming something by name or path. So the desk is one printed plist, read back
-;;;; with *READ-EVAL* off (doc/session-persistence.org §6):
+;;;; with *READ-EVAL* off (file:../doc/session-persistence.org::#desk-tabs-workspaces-clipboard):
 ;;;;
 ;;;;   (:version 1 :build "…" :saved 3970000000
 ;;;;    :trails (((:ref (:workspace) :text ";; my scratch…" :point (12 4)))

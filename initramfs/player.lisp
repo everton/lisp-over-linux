@@ -1,6 +1,6 @@
 ;;;; player.lisp — play a video with the host's MPlayer, full screen, then come back.
 ;;;;
-;;;; doc/screencast.org §8.2. We do not build a player (the user's call,
+;;;; file:../doc/screencast.org::#mplayer-full-screen-screen. We do not build a player (the user's call,
 ;;;; 2026-10-17): decoding, A/V sync, seeking and the sound are MPlayer's, the host's
 ;;;; own, run in the default container. Our part is the screen and the keys.
 ;;;;
@@ -18,7 +18,7 @@
 ;;;;   SPC pause   <- / -> 5 s   S-<- / S-> 30 s   0-9 jump to 0-90 %
 ;;;;   o the on-screen clock   q or Esc stop (and come back)
 ;;;;
-;;;; :WINDOW T plays in a 640-wide window instead, the interim way of §8.5: MPlayer in
+;;;; :WINDOW T plays in a 640-wide window instead, the interim way of file:../doc/screencast.org::#mplayer-full-screen-screen: MPlayer in
 ;;;; a terminal tab drawing over the right of the screen (two writers — fine for a look,
 ;;;; and why full screen is the default).
 ;;;;

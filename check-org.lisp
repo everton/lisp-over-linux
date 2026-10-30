@@ -4,7 +4,7 @@
 ;;;;
 ;;;; What Org DOES is host-tested against Emacs (poc/org-test.lisp, the pure part;
 ;;;; poc/org-mode-test.lisp, the shell). What only the guest can show is how its KEYS
-;;;; arrive on the bare console, and three of them needed work (doc/org.org §6.3):
+;;;; arrive on the bare console, and three of them needed work (file:doc/org.org::#keys-console):
 ;;;;
 ;;;;   - S-TAB: the console sends a plain Tab; the Shift comes from the keyboard's evdev
 ;;;;   - M-RET: alt_map sends ESC CR, which the tty decoder used to drop

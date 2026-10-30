@@ -118,7 +118,7 @@
         (t (format t "~&network REPL could not start.~%")))
   (show-net-interfaces)           ; diagnostic: NIC bound + address
   ;; sound (tag #29): switch the codec on and restore the saved volume, the job
-  ;; alsactl / WirePlumber do on Debian (mixer.lisp, doc/screencast.org §3.1)
+  ;; alsactl / WirePlumber do on Debian (mixer.lisp, file:../doc/screencast.org::#userland-card-device-nodes)
   (when (fboundp 'restore-audio) (ignore-errors (funcall 'restore-audio)))
   (sleep 1)                       ; let the boot diagnostics be read first
   ;; the journal: every Accept of earlier sessions compiled back in, each entry

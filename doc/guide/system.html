@@ -96,7 +96,7 @@ a clean read-only disk at power-off) stay with a small helper inside preinit.</f
     Tests use <code>test-disk.img</code>, attached <code>snapshot=on</code>. Never pass the real disk to QEMU.</li>
 </ul>
 <p>The file system as data is <a class="ref" data-ref="initramfs/files.lisp#file-entry" href="../../initramfs/files.lisp"><code>file-entry</code><span class="loc">initramfs/files.lisp:224</span></a> and friends, calling libc through
-<code>sb-unix</code> / <code>sb-alien</code> rather than <code>sb-posix</code> (<a href="../processes.org">processes.org</a> §6 explains
+<code>sb-unix</code> / <code>sb-alien</code> rather than <code>sb-posix</code> (<a href="../processes.org">processes.org</a>, “sb-posix — the audit, and why nothing was migrated”, explains
 why: an inlined <code>sb-posix</code> entry point cannot be recompiled in the guest). Folders and files become subjects in
 <code>file-views.lisp</code>. The keys and operations are in <code>poc/file-manager.lisp</code>
 (<a href="../file-manager.org">file-manager.org</a>).</p>
@@ -120,7 +120,7 @@ why: an inlined <code>sb-posix</code> entry point cannot be recompiled in the gu
 <a class="ref" data-ref="initramfs/dhcp.lisp#network-up" href="../../initramfs/dhcp.lisp"><code>network-up</code><span class="loc">initramfs/dhcp.lisp:552</span></a>, which does this on every wired link through
 <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-configure" href="../../initramfs/dhcp.lisp"><code>dhcp-configure</code><span class="loc">initramfs/dhcp.lisp:458</span></a>, then installs the
 default route, writes <code>/etc/resolv.conf</code> and checks the clock through the lease's hooks, and starts the
-<code>netd</code> thread (renewals, Wi-Fi). DNS, SNTP, HTTP/HTTPS and Wi-Fi: <a href="../networking.org">networking.org</a> §2c–f, §7.</figcaption>
+<code>netd</code> thread (renewals, Wi-Fi). DNS, SNTP, HTTP/HTTPS and Wi-Fi: <a href="../networking.org">networking.org</a>, “Userland half — reaching the network from SBCL” and “Wi-Fi”.</figcaption>
 </figure>
 <ul>
   <li><a class="ref" data-ref="initramfs/dhcp.lisp#configure-eth0" href="../../initramfs/dhcp.lisp"><code>configure-eth0</code><span class="loc">initramfs/dhcp.lisp:480</span></a>, <a class="ref" data-ref="initramfs/dhcp.lisp#dhcp-acquire" href="../../initramfs/dhcp.lisp"><code>dhcp-acquire</code><span class="loc">initramfs/dhcp.lisp:322</span></a>,
@@ -138,7 +138,7 @@ default route, writes <code>/etc/resolv.conf</code> and checks the clock through
 <p>Only one process writes <code>/dev/fb0</code>. A peer process contributes a <em>view</em> (data), never pixels.
 <a class="ref" data-ref="initramfs/worker.lisp#call-worker" href="../../initramfs/worker.lisp"><code>call-worker</code><span class="loc">initramfs/worker.lisp:151</span></a> re-executes <code>/sbin/lisp job NAME</code>, reads one
 plist from the pipe with <code>*read-eval*</code> off, and <a class="ref" data-ref="initramfs/worker.lisp#present@subj-worker" href="../../initramfs/worker.lisp"><code>(present subj-worker)</code><span class="loc">initramfs/worker.lisp:189</span></a>
-rebuilds real subjects from the names it receives. <a href="../processes.org">processes.org</a> §2 and §7 explain the
+rebuilds real subjects from the names it receives. <a href="../processes.org">processes.org</a>, “Scenario A — a peer that sends a VIEW” and “The worked example: a one-shot worker”, explain the
 design. <code>check-worker.lisp</code> proves the fork is real.</p>
 
 <div class="pager"><a href="live.html">← Live editing</a><a href="verify.html">How to verify things →</a></div>

@@ -1,6 +1,6 @@
-;;;; stage.lisp — the COLLIDE specimens, moving, dispatching for real (§3b).
+;;;; stage.lisp — the COLLIDE specimens, moving, dispatching for real (file:../doc/code-browser.org::#stage-dispatch-happening-done).
 ;;;;
-;;;; The dispatch matrix (§3) shows which collisions HAVE a rule. This shows collisions
+;;;; The dispatch matrix (file:../doc/code-browser.org::#classes-vs-generic-functions) shows which collisions HAVE a rule. This shows collisions
 ;;;; happening: every sprite is a live CLOS instance from lol.examples, every contact is
 ;;;; a real COLLIDE call, and every hole in the matrix is a no-applicable-method waiting
 ;;;; to open the debugger with the whole stack standing.
@@ -46,7 +46,7 @@
 
 (defpackage :lol.stage
   (:use :cl)
-  (:documentation "The COLLIDE stage (§3b): lol.examples' instances moving, every contact
+  (:documentation "The COLLIDE stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): lol.examples' instances moving, every contact
    a real COLLIDE call. Shown from COLLIDE's generic-function view.")
   ;; the present protocol (present.lisp, in CL-USER) — what a subject speaks
   (:import-from :cl-user #:present #:commands-for #:make-view #:make-command
@@ -91,7 +91,7 @@
    ship at a glance where (:DESTROYED \"ship-2\") does not.
 
    And they are the project's own nouns rather than invented ones, which is the =space=
-   joke §4¾ parked finally landing. The environment is a space; these are the things in
+   joke file:../doc/code-browser.org::#naming-environment-settled parked finally landing. The environment is a space; these are the things in
    it, and each class draws from the register that fits what it DOES:
 
      ships     — Lisp machines. Crewed, mobile, fragile, would rather dock than
@@ -638,7 +638,7 @@
    Accept — works exactly as it does anywhere else. Only the opening text differs.")
 
 (defparameter *stage-workspace-text*
-  ";; Workspace — beside the stage (§3b). The same verbs as any other:
+  ";; Workspace — beside the stage (doc/code-browser.org, \"The Stage\"). The same verbs as any other:
 ;;   C-x C-e   Do it       eval, value to the status line
 ;;   C-c C-p   Print it    eval and weave the result in after the form
 ;;   C-c C-i   Inspect it  eval and open the value in the Inspector

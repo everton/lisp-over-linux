@@ -83,8 +83,8 @@ answers it. The code browser is our answer, in the form of instruments:
 
 - the generic-function panel, which shows *coverage* (where methods live across
   the class space) and *combination* (what actually runs, in which order). See
-  [[file:code-browser.org][code-browser.org]] §3, "The hard one: classes vs generic functions";
-- the *Stage* (§3b), where you watch =COLLIDE='s two-argument dispatch happen;
+  [[file:code-browser.org::#smalltalk-lisp-concept-map][code-browser.org, The Smalltalk → Lisp concept map]], "The hard one: classes vs generic functions";
+- the *Stage* ([[file:code-browser.org::#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]), where you watch =COLLIDE='s two-argument dispatch happen;
 - the live source: every definition shown, edited and recompiled in place
   ([[file:../initramfs/registry.lisp][registry.lisp]]).
 

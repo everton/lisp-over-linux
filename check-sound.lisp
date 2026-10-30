@@ -18,7 +18,7 @@
 ;;;;     / KEY_VOLUMEDOWN / KEY_MUTE on the PS/2 keyboard's evdev): the level moves by a
 ;;;;     step, the status line says so, the tray's VOL item follows, mute toggles;
 ;;;;   - ffmpeg in the container RECORDS from plughw:0,0 (2 s of the backend's silence);
-;;;;   - mplayer in the container, started by the Workspace form doc/screencast.org §8.5
+;;;;   - mplayer in the container, started by the Workspace form file:doc/screencast.org::#playing-file-hand-checking
 ;;;;     gives, PLAYS a 440 Hz tone through plughw:1,0 (card 1 here) into QEMU's WAV file: not silent,
 ;;;;     and its zero crossings say ~440 Hz.
 ;;;;

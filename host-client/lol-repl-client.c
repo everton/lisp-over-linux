@@ -16,8 +16,8 @@
  * Because the keystrokes arrive raw, the line editor running INSIDE the guest
  * (read-line-edited) receives the arrow escape sequences and drives history /
  * editing remotely; its redraw escapes come back and we paint them. So we get
- * full editing over a bare socket with no PTY on the guest side. (networking.org
- * §6a — the raw-forwarding client.)
+ * full editing over a bare socket with no PTY on the guest side.
+ * (file:../doc/networking.org::#raw-tcp-repl — the raw-forwarding client.)
  *
  * Build (host, any libc):
  *     cc -O2 -o lol-repl-client lol-repl-client.c

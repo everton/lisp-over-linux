@@ -77,7 +77,7 @@
   (wait-for-browser)                                        ; boots into the module index
 
   ;; count every repair that drew anything (the screen's morphs are drawn by
-  ;; LOL.MORPH:WORLD-REPAIR, damage by damage — doc/morphic.org §4.2)
+  ;; LOL.MORPH:WORLD-REPAIR, damage by damage — file:doc/morphic.org::#cycle-repair)
   (probe "(progn (defvar *draws* nil) (setf *draws* nil) (sb-int:encapsulate 'lol.morph:world-repair 'count (lambda (f &rest args) (let ((n (lol.morph:world-repairs *world*))) (multiple-value-prog1 (apply f args) (unless (= n (lol.morph:world-repairs *world*)) (push t *draws*)))))) t)")
 
   ;; The arrow's (1,2) cell is W — white fill — so it is unmistakable on screen.

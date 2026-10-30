@@ -9,7 +9,7 @@
 ;;;;
 ;;;; How we reach the kernel. Not sb-posix: its entry points are DECLAIM INLINE over
 ;;;; groveled alien structs, and code that calls them cannot be recompiled inside
-;;;; the guest (doc/processes.org §6) — which would quietly cost C-c C-c on every
+;;;; the guest (file:../doc/processes.org::#sb-posix-audit-nothing) — which would quietly cost C-c C-c on every
 ;;;; definition in this file. So, two layers only:
 ;;;;
 ;;;;   - SB-UNIX, SBCL's own internal wrappers, where they exist and are ordinary

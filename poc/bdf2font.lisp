@@ -2,7 +2,7 @@
 ;;;;
 ;;;;     sbcl --script poc/bdf2font.lisp IN.bdf OUT.lolf
 ;;;;
-;;;; Why this exists (doc/code-browser.org §6.2, doc/fonts.org): we bake a permissive
+;;;; Why this exists (file:../doc/code-browser.org::#must-write-ourselves, doc/fonts.org): we bake a permissive
 ;;;; bitmap font into the tool the way alien.rgba is baked in, and we want to control
 ;;;; the codepoint->glyph index OURSELVES. PSF's implicit glyph ordering is what
 ;;;; caused the "·" -> "Ö" class of bug. So this reads a BDF — honouring each glyph's
@@ -139,7 +139,7 @@
     (when (> cell-w 8)
       (format *error-output*
               "~&width ~d > 8: the 1-byte-per-row blitter can't render it yet ~
-               (see doc/fonts.org §7 Path B).~%" cell-w)
+               (see file:../doc/fonts.org::#which-font-ships-changing Path B).~%" cell-w)
       (return-from main 1))
     (let ((bytes (make-array (+ 4 (* 256 cell-h))
                              :element-type '(unsigned-byte 8) :initial-element 0))

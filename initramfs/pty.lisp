@@ -33,7 +33,7 @@
 ;;;; Lisp at all, which is why it is safe to call from a garbage-collected image.
 ;;;;
 ;;;; CL-USER, every call through EXTERN-ALIEN with basic types (INT, C-STRING,
-;;;; SYSTEM-AREA-POINTER) — no sb-posix (doc/processes.org §6), so every definition
+;;;; SYSTEM-AREA-POINTER) — no sb-posix (file:../doc/processes.org::#sb-posix-audit-nothing), so every definition
 ;;;; here can be recompiled in the guest. Host test: poc/pty-test.lisp.
 ;;;; The tour: doc/terminal.org.
 

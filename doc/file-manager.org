@@ -8,7 +8,7 @@ file, delete something or edit a text file. It's built to be usable from the
 keyboard, like dired or ranger, and unable to take PID 1 down whatever the disk says.
 
 It isn't an app. A folder is one more *subject*, presented by the same =present=
-protocol as a package or a class ([[file:code-browser.org][code-browser.org]] §4½). Everything the browser
+protocol as a package or a class ([[file:code-browser.org::#drill-down-protocol-present][code-browser.org, The drill-down protocol — one =present=, everything browsable]]). Everything the browser
 already does — trails and tabs, the nav split's preview, breadcrumbs, the Spotter,
 the right-button menu, the halo — works on files with no new chrome.
 
@@ -37,12 +37,12 @@ A separate application would need a second list widget, preview pane, set of tab
 and way of saying "open this". Instead, the only new machinery is what a file
 manager needs and a code browser didn't — all generic, none naming a file:
 
-- *Asking a question.* The minibuffer (§5).
+- *Asking a question.* The minibuffer ([[#asking-questions-minibuffer][Asking questions: the minibuffer]]).
 - *Verbs on plain letters.* =SUBJECT-KEY= in [[file:../poc/shell.lisp][shell.lisp]]: a subject's own keys on its
   list pane, called before the generic list keys and only without Ctrl/Meta/Super.
   =SUBJECT-HINTS= gives its status-line hints. A process monitor could bind =k= to
   kill the same way.
-- *Preview ≠ open.* =PRESENT-PREVIEW= (§6).
+- *Preview ≠ open.* =PRESENT-PREVIEW= ([[#previews-preview-side-drill][Previews: preview = side, drill = vertical]]).
 
 * 2. Reaching the kernel — and why not sb-posix
 
@@ -61,7 +61,7 @@ Ruled out:
 
 - *=sb-posix=.* Its entry points are =declaim inline= over groveled structs, which
   don't survive =save-lisp-and-die=, so code calling them *can't be recompiled in
-  the guest* and =C-c C-c= on any definition here would fail ([[file:processes.org][processes.org]] §6). The
+  the guest* and =C-c C-c= on any definition here would fail ([[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]). The
   basic alien types are in the core, so everything here recompiles live.
 - *=sb-unix:unix-opendir= and friends.* They're in SBCL's source but listed in
   =*!removable-symbols*=, and the shipped core drops them: =Symbol "UNIX-OPENDIR"
@@ -152,6 +152,9 @@ re-present — =present= must stay cheap. The view says how many folders were se
 and, when a cap stopped it, which one.
 
 * 5. Asking questions: the minibuffer
+:PROPERTIES:
+:CUSTOM_ID: asking-questions-minibuffer
+:END:
 
 The file manager asks a lot of questions, so it uses Emacs's answer: a *minibuffer*
 ([[file:../poc/shell.lisp][shell.lisp]], =minibuffer-read=). It's *state, not a loop*:
@@ -169,9 +172,12 @@ The file manager asks a lot of questions, so it uses Emacs's answer: a *minibuff
 - *Candidate panel.* =minibuffer-read='s =:candidates= is a function from the text to
   the rows a list above the line shows. =Down= / =C-n= choose one, Tab takes it into
   the line, Enter answers it. The web pane's address prompt uses it to list a
-  folder's files as you type a path, and your history otherwise ([[file:web-browser.org][web-browser.org]] §4.6).
+  folder's files as you type a path, and your history otherwise ([[file:web-browser.org::#address-prompt-knows-paths][web-browser.org, The address prompt knows paths and your history]]).
 
 * 6. Previews: preview = side, drill = vertical
+:PROPERTIES:
+:CUSTOM_ID: previews-preview-side-drill
+:END:
 
 The browser's rule: /moving/ the selection previews it on the right, /drilling/
 (Enter) opens it below. For code the two are the same view. For files they can't
@@ -189,7 +195,7 @@ so a program can tell what it holds — the way =file(1)= does.
 =SuperL-f=, the live filter (=/=) down to =Pictures=, three rows down: the JPEG is
 decoded by =libstbi.so= and scaled into the preview beside the listing. (Every shot
 here is the stand-in home of =make-test-disk.sh=, captured by
-=./refresh-screenshot.sh --scene files=; see §12.)
+=./refresh-screenshot.sh --scene files=; see [[#verified][Verified, and how]].)
 
 [[file:../media/screenshots/files-2026-10-20.png]]
 
@@ -212,12 +218,12 @@ frame from a tenth of the way in, with size, codecs and length in the title
   ready, the =:video-previews= service drops the stale preview and the next repair
   draws the frame.
 - *Opened.* Enter shows the same frame; =p= plays it full screen, =w= in a window
-  ([[file:screencast.org][screencast.org]] §8).
+  ([[file:screencast.org::#playback-host-s-player][screencast.org, Playback: the host's player]]).
 
 | type                 | detected by                                                                                                                 | preview                                                                                                                  | open (Enter)                 | caps                                                                             |
 |----------------------+-----------------------------------------------------------------------------------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------+------------------------------+----------------------------------------------------------------------------------|
 | folder               | lstat                                                                                                                       | its listing                                                                                                              | the folder                   | 2 000 / 20 000 entries                                                           |
-| text                 | no NUL, valid UTF-8 (a cut multibyte tail forgiven)                                                                         | first 200 lines, tabs expanded, Lisp-coloured for =.lisp= &c.                                                            | *the editor* (§7)            | 64 KB preview; editable up to 2 MB, then a read-only head                        |
+| text                 | no NUL, valid UTF-8 (a cut multibyte tail forgiven)                                                                         | first 200 lines, tabs expanded, Lisp-coloured for =.lisp= &c.                                                            | *the editor* ([[#editing-file-saving-safely][Editing a file, and saving it safely]])            | 64 KB preview; editable up to 2 MB, then a read-only head                        |
 | image                | PNG =89 50 4E 47=, JPEG =FF D8 FF=, GIF8, RIFF…WEBP, =qoif=, BMP/netpbm (+ name), TGA/ICO/PSD/HDR (name + lol.image agrees) | the picture, scaled to fit                                                                                               | the same, full pane          | 8 MB to preview, 48 MB to open; lol.image refuses > 40 Mpx                       |
 | symlink              | lstat                                                                                                                       | the *target's* preview, titled =link name -> target=                                                                     | the target, through the link | —                                                                                |
 | broken link          | stat fails                                                                                                                  | where it points, and its folder                                                                                          | same                         | —                                                                                |
@@ -240,6 +246,9 @@ frame from a tenth of the way in, with size, codecs and length in the title
   backends present this canvas, so /dev/fb0 and X11 need nothing more.
 
 * 7. Editing a file, and saving it safely
+:PROPERTIES:
+:CUSTOM_ID: editing-file-saving-safely
+:END:
 
 Enter on a text file opens a =:file= pane: the same text view as source code, saved
 with =C-x C-s=. A =.lisp= file keeps the Workspace's verbs — =C-x C-e= Do it, =C-c C-c=
@@ -314,6 +323,9 @@ a folder (EPERM).
 act on all marked entries; =U= clears them.
 
 * 9. The Spotter reads paths
+:PROPERTIES:
+:CUSTOM_ID: spotter-reads-paths
+:END:
 
 Anything typed into the Spotter that *looks like a path* is not a fuzzy query
 (=path-query-p=):
@@ -353,7 +365,7 @@ file manager.
 
 - =SuperL-f= — the file manager: focuses the tab already showing a folder, or opens
   one at =$HOME= (from that tab, a new one).
-- The Spotter: =files=, =home=, or any path (§9).
+- The Spotter: =files=, =home=, or any path ([[#spotter-reads-paths][The Spotter reads paths]]).
 - The right-button menu's environment section: /Files/.
 
 * 11. Keys
@@ -391,12 +403,15 @@ meaning in every list). =SuperL-?= shows the same keys in its /Files/ group
 In a file you are editing: =C-x C-s= saves, =C-_= undoes, =C-g= closes (twice if
 modified), plus every editor key ([[file:clipboard.org][clipboard.org]]); a Lisp file adds =C-x C-e= and
 =C-c C-c=. A video you opened (=.mp4=, =.mkv=, =.webm=, …) plays with =p= — full screen, the
-screen lent to the host's MPlayer — or =w= in a window ([[file:screencast.org][screencast.org]] §8.2). In the
-minibuffer: §5. Every folder and file command is also in the
+screen lent to the host's MPlayer — or =w= in a window ([[file:screencast.org::#mplayer-full-screen-screen][screencast.org, MPlayer full screen, the screen lent]]). In the
+minibuffer: [[#asking-questions-minibuffer][Asking questions: the minibuffer]]. Every folder and file command is also in the
 right-button menu and the halo, from =commands-for= — the menu, the keys and the status
 line all read the same declarations.
 
 * 12. Verified, and how
+:PROPERTIES:
+:CUSTOM_ID: verified
+:END:
 
 - =sbcl --script poc/files-test.lisp= — 70 checks in a fresh scratch directory
   (never =$HOME=): every operation above including the refusals (EEXIST on rename /
@@ -416,7 +431,7 @@ line all read the same declarations.
 - *In the guest* (tag #25, [[file:../check-files.lisp][check-files.lisp]] with the stand-in disk): a real held
   =SuperL-f= over QMP opens the file manager at =$HOME= (=/home/<user>=); =+= then a typed name
   makes a folder on the ext4 disk owned by uid 1000 (because PID 1 runs as the
-  user — [[file:storage.org][storage.org]] §5); the Spotter completes =~/Pic= to =Pictures/=; and a
+  user — [[file:storage.org::#running-user-capabilities-root][storage.org, Running as the user: capabilities, not root]]); the Spotter completes =~/Pic= to =Pictures/=; and a
   screendump shows =~/Pictures= with a JPEG decoded by =libstbi.so= in the preview;
   and =q= on the opened JPEG goes back to the folder with the environment still
   reading keys. (=q= is /back/ everywhere; leaving is only =SuperL-q=, which asks. A

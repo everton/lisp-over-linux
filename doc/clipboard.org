@@ -3,7 +3,7 @@
 
 Sibling docs: [[file:input.org][input.org]] (where the keys and the mouse buttons come from) ·
 [[file:line-editing.org][line-editing.org]] (the console REPL's own editing keys) ·
-[[file:code-browser.org][code-browser.org]] §4¾ (the shell whose editors this clipboard serves).
+[[file:code-browser.org::#environment-trails-spotter-tiled][code-browser.org, The environment — trails, the Spotter, and the tiled shell]] (the shell whose editors this clipboard serves).
 
 Code: [[file:../poc/clipboard.lisp][poc/clipboard.lisp]] (package =LOL.CLIPBOARD=) · test:
 [[file:../poc/clipboard-test.lisp][poc/clipboard-test.lisp]] (=sbcl --script poc/clipboard-test.lisp=).
@@ -11,13 +11,13 @@ Code: [[file:../poc/clipboard.lisp][poc/clipboard.lisp]] (package =LOL.CLIPBOARD
 The environment's clipboard combines three familiar models: a desktop clipboard
 manager's browsable history (Parcellite's, which refuses to record whitespace), X's
 select-to-copy / middle-click-to-paste, and the Emacs kill ring and rectangle keys.
-The editor's undo and incremental search live here too (§6½, §6¾).
+The editor's undo and incremental search live here too ([[#undo-other-history-beside][Undo — the other history beside the kill ring]], [[#search-c-s-c][Search — =C-s= / =C-r=, and the mark it leaves]]).
 
 *Status: built.* The core is host-tested (63 assertions). The keys, the mouse and
 the manager card are wired in [[file:../poc/shell.lisp::defun clipboard-key][=poc/shell.lisp=]] (the "clipboard, wired into the
 editor" section), [[file:../poc/textview.lisp::defun tv-region][=poc/textview.lisp=]] (the region and the rectangle display)
 and [[file:../poc/overlays.lisp::defun run-clipboard-manager][=poc/overlays.lisp=]] (the manager, an overlay), and verified in the guest by
-[[file:../check-clipboard.lisp][check-clipboard.lisp]]. §6 is the key table.
+[[file:../check-clipboard.lisp][check-clipboard.lisp]]. [[#key-table-wired][The key table, as wired]] is the key table.
 
 * The one-sentence essence
 
@@ -48,6 +48,9 @@ whether this kill continues the last one); this file decides /what that does/ to
 the stored text. Being pure, it's tested on the host by a plain =sbcl --script=.
 
 * 2. Parcellite — what we copy and what we don't
+:PROPERTIES:
+:CUSTOM_ID: parcellite-copy-don-t
+:END:
 
 Parcellite's options are a good catalogue of what a clipboard history can do. The
 names below are the keys in its config file (=~/.config/parcellite/parcelliterc=).
@@ -60,10 +63,10 @@ names below are the keys in its config file (=~/.config/parcellite/parcelliterc=
 | =data_size=                                | a cap on entry size                                           | *yes* — =board-max-length=, 1 000 000 chars |
 | =single_line= + =item_length= (50)         | show each entry as one ellipsised row                         | *yes* — [[file:../poc/clipboard.lisp::defun clip-label][=clip-label=]]                        |
 | =type_search= / =case_search=              | type to filter the menu                                       | *yes* — [[file:../poc/clipboard.lisp::defun clip-filter][=clip-filter=]], case-insensitive     |
-| =history_key=                              | a key that pops the history up                                | *yes* — =SuperL-h= (§7)                     |
-| =use_copy= / =use_primary= / =synchronize= | track CLIPBOARD, PRIMARY, or keep both equal                  | *partly* — §3: a mouse selection sets both  |
+| =history_key=                              | a key that pops the history up                                | *yes* — =SuperL-h= ([[#manager][The manager]])                     |
+| =use_copy= / =use_primary= / =synchronize= | track CLIPBOARD, PRIMARY, or keep both equal                  | *partly* — [[#selections-clipboard-primary][Two selections: CLIPBOARD and PRIMARY]]: a mouse selection sets both  |
 | =trim_wspace_begend= / =trim_newline=      | rewrite the text on the way in                                | *no* — a copy should paste back exactly     |
-| =save_history= / =persistent_history=      | survive a restart                                             | *opt-in* — the desk keeps N entries (§8)    |
+| =save_history= / =persistent_history=      | survive a restart                                             | *opt-in* — the desk keeps N entries ([[#limits][Limits]])    |
 | =hyperlinks_only=, actions (=actions_key=) | URL filtering, run a command on an entry                      | *no* — no browser, no shell to run it in    |
 
 - *Blank refusal.* A copy that's all whitespace is almost always a mis-click — a
@@ -79,6 +82,9 @@ names below are the keys in its config file (=~/.config/parcellite/parcelliterc=
   browsable list duplicates are noise.
 
 * 3. Two selections: CLIPBOARD and PRIMARY
+:PROPERTIES:
+:CUSTOM_ID: selections-clipboard-primary
+:END:
 
 X has two everyday selections, and they are independent:
 
@@ -88,7 +94,7 @@ X has two everyday selections, and they are independent:
   *middle mouse button*. Select a word in one terminal, middle-click in another,
   done.
 
-We model them as two different things: the *history* (§2, whose newest entry is
+We model them as two different things: the *history* ([[#parcellite-copy-don-t][Parcellite — what we copy and what we don't]], whose newest entry is
 the CLIPBOARD) and [[file:../poc/clipboard.lisp::defun set-primary][=set-primary=]] / =primary=, a single string with no history,
 exactly as X has.
 
@@ -148,6 +154,9 @@ buffer, because only it can replace it — [[file:../poc/clipboard.lisp::defun i
 for exactly that.
 
 * 5. Rectangles
+:PROPERTIES:
+:CUSTOM_ID: rectangles
+:END:
 
 A *rectangle*, in Emacs, is the block of text between two corners taken
 /column-wise/: every line from the top corner's line to the bottom one, and on
@@ -203,11 +212,14 @@ spans several; we do not, which is honest only because the text view inserts
 spaces for =Tab=. Pasted text containing tabs would rectangle-cut by characters.
 
 * 5½. Drag and drop is not the clipboard
+:PROPERTIES:
+:CUSTOM_ID: drag-drop-clipboard
+:END:
 
 A row dragged onto editable text inserts text too, but nothing passes through the
 clipboard: neither the history nor PRIMARY changes, and =M-y= does not see it.
 What travels is not text but a *subject*, carried by the hand
-([[file:morphic.org][morphic.org]] §9.4); the text view asks it for a *readable reference*
+([[file:morphic.org::#subject-s-readings][morphic.org, A subject's two readings]]); the text view asks it for a *readable reference*
 ([[file:../poc/shell.lisp::defun drop-reference][=drop-reference=]]: ='name=, =#'f=, =(find-class 'c)=, a path as a string) and inserts
 that where it lands, as one undoable edit ([[file:../poc/shell.lisp::defun drop-reference-at][=drop-reference-at=]]). Two reasons it
 stays apart:
@@ -220,6 +232,9 @@ stays apart:
   tested against an X server).
 
 * 6. The key table, as wired
+:PROPERTIES:
+:CUSTOM_ID: key-table-wired
+:END:
 
 Bindings verified against =key-binding= in Emacs 30.2 (=emacs --batch=); the shell
 side is [[file:../poc/shell.lisp::defun clipboard-key][=clipboard-key=]] (one place, tested before the editor's own keys) and
@@ -242,11 +257,11 @@ the =C-x= chords in [[file:../poc/shell.lisp::defun edit-pane-key][=edit-pane-ke
 | drag, then release      | X PRIMARY                       | =clip-select=, *on release*                        | =browser-drag-end=        |
 | double / triple click   | X: select the word / the line   | =clip-select=, at once                             | =text-press=              |
 | middle click in text    | =mouse-yank-primary=            | =primary= → =insert-text= at the click             | =pane-middle-click=       |
-| drag a row onto text    | (a drop, not a selection)       | a readable reference, =insert-text= where it lands | =drop-reference-at= (§5½) |
-| =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)    | — (=tv-undo=, §6½)                                 | =editor-undo=             |
-| =C-s=, =C-r=            | =isearch-forward= / =-backward= | — (=tv-isearch-key=, §6¾)                          | =start-isearch=           |
-| =C-x C-x=               | =exchange-point-and-mark=       | — (=tv-exchange-point-and-mark=, §6¾)              | =exchange-point-and-mark= |
-| =SuperL-h=, tray icon   | the manager (§7)                | =clip-filter= / =clip-promote= / =clip-delete=     | =open-clipboard-manager=  |
+| drag a row onto text    | (a drop, not a selection)       | a readable reference, =insert-text= where it lands | =drop-reference-at= ([[#drag-drop-clipboard][Drag and drop is not the clipboard]]) |
+| =C-_=, =C-/=, =C-x u=   | =undo= (again: further back)    | — (=tv-undo=, [[#undo-other-history-beside][Undo — the other history beside the kill ring]])                                 | =editor-undo=             |
+| =C-s=, =C-r=            | =isearch-forward= / =-backward= | — (=tv-isearch-key=, [[#search-c-s-c][Search — =C-s= / =C-r=, and the mark it leaves]])                          | =start-isearch=           |
+| =C-x C-x=               | =exchange-point-and-mark=       | — (=tv-exchange-point-and-mark=, [[#search-c-s-c][Search — =C-s= / =C-r=, and the mark it leaves]])              | =exchange-point-and-mark= |
+| =SuperL-h=, tray icon   | the manager ([[#manager][The manager]])                | =clip-filter= / =clip-promote= / =clip-delete=     | =open-clipboard-manager=  |
 
 Where each key comes from, since the console delivers them unevenly:
 
@@ -273,6 +288,9 @@ Where each key comes from, since the console delivers them unevenly:
   Alt-click ([[file:input.org][input.org]], "Three buttons on a pad with one").
 
 * 6½. Undo — the other history beside the kill ring
+:PROPERTIES:
+:CUSTOM_ID: undo-other-history-beside
+:END:
 
 The kill ring remembers what you /took out/; undo remembers what the buffer /was/.
 Both are Emacs's, and the second is wired the Emacs way too: =C-_=, =C-/= or
@@ -321,6 +339,9 @@ Host test: [[file:../poc/undo-test.lisp][poc/undo-test.lisp]] (=sbcl --script po
 assertions); in the guest, section K of [[file:../check-clipboard.lisp][check-clipboard.lisp]].
 
 * 6¾. Search — =C-s= / =C-r=, and the mark it leaves
+:PROPERTIES:
+:CUSTOM_ID: search-c-s-c
+:END:
 
 The third history an Emacs user expects, beside the kill ring and undo, is
 /where you were looking/. =C-s= searches forward, =C-r= backward, in any text view —
@@ -377,13 +398,13 @@ it does not move it — and it is clamped when used.
 other matches in view a quieter olive one (Emacs's =isearch= and =lazy-highlight=
 faces); neither is the accent, which a function name already wears. The bands are
 part of what a row shows ([[file:../poc/textview.lisp::defun tv-row-keys][=tv-row-keys=]]), so the world repairs exactly the rows a
-key changed ([[file:morphic.org][morphic.org]] §4.5). The status line shows Emacs's prompt —
+key changed ([[file:morphic.org::#text-view-damages-rows][morphic.org, A text view damages rows, not the pane]]). The status line shows Emacs's prompt —
 "Failing wrapped I-search backward: " and the like — with the part of the string
 that matches nothing in red ([[file:../poc/shell.lisp::defun draw-isearch-prompt][=draw-isearch-prompt=]]). A match off to the right
 scrolls the view sideways even in a read-only pane, which has no caret to follow.
 
 *How the keys arrive.* On the console =C-s= is byte 19, which the line discipline
-takes as XOFF while =IXON= is on, stopping the console ([[file:diagnostics.org][diagnostics.org]] §1). Raw
+takes as XOFF while =IXON= is on, stopping the console ([[file:diagnostics.org::#four-ways-screen-freezes][diagnostics.org, Four ways a screen "freezes"]]). Raw
 mode clears =IXON=, so it's a key like any other.
 =C-x C-s= is still save: the chord is decided before =C-s= is looked at.
 
@@ -407,10 +428,13 @@ paint through a search in [[file:../poc/morphic-test.lisp][poc/morphic-test.lisp
 [[file:../check-isearch.lisp][check-isearch.lisp]] (17) drives it with QMP keys.
 
 * 7. The manager
+:PROPERTIES:
+:CUSTOM_ID: manager
+:END:
 
 Parcellite's history is a pop-up menu. Ours is the shape the environment already
 has for "pick one from many": a *modal card like the Spotter* (=SuperL-Space=,
-[[file:code-browser.org][code-browser.org]] §4¾), drawn with the same list widget.
+[[file:code-browser.org::#environment-trails-spotter-tiled][code-browser.org, The environment — trails, the Spotter, and the tiled shell]]), drawn with the same list widget.
 
 | key                      | does                                                                     |
 |--------------------------+--------------------------------------------------------------------------|
@@ -436,16 +460,19 @@ Drawing:
 the pick; [[file:../poc/shell.lisp::defun open-clipboard-manager][=open-clipboard-manager=]] pastes it).
 
 * 8. Limits
+:PROPERTIES:
+:CUSTOM_ID: limits
+:END:
 
 - *Not shared with another OS.* There's no X server inside the image and no channel
   to another system's selections, so text copied on a host desktop can't be pasted
   in, or back. (Under QEMU the net REPL on :4005 is the way to move text in.)
   Programs in a terminal pane reach the history through OSC 52
-  ([[file:terminal.org][terminal.org]] §10).
+  ([[file:terminal.org::#pane][terminal.org, The pane]]).
 - *Persisted only on request.* The history lives in the heap. The desk saves the
   newest N entries when =~/.lol/settings= sets =:desk-clipboard N= (at most 50; the
   default is none) — [[file:session-persistence.org][session-persistence.org]]. PRIMARY and the rectangle are never
   saved.
 - *One process.* A second process (the =job= worker of [[file:processes.org][processes.org]]) has its
   own heap and so its own, empty clipboard. Nothing it does copies text.
-- *Columns are characters* (see §5's note on tabs).
+- *Columns are characters* (see [[#rectangles][Rectangles]]'s note on tabs).

@@ -1,6 +1,6 @@
 ;;;; registry.lisp — the definition registry: the source lives IN the image.
 ;;;;
-;;;; This is Phase 0 of the code browser (doc/code-browser.org §2). The problem
+;;;; This is Phase 0 of the code browser (file:../doc/code-browser.org::#model-layer-unit-code). The problem
 ;;;; it solves: build.sh bakes the .lisp files into the frozen lisp-init and
 ;;;; ships only the binary — the sources are NOT in the running system, and
 ;;;; sb-introspect's source locations point at the build host's paths, which do
@@ -194,7 +194,7 @@
 
    Note: the span from one form's end to the next form's end includes the blank
    lines and comments between them, so a doc-comment written above a DEFUN is
-   captured WITH it — exactly where it belongs (doc/code-browser.org §2)."
+   captured WITH it — exactly where it belongs (file:../doc/code-browser.org::#model-layer-unit-code)."
   (load path)                                    ; execute first: packages now exist
   (record-source path))
 
@@ -211,7 +211,7 @@
     (or (and d (defn-package d) (find-package (defn-package d)))
         *package*)))
 
-;;; The Accept SANDBOX hook (sandbox.lisp, doc/processes.org §7¾). NIL here, so this
+;;; The Accept SANDBOX hook (sandbox.lisp, file:../doc/processes.org::#accept-tries-definition-child). NIL here, so this
 ;;; file stands alone; sandbox.lisp — loaded much later — sets it to a function of
 ;;; (TEXT PACKAGE-NAME) that tries the definition in a CHILD process first and
 ;;; signals when the child did not survive it. It runs before anything else in

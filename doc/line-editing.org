@@ -45,7 +45,7 @@ few lines of =sb-alien= to a function that's already there.
   the guest. The REPL still ran, but =(compile nil '(lambda () (with-raw-mode (0)
   :x)))= failed in the guest — you could no longer =C-c C-c= this file's own
   definitions from inside the image. The hand-rolled version recompiles there
-  (checked both ways). Full audit: [[file:processes.org][processes.org]] §6.
+  (checked both ways). Full audit: [[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]].
 - *Always restore.* The saved termios goes back on every exit through
   =unwind-protect=.
 
@@ -79,7 +79,7 @@ exactly right:
 | =SIOCSIFADDR=              | =0x8916= | set an interface's address    | [[file:../initramfs/net.lisp::defconstant +siocsifaddr+][net.lisp]]           |
 | =SIOCSIFFLAGS=             | =0x8914= | bring an interface up/down    | [[file:../initramfs/net.lisp::defconstant +siocsifflags+][net.lisp]]           |
 | =KDSETMODE=                | =0x4B3A= | console text ↔ graphics mode  | [[file:../poc/fb.lisp::defconstant +kdsetmode+][fb.lisp]]            |
-| =FBIOGET_VSCREENINFO=      | =0x4600= | read framebuffer pixel format | [[file:framebuffer.org][framebuffer.org]] §5 |
+| =FBIOGET_VSCREENINFO=      | =0x4600= | read framebuffer pixel format | [[file:framebuffer.org::#dev-fb0-driving-pixels][framebuffer.org, /dev/fb0 — driving the pixels yourself]] |
 
 An ioctl is *the same three-argument FFI call every time*. Bind it once with
 =sb-alien= and every one of those knobs is reachable — which is why this project
@@ -87,8 +87,7 @@ needs no =stty=, =ip=, =fbset= or =setfont=. The cost: the kernel does no type
 checking for you. A wrongly laid-out struct gets =EINVAL= at best, silence at
 worst.
 
-See also [[file:networking.org][networking.org]] §2 (the interface ioctls in anger) and [[file:framebuffer.org][framebuffer.org]]
-§9.3 (=KDSETMODE=, with the =unwind-protect= that keeps you from a dead console).
+See also [[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]] (the interface ioctls in anger) and [[file:framebuffer.org::#kd-graphics-telling-fbcon][framebuffer.org, KD_GRAPHICS — telling fbcon to stand down]] (=KDSETMODE=, with the =unwind-protect= that keeps you from a dead console).
 
 * What makes it render: fbcon speaks ANSI/VT
 
@@ -114,7 +113,7 @@ raw mode it's a full escape-driven canvas ([[file:framebuffer.org][framebuffer.o
      at a time.
    - *=c_iflag=*: clear =IXON|IXOFF=. With =IXON= on, Ctrl-S is flow control
      (XOFF): the kernel keeps the byte and stops the console's output until a
-     Ctrl-Q, which froze the environment on its next write ([[file:diagnostics.org][diagnostics.org]] §1).
+     Ctrl-Q, which froze the environment on its next write ([[file:diagnostics.org::#four-ways-screen-freezes][diagnostics.org, Four ways a screen "freezes"]]).
    - *=ISIG= kept by default*, so Ctrl-C still interrupts a runaway eval. Passing
      =signals nil= clears it too, so Ctrl-C arrives as a byte — what the code
      browser needs for its =C-c C-c= chord.

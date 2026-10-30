@@ -7,7 +7,7 @@
 ;;;; Smalltalk solved this forty years ago with its .changes file: every accepted
 ;;;; method is appended to a log THE MOMENT it is accepted, so a crash or a pulled plug
 ;;;; loses nothing that was accepted, and the log is replayed to recover. This is that
-;;;; log, for this image (doc/session-persistence.org §4 — the design, the choices
+;;;; log, for this image (file:../doc/session-persistence.org::#change-journal — the design, the choices
 ;;;; and the reasons; this header only says what the code does).
 ;;;;
 ;;;; WRITE side.  ACCEPT-SOURCE (registry.lisp) runs *ACCEPT-HOOKS* after every
@@ -34,7 +34,7 @@
 ;;;;   :pending        written by a DIFFERENT build: the code around it may have moved,
 ;;;;                   so it waits in the journal view to be Accepted or dropped by hand
 ;;;;   :needs-rebuild  a DEFSTRUCT: redefining a struct breaks every live instance
-;;;;                   (doc §4, "Structs are the sharp edge"), so it is never replayed
+;;;;                   (file:../doc/session-persistence.org::#replay-at-boot, "Structs are the sharp edge"), so it is never replayed
 ;;;;   :failed         it would not read, or not compile, or ran past the timeout
 ;;;;
 ;;;; A torn last record (the power went mid-write) stops the reader; the readable
@@ -73,7 +73,7 @@
 
 (defun home-mounted-p ()
   "True when /proc/mounts lists a mount AT /home — the laptop's /home bind-mounted
-   by preinit (doc/storage.org §4), or the 9p test mode's overlay. A diskless boot
+   by preinit (file:../doc/storage.org::#mount-layout-host-s), or the 9p test mode's overlay. A diskless boot
    has none: its /home is just a directory in the initramfs."
   (ignore-errors
     (with-open-file (in "/proc/mounts")
@@ -525,7 +525,7 @@
      (append
       (list (make-item :label (if path (abbreviate-home path) "no disk - nothing is kept")
                        :detail (if path (replay-summary report)
-                                   "a diskless boot writes nothing (doc/session-persistence.org §3)")
+                                   "a diskless boot writes nothing (file:../doc/session-persistence.org::#where-things-live-when)")
                        :kind :package :group "journal"))
       (when (getf report :stop)
         (list (make-item :label (format nil "reading stopped at character ~d" (getf (getf report :stop) :offset))

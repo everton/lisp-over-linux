@@ -1,7 +1,7 @@
 ;;;; url-prompt-test.lisp — host test for the web pane's address prompt: the
 ;;;; minibuffer's candidate panel (poc/shell.lisp, "The candidate panel"; the morph in
 ;;;; poc/morphic.lisp), paths typed into C-l (a folder listed like a small file manager)
-;;;; and the history (initramfs/web.lisp, "the history"). See doc/web-browser.org §4.6.
+;;;; and the history (initramfs/web.lisp, "the history"). See file:../doc/web-browser.org::#address-prompt-knows-paths.
 ;;;;
 ;;;;     sbcl --script poc/url-prompt-test.lisp      ; exits 0 if every check passes
 ;;;;

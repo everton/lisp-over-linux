@@ -8,7 +8,7 @@ Windows overlap, damage is repaired per morph, live panes step themselves, and a
 subject can be dragged from one morph and dropped on another.
 
 *Status: built.* This is Phase 7 of the code browser ([[file:code-browser.org][code-browser.org]], "Phases").
-What's not built is in §14.
+What's not built is in [[#known-limits][Known limits]].
 
 Code: [[file:../poc/morph.lisp][poc/morph.lisp]] (=lol.morph=, the backend-blind core),
 [[file:../poc/morphic.lisp][poc/morphic.lisp]] (the desk: the shell as morphs, windows, layout, damage, drag and
@@ -41,18 +41,24 @@ vocabulary this doc uses:
   morph, including ones nobody wrote handles for. There's no separate "edit mode":
   the running UI is the thing you edit.
 
-The project's slogan, from [[file:code-browser.org][code-browser.org]] §1: /Smalltalk was never an X
+The project's slogan, from [[file:code-browser.org::#framebuffer-x-question-answered][code-browser.org, Framebuffer or X? — the question, answered]]: /Smalltalk was never an X
 application; Smalltalk was the window system./ This is that sentence taken literally.
 
 * 2. The design
+:PROPERTIES:
+:CUSTOM_ID: design
+:END:
 
 ** 2.1 Principles
+:PROPERTIES:
+:CUSTOM_ID: principles
+:END:
 
 - *Morphs are CLOS objects.* =morph= is a =standard-class=, so the model layer, the
   Inspector, =all-instances= and the halo understand it with no extra code.
 - *The World owns the one event loop.* Poll, turn input into events, dispatch, step,
   repair damage, present. There are no nested modal loops: a menu waits by turning the
-  same loop (§7).
+  same loop ([[#overlays-modal-cards-loop][Overlays: modal cards in the one loop]]).
 - *Everything on screen is a morph.* There's one way to be on screen, not a tree of
   morphs around a monolithic painter. The tab strip, a breadcrumb, a pane, the list
   inside it and a window's title bar each draw themselves, take their own events and
@@ -78,12 +84,15 @@ renderer.
   drags opaque by default (macOS, Windows since the late 1990s, GNOME and KDE); outline
   dragging is what slow machines did, because repainting what the window uncovered was
   too expensive. Squeak's Morphic drags the morph itself. Here a moved window is a copy
-  of its backing store (§3.4), well under a millisecond (§11).
-- *Keyboard first, still.* Every window operation has a key (§6.2); the mouse is an
+  of its backing store ([[#surfaces][Surfaces]]), well under a millisecond ([[#costs][What it costs]]).
+- *Keyboard first, still.* Every window operation has a key ([[#keys-gestures][Keys and gestures]]); the mouse is an
   accelerant. Every window key is in the =SuperL-?= cheatsheet, group "Windows".
-- *A minimal title bar* in the tab strip's own style (§6.1).
+- *A minimal title bar* in the tab strip's own style ([[#window][What a window is]]).
 
 * 3. The core: =lol.morph=
+:PROPERTIES:
+:CUSTOM_ID: core-lol-morph
+:END:
 
 [[file:../poc/morph.lisp][poc/morph.lisp]] knows nothing about the browser. It's the toolkit; [[file:../poc/morphic.lisp][poc/morphic.lisp]]
 builds the browser's morphs on it, in =CL-USER= beside the shell.
@@ -103,7 +112,7 @@ top), =step-ms= (NIL: never stepped), =subject= (what it shows, if anything), an
 | =morph-opaque-p=    | does it paint every pixel of its bounds? (repair starts at the topmost opaque cover) |
 | =morph-hit-p=       | is a point /on/ it? default: in its bounds; a window's frame is hit only at its grip |
 | =drop-morph=        | the hand let go of this morph after carrying it                                      |
-| =accept-drop=       | will you take what the hand carries? (§9.3)                                          |
+| =accept-drop=       | will you take what the hand carries? ([[#dropping][Dropping]])                                          |
 
 Two rules:
 
@@ -120,18 +129,21 @@ A [[file:../poc/morph.lisp::defclass world (morph)][=world=]] is a morph the siz
 the keyboard focus, each stepping morph's deadline, and the hand.
 
 The [[file:../poc/morph.lisp::defclass hand (morph)][=hand=]] is *not* drawn into the canvas. The arrow is composited as a patch after
-the frame ([[file:framebuffer.org][framebuffer.org]] §9.5), so a bare pointer move costs microseconds and
+the frame ([[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]]), so a bare pointer move costs microseconds and
 repairs nothing. What the hand holds:
 
 - *=hand-capture=* — the morph the last press went to. Its drag and its release go
   there too, wherever the pointer wanders.
 - *=hand-carrying=* — a morph being moved or resized (a window), with its grab offset.
-- *=hand-press=* — the press in progress, described by the morph that took it (§9.1).
+- *=hand-press=* — the press in progress, described by the morph that took it ([[#press-progress][The press in progress]]).
 - *=hand-clicks=* — the last press, from which [[file:../poc/morph.lisp::defun hand-count-click][=hand-count-click=]] counts a double or
   triple click.
-- *A payload* — a subject picked up to be dropped (=hand-carry-payload=, §9).
+- *A payload* — a subject picked up to be dropped (=hand-carry-payload=, [[#hand-press-progress-drag][The hand: the press in progress, drag and drop]]).
 
 ** 3.3 Events and dispatch
+:PROPERTIES:
+:CUSTOM_ID: events-dispatch
+:END:
 
 One event struct, built from what the backend's loop decodes:
 
@@ -158,6 +170,9 @@ One event struct, built from what the backend's loop decodes:
 A bare pointer move is an event too; it damages nothing.
 
 ** 3.4 Surfaces
+:PROPERTIES:
+:CUSTOM_ID: surfaces
+:END:
 
 A [[file:../poc/morph.lisp::defclass surface (morph)][=surface=]] draws its subtree into a *backing store* of its own — a canvas its
 size — which the world then copies onto the screen. A window is a surface.
@@ -179,6 +194,9 @@ store is what makes opaque drag nearly free.
 * 4. Drawing and damage
 
 ** 4.1 The canvas clip rectangle
+:PROPERTIES:
+:CUSTOM_ID: canvas-clip-rectangle
+:END:
 
 Damage repair needs every pixel writer to stay inside the rect being repaired, or a
 pane redrawing itself would scribble over a window above it.
@@ -204,6 +222,9 @@ pane redrawing itself would scribble over a window above it.
 itself escapes the clip. =blit-pixels= is a =REPLACE= per row, so it costs nothing.
 
 ** 4.2 The cycle and the repair
+:PROPERTIES:
+:CUSTOM_ID: cycle-repair
+:END:
 
 #+begin_example
 poll → events → dispatch → step due morphs → layout (desk-sync) → damage list
@@ -221,8 +242,8 @@ poll → events → dispatch → step due morphs → layout (desk-sync) → dama
   redraw, while apart they're a strip of shell plus a window-sized copy. More than 16
   rects (=+max-damage-rects+=), or one covering the screen, become one full repair.
 - *The world lays out first.* =world-before-repair= is where the desk runs
-  =desk-sync= (§5.3), so a change made from the net REPL, the agent's thread or a
-  service is laid out and found by its signature (§4.4) at the next repair, with nobody
+  =desk-sync= ([[#layout-container-s-policy][Layout is a container's policy]]), so a change made from the net REPL, the agent's thread or a
+  service is laid out and found by its signature ([[#damage-per-morph][Damage per morph]]) at the next repair, with nobody
   having to announce it.
 - *[[file:../poc/morph.lisp::defun world-repair][=world-repair=]] returns the rects it drew*; the backend sends just those.
   =world-last-repair= records, per rect, which morphs drew in it (=:per-rect=) — the
@@ -232,6 +253,9 @@ poll → events → dispatch → step due morphs → layout (desk-sync) → dama
   =draw-browser= survives only as a name for "paint the whole world afresh".
 
 ** 4.3 Painted rects: the fast paths
+:PROPERTIES:
+:CUSTOM_ID: painted-rects-fast-paths
+:END:
 
 Some things paint straight into a canvas without a full morph draw: the tray's clock
 (=tick-tray=), a terminal's dirty rows, a web page's newest frame. Each paints into
@@ -245,6 +269,9 @@ then composited again would be dimmed twice. Painted-only repairs don't touch
 =world-last-repair= or =world-repairs=, which describe repairs of damage.
 
 ** 4.4 Damage per morph
+:PROPERTIES:
+:CUSTOM_ID: damage-per-morph
+:END:
 
 - *An event damages the morph it reached*: a key the body it was typed into
   ([[file:../poc/shell.lisp::defun focused-body][=focused-body=]]: the side's when the side has the keys), a click the body clicked,
@@ -281,6 +308,9 @@ What a signature must and mustn't hold:
   ship is found.
 
 ** 4.5 A text view damages rows, not the pane
+:PROPERTIES:
+:CUSTOM_ID: text-view-damages-rows
+:END:
 
 [[file:../poc/textview.lisp][lol.textview]] describes its own picture in two parts, by the rules =tv-draw= paints by:
 
@@ -322,8 +352,14 @@ fresh paint. Everything else is per morph:
 =environment-changed= is =desk-sync=: it damages by signature.
 
 * 5. The shell as a tree of morphs
+:PROPERTIES:
+:CUSTOM_ID: shell-tree-morphs
+:END:
 
 ** 5.1 The tree
+:PROPERTIES:
+:CUSTOM_ID: tree
+:END:
 
 The classes:
 
@@ -374,6 +410,9 @@ keep their size (a web page isn't resized because you typed into its address). I
 isn't an overlay: the keys stay the minibuffer's.
 
 ** 5.2 =PANE= is the morph
+:PROPERTIES:
+:CUSTOM_ID: pane-morph
+:END:
 
 [[file:../poc/shell.lisp::defclass pane (lol.morph:morph)][=pane=]] is a CLOS morph with the old struct's slot names and accessors
 (=pane-subject=, =pane-view=, =pane-sel=, =pane-top=, =pane-tv=, =pane-side= …, and
@@ -398,8 +437,8 @@ back now lives on the morph that drew it, in that morph's coordinates:
 | =*mb-clear-rect*=                                                | a slot of the =status-line=                                    |
 | =*web-page-rect*=, =*web-bar-rects*=, =*web-bar-y*=              | slots of the =WEB-TAB= the pane shows (web.lisp)               |
 | the cards' =*spotter-hits*=, =*menu-hits*=, =*clip-hits*= …      | the hit map each card's drawer returns, kept by its overlay    |
-| =*drawn*=, =note-drawn=                                          | gone: the halo walks the morph tree (§5.6)                     |
-| the drag specials (=*drag-tv*=, =*last-press*=, =*web-press*= …) | =hand-press=, =hand-clicks= (§9.1)                             |
+| =*drawn*=, =note-drawn=                                          | gone: the halo walks the morph tree ([[#halo-walks-tree][The halo walks the tree]])                     |
+| the drag specials (=*drag-tv*=, =*last-press*=, =*web-press*= …) | =hand-press=, =hand-clicks= ([[#press-progress][The press in progress]])                             |
 
 =pane-rows=, =pane-cells=, =pane-stage-rect= and =pane-body-rect= remain as readers of
 the pane's body, under the names the click and halo code uses.
@@ -410,6 +449,9 @@ side focus from one tab to another. Two mirrors stay global only for the guest c
 to read: =*chooser-state*= and =*dbg-state*=; no click reads them.
 
 ** 5.3 Layout is a container's policy
+:PROPERTIES:
+:CUSTOM_ID: layout-container-s-policy
+:END:
 
 [[file:../poc/morphic.lisp::defun desk-sync][=desk-sync=]] runs before every repair and around every event. It asks the trails
 what should be on screen and makes the tree agree:
@@ -437,6 +479,9 @@ it draws inside its bounds (=with-clip=): a split's long column header can't run
 the gutter.
 
 ** 5.4 A pane's body is a morph
+:PROPERTIES:
+:CUSTOM_ID: pane-s-body-morph
+:END:
 
 The body is the pane's child for what lies under its header, of the class its view
 kind asks for ([[file:../poc/shell.lisp::defun body-class-for][=body-class-for=]]):
@@ -457,6 +502,9 @@ not a body itself: it has its own subject, view, selection and text, and becomes
 trail's pane when promoted.
 
 ** 5.5 Routing presses and keys
+:PROPERTIES:
+:CUSTOM_ID: routing-presses-keys
+:END:
 
 - *A body takes its own press* through [[file:../poc/shell.lisp::defgeneric body-press][=body-press=]], one method per class: the
   list's row, the text's caret or Ctrl-jump, the grid's cell, the stage's sprite, the
@@ -478,6 +526,9 @@ trail's pane when promoted.
 - *Menus, the halo and the wheel* go on to the pane and the trail area.
 
 ** 5.6 The halo walks the tree
+:PROPERTIES:
+:CUSTOM_ID: halo-walks-tree
+:END:
 
 [[file:../poc/morphic.lisp::defun halo-layers][=halo-layers=]] is the target under the pointer (the word, the row, the sprite), then
 for each morph from the deepest out, the layers it offers (=morph-halo-layers=):
@@ -500,8 +551,11 @@ fields.
 * 6. Windows
 
 ** 6.1 What a window is
+:PROPERTIES:
+:CUSTOM_ID: window
+:END:
 
-A [[file:../poc/morphic.lisp::defclass trail-window][=trail-window=]] is a trail torn off the tab strip: a surface (§3.4) with a
+A [[file:../poc/morphic.lisp::defclass trail-window][=trail-window=]] is a trail torn off the tab strip: a surface ([[#surfaces][Surfaces]]) with a
 =title-bar=, a =trail-area= of the same pane morphs, and a =window-frame=.
 
 - *A trail, still in =*trails*=.* A trail is either in the tab strip or in a window.
@@ -526,6 +580,9 @@ A [[file:../poc/morphic.lisp::defclass trail-window][=trail-window=]] is a trail
   windows would be a design of its own.
 
 ** 6.2 Keys and gestures
+:PROPERTIES:
+:CUSTOM_ID: keys-gestures
+:END:
 
 | keys                                    | does                                                                          |
 |-----------------------------------------+-------------------------------------------------------------------------------|
@@ -549,6 +606,9 @@ Grab mode isn't a nested loop: it's a slot of the desk (=desk-grab=), and the de
 every key before the focus does ([[file:../poc/morphic.lisp::defun grab-key][=grab-key=]]). Nothing else stops while it's on.
 
 ** 6.3 The halo's window handles
+:PROPERTIES:
+:CUSTOM_ID: halo-s-window-handles
+:END:
 
 On a window's layer the halo offers Morphic's handles first
 ([[file:../poc/morphic.lisp::defmethod lol.morph:morph-affordances ((w trail-window))][=morph-affordances=]] of =trail-window=), then Inspect, Code and Class as on any layer.
@@ -587,6 +647,9 @@ A fresh world lets the panes go from the old one first, since a morph can be in 
 one tree.
 
 * 7. Overlays: modal cards in the one loop
+:PROPERTIES:
+:CUSTOM_ID: overlays-modal-cards-loop
+:END:
 
 Every modal card is an [[file:../poc/morphic.lisp::defclass overlay (lol.morph:morph)][=overlay=]]: a morph on top of the desk that the world draws
 (clipped, back to front, so a scrim dims what's under it /as it is now/) and that takes
@@ -619,8 +682,11 @@ under it. Rewriting every caller as a callback wasn't worth it, so there are two
   (=unwind-protect=). With no =*world-cycle*=, a waiting chooser answers NIL at once.
 
 ** 7.2 What stops behind a waiting overlay
+:PROPERTIES:
+:CUSTOM_ID: stops-behind-waiting-overlay
+:END:
 
-*Stepping (§8) and the agent's tick.* The computation that waits may be the very one a
+*Stepping ([[#stepping][Stepping]]) and the agent's tick.* The computation that waits may be the very one a
 step would run again: a stage whose contact raised the debugger would raise it again
 every 33 ms. The agent's tick runs tool calls on this thread. Input, the services,
 repair and the clock go on.
@@ -687,6 +753,9 @@ poll, each event to the morph on top, and a repair of just the card's rectangle.
 | things that move on their own | each one a special case in the main loop | =step-morph= on a per-morph deadline; idle sleeps          |
 
 * 8. Stepping
+:PROPERTIES:
+:CUSTOM_ID: stepping
+:END:
 
 The world keeps a deadline per stepping morph ([[file:../poc/morph.lisp::defun world-step][=world-step=]],
 [[file:../poc/morph.lisp::defun world-step-timeout][=world-step-timeout=]]: -1 when nothing steps). =morph-step-ms= is read afresh every
@@ -710,8 +779,14 @@ until input.
   (=visible-trails=).
 
 * 9. The hand: the press in progress, drag and drop
+:PROPERTIES:
+:CUSTOM_ID: hand-press-progress-drag
+:END:
 
 ** 9.1 The press in progress
+:PROPERTIES:
+:CUSTOM_ID: press-progress
+:END:
 
 There's one pointer, so there's one press. =hand-press= is a plist whose first key says
 whose it is:
@@ -735,6 +810,9 @@ it acts at once (=input-events=, fb-browser.lisp). A press in text still acts at
 moves. render-frame's =click:= token is a press and its release.
 
 ** 9.2 Picking up
+:PROPERTIES:
+:CUSTOM_ID: picking-up
+:END:
 
 What the hand carries is a *subject*:
 
@@ -751,6 +829,9 @@ carried and where it can go ([[file:../poc/shell.lisp::defun carrying-hints][=ca
 so a carry costs no repair. Code: =start-carry=, =keyboard-pick-up=, =keyboard-drop=.
 
 ** 9.3 Dropping
+:PROPERTIES:
+:CUSTOM_ID: dropping
+:END:
 
 The world asks the morph under the hand, then its owners, whether they take it
 ([[file:../poc/morph.lisp::defgeneric accept-drop][=lol.morph:accept-drop=]], [[file:../poc/morph.lisp::defun world-drop][=world-drop=]]). Each answers T (taken; it says what it did),
@@ -766,6 +847,9 @@ a string (refused; the walk stops and the string is shown), or NIL (ask my owner
 | a web page                                                            | refuses: a page takes no drops                                                                                                                          |
 
 ** 9.4 A subject's two readings
+:PROPERTIES:
+:CUSTOM_ID: subject-s-readings
+:END:
 
 A subject has two readings, and they agree ([[file:../poc/shell.lisp::defun drop-value][=drop-value=]], [[file:../poc/shell.lisp::defun drop-reference][=drop-reference=]]):
 
@@ -782,6 +866,9 @@ refused by a text, with the reason, rather than inserted as =#<…>=, and is sti
 by a field or the tab strip.
 
 * 10. Backends
+:PROPERTIES:
+:CUSTOM_ID: backends
+:END:
 
 The core is backend-blind; each backend decodes its input into events, turns the
 world's cycle, and sends what the world repaired.
@@ -790,18 +877,21 @@ world's cycle, and sends what the world repaired.
   console, then the pointers, in that order; one turn is [[file:../initramfs/fb-browser.lisp::defun fb-cycle][=fb-cycle=]]. The stall
   watcher's =note-main-idle= / =note-main-busy= live in =poll-input-once=, and
   =*fb-services*= run every turn. The pointer stays the composited patch of
-  [[file:framebuffer.org][framebuffer.org]] §9.5.
+  [[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]].
 - *The X11 host* ([[file:../poc/run-browser.lisp][poc/run-browser.lisp]]): one turn is [[file:../poc/run-browser.lisp::defun host-cycle][=host-cycle=]] — repair and present,
   wait for an X event or the earliest step deadline, route, step — installed as
   =*world-cycle*= exactly as the guest installs =fb-cycle=, so every overlay waits there
   too. The runner loads =overlays.lisp= and =fb-browser.lisp= (nothing there touches
   =/dev/fb0= before =run-browser-fb=); the cheatsheet, the frame-source viewer and the
   agent view size themselves from the world. An =Expose= damages the exposed rect. The
-  leave menu's entries just end the runner. Details: [[file:x11.org][x11.org]] §9½.
+  leave menu's entries just end the runner. Details: [[file:x11.org::#host-s-loop-world][x11.org, The host's loop is the world's cycle]].
 - *Headless frames* ([[file:../poc/render-frame.lisp][poc/render-frame.lisp]]): its =-k= script goes through
   =world-dispatch=; =drag:X1,Y1,X2,Y2= drags.
 
 * 11. What it costs
+:PROPERTIES:
+:CUSTOM_ID: costs
+:END:
 
 Guest: QEMU with KVM on an i7-1065G7 host, =-cpu qemu64=, 1280×800, averaged over 50
 runs (the guest's clock reads in 4 ms ticks), each event or damage repaired and sent.
@@ -813,7 +903,7 @@ other guests.
 | a key in a text view beside a list              | 0.32–0.40 ms |
 | a key in a window (its list, moved)             | 0.96–1.04 ms |
 | a window moved 10 px                            | 0.56–0.88 ms |
-| a key in a tiled pane, whole pane (before §4.5) | 2.64–3.36 ms |
+| a key in a tiled pane, whole pane (before [[#text-view-damages-rows][A text view damages rows, not the pane]]) | 2.64–3.36 ms |
 | a stage step (its body)                         | 2.00–2.24 ms |
 | a stage step as a full repair                   | 2.96–3.60 ms |
 | a full repair (shell + one window)              | 4.32–4.80 ms |
@@ -833,13 +923,16 @@ other guests.
 Host ([[file:../poc/morphic-test.lisp][morphic-test]], 30 runs, drawing only): a key in the tiled list 0.5–0.7 ms.
 
 * 12. Tests
+:PROPERTIES:
+:CUSTOM_ID: tests
+:END:
 
 | test                                    | checks | covers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 |-----------------------------------------+--------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | [[file:../poc/clip-test.lisp][poc/clip-test.lisp]]                      |     34 | each pixel writer drawn unclipped and through an awkward clip agrees inside the rect and leaves the outside alone (with a guard that the drawing reached it); clips nest, survive a non-local exit, an empty one draws nothing; twelve clipped tiles reproduce a picture                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | [[file:../poc/morphic-test.lisp][poc/morphic-test.lisp]]                   |    206 | the core alone in a test surface (local coordinates, a move is a copy, damage inside a surface, events localized, =morph-hit-p=); then the real shell: the tree and the focus; per-morph damage (a key repairs its body, a message the status line alone, a view replaced from outside found by signature); a key in a text view one line, a quote at the top one band below; tear off, grab, keys, drags, resize, raise, =SuperL-Tab=, re-tile, close, font change; the halo's Move/Resize and bounds set through Inspect; every overlay, waiting while a scripted =*world-cycle*= turns; a menu in a window; stages stepping; a terminal in a window; windows across a new world; drag and drop by pointer and keys; more tabs than fit. *After every step, the incrementally repaired screen equals the whole tree painted afresh* (=world-paint :fresh=), and the right morphs drew in the right rects |
 | [[file:../poc/x11-test.lisp][poc/x11-test.lisp]]                       |     26 | =host-cycle= turned headless with a script of =lol.x11= events: a row clicked, a right-click menu, the halo, the clipboard manager, the value prompt, the debugger (=C-g= unwinding through the wait), the Spotter, the cheatsheet, a window dragged by Button1Mask motion, a row dragged out onto the tabs, the leave menu; the presented canvas equals a fresh paint after each                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| [[file:../check-morphic.lisp][check-morphic.lisp]]                      |     82 | in the guest by real input. A: the tree, the focus, a bare move repairs nothing, a key repairs the =TEXT-BODY='s rows alone, the halo's outermost layer is the =SHELL-MORPH=. B: windows by QMP — tear off, grab, a title-bar drag copied not redrawn (the screendump's uncovered strip equals the shell drawn fresh), a key in a window repairs its pane in the store. C: a terminal in a window. D–F: the halo's Move/Resize, Inspect + =C-c C-c= on BOUNDS; a terminal printing behind an open Spotter and menu; idle turns, stage steps body-only. G: drag and drop by pointer and keys. H: costs (§11)                                                                                                                                                                                                                                                                                                |
+| [[file:../check-morphic.lisp][check-morphic.lisp]]                      |     82 | in the guest by real input. A: the tree, the focus, a bare move repairs nothing, a key repairs the =TEXT-BODY='s rows alone, the halo's outermost layer is the =SHELL-MORPH=. B: windows by QMP — tear off, grab, a title-bar drag copied not redrawn (the screendump's uncovered strip equals the shell drawn fresh), a key in a window repairs its pane in the store. C: a terminal in a window. D–F: the halo's Move/Resize, Inspect + =C-c C-c= on BOUNDS; a terminal printing behind an open Spotter and menu; idle turns, stage steps body-only. G: drag and drop by pointer and keys. H: costs ([[#costs][What it costs]])                                                                                                                                                                                                                                                                                                |
 | [[file:../check-web.lisp][check-web.lisp]] (=LOL_GUEST_HOSTROOT=1=) |    +12 | a web tab torn off into a window: =C-l= loads a page, its viewport is the pane (=innerWidth=), frames painted into the store and shown by the screendump, the wheel scrolls, a link click navigates, keys reach a focused input, the window dragged takes the page along and a click still lands, =SuperL-g t= puts it back                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | [[file:../check-persist.lisp][check-persist.lisp]]                      |        | boot 1 tears the module index off and moves it; boot 2 finds it a window at the same bounds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
@@ -851,7 +944,7 @@ pinned side's header, which now ends at the pane's edge.
 * 13. Pitfalls and false leads
 
 - *A body's signature must cover what its drawing reads*, not only what it owns
-  (§4.4: the stage's heads-up line).
+  ([[#damage-per-morph][Damage per morph]]: the stage's heads-up line).
 - *=world-repair= with nothing to repair must return =(values nil nil)=.* Returning one
   value killed the loop's =multiple-value-call= at the first wake, and every check
   failed with nothing on the console: the environment's =handler-case= dropped to the
@@ -877,15 +970,18 @@ pinned side's header, which now ends at the pane's edge.
   =draw-browser= calls as "a frame" count the world's repairs that drew something;
   check-scroll's long definition is now =draw-pane-expanded=; check-pointer times
   =present-frame=; check-clipboard's halo on the Workspace is about the =TEXT-BODY=.
-- *No Xvfb on the build host*, so the X11 loop is tested headless (§12). The real
+- *No Xvfb on the build host*, so the X11 loop is tested headless ([[#tests][Tests]]). The real
   runner has been started against an X server and runs without error, which shows only
   that it starts.
 
 * 14. Known limits
+:PROPERTIES:
+:CUSTOM_ID: known-limits
+:END:
 
 - *No picture of the carried thing* beside the arrow; the status line says what's
   carried.
 - *No dragging a text selection* out of a text view: =SuperL-p= picks up only the name
   at the caret.
 - *Nothing drops onto the stage.*
-- *No empty desktop.* The last tiled trail can't be torn off (§6.1).
+- *No empty desktop.* The last tiled trail can't be torn off ([[#window][What a window is]]).

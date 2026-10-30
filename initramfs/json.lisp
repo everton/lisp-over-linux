@@ -3,7 +3,7 @@
 ;;;; The agent (doc/agent.org) speaks the Messages API, whose every request and every
 ;;;; streamed event is JSON. A JSON library is about two hundred lines; the part worth
 ;;;; thinking about is the MAPPING — which Lisp object each JSON value becomes — and
-;;;; doc/agent.org §5 decided it before a line was written:
+;;;; file:../doc/agent.org::#json-decision-earns-keep decided it before a line was written:
 ;;;;
 ;;;;     JSON      Lisp                      why
 ;;;;     object    a JSON-OBJECT instance    so PRESENT can dispatch on it: an API reply
@@ -23,7 +23,7 @@
 ;;;; sites and buys a reader and writer that round-trip exactly.
 ;;;;
 ;;;; ORDER IS PRESERVED, and that is not cosmetic. The API caches a prompt by its
-;;;; exact bytes (prompt caching, doc/agent.org §5): serialise the same request twice
+;;;; exact bytes (prompt caching, file:../doc/agent.org::#json-decision-earns-keep): serialise the same request twice
 ;;;; with the keys in a different order and the cache silently misses. So an object
 ;;;; keeps its keys in insertion order, the writer emits them in that order, and the
 ;;;; same Lisp value always prints as the same bytes.
@@ -59,7 +59,7 @@
   ((pairs :initarg :pairs :initform '() :accessor json-object-pairs
           :documentation "An alist (KEY . VALUE), KEY a string, in insertion order."))
   (:documentation "A JSON object. A class rather than a hash table or a plist so that
-   (PRESENT obj) can show an API reply as a drillable tree (doc/agent.org §5)."))
+   (PRESENT obj) can show an API reply as a drillable tree (file:../doc/agent.org::#json-decision-earns-keep)."))
 
 (defun json-object-p (x) (typep x 'json-object))
 

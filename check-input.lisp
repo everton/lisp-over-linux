@@ -2,7 +2,7 @@
 ;;;;
 ;;;;     sbcl --script check-input.lisp            ; exits 0 if all assertions pass
 ;;;;
-;;;; The bug this guards (doc/input.org §4¾): the environment opened ONE pointer and ONE
+;;;; The bug this guards (file:doc/input.org::#every-device-once-ones): the environment opened ONE pointer and ONE
 ;;;; keyboard, chosen once at startup. On the laptop that meant the external mouse OR
 ;;;; the touchpad, never both; the laptop's own keyboard for Ctrl/Super, never the
 ;;;; external one; and nothing plugged in afterwards.

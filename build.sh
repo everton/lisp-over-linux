@@ -49,7 +49,7 @@ INITRAMFS_DIR="$MICRO/initramfs"
 
 # registry.lisp is loaded FIRST, with a plain (load), because it defines
 # load-recording — the loader that captures each module's verbatim source into the
-# image (the code browser's definition registry; see doc/code-browser.org §2). The
+# image (the code browser's definition registry; see file:doc/code-browser.org::#model-layer-unit-code). The
 # modules below are then loaded with (load-recording ...) instead of (load ...),
 # which loads them identically AND records their source.
 REGISTRY_SRC="$INITRAMFS_DIR/registry.lisp"
@@ -135,8 +135,8 @@ LISP_SOURCES=(
   "$INITRAMFS_DIR/http.lisp"         # HTTP/1.1 client: http-request, chunked, redirects (uses dns + tls)
   "$INITRAMFS_DIR/wifi.lisp"         # Wi-Fi: rfkill, the HOST's wpa_supplicant, its control socket (uses dhcp)
   "$INITRAMFS_DIR/net-views.lisp"    # the network as a subject: SuperL-n, the Spotter (uses shell + wifi)
-  "$INITRAMFS_DIR/player.lisp"       # play a video with the HOST's mplayer, the screen lent (doc/screencast.org §8)
-  "$INITRAMFS_DIR/damage-log.lisp"   # the screen as a log of rects: written while recording, replayed after (doc/screencast.org §5.2)
+  "$INITRAMFS_DIR/player.lisp"       # play a video with the HOST's mplayer, the screen lent (file:doc/screencast.org::#playback-host-s-player)
+  "$INITRAMFS_DIR/damage-log.lisp"   # the screen as a log of rects: written while recording, replayed after (file:doc/screencast.org::#damage-log)
   "$INITRAMFS_DIR/recorder.lisp"     # screencasts: the canvas + the mic into the host's ffmpeg (doc/screencast.org)
   "$INITRAMFS_DIR/journal.lisp"      # every Accept appended to ~/.lol/journal/changes.lisp, replayed
                                      #   at boot, + the journal view (doc/session-persistence.org)
@@ -161,7 +161,7 @@ OVMF_VARS="/usr/share/OVMF/OVMF_VARS_4M.fd"
 # bridge. Gives the guest 10.0.2.15 / gateway 10.0.2.2 / DNS 10.0.2.3 in software,
 # and forwards host port 4005 -> guest 4005 so a future Lisp TCP REPL is reachable
 # from the host with `nc localhost 4005`. Needs kernel virtio-net (tag #21+).
-# See doc/networking.org §4. Shared by both the --interactive and --run QEMU lines.
+# See file:doc/networking.org::#qemu-test-wiring. Shared by both the --interactive and --run QEMU lines.
 # The fw_cfg blob is what switches the REPL ON: since tag #26 the guest serves it
 # only when asked (net.lisp, NET-REPL-WANTED-P), and only QEMU has fw_cfg.
 QEMU_NET=(-netdev "user,id=net0,hostfwd=tcp::4005-:4005" \
@@ -222,7 +222,7 @@ musl-gcc -static -O2 -s -o "$INITRAMFS_DIR/preinit" "$INITRAMFS_DIR/preinit.c"
 
 # ---- 1b. lol-ct, the container helper (musl static, like preinit) ----------
 # Runs a command inside the host's own Debian, in user+mount+pid+uts namespaces
-# (doc/containers.org §5.1). C for the same reason preinit is C, and a separate
+# (file:doc/containers.org::#s-c). C for the same reason preinit is C, and a separate
 # program because unshare(CLONE_NEWUSER) refuses a multithreaded caller — which
 # our Lisp PID 1 is.
 say "Building lol-ct (musl static C)"
@@ -347,7 +347,7 @@ say "lol.conf: user=$LOL_USER disk=$LOL_DISK"
 # (CONFIG_FW_LOADER_USER_HELPER is off). The files are Intel's binary blobs:
 # redistributable, but we keep this repo source-only and MIT, so they are read
 # from the build host's /lib/firmware at pack time and go into the cpio only —
-# exactly like the kernel itself (doc/networking.org §7, README licensing table).
+# exactly like the kernel itself (file:doc/networking.org::#wi-fi, README licensing table).
 #
 # CARD-KEYED: one table entry per card. LOL_WIFI_CARD=auto picks it from the build
 # host's PCI ids (the host IS the laptop); LOL_WIFI_FIRMWARE=0 leaves Wi-Fi out.
@@ -458,7 +458,7 @@ printf '  %-28s %s bytes\n' "bootx64.efi"    "$(stat -c%s "$BOOTX64")"
 # efi_load_initrd). `cmp` first, so an unchanged file needs no sudo at all.
 if [ "$DO_INSTALL_HOST" -eq 1 ] && [ -n "${LOL_CONTAINER:-}" ]; then
   # In the environment's terminal there is no sudo to be had (setuid is off in a
-  # container, doc/containers.org §4) and the host's /boot is read-only. lol-rootd installs the pair instead,
+  # container, file:doc/containers.org::#can-can-t-change) and the host's /boot is read-only. lol-rootd installs the pair instead,
   # asked by the environment itself — so the step is a menu entry, not a command.
   say "Inside the environment (container '$LOL_CONTAINER'): nothing to copy from here"
   echo "  SuperL-q -> \"Install the new build and restart\" installs it into /boot/lisp"

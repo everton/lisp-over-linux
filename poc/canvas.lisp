@@ -2,11 +2,11 @@
 ;;;;
 ;;;; This is the WHOLE portable half of the graphics plan, in miniature. The
 ;;;; browser draws here and nowhere else; it never learns whether the picture
-;;;; ends up on an X11 window or on /dev/fb0. See doc/code-browser.org §1.
+;;;; ends up on an X11 window or on /dev/fb0. See file:../doc/code-browser.org::#framebuffer-x-question-answered.
 ;;;;
 ;;;; Pixel format: one (unsigned-byte 32) per pixel, #x00RRGGBB. On x86 that
 ;;;; sits in memory little-endian as bytes B,G,R,0 — which is exactly BGRX,
-;;;; exactly what efifb wants (framebuffer.org §8) AND what a 24-bit-depth X
+;;;; exactly what efifb wants (file:../doc/framebuffer.org::#drawing-image-corner) AND what a 24-bit-depth X
 ;;;; server wants on this machine. So the same buffer ships to both backends
 ;;;; with no conversion at all. That is not luck; it is why this format was
 ;;;; chosen.
@@ -59,7 +59,7 @@
 
 (deftype pixmap () '(simple-array (unsigned-byte 32) (*)))
 
-;;; The CLIP RECTANGLE (doc/morphic.org §4.1). Every primitive below writes only
+;;; The CLIP RECTANGLE (file:../doc/morphic.org::#canvas-clip-rectangle). Every primitive below writes only
 ;;; inside it. It is stored as four half-open edges — x0 <= x < x1, y0 <= y < y1 —
 ;;; because that is the form the loops want: a fill is then "from the larger left
 ;;; edge to the smaller right edge", with no +1/-1 anywhere. A fresh canvas clips to
@@ -149,7 +149,7 @@
 (defun draw-line (canvas x0 y0 x1 y1 color)
   "One-pixel line from X0,Y0 to X1,Y1 — integer Bresenham, clipped per pixel.
 
-   Added for the stage (§3b): a sprite is a silhouette, and a silhouette is lines.
+   Added for the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): a sprite is a silhouette, and a silhouette is lines.
    Per-pixel clipping rather than a clip-to-rect pass up front, because the lines are
    short and the loop is already a bounds check away from being one."
   (declare (optimize (speed 3) (safety 1)) (fixnum x0 y0 x1 y1)
@@ -287,7 +287,7 @@
 ;;; recomputing CW / CH. That is the whole runtime-resizing design: every piece of
 ;;; layout code reads (font-cw font) / (font-ch font) at DRAW time, the shell holds the
 ;;; one font object everyone shares, so a size change followed by a redraw relays out
-;;; everything. doc/fonts.org §5.
+;;; everything. file:../doc/fonts.org::#font-object-glyph-cache.
 
 (defconstant +min-font-size+ 10 "Smallest pixel size SET-FONT-SIZE allows.")
 (defconstant +max-font-size+ 40 "Largest pixel size SET-FONT-SIZE allows.")
@@ -296,7 +296,7 @@
   "The em size, in pixels, an outline font starts at. Chosen for the laptop's 13.4-inch
    1920x1200 panel (~168 dpi): 18 px makes DejaVu Sans Mono's cell 11 x 21, so a
    full-screen pane holds about 170 columns by 46 rows — readable at arm's length, where the old
-   6 x 15 bitmap was not. ~/.lol/settings overrides it (doc/fonts.org §6).")
+   6 x 15 bitmap was not. ~/.lol/settings overrides it (file:../doc/fonts.org::#size-change-reaches-every).")
 
 (defstruct (glyph (:constructor make-glyph (coverage w h left top)))
   "One rasterised outline glyph, as cached: a W x H coverage bitmap (octets, 0..255)

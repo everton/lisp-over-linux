@@ -87,7 +87,7 @@
    MOUSE-FD and KEV-FD are IGNORED, and kept only so every loop's call reads as it
    always did. They were the one pointer and the one keyboard this used to poll,
    three fixed slots; now the device set is *INPUT-DEVICES*, which grows and shrinks
-   underneath (doc/input.org §4¾), and POLL-INPUT-ONCE does the actual poll.
+   underneath (file:../doc/input.org::#every-device-once-ones), and POLL-INPUT-ONCE does the actual poll.
 
    HOUSEKEEPING NEVER RETURNS. A hotplug event or a device going away wakes the poll
    but is nothing the caller asked about, so we handle it and wait again — for
@@ -95,7 +95,7 @@
    on time. Returning (nil nil nil) for it instead would read, to the main loop, as
    'a deadline fired'.
 
-   The timeout exists for the stage (§3b). Every other view in the browser is a
+   The timeout exists for the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done). Every other view in the browser is a
    function of state that only input changes, so sleeping until a key or a click is
    exactly right and costs nothing. A stage advances on its own, which means the loop
    needs a way to wake on a frame deadline instead. This is that way, and it is the
@@ -248,12 +248,12 @@
 
    A bitmap prints as space-separated 64-bit words, MOST significant first, so the
    lowest word — the one holding bit 0 — is the LAST token on the line, not the
-   first (doc/input.org §4, 'Parsing the bitmaps'). For EV and PROP there is only
+   first (file:../doc/input.org::#finding-device-without-udev, 'Parsing the bitmaps'). For EV and PROP there is only
    ever one word, so first and last agree.
 
    This used to be SCAN-INPUT-DEVICE, singular: it returned the first device a
    predicate liked, and the caller opened that one alone. That is the bug the
-   multi-device section below exists to fix (doc/input.org §4¾)."
+   multi-device section below exists to fix (file:../doc/input.org::#every-device-once-ones)."
   (let ((out '()))
     (ignore-errors
       (with-open-file (s "/proc/bus/input/devices" :if-does-not-exist nil)
@@ -408,7 +408,7 @@
      :MOUSE    EV_REL and REL_X — any mouse, a TrackPoint, or the relative node a
                HID touchpad exposes while it is still in mouse mode
      :PAD      EV_ABS and ABS_X, no REL_X, and PROP says POINTER or BUTTONPAD — a
-               touchpad, whose positions are on the pad, not the screen (§4½)
+               touchpad, whose positions are on the pad, not the screen (file:../doc/input.org::#touchpad-absolute-but-position)
      :TABLET   EV_ABS and ABS_X otherwise — QEMU's usb-tablet; positions ARE screen
      :KEYBOARD EV_KEY and EV_REP (autorepeat) — the EV_REP bit is what separates a
                keyboard from the Power Button (also a 'kbd' handler, EV=3)
@@ -431,7 +431,7 @@
 (defun open-evdev (path)
   "Open an evdev node non-blocking: (values FD NIL), or (values NIL ERRNO) on
    failure — ERRNO 13 (EACCES) is the interesting one, a node that devtmpfs just made
-   root's and lol-rootd has not yet handed to the user (doc/input.org §4¾)."
+   root's and lol-rootd has not yet handed to the user (file:../doc/input.org::#every-device-once-ones)."
   (when path
     (let ((fd (%fbb-open path (logior +o-rdonly+ +o-nonblock+))))
       (if (>= fd 0) (values fd nil) (values nil (sb-alien:get-errno))))))
@@ -553,7 +553,7 @@
    is pressed again — whatever the termios flags say, so clearing IXON (line-editor.lisp)
    does not cover it. A stopped console makes the next write to it block, and the
    environment's thread writes there (*error-output*): found 2026-10-17, after the C-s
-   freeze (doc/diagnostics.org §1), by a QMP scroll_lock in QEMU. defkeymap binds it
+   freeze (file:../doc/diagnostics.org::#four-ways-screen-freezes), by a QMP scroll_lock in QEMU. defkeymap binds it
    to keycode 70 (KEY_SCROLLLOCK) in the plain and Alt tables; all 256 tables are
    scanned, since a loaded keymap may put it elsewhere in that key's row. Returns how
    many entries were changed (0 off a console, or when none held it)."
@@ -569,7 +569,7 @@
 
 (defun unbind-console-alt-arrows (&optional (fd 0))
   "Take VT switching off Alt-Left / Alt-Right, so they reach the environment as
-   M-<left> / M-<right> (Org's promote and demote, doc/org.org §6.2; a terminal's
+   M-<left> / M-<right> (Org's promote and demote, file:../doc/org.org::#keys; a terminal's
    Alt-arrows). defkeymap binds alt_map[105] / [106] (KEY_LEFT / KEY_RIGHT) to the
    previous / next console; this binds every such entry, in every table with the Alt
    bit (8), to the cursor key itself — K_LEFT / K_RIGHT, K(KT_CUR,1/2), which is what
@@ -630,7 +630,7 @@
   "The struct timeval at the head of an input_event, as microseconds.
 
    Seconds then microseconds, 8 bytes each on x86-64 — the 16 bytes every record has
-   carried and we have ignored since the beginning (doc/input.org §2). Only the tap
+   carried and we have ignored since the beginning (file:../doc/input.org::#evdev). Only the tap
    gesture reads them, and only to take a difference, so the clock they come from
    (evdev's default is CLOCK_REALTIME) never has to mean anything absolute."
   (let ((sec 0) (usec 0))
@@ -676,7 +676,7 @@
         ;; pressed, though: the thumb holding the press down is a finger too, and
         ;; the other one is dragging a selection, not scrolling. Dragging them
         ;; toward you is the same gesture as rolling a wheel toward you, so it
-        ;; makes the same negative notches (see §6 of doc/input.org).
+        ;; makes the same negative notches (see file:../doc/input.org::#wheel-end-end).
         (when dy
           (incf *pad-scroll* dy)
           (let ((notch (max 1 (floor yrange 24))))
@@ -722,7 +722,7 @@
    FD is one pointer's fd — the form a replayed file of records uses, reading the
    global state — or anything else (the :POINTERS that *FB-MOUSE* holds), meaning
    every pointer the last FBB-WAIT found readable, each read against its OWN state
-   (READ-POINTERS, doc/input.org §4¾). A fourth value counts the records read."
+   (READ-POINTERS, file:../doc/input.org::#every-device-once-ones). A fourth value counts the records read."
   (unless (integerp fd) (return-from read-mouse (read-pointers xres yres)))
   (let ((clicked nil) (wheel 0) (nx nil) (ny nil) (button nil) (count 0))
     (sb-alien:with-alien ((e (sb-alien:array sb-alien:unsigned-char 24)))
@@ -896,7 +896,7 @@
 ;;; Which pointer is drawn. The environment itself only ever shows the arrow; a web
 ;;; page says what its element under the pointer asks for (CSS cursor), because
 ;;; headless Chrome works it out but draws no pointer of its own
-;;; (doc/web-browser.org §4.10, WEB-CURSOR in web.lisp). Each shape is its bitmap and
+;;; (file:../doc/web-browser.org::#pointer-s-shape-follows, WEB-CURSOR in web.lisp). Each shape is its bitmap and
 ;;; its HOTSPOT, the pixel that is the point: the arrow's tip, the forefinger's tip,
 ;;; the I-beam's middle.
 ;;;
@@ -941,13 +941,13 @@
 (defvar *fb-canvas* nil) (defvar *fb-xres* 0) (defvar *fb-yres* 0)
 (defvar *fb-mouse* nil
   ":POINTERS while at least one pointer is open, else NIL. It was a single fd until
-   the environment learned to read every device at once (doc/input.org §4¾); the
+   the environment learned to read every device at once (file:../doc/input.org::#every-device-once-ones); the
    loops still say (read-mouse *fb-mouse* w h), and READ-MOUSE reads a non-fd as
    'every pointer that is ready'. Its truth still means 'there is a pointer to draw'.")
 (defvar *fb-kbd* nil
   ":KEYBOARDS while at least one keyboard's evdev is open, else NIL — as *FB-MOUSE*.")
 
-;;; ---- every input device at once, and the ones that come later (§4¾) ------
+;;; ---- every input device at once, and the ones that come later (file:../doc/input.org::#every-device-once-ones) ------
 ;;;
 ;;; THE BUG THIS REPLACES. The environment used to open ONE pointer and ONE
 ;;; keyboard: FIND-MOUSE-DEVICE ranked the candidates (tablet > mouse > touchpad)
@@ -1278,7 +1278,7 @@
 ;;; Before this, every mouse packet repainted and re-sent the whole 1280x800 frame
 ;;; for a change of about 200 pixels — 6.5 ms a frame under KVM and 67 ms under
 ;;; QEMU's TCG (tag #24), so the pointer trailed the hand. A move now costs 12 us and
-;;; 0.13 ms (doc/framebuffer.org §9.5). (Nothing the browser DRAWS depends on where
+;;; 0.13 ms (file:../doc/framebuffer.org::#pointer-part-frame). (Nothing the browser DRAWS depends on where
 ;;; the pointer is — no hover effects — which is what makes skipping the redraw correct.)
 
 ;; The BOX every shape fits in, placed with each shape's hotspot at (+CURSOR-OX+,
@@ -1323,11 +1323,11 @@
 
 ;;; Every write of ours to /dev/fb0 is in the five functions below — PUT-CURSOR,
 ;;; PRESENT-FRAME, PRESENT-REPAIR, MOVE-CURSOR, HIDE-CURSOR — which is what makes
-;;; these two hooks enough (doc/screencast.org §1.1, §8.2):
+;;; these two hooks enough (file:../doc/screencast.org::#builds file:../doc/screencast.org::#mplayer-full-screen-screen):
 (defvar *frame-taps* '()
   "Functions called with (RECTS FULL) each time a repair (its rects) or a whole frame
    (FULL) is presented: the screen recorder's \"the canvas changed\" (recorder.lisp),
-   and a screen shared into a video call (web.lisp, doc/web-browser.org §4.8).")
+   and a screen shared into a video call (web.lisp, file:../doc/web-browser.org::#video-calls-google-meet).")
 (defvar *screen-lent* nil
   "True while another program owns /dev/fb0 — the host's MPlayer playing a video
    full screen (player.lisp). Only one process may write the screen at a time
@@ -1463,11 +1463,11 @@
   (let ((real (remove -1 timeouts)))
     (if real (reduce #'min real) -1)))
 
-;;; ---- the stage's heartbeat (§3b) -----------------------------------------
+;;; ---- the stage's heartbeat (file:../doc/code-browser.org::#stage-dispatch-happening-done) -----------------------------------------
 ;;; The browser has always been a pure function of state that only input changes, and
 ;;; the poll that sleeps forever is how it stays at zero CPU on an idle console. A
 ;;; running stage breaks that, so it is allowed to — but ONLY while one is actually on
-;;; screen and running. It is a STEP now (doc/morphic.org §8): the morph that shows
+;;; screen and running. It is a STEP now (file:../doc/morphic.org::#stepping): the morph that shows
 ;;; the stage asks to be stepped every +STAGE-FRAME-MS+ (poc/morphic.lisp,
 ;;; STEP-STAGE-PANE), the poll's deadline is the world's next step
 ;;; (LOL.MORPH:WORLD-STEP-TIMEOUT), and the moment nothing on screen steps that
@@ -1524,7 +1524,7 @@
 
 (defparameter +guest-font+ "/usr/share/lol/mono.ttf"
   "Where the image keeps its outline font: build.sh copies the build host's monospace
-   TrueType file there ($LOL_FONT, else DejaVu Sans Mono — doc/fonts.org §6).")
+   TrueType file there ($LOL_FONT, else DejaVu Sans Mono — file:../doc/fonts.org::#size-change-reaches-every).")
 (defun fb-service-fds ()
   "Every service's fds, flattened: a service's :FD may return one fd or a LIST of
    them — the terminals are one service with a pty master per open terminal."
@@ -1620,7 +1620,7 @@
               (setf clicked nil button :middle *button-down* nil))
             ;; a TAP is a click with no button held, and no release to come: marked,
             ;; so what waits for a release (a row, which a press that moves would pick
-            ;; up instead — doc/morphic.org §9.1) acts at once
+            ;; up instead — file:../doc/morphic.org::#press-progress) acts at once
             (when clicked
               (emit :down :state (logior (if *ctrl-down* 4 0) (if *super-down* 64 0))
                           :data (unless *button-down* '(:tap t))))
@@ -1802,7 +1802,7 @@
         (multiple-value-bind (xres yres) (lol.fb:fb-geometry)
           (let ((canvas (lol.canvas:make-canvas xres yres)))
             ;; every keyboard and pointer, plus a watch for the ones still to come;
-            ;; sets *FB-MOUSE* / *FB-KBD* and clears every held modifier (§4¾)
+            ;; sets *FB-MOUSE* / *FB-KBD* and clears every held modifier (file:../doc/input.org::#every-device-once-ones)
             (open-input-devices)
             (setf *cursor-x* (floor xres 2) *cursor-y* (floor yres 2)
                   *fb-canvas* canvas *fb-xres* xres *fb-yres* yres
@@ -1817,7 +1817,7 @@
                  (lol.fb:with-graphics-console         ; KD_GRAPHICS: fbcon stops drawing
                    ;; signals OFF so Ctrl-C arrives as a byte (the C-c C-c Accept chord)
                    (with-raw-mode (0 nil)
-                     ;; THE CYCLE (doc/morphic.org §4.2), one turn at a time: FB-CYCLE.
+                     ;; THE CYCLE (file:../doc/morphic.org::#cycle-repair), one turn at a time: FB-CYCLE.
                      ;; The world starts wholly damaged, so the first turn draws the
                      ;; frame. A blocking overlay (a menu, the debugger) turns the same
                      ;; function while it waits (RUN-OVERLAY, poc/morphic.lisp) —
@@ -1861,7 +1861,7 @@
        (multiple-value-bind (key state) (fb-read-key 0)
          (or (eq key :escape) (and (logbitp 2 state) (member key '(#\g #\G)))))))
 
-;;; ---- the debugger: a condition made interactive (§3) ---------------------
+;;; ---- the debugger: a condition made interactive (file:../doc/code-browser.org::#condition-system) ---------------------
 ;;; Entered from a HANDLER-BIND handler (WORKSPACE-DEBUG-IT, STEP-STAGE-PANE) — not
 ;;; from *DEBUGGER-HOOK*, which nothing sets — with the stack STILL STANDING, so the
 ;;; restarts are live and invoking one actually transfers control. It is an OVERLAY
@@ -1873,7 +1873,7 @@
 ;;; locals strip — DRAW-DEBUGGER returns as a plist, its GEOMETRY, which the
 ;;; debugger's overlay keeps and its clicks read back (DBG-RESTART-AT & co.): like
 ;;; every other hit map in the environment, it belongs to the morph that drew it.
-;;; The debugger's row metrics follow the CURRENT font (doc/fonts.org §5). They were
+;;; The debugger's row metrics follow the CURRENT font (file:../doc/fonts.org::#font-object-glyph-cache). They were
 ;;; constants (17 and 15 px, for the 6x15 font); kept under their old names as symbol
 ;;; macros — like lol.widgets' +ROW-H+ — so every use below reads unchanged.
 (defun dbg-row-h () "A restart row: the cell plus 2." (+ (line-h) 2))
@@ -1896,8 +1896,8 @@
   "Render LOCALS (FRAME-LOCAL-PLACES plists: :name :value :set :why) as one 'name =
    value' line each, starting at X0,Y0 and stopping before the screen bottom. A local
    that can be SET (it has a :set function) has its name in teal; one that cannot is
-   dim all through — that is the honest version of the feature (doc/inspector-history
-   §5.4): only what sb-di vouches for looks editable. LSEL, when non-NIL, is the
+   dim all through — that is the honest version of the feature (
+   file:../doc/inspector-history.org::#set-local-debugger-frame): only what sb-di vouches for looks editable. LSEL, when non-NIL, is the
    selected row (the locals have the focus): it is highlighted and the strip scrolls
    to keep it in view. Each line is clipped to the panel's right edge (W).
    Placeholder when the frame has no debug vars. Returns where the rows went, as
@@ -1943,7 +1943,7 @@
       (let ((i (+ first (floor (- y top) (line-h)))))
         (when (and (< i n) (< (- i first) rows)) i)))))
 
-;;; ---- the two-sided spine (§3): the signal rose, a restart unwinds -----------
+;;; ---- the two-sided spine (file:../doc/code-browser.org::#condition-system): the signal rose, a restart unwinds -----------
 (defparameter *dbg-red*      !#FF6B6B "the condition itself — the concept :condition colour.")
 (defparameter *dbg-title-bg* !#5A1C1C "the alarm-red title band.")
 (defparameter *dbg-title-fg* !#FFD0C0 "text on the title band.")
@@ -1960,7 +1960,7 @@
 
 (defun draw-debugger (canvas w h condition restarts backtrace locals rsel fsel focus
                       &optional (lsel 0) note)
-  "Paint the debugger as the two-sided spine of §3: the CONDITION is the header; the
+  "Paint the debugger as the two-sided spine of file:../doc/code-browser.org::#condition-system: the CONDITION is the header; the
    RESTARTS stand in an amber rail down the LEFT (they are the way out — the first
    thing to read, and invoking one is the unwind); the CALL STACK runs down the RIGHT
    with a teal rail hugging its left (the signal rose here and NOTHING unwound — every
@@ -2005,7 +2005,7 @@
         (lol.canvas:draw-string canvas *bfont* "  ·  Tab walks · R restarts · M-. source" pen top *ui-dim*))
       (incf top (+ (line-h) 5))
       ;; a rule divides the two sides; a dim-amber restart rail (the unwind) faces a
-      ;; mirrored SOLID teal signal rail (the stack stands) — §3's two forces, left and right.
+      ;; mirrored SOLID teal signal rail (the stack stands) — the two forces of file:../doc/code-browser.org::#condition-system, left and right.
       (lol.canvas:fill-rect canvas (- split 8) top 1 (- bottom top) *ui-rule*)
       (draw-dbg-rail canvas rail-x top (min bottom (+ top (* +dbg-row+ (length restarts))))
                      !#8A5A28)
@@ -2179,7 +2179,7 @@
 (defun dbg-set-local (frame place)
   "Ask for a new value for the frame local PLACE (a FRAME-LOCAL-PLACES plist) and write
    it into the standing FRAME — the debugger's twin of the inspector's SET-FIELD
-   (shell.lisp), and the gesture of doc/inspector-history.org §5.4. The typed text is
+   (shell.lisp), and the gesture of file:../doc/inspector-history.org::#set-local-debugger-frame. The typed text is
    READ and evaluated IN THE FRAME (EVAL-IN-FRAME-CONTEXT), so the frame's other locals
    are in scope: (* x 3) means this frame's X. Returns the note for the strip's header:
    the value READ BACK from the frame, or why nothing was written. Never signals —
@@ -2214,7 +2214,7 @@
 
 (defun run-debugger-fb (condition)
   "The debugger, with one more restart when the agent is in the image: ASK — explain
-   this, and propose a fix (doc/agent.org §8.8, initramfs/agent-ui.lisp). It is a real
+   this, and propose a fix (file:../doc/agent.org::#debugger-where-converges, initramfs/agent-ui.lisp). It is a real
    restart, established here around the rail, so it is listed and chosen like the
    condition's own; choosing it shows the agent's answer and comes back here, with the
    stack still standing."
@@ -2359,7 +2359,7 @@
            (dbg-refresh o)))))))
 
 ;;; ---- the ASK restart's view: the agent's answer, over the debugger -------------
-;;; (doc/agent.org §8.8.) Opened by AGENT-ASK-ABOUT-CONDITION (agent-ui.lisp, through
+;;; (file:../doc/agent.org::#debugger-where-converges.) Opened by AGENT-ASK-ABOUT-CONDITION (agent-ui.lisp, through
 ;;; RUN-AGENT-DEBUGGER-VIEW), which waits in it; Esc goes back to the restarts. It fills
 ;;; in as the answer streams: it STEPS while the turn runs (a frame period), so the wait
 ;;; wakes for it without a key.
@@ -2440,7 +2440,7 @@
           (t (setf (agent-view-prefix o) nil)))
         (overlay-changed o)))))
 
-;;; ---- the SuperL-? cheatsheet: every binding, on demand (§4¾) --------------
+;;; ---- the SuperL-? cheatsheet: every binding, on demand (file:../doc/code-browser.org::#keys-two-layers) --------------
 ;;; The keys are deliberately NOT shown as permanent chrome — SuperL-? summons this
 ;;; overlay instead. Super reaches us only through the keyboard's own evdev (the
 ;;; cooked tty can't report it), same as Ctrl/Shift; the main loop folds *super-down*
@@ -2636,7 +2636,7 @@
      ("M-."                "the selected frame's source")
      ("Enter / click"      "invoke the selected restart")
      ("C-g"                "abort"))
-    ("Stage  (§3b)"
+    ("Stage  (doc/code-browser.org)"
      ("Space / n"          "run-pause / one tick")
      ("s / a / m / t"      "spawn ship/asteroid/missile/station")
      ("Tab / click"        "select a sprite;  Enter inspects")
@@ -2738,7 +2738,7 @@
 ;;; that need nothing of this backend: poc/overlays.lisp. They used to be loops here
 ;;; (RUN-CHOOSER-FB, RUN-CLIPBOARD-FB, RUN-SPOTTER-FB, DBG-PROMPT-VALUE).
 
-;;; ---- what the environment sees: the input devices as a subject (§4¾) -------
+;;; ---- what the environment sees: the input devices as a subject (file:../doc/input.org::#seeing-what-environment-sees) -------
 ;;; "My mouse does nothing" has four different answers — the kernel has no driver
 ;;; for it, it is not a pointer by our rules, it is not ours to open, or it is open
 ;;; and fine and the trouble is elsewhere — and from the chair they all look the

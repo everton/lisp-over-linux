@@ -18,7 +18,7 @@
 ;;;;         LDB, SBCL's low-level debugger, waiting for a command on the console.
 ;;;;         Same picture: nothing moves. (sbcl/src/runtime/interr.c, lose and
 ;;;;         enable_lossage_handler; runtime.c turns LDB on by default.)
-;;;;   - the KERNEL stuck (no Lisp code can see that; doc/diagnostics.org §6).
+;;;;   - the KERNEL stuck (no Lisp code can see that; file:../doc/diagnostics.org::#when-kernel-stuck-tag).
 ;;;;
 ;;;; So this file makes the next freeze tell us which. Everything it writes goes to
 ;;;; ~/.lol/log/, on the laptop's /home, so Debian can read it after a hard reset:
@@ -424,8 +424,8 @@
 ;;;
 ;;; Drained every 2 s, one fsync per batch: the boot alone is a thousand records.
 ;;; So the last two seconds before a hard freeze can be missing — a kernel that is
-;;; still alive keeps them in its buffer, and the next kernel tag's pstore (§6 of
-;;; doc/diagnostics.org) is what catches a dying one.
+;;; still alive keeps them in its buffer, and the next kernel tag's pstore (file:../doc/diagnostics.org::#when-kernel-stuck-tag)
+;;; is what catches a dying one.
 
 (defvar *kmsg-thread* nil)
 

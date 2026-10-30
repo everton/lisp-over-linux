@@ -4,7 +4,7 @@
 *Status: built* (needs devpts, there since kernel tag #26). =SuperL-↵= opens a
 shell in a pane: a login =bash= inside the default container
 ([[file:containers.org][containers.org]]) when the host's root is mounted, something lesser when it isn't
-(§9). vim, less, htop, readline programs and psql run in it.
+([[#runs-open-terminal-superl][What runs: =open-terminal= and =SuperL-↵=]]). vim, less, htop, readline programs and psql run in it.
 
 Shells, REPLs and editors expect a *terminal*, and under =KD_GRAPHICS= the browser
 owns the pixels, so the kernel's text console can't be that terminal. This doc is
@@ -37,7 +37,7 @@ arrow. Everything in this doc is about honouring those two contracts.
 So the engine ([[file:../poc/terminal.lisp][poc/terminal.lisp]]) knows no pixels, file descriptors or fonts.
 =term-feed= takes octets and changes a grid; =encode-key= takes a key and returns a
 string. Both are pure functions of data, so the engine is tested on the host with a
-stock SBCL, against what real programs send (§12).
+stock SBCL, against what real programs send ([[#testing][Testing]]).
 
 * 2. The pseudo-terminal
 
@@ -71,6 +71,9 @@ in 4 KB blocks. A real terminal used to be a serial line with a VT100 at the end
   (=pty-enable-utf8=).
 
 * 3. Sessions, and the controlling terminal
+:PROPERTIES:
+:CUSTOM_ID: sessions-controlling-terminal
+:END:
 
 A terminal carries *jobs*, not just bytes. The kernel groups processes into
 *sessions* (roughly one per login) and those into *process groups* (one per
@@ -93,7 +96,7 @@ child (=spawn= in =./sbcl/src/runtime/run-program.c=) calls =setpgrp()=, not
 controlling terminal. And =set_pty= turns =ECHO= off on the slave. bash then says
 "no job control in this shell", =^C= reaches nothing, and =cat= doesn't echo.
 That's fine for =runs.lisp='s run panes (output only, stdin =/dev/null= —
-[[file:containers.org][containers.org]] §6.2) and fatal for a shell, so the two share nothing but
+[[file:containers.org::#run-panes][containers.org, Run panes]]) and fatal for a shell, so the two share nothing but
 =/dev/ptmx=.
 
 *What we use: =posix_spawn=.* It's fork-and-exec done inside libc — a
@@ -112,11 +115,14 @@ That glibc does the setsid /before/ the file actions is checked by its effect:
 [[file:../poc/pty-test.lisp][poc/pty-test.lisp]] sees =tty= print the slave's name and =^C= kill =cat= with SIGINT,
 neither of which happens without a controlling terminal. Everything goes through
 =extern-alien= with basic types, as [[file:../initramfs/files.lisp][files.lisp]] does — no =sb-posix=
-([[file:processes.org][processes.org]] §6) — so every definition in =pty.lisp= recompiles in the guest.
+([[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]) — so every definition in =pty.lisp= recompiles in the guest.
 Struct sizes (80, 336 and 128 bytes for the file actions, the attributes and a
 =sigset_t=) were measured with a C program against glibc 2.43.
 
 * 4. Why escape sequences, and which ones
+:PROPERTIES:
+:CUSTOM_ID: escape-sequences-which-ones
+:END:
 
 A VT100 had one wire for everything, so a command to the terminal travelled inside
 the text: an *escape sequence*, starting with ESC (27) and shaped so it can't be
@@ -131,12 +137,12 @@ distro has — and implement the part of xterm that entry *promises*. From
 | capability              | sequence                         | what it obliged us to do                                           |
 |-------------------------+----------------------------------+--------------------------------------------------------------------|
 | =bce=                   | —                                | erasing paints the *current* background, not the default           |
-| =smcup= / =rmcup=       | =ESC[?1049h ESC[22;0;0t=         | the alternate screen (§6), and to *ignore* the title-stack =CSI t= |
-| =smkx= / =rmkx=         | =ESC[?1h ESC==                   | application cursor keys: arrows send =ESC O A= (§7)                |
-| =kcuu1=, =kf5=, =kDC5=… | =ESC O A=, =ESC[15~=, =ESC[3;5~= | the key encoding (§7)                                              |
-| =kmous=, =XM=           | =ESC[<=, =ESC[?1006;1000h=       | SGR mouse reports (§8)                                             |
-| =BE= / =PS= / =PE=      | =ESC[?2004h=, =ESC[200~=         | bracketed paste (§8)                                               |
-| =acsc=, =smacs=         | =ESC(0=                          | DEC line-drawing characters (§6)                                   |
+| =smcup= / =rmcup=       | =ESC[?1049h ESC[22;0;0t=         | the alternate screen ([[#grid][The grid]]), and to *ignore* the title-stack =CSI t= |
+| =smkx= / =rmkx=         | =ESC[?1h ESC==                   | application cursor keys: arrows send =ESC O A= ([[#answers-program-waits][Answers the program waits for]])                |
+| =kcuu1=, =kf5=, =kDC5=… | =ESC O A=, =ESC[15~=, =ESC[3;5~= | the key encoding ([[#answers-program-waits][Answers the program waits for]])                                              |
+| =kmous=, =XM=           | =ESC[<=, =ESC[?1006;1000h=       | SGR mouse reports ([[#keys-become-bytes][Keys become bytes]])                                             |
+| =BE= / =PS= / =PE=      | =ESC[?2004h=, =ESC[200~=         | bracketed paste ([[#keys-become-bytes][Keys become bytes]])                                               |
+| =acsc=, =smacs=         | =ESC(0=                          | DEC line-drawing characters ([[#grid][The grid]])                                   |
 | =setaf= / =setab=       | =ESC[38;5;Nm=                    | 256 colours                                                        |
 
 Anything outside the subset is still *parsed* — so it can never leak onto the
@@ -146,7 +152,7 @@ screen as garbage — and then ignored.
 
 Paul Williams' description of the DEC terminals' parser
 (https://vt100.net/emu/dec_ansi_parser) is the model serious emulators use, and
-=parse-code= follows it. Each byte (here: each *code point*, §5.2) moves a small
+=parse-code= follows it. Each byte (here: each *code point*, [[#utf-8-first][UTF-8 first]]) moves a small
 machine between a handful of states:
 
 #+begin_example
@@ -181,6 +187,9 @@ parameter is kept as a *group* of colon parts, and =sgr-color= reads both
 spellings (the colon one in a single group, the older =38;2;R;G;B= across five).
 
 ** 5.2 UTF-8 first
+:PROPERTIES:
+:CUSTOM_ID: utf-8-first
+:END:
 
 The input is UTF-8; =term-feed= decodes it *before* the state machine, which then
 runs over code points — what xterm does in UTF-8 mode. A character split across two
@@ -189,6 +198,9 @@ runs over code points — what xterm does in UTF-8 mode. A character split acros
 since it may be a perfectly good ESC.
 
 * 6. The grid
+:PROPERTIES:
+:CUSTOM_ID: grid
+:END:
 
 *A cell isn't an object.* A 1280x800 screen in the Cozette fallback font (6x15) is
 208x48 = ~10,000 cells, and a busy program rewrites most of them many times a
@@ -216,7 +228,7 @@ The rules that are easy to get wrong, each with its test in [[file:../poc/termin
 - *The alternate screen* (=1049=, and the older =47= / =1047=): a blank second page.
   vim and less draw there, and when they leave, the shell's screen — and its cursor,
   saved by =1049= — comes back exactly as it was.
-- *bce*: erasing paints the current background (§4).
+- *bce*: erasing paints the current background ([[#escape-sequences-which-ones][Why escape sequences, and which ones]]).
 - *Wide characters* (CJK, most emoji) take two cells — the right one holds a
   placeholder — and combining marks take none. The program decides where the cursor
   goes by glibc's =wcwidth=, so the terminal must agree or everything after the
@@ -229,6 +241,9 @@ The rules that are easy to get wrong, each with its test in [[file:../poc/termin
   truncated or padded, not reflowed.
 
 * 7. Answers the program waits for
+:PROPERTIES:
+:CUSTOM_ID: answers-program-waits
+:END:
 
 Some sequences are *questions*, and a program that asks may block until we answer
 (=term-take-output= hands the answers to the pane, which writes them back):
@@ -244,6 +259,9 @@ Some sequences are *questions*, and a program that asks may block until we answe
 | =ESC[18t= your size?                     | =ESC[8;rows;colst=                                                              |
 
 * 8. Keys become bytes
+:PROPERTIES:
+:CUSTOM_ID: keys-become-bytes
+:END:
 
 The browser hands every pane a key the same way: a character or a keyword
 (=:up=, =:f5=, =:page-down=…) plus a modifier STATE in the X11 convention (Shift 1,
@@ -286,6 +304,9 @@ console's keymap ([[file:input.org][input.org]]), and it isn't xterm:
   (application keypad) is recorded and has no effect.
 
 * 9. What runs: =open-terminal= and =SuperL-↵=
+:PROPERTIES:
+:CUSTOM_ID: runs-open-terminal-superl
+:END:
 
 =(open-terminal argv &key title cwd env)= opens a pane running ARGV in a new tab
 and returns its subject (=ENV= adds =NAME=value= strings to a base environment:
@@ -323,8 +344,11 @@ such file or directory=. So preinit makes =/dev/fd=, =/dev/stdin=, =/dev/stdout=
 =/dev/stderr= ([[file:../initramfs/preinit.c::int main(void)][=main=]]); the guest check asserts it.
 
 * 10. The pane
+:PROPERTIES:
+:CUSTOM_ID: pane
+:END:
 
-=subj-terminal= is a subject like any other ([[file:code-browser.org][code-browser.org]] §4½): it opens in a
+=subj-terminal= is a subject like any other ([[file:code-browser.org::#drill-down-protocol-present][code-browser.org, The drill-down protocol — one =present=, everything browsable]]): it opens in a
 trail, shows as a tab, closes with =SuperL-w=. Its one oddity: creating one starts
 nothing, *presenting* it does — so the Spotter can offer a fresh "terminal" row at
 no cost — and =present-preview= never starts a program. Its view kind is
@@ -415,7 +439,7 @@ What the loop has to get right:
   a terminal doesn't redraw the frame either (=terminal-key-was-cheap-p=): its echo
   comes back as output. The guest check counts whole draws of the terminal's pane
   while typing 8 keys: fewer than 3. In a window the rows go into the window's
-  backing store and only their rectangles are copied out ([[file:morphic.org][morphic.org]] §4.3).
+  backing store and only their rectangles are copied out ([[file:morphic.org::#painted-rects-fast-paths][morphic.org, Painted rects: the fast paths]]).
 - *Closing.* Closing the tab (or popping the pane) is noticed by a sweep after every
   input event (=terminal-sweep=): a terminal no longer in any trail is hung up —
   closing the master makes the kernel send SIGHUP to the session (=pty_close= calls
@@ -429,6 +453,9 @@ What the loop has to get right:
   pressed.
 
 * 12. Testing
+:PROPERTIES:
+:CUSTOM_ID: testing
+:END:
 
 | what                  | how                                                      | result                 |
 |-----------------------+----------------------------------------------------------+------------------------|
@@ -475,6 +502,6 @@ the pane, =exit 3= keeping it with its code, and Return closing it.
   take their two cells, so alignment holds.
 - Not implemented: OSC 52's query (reading the clipboard — refused on purpose), left/right margins
   (=DECLRMM=, mode 69), sixel, the title stack, focus events (1004 is recorded and
-  not sent), synchronized output (2026 reports "unknown"), application keypad (§8).
-- The fallback shell (§9, 2.) keeps PID 1's capabilities. The container path
+  not sent), synchronized output (2026 reports "unknown"), application keypad ([[#keys-become-bytes][Keys become bytes]]).
+- The fallback shell ([[#runs-open-terminal-superl][What runs: =open-terminal= and =SuperL-↵=]], 2.) keeps PID 1's capabilities. The container path
   doesn't.

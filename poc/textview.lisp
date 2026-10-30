@@ -1,6 +1,6 @@
 ;;;; textview.lisp — an editable text view: caret, selection, syntax, scrolling.
 ;;;;
-;;;; This is the piece doc/code-browser.org §9 flags as the hardest, because a
+;;;; This is the piece file:../doc/code-browser.org::#risks-honestly flags as the hardest, because a
 ;;;; character grid gives you all of it for free and pixels give you none of it.
 ;;;; So it is worth being precise about what is actually hard here:
 ;;;;
@@ -77,7 +77,7 @@
                                    ; where a search began or C-SPC was last set — what
                                    ; C-x C-x goes back to. Not moved by edits (Emacs's
                                    ; is a marker); clamped when used.
-  ;; folding — see "Hidden lines" below (doc/org.org §5)
+  ;; folding — see "Hidden lines" below (file:../doc/org.org::#folding-change-text-view)
   (fold-bits nil)                  ; NIL, or a simple-bit-vector: 1 = the line is hidden
   (fold-lines nil)                 ; the LINES vector FOLD-BITS were made for
   (rows-cache nil)                 ; (LINES BITS . ROWS): the visible lines, in order
@@ -91,7 +91,7 @@
                                         (tv-line-height tv))))
 
 ;;; ---- hidden lines: folding ---------------------------------------------------------
-;;; A view can hide lines (Org's folds, doc/org.org §5). Which ones is a bit per line,
+;;; A view can hide lines (Org's folds, file:../doc/org.org::#folding-change-text-view). Which ones is a bit per line,
 ;;; NIL when none — every view that does not fold — and then everything below is the
 ;;; identity: screen row R shows line SCROLL + R, as it always did. With bits, rows go
 ;;; through ROWS, the visible lines in order, and TV-SCROLL counts ROWS, not lines.
@@ -585,7 +585,7 @@
 (defun tv-gutter-w (tv)
   "Width in pixels of the line-number gutter to the LEFT of the text: three digits,
    a cell of air and 16 px (40 at 6x15 — it was the constant *GUTTER-W* until the
-   font became resizable; doc/fonts.org §5). It is part of
+   font became resizable; file:../doc/fonts.org::#font-object-glyph-cache). It is part of
    a glyph's on-screen X, so both x-of-col and col-at-x count it — otherwise a click
    lands one gutter-width (≈7 columns) to the right of the pointer (tv-draw used to
    add it only on the draw side, so hit-testing disagreed with what you saw)."
@@ -604,7 +604,7 @@
   "Scroll sideways so the caret's column is on screen, with a few columns of context —
    what Emacs does for a line longer than the window when truncating. Lines that fit
    need none of this, so HSCROLL stays 0 for them; it matters once the font is large
-   (doc/fonts.org §5)."
+   (file:../doc/fonts.org::#font-object-glyph-cache)."
   (let ((col (tv-point-col tv)) (n (tv-text-cols tv)) (hs (tv-hscroll tv)))
     (cond ((< col hs) (setf (tv-hscroll tv) (max 0 (- col 8))))
           ((>= col (+ hs n -1)) (setf (tv-hscroll tv) (max 0 (+ (- col n) 9)))))))
@@ -1135,7 +1135,7 @@
          ;; the visible columns are [HS, MAXCOL): text past them is CLIPPED, not drawn
          ;; over the pane's frame, and the caret's column is kept inside them. With the
          ;; old 6-px font a line rarely reached the edge; at a large size most do
-         ;; (doc/fonts.org §5).
+         ;; (file:../doc/fonts.org::#font-object-glyph-cache).
          (hs (progn (when (tv-focus tv) (follow-caret-horizontally tv)) (tv-hscroll tv)))
          (maxcol (+ hs (tv-text-cols tv)))
          (last  (min (row-count tv) (+ first (visible-lines tv))))

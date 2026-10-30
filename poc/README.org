@@ -1,7 +1,7 @@
 #+TITLE: poc/ — the graphics proof-of-concept for the code browser
 #+STARTUP: showall
 
-The design this validates: [[file:../doc/code-browser.org][doc/code-browser.org]] (§1, "one pixel buffer, two
+The design this validates: [[file:../doc/code-browser.org::#framebuffer-x-question-answered][doc/code-browser.org]] ("one pixel buffer, two
 backends"). It began as a proof of concept and is now the browser's pixel toolkit
 and shell, loaded in place by =build.sh=.
 
@@ -19,7 +19,7 @@ never means running an X *server*, only writing a small X *client*.
 *The claim holds.* The identical =canvas.lisp= + =scene.lisp= render the same mock
 browser in an X11 window on the host and on =/dev/fb0= with SBCL as PID 1. No C,
 no Xlib, no CLX, no DRM, no kernel change. (The framebuffer half was already
-proven by =draw-alien=, [[file:../doc/framebuffer.org][framebuffer.org §8]]; the X11 client was the open question.)
+proven by =draw-alien=, [[file:../doc/framebuffer.org][[[file:../doc/framebuffer.org::#drawing-image-corner][framebuffer.org, Drawing an image (the Land-of-Lisp alien) in a corner]]]]; the X11 client was the open question.)
 
 * The files
 
@@ -37,7 +37,7 @@ proven by =draw-alien=, [[file:../doc/framebuffer.org][framebuffer.org §8]]; th
 | =morph.lisp=                                             | =lol.morph=: Morphic's core — =morph= / =world= / =hand= / =surface=, events, damage repair (=invalidate=, =world-repair=), routing (=world-dispatch=), the hand's press and drag and drop. *Backend-blind.* [[file:../doc/morphic.org][doc/morphic.org]].                         |
 | =morphic.lisp=                                           | the *desk*: the tiled shell as a tree of morphs (tab strip, tray, trail area, status line), trail windows (=SuperL-g=), the grab mode, the halo, damage by signature, drag and drop. *Backend-blind.*                                                         |
 | =overlays.lisp=                                          | the modal cards as overlay morphs: the Spotter, menus and the halo, the clipboard manager, the value prompt.                                                                                                                                                 |
-| =run-browser.lisp=                                       | *the code browser in an X11 window*: =sbcl --script poc/run-browser.lisp=. Its loop is the world's cycle (=host-cycle=), so every overlay works there as on the guest ([[file:../doc/x11.org][doc/x11.org]] §9½).                                                           |
+| =run-browser.lisp=                                       | *the code browser in an X11 window*: =sbcl --script poc/run-browser.lisp=. Its loop is the world's cycle (=host-cycle=), so every overlay works there as on the guest ([[file:../doc/x11.org::#host-s-loop-world][x11.org, The host's loop is the world's cycle]]).                                                           |
 | =run-editor.lisp=                                        | a text view alone in an X11 window.                                                                                                                                                                                                                          |
 | =render-frame.lisp=                                      | *the verification harness*: one browser frame rendered headless to a PPM. See [[*Verifying a visual change][Verifying a visual change]].                                                                                                                                  |
 | =clipboard.lisp=                                         | =lol.clipboard=: the clipboard core as plain data — history, PRIMARY, the =C-x r= rectangle commands. No dependencies. [[file:../doc/clipboard.org][doc/clipboard.org]].                                                                                                   |
@@ -104,7 +104,7 @@ minutes. =render-frame.lisp= takes about a second:
   =model= → =present= → =canvas= → =textview= → =shell=, the modules =build.sh=
   bakes in, minus those that want hardware), seeds the environment with
   =open-environment= (tab 1 your subject, tab 2 the Workspace, as in the guest),
-  makes the *real* world (=make-desk=, [[file:../doc/morphic.org][doc/morphic.org]] §5) and lets it repair
+  makes the *real* world (=make-desk=, [[file:../doc/morphic.org::#shell-tree-morphs][morphic.org, The shell as a tree of morphs]]) and lets it repair
   itself into a canvas.
 - *The pixels are the framebuffer's.* The guest doesn't re-render: =lol.fb= copies
   this very canvas into =/dev/fb0= byte for byte. The PPM is the framebuffer's
@@ -135,7 +135,7 @@ The canvas is repaired between steps, because clicks hit-test against geometry e
 morph records as it draws (a list body's rows, a pane's =pane-body-top=, a grid
 body's cells, the tab strip's tabs). A =click:X,Y= is a press and its release; a
 press on a row acts on the release (one that moves picks the row up instead —
-[[file:../doc/morphic.org][doc/morphic.org]] §9.1). So a scripted click exercises the same draw/hit-test
+[[file:../doc/morphic.org::#press-progress][morphic.org, The press in progress]]). So a scripted click exercises the same draw/hit-test
 agreement a real one does.
 
 ** Other options and subjects
@@ -143,7 +143,7 @@ agreement a real one does.
 - *Font size.* =--size N= sets the pixel size (10–40; default 18), =--font PATH=
   another TrueType file or a =.lolf=. Look at any layout change at 12, 18 and 28: a
   distance that doesn't follow the font only shows when the font moves
-  ([[file:../doc/fonts.org][doc/fonts.org]] §6).
+  ([[file:../doc/fonts.org::#size-change-reaches-every][fonts.org, How a size change reaches every pixel of layout]]).
 - *The Spotter.* =--spotter QUERY= draws the palette over the subject, filtered by
   QUERY. Its drawing lives in =shell.lisp= (its input loop in =overlays.lisp=),
   which is why the host can render it.
@@ -194,7 +194,7 @@ ones about the toolkit and the shell:
 | =x11-test.lisp=      | the X11 loop turned headless with scripted X events, every overlay waiting in it (26 checks).                                                                                                  |
 | =font-test.lisp=     | the TrueType reader against the host's DejaVu Sans Mono (or =$LOL_FONT=): tables, cmap, coverage, sizes, the cache, blending, the bitmap fallback, timings.                                   |
 | =clipboard-test.lisp= | the clipboard core.                                                                                                                                                                           |
-| =undo-test.lisp=     | the text view's Emacs-style undo (=tv-undo=): amalgamated typing, undo-the-undo as redo ([[file:../doc/clipboard.org][doc/clipboard.org]] §6½).                                                                                      |
+| =undo-test.lisp=     | the text view's Emacs-style undo (=tv-undo=): amalgamated typing, undo-the-undo as redo ([[file:../doc/clipboard.org::#undo-other-history-beside][clipboard.org, Undo — the other history beside the kill ring]]).                                                                                      |
 | =terminal-test.lisp= | the VT engine, against recordings in =poc/terminal-data/=.                                                                                                                                     |
 | =files-test.lisp=    | the file manager's data layer in a scratch directory (=$FILES_TEST_DIR=, else =/tmp=; never =$HOME=): create, rename, delete, links, copy, move, atomic save, sort, find, the path grammar. |
 | =sysinfo-test.lisp=  | the systray data ([[file:../initramfs/sysinfo.lisp][initramfs/sysinfo.lisp]]) against fake =/sys/class/power_supply= trees ([[file:../doc/systray.org][doc/systray.org]]).                                                                          |

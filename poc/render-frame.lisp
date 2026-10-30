@@ -60,7 +60,7 @@
     "initramfs/present.lisp"      ; the present / commands-for protocol
     "initramfs/tour.lisp"         ; the guided tour (subj-tour) — doc/tour.org
     "initramfs/examples.lisp"     ; COLLIDE — a real 2-axis dispatch matrix to render
-    "initramfs/stage.lisp"        ; the COLLIDE stage (§3b) — bodies, dispatch, enact
+    "initramfs/stage.lisp"        ; the COLLIDE stage (file:../doc/code-browser.org::#stage-dispatch-happening-done) — bodies, dispatch, enact
     "poc/ttf.lisp"                ; lol.ttf — TrueType outlines + the rasteriser
     "poc/canvas.lisp"             ; the pixel buffer, the font, draw-string
     "poc/textview.lisp"           ; the editable, syntax-colouring text view
@@ -253,7 +253,7 @@ OPTIONS
          (rest  (and colon (subseq spec (1+ colon)))))
     (cond
       ((string= head "modules")   (subj-modules))
-      ;; the stage (§3b) is the one subject with STATE: it has to be stepped before it
+      ;; the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done) is the one subject with STATE: it has to be stepped before it
       ;; is worth a picture, and its RNG is seeded so N ticks render identically here
       ;; and in the guest. "stage" alone means 240 ticks (four seconds at sixty a tick).
       ((string= head "stage")
@@ -413,7 +413,7 @@ OPTIONS
         (case key
           ;; a click is a press and its release: a press on a row that opens
           ;; something acts on the release (a press that moves picks it up instead —
-          ;; doc/morphic.org §9.1)
+          ;; file:../doc/morphic.org::#press-progress)
           (:click (send :down (car arg) (cdr arg))
                   (send :up (car arg) (cdr arg)))
           ;; drag:X1,Y1,X2,Y2 — press, move with the button held, release: a text

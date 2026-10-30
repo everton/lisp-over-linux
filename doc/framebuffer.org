@@ -20,6 +20,9 @@ hardware continuously *scans that memory out* to the panel. Drawing is writing b
 into that region. Everything else is plumbing.
 
 * 1. What a framebuffer physically is
+:PROPERTIES:
+:CUSTOM_ID: framebuffer-physically
+:END:
 
 A block of memory holds one slot per pixel — at 32 bpp, 4 bytes: blue, green, red,
 pad. The GPU's display controller has a register pointing at its start and, about 60
@@ -53,6 +56,9 @@ black screen. The fix isn't in the kernel's logic: it's giving the kernel a way 
 render text *as pixels* — =FB_EFI= + =FRAMEBUFFER_CONSOLE=.
 
 * 3. Getting a framebuffer without a GPU driver (efifb)
+:PROPERTIES:
+:CUSTOM_ID: getting-framebuffer-without-gpu
+:END:
 
 A real driver for a specific GPU is huge and vendor-specific; we write none of it. UEFI
 firmware has *already* programmed the GPU and set up a working framebuffer (it needs
@@ -69,18 +75,21 @@ once. [[file:../linux/drivers/video/fbdev/efifb.c::static int efifb_probe][=efif
 
 - *Takes the firmware's numbers* from =screen_info= (=si->lfb_width=,
   =si->lfb_linelength=, =__screen_info_lfb_base=).
-- *Maps the address* into kernel space — normally =ioremap_wc=, write-combining (§5½),
+- *Maps the address* into kernel space — normally =ioremap_wc=, write-combining ([[#memory-area-file-dev][A memory area, or a file? — what =/dev/fb0= actually is]]),
   with =ioremap=/=memremap= fallbacks when the EFI memory map asks for other
   attributes.
 - *Registers the result.* Nothing programs the display controller, because there's
   nothing efifb could set.
 
 * 4. fbcon — turning printk/format into pixels
+:PROPERTIES:
+:CUSTOM_ID: fbcon-turning-printk-format
+:END:
 
 A framebuffer knows pixels; the kernel speaks characters (printk, tty, SBCL =format=).
 =CONFIG_FRAMEBUFFER_CONSOLE= (=fbcon=) bridges them: it's the *font ROM reimplemented
 in software*. It carries a built-in bitmap font; when the console says "put 'A' at row
-5 col 12" it looks up the glyph and writes its pixels into the framebuffer, using §1's
+5 col 12" it looks up the glyph and writes its pixels into the framebuffer, using [[#framebuffer-physically][What a framebuffer physically is]]'s
 offset math scaled by the cell size.
 
 - *[[file:../linux/drivers/video/fbdev/core/fbcon.c][=core/fbcon.c=]]* is the console driver: rows, columns, cursor, scrolling.
@@ -113,6 +122,9 @@ Every box is one of the Display =CONFIG_= options. Remove fbcon and the chain br
 must all be on together.
 
 * 5. /dev/fb0 — driving the pixels yourself
+:PROPERTIES:
+:CUSTOM_ID: dev-fb0-driving-pixels
+:END:
 
 With =CONFIG_FB= + =CONFIG_FB_DEVICE= + devtmpfs, the raw framebuffer is the device
 file */dev/fb0*, and that file IS the pixel memory. Two ways in:
@@ -121,7 +133,7 @@ file */dev/fb0*, and that file IS the pixel memory. Two ways in:
 - *mmap.* Map it into your address space and store directly.
 
 Both doors are in one short file, [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c][=core/fb_chrdev.c=]] — the code that makes
-=/dev/fb0= a file at all. Its [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static const struct file_operations fb_fops][=fb_fops=]] table is §5½'s "doorway, not translator" in
+=/dev/fb0= a file at all. Its [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static const struct file_operations fb_fops][=fb_fops=]] table is [[#memory-area-file-dev][A memory area, or a file? — what =/dev/fb0= actually is]]'s "doorway, not translator" in
 source form: [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static ssize_t fb_write][=fb_write=]] bounds-checks your offset and copies your bytes into the
 mapped framebuffer, [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static ssize_t fb_read][=fb_read=]] copies them back, [[file:../linux/drivers/video/fbdev/core/fb_chrdev.c::static int fb_mmap][=fb_mmap=]] hands the pages to your
 process. No transformation in any of them. Device registration lives next door in
@@ -139,7 +151,7 @@ The mode parameters come from the kernel, not guesswork:
 kernel's *device model* as a directory tree. Every device gets a directory; every
 readable or tunable property becomes a *file* holding a short line of ASCII. Reading
 one calls a kernel function that formats the answer on the spot (like =/proc/meminfo=,
-and the opposite of =/dev/fb0=, §5½).
+and the opposite of =/dev/fb0=, [[#memory-area-file-dev][A memory area, or a file? — what =/dev/fb0= actually is]]).
 
 So =read-fb-geometry= is plain: to ask how big the screen is, =open= a file and parse
 the number. No library, no ioctl, no struct layout. =/sys/class/graphics/= is the
@@ -150,15 +162,18 @@ SBCL does all of this with plain binary file I/O or =sb-alien=, the same FFI it 
 for =reboot(2)=. Drawing needs no extra kernel option: it's pure userland.
 
 * 5½. A memory area, or a file? — what =/dev/fb0= actually is
+:PROPERTIES:
+:CUSTOM_ID: memory-area-file-dev
+:END:
 
-§1 says the framebuffer is *memory*; §5 says it's a *file*. Both are true.
+[[#framebuffer-physically][What a framebuffer physically is]] says the framebuffer is *memory*; [[#dev-fb0-driving-pixels][/dev/fb0 — driving the pixels yourself]] says it's a *file*. Both are true.
 
 - *A character device, not a synthesised file.* Nothing holds =/proc/meminfo='s
   bytes: the kernel generates them on each read. =/dev/fb0='s bytes exist in hardware
   whether or not anyone opens the file. It's a *handle on real storage*, like
   =/dev/sda=.
 - *A doorway, not a translator.* Byte /N/ of the file is byte /N/ of the framebuffer.
-  No format conversion, no remapping — which is why §1's one line of arithmetic is the
+  No format conversion, no remapping — which is why [[#framebuffer-physically][What a framebuffer physically is]]'s one line of arithmetic is the
   whole subsystem.
 - *"Byte-addressed" isn't about word size.* Every byte has its own address; 64-bit
   describes how much the CPU moves per instruction, not memory granularity. Pixels are
@@ -170,7 +185,7 @@ Two things that *are* padding, easy to confuse with that:
   makes a pixel a power of two, so the address is a *shift*, not a multiply by 3. A
   24 bpp framebuffer would have pixels straddling word boundaries — which is why our
   code bails out unless =bpp = 32=.
-- *Stride padding at the end of each row* (§1). A scanout alignment property of the
+- *Stride padding at the end of each row* ([[#framebuffer-physically][What a framebuffer physically is]]). A scanout alignment property of the
   hardware, nothing to do with the CPU.
 
 *Where the memory is.* Usually not ordinary RAM: VRAM behind a PCI BAR, or "stolen"
@@ -181,19 +196,22 @@ That's *MMIO*: the same =mov=, but the address decodes to a device. Two conseque
   (=ioremap_wc=).
 - *Each =write(2)= costs a syscall.* So [[file:../initramfs/framebuffer.lisp::defun draw-alien][=draw-alien=]] builds a whole row in a Lisp
   array and issues *one* =write-sequence= per row: 150 syscalls for the alien, not
-  38,400. [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] goes to the end — one syscall per frame (§9.4).
+  38,400. [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] goes to the end — one syscall per frame ([[#done-blit-single-copy][DONE: the blit is a single copy]]).
 
 *Two doors onto the same memory*, with different units:
 
 | door              | you index by | using      |
 |-------------------+--------------+------------|
-| file I/O (§5)     | *bytes*      | =stride=   |
-| =mmap= (§5, §9.4) | *words*      | =stride/4= |
+| file I/O ([[#dev-fb0-driving-pixels][/dev/fb0 — driving the pixels yourself]])     | *bytes*      | =stride=   |
+| =mmap= ([[#dev-fb0-driving-pixels][/dev/fb0 — driving the pixels yourself]], [[#done-blit-single-copy][DONE: the blit is a single copy]]) | *words*      | =stride/4= |
 
 That's why this doc writes =bpp/8= rather than leaving the unit implicit — the =/8=
 keeps the two readings apart.
 
 * 6. Limits: efifb vs DRM/KMS
+:PROPERTIES:
+:CUSTOM_ID: limits-efifb-vs-drm
+:END:
 
 | capability         | efifb (what we have)        | DRM/KMS (real GPU driver) |
 |--------------------+-----------------------------+---------------------------|
@@ -208,14 +226,17 @@ resolution would need the real DRM/KMS driver for the chip — much bigger, agai
 project's spirit.
 
 * 6½. No GPU — what we give up, and what a real driver would cost
+:PROPERTIES:
+:CUSTOM_ID: gpu-give-up-real
+:END:
 
-The code browser paints the whole screen, so §6's trade-off has concrete costs on both
+The code browser paints the whole screen, so [[#limits-efifb-vs-drm][Limits: efifb vs DRM/KMS]]'s trade-off has concrete costs on both
 sides.
 
 ** (a) What we have today that would benefit
 
 - *Full-screen repaint is a CPU copy.* [[file:../poc/fb.lisp::defun present-fb][=present-fb=]] pushes the Lisp canvas into scanout
-  memory with one =pwrite(2)= per frame (§9.4) — 4 MB at 1280×800, every time. With a
+  memory with one =pwrite(2)= per frame ([[#done-blit-single-copy][DONE: the blit is a single copy]]) — 4 MB at 1280×800, every time. With a
   GPU the canvas would live in a GPU buffer and presenting would be a *page flip*:
   telling the display controller to scan out a different address.
 - *The copy exists because we hand bytes to the kernel.* A DRM *dumb buffer* is mapped
@@ -228,16 +249,16 @@ sides.
 - *Resolution is whatever the firmware chose.* No resolution change, second monitor or
   rotation. The browser reads =virtual_size= and adapts.
 - *Fonts are pure CPU rasterisation.* TrueType glyphs are rasterised in Lisp
-  ([[file:fonts.org][fonts.org]] §4), cached per size, and blended pixel by pixel by
+  ([[file:fonts.org::#coverage-signed-area-accumulator][fonts.org, Coverage: the signed-area accumulator]]), cached per size, and blended pixel by pixel by
   [[file:../poc/canvas.lisp::defun draw-string][=draw-string=]]; a GPU would composite from a texture atlas. Measured, it doesn't
-  matter: a full 1920×1080 screen of text draws in about 5 ms (fonts.org §5). (§7 is
+  matter: a full 1920×1080 screen of text draws in about 5 ms ([[file:fonts.org::#font-object-glyph-cache][fonts.org, The FONT object, the glyph cache, and blending]]). ([[#fbcon-font-size-default][The fbcon font size: the default 8x16]] is
   the /kernel console's/ font, a different thing.)
 
 ** (b) What shipping a real driver would require
 
 The Dell XPS 13 9300's GPU is =00:02.0 [8086:8a52] Intel Iris Plus Graphics G7=
 (Ice Lake-LP), driver *=i915=*. Four layers, mirroring the Wi-Fi analysis in
-[[file:networking.org][networking.org]] §7:
+[[file:networking.org::#wi-fi][networking.org, Wi-Fi]]:
 
 - *Kernel side,* all =y= since we ship no modules: =CONFIG_DRM=, the vendor driver
   (=CONFIG_DRM_I915=), and =CONFIG_DRM_FBDEV_EMULATION= to keep a text console on top —
@@ -257,22 +278,25 @@ The Dell XPS 13 9300's GPU is =00:02.0 [8086:8a52] Intel Iris Plus Graphics G7=
 - *Acceleration brings a libc problem.* The dumb-buffer path is pure =ioctl(2)=. Real
   2D/3D goes through *Mesa*, whose driver modules (=dri/iris_dri.so= for this chip — on
   current Mesa a symlink into the =libdril_dri.so= megadriver) are *glibc-linked*
-  objects loaded with =dlopen=. Our userland is musl-static ([[file:micro-distro.org][micro-distro.org]]
-  § "Shrinking init with musl libc"), and musl and glibc aren't ABI-compatible.
+  objects loaded with =dlopen=. Our userland is musl-static ([[file:micro-distro.org::#shrinking-init-musl][micro-distro.org,
+  Shrinking init with musl libc]]), and musl and glibc aren't ABI-compatible.
   [[https://github.com/pg83/solo][pg83/solo]] bridges a glibc =.so= onto musl with its own ELF loader and ABI shim —
   another loader to carry. Modesetting and page flips need none of it.
 - *Size.* =drivers/gpu/drm/i915= is about 419,000 lines of =.c= and =.h= (kernel
-  7.2.5); [[file:../linux/drivers/video/fbdev/efifb.c][=efifb.c=]] is about 600. That ~690:1 ratio is §6's table in one number.
+  7.2.5); [[file:../linux/drivers/video/fbdev/efifb.c][=efifb.c=]] is about 600. That ~690:1 ratio is [[#limits-efifb-vs-drm][Limits: efifb vs DRM/KMS]]'s table in one number.
 
 ** Verdict (unchanged)
 
 efifb stays. We don't render video or run a compositor; we repaint a text-dense
 browser on keystrokes, and a CPU-drawn 1280×800 frame takes about 3 ms drawn and sent
-under KVM (§9.4). The alternative is a 419k-line driver, three proprietary blobs and an
+under KVM ([[#done-blit-single-copy][DONE: the blit is a single copy]]). The alternative is a 419k-line driver, three proprietary blobs and an
 ioctl graphics stack in Lisp — for page flips, vsync, modesetting and acceleration that
 a keypress-driven browser barely notices. The one real loss is *tearing*.
 
 * 7. The fbcon font size: the default 8x16
+:PROPERTIES:
+:CUSTOM_ID: fbcon-font-size-default
+:END:
 
 The kernel console uses mainline's default *8x16* font (=CONFIG_FONT_8x16=y=, no
 =fbcon=font:= on the command line). fbcon has *no scrollback* on mainline, so screen
@@ -302,6 +326,9 @@ This font only affects the text console. The environment draws its own text
 ([[file:fonts.org][fonts.org]]).
 
 * 8. Drawing an image (the Land-of-Lisp alien) in a corner
+:PROPERTIES:
+:CUSTOM_ID: drawing-image-corner
+:END:
 
 Drawing a raster image is pure userland. The supervisor paints the Lisperati alien
 into the top-right corner of the text console at boot and on the =a= menu key
@@ -332,32 +359,41 @@ alien. The supervisor clears the screen before its menu and calls =draw-alien= *
 printing the menu each cycle. Routine redraws are silent; =a)= passes =:announce t= to
 print "alien drawn at …".
 
-Bigger console fonts are a *kernel* change (§7); drawing an image is *userland* only —
+Bigger console fonts are a *kernel* change ([[#fbcon-font-size-default][The fbcon font size: the default 8x16]]); drawing an image is *userland* only —
 =build.sh= without =--kernel=.
 
 * 9. Full-screen: =present-fb= and KD_GRAPHICS
+:PROPERTIES:
+:CUSTOM_ID: full-screen-present-fb
+:END:
 
 The code browser ([[file:code-browser.org][code-browser.org]]) is the main consumer of =/dev/fb0=. It needs a
 whole-canvas blit and a console that stays out of the way.
 
 ** 9.1 =present-fb= — =draw-alien= generalised
+:PROPERTIES:
+:CUSTOM_ID: present-fb-draw-alien
+:END:
 
 =lol.fb:present-fb= ([[file:../poc/fb.lisp][poc/fb.lisp]]) blits a whole *canvas* instead of one sprite, with
-a single =pwrite(2)= from the canvas (§9.4). It keeps =draw-alien='s addressing: the
+a single =pwrite(2)= from the canvas ([[#done-blit-single-copy][DONE: the blit is a single copy]]). It keeps =draw-alien='s addressing: the
 32 bpp bail-out, the never-assume-stride rule, the byte offset =(y0+y)*stride + x0*4=
 for a row whenever rows aren't contiguous. =lol.fb:fb-geometry= is =read-fb-geometry=
 in the toolkit's package.
 
-- *No read-modify-write.* The alien reads the background for its alpha cutout (§8);
+- *No read-modify-write.* The alien reads the background for its alpha cutout ([[#drawing-image-corner][Drawing an image (the Land-of-Lisp alien) in a corner]]);
   a full-screen canvas *owns* every pixel it covers and just overwrites.
 - *Never a pixel at a time.* One =write(2)= per pixel would be 1,024,000 syscalls a
   frame at 1280×800. It's one call a frame, or one per row only when the screen's
   =stride= is wider than the canvas.
 
 ** 9.2 The pixel format lines up for free
+:PROPERTIES:
+:CUSTOM_ID: pixel-format-lines-up
+:END:
 
 The canvas stores one =(unsigned-byte 32)= per pixel as =#x00RRGGBB=. On x86 that word
-sits in memory as =B,G,R,00= — which *is* BGRX, what efifb scans out (§8). No
+sits in memory as =B,G,R,00= — which *is* BGRX, what efifb scans out ([[#drawing-image-corner][Drawing an image (the Land-of-Lisp alien) in a corner]]). No
 conversion, no swizzle: =#x00RRGGBB= was chosen for exactly that.
 
 *Endianness* is which end of a multi-byte number goes at the lowest address.
@@ -379,8 +415,11 @@ conversion, no swizzle: =#x00RRGGBB= was chosen for exactly that.
   being free: X11 carries an explicit byte-order flag, and we declare =l=.)
 
 ** 9.3 KD_GRAPHICS — telling fbcon to stand down
+:PROPERTIES:
+:CUSTOM_ID: kd-graphics-telling-fbcon
+:END:
 
-Repainting after the console (§8) can't work full-screen: fbcon's cursor blink and any
+Repainting after the console ([[#drawing-image-corner][Drawing an image (the Land-of-Lisp alien) in a corner]]) can't work full-screen: fbcon's cursor blink and any
 stray =printk= would crawl across the picture.
 
 =ioctl(KDSETMODE, KD_GRAPHICS)= on =/dev/tty0=, wrapped as
@@ -392,11 +431,14 @@ kernel side is [[file:../linux/drivers/tty/vt/vt_ioctl.c::case KDSETMODE][=drive
 - *=KD_TEXT= comes back in an =unwind-protect=.* Non-negotiable: a VT left in graphics
   mode is a dead console with no way back.
 
-It's §4's mirror image: §4 turns fbcon *on* so text appears; this turns it off so it
+It's [[#fbcon-turning-printk-format][fbcon — turning printk/format into pixels]]'s mirror image: [[#fbcon-turning-printk-format][fbcon — turning printk/format into pixels]] turns fbcon *on* so text appears; this turns it off so it
 doesn't vandalise our pixels. Used by =run-browser-fb= ([[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]) around its
 event loop, and by =poc/run-guest.lisp=.
 
 ** 9.4 DONE: the blit is a single copy
+:PROPERTIES:
+:CUSTOM_ID: done-blit-single-copy
+:END:
 
 [[file:../poc/fb.lisp::defun blit-fb][=blit-fb=]] in poc/fb.lisp:
 
@@ -412,7 +454,7 @@ event loop, and by =poc/run-guest.lisp=.
    kernel's [[file:../linux/drivers/video/fbdev/core/fb_io_fops.c::ssize_t fb_io_write][=fb_io_write=]] copies a page at a time and advances by what it copied, so
    one call writes the whole 4 MB.
 
-Per §9.2, unpacking each pixel into bytes would be a no-op; the old per-pixel unpack,
+Per [[#pixel-format-lines-up][The pixel format lines up for free]], unpacking each pixel into bytes would be a no-op; the old per-pixel unpack,
 per-row seek and per-frame reopen of =/dev/fb0= are gone.
 
 *Why not =mmap=.* Both end in one copy of the canvas into scanout memory; =mmap= only
@@ -464,6 +506,9 @@ QEMU reference, so the last column scales down:
   indicative: a taller screen also shows more rows of text.
 
 ** 9.5 The pointer is not part of the frame
+:PROPERTIES:
+:CUSTOM_ID: pointer-part-frame
+:END:
 
 Nothing the browser *draws* depends on where the pointer is (there are no hover
 effects), so a bare move needs no redraw — only the arrow moves. That works because
@@ -484,7 +529,7 @@ the canvas never contains the arrow:
 *Shapes.* The pointer has three: arrow, pointing hand, I-beam (=*cursor-shapes*=, each
 a bitmap and its /hotspot/ — the pixel that is the point: the arrow's tip, the
 forefinger's tip, the I-beam's middle). A web page chooses among them
-([[file:web-browser.org][web-browser.org]] §4.10); everything else shows the arrow.
+([[file:web-browser.org::#pointer-s-shape-follows][web-browser.org, The pointer's shape follows the page]]); everything else shows the arrow.
 
 - *One box for all.* The patch is a box every shape fits in, placed by
   [[file:../initramfs/fb-browser.lisp::defun cursor-box][=cursor-box=]] so each shape's hotspot lands on the point (17×27 pixels, its corner
@@ -529,7 +574,7 @@ draws like any other morph; one that waits for an answer turns this same loop.
 The next motion, click or notch brings it back ([[file:../initramfs/fb-browser.lisp::defun pointer-activity][=pointer-activity=]]); typing never
 does, since an arrow parked over text is in the way while typing. The deadline joins
 the poll timeout ([[file:../initramfs/fb-browser.lisp::defun earliest-timeout][=earliest-timeout=]]) beside the stage's frame and the systray's
-clock ([[file:systray.org][systray.org]] §5), so an idle browser sleeps until something is due.
+clock ([[file:systray.org::#drawing-strip-repainted-itself][systray.org, Drawing it: one strip, repainted by itself]]), so an idle browser sleeps until something is due.
 
 *Tested.* =check-pointer.lisp= counts the world's repairs across real QMP pointer
 motion (zero), checks the screendump (arrow at the new place, the canvas's pixel back

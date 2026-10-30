@@ -8,7 +8,7 @@
 ;;;; the outline subject. Where Org has an answer, the expected value is EMACS'S — the
 ;;;; same Emacs 30.2 / Org 9.7.11 batch runs poc/org-test.lisp cites — turned 0-based.
 ;;;; After the screen-changing steps it checks that the incrementally repaired screen
-;;;; equals the whole world painted afresh (doc/morphic.org §4.5), because folding
+;;;; equals the whole world painted afresh (file:../doc/morphic.org::#text-view-damages-rows), because folding
 ;;;; changes which line each row shows.
 
 (defvar cl-user::*render-frame-library* t)

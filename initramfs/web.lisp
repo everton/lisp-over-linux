@@ -7,7 +7,7 @@
 ;;;; Going the other way, our keys and clicks become Input.dispatchKeyEvent /
 ;;;; Input.dispatchMouseEvent commands. The wire is web-cdp.lisp. Chrome never
 ;;;; touches /dev/fb0 or our input devices; the Lisp is still the only process that
-;;;; draws, and Chrome is one more thing it draws (doc/processes.org §1).
+;;;; draws, and Chrome is one more thing it draws (file:../doc/processes.org::#invariant-exactly-process-writes).
 ;;;;
 ;;;; THE SHAPE, top to bottom:
 ;;;;
@@ -53,7 +53,7 @@
    means ~/.lol/web/chrome/ — OUR profile, not the one the host's own Chrome uses.
    Point it at ~/.config/google-chrome to reuse your desktop logins, but only while
    the desktop Chrome is NOT running (a profile is locked by the process using it),
-   and see doc/web-browser.org §7.3 on why its saved cookies may not decrypt here.")
+   and see file:../doc/web-browser.org::#profile-ours-default-yours on why its saved cookies may not decrypt here.")
 
 (defvar *web-search* "https://www.google.com/search?q=~a"
   "What a non-URL typed in the address bar becomes: FORMAT with the query, percent-
@@ -86,13 +86,13 @@
 (defvar *web-sandbox* :auto
   "Chrome's own sandbox (renderers in namespaces, filtered by seccomp). T keeps it,
    NIL passes --no-sandbox, :AUTO keeps it on the host and inside a container that can
-   provide it, and drops it where it cannot be had (doc/web-browser.org §6.4).")
+   provide it, and drops it where it cannot be had (file:../doc/web-browser.org::#chrome-s-sandbox-works).")
 
 (defvar *web-extra-args* '()
   "More Chrome switches, appended last (e.g. \"--force-dark-mode\").")
 
 (defvar *web-audio-device* :auto
-  "The ALSA device Chrome plays and records with (doc/web-browser.org §4.8). ALSA's
+  "The ALSA device Chrome plays and records with (file:../doc/web-browser.org::#video-calls-google-meet). ALSA's
    \"default\" is the host's PipeWire, which does not run in the image: Chrome then
    fails to open any sound (\"Host is down\"). :AUTO is the card itself, plughw:0,0 as
    the recorder uses it, unless a sound server IS running (a host test on Debian's
@@ -129,7 +129,7 @@
   loading                 ; T between frameStartedLoading and frameStoppedLoading
   frame-w frame-h frame-px ; the newest decoded frame: size + #x00RRGGBB pixels
   pending                 ; the newest UNDECODED frame's base64 string, or NIL
-  pending-sharp           ; ... T when it is a screenshot: already device-sized (§4.7)
+  pending-sharp           ; ... T when it is a screenshot: already device-sized (file:../doc/web-browser.org::#page-zoom-fills-pane)
   meta                    ; that frame's metadata (scroll offset, scale, device size)
   (want-w 0) (want-h 0)   ; the page rect the last draw gave this tab, in device px
   (sent-w 0) (sent-h 0) (sent-zoom 1) ; ... and what Chrome was last told
@@ -524,18 +524,18 @@
          ;; no welcome tab, no "make me your default browser", no sync promo
          "--no-first-run" "--no-default-browser-check"
          ;; saved passwords and cookie keys in the profile itself: there is no GNOME
-         ;; keyring or KWallet in the image to hold them (doc/web-browser.org §7.3)
+         ;; keyring or KWallet in the image to hold them (file:../doc/web-browser.org::#profile-ours-default-yours)
          "--password-store=basic"
          ;; the window. Pages are laid out at the pane's size (WEB-SYNC-SCREENCAST),
          ;; so this is only what outerWidth/outerHeight say: the screen's size, since
-         ;; a window smaller than the page inside it is a headless tell (§4.5)
+         ;; a window smaller than the page inside it is a headless tell (file:../doc/web-browser.org::#saying-chrome-user-agent)
          (format nil "--window-size=~d,~d" (max 200 w) (max 200 h))
          ;; nothing to talk to: no D-Bus, no GPU. These only quieten the log.
          "--disable-gpu" "--disable-features=MediaRouter,DialMediaRouteProvider"
          ;; the DevTools pipe marks every page as automated: navigator.webdriver is
          ;; true (measured, Chrome 148; false without the pipe). Google's sign-in
          ;; refuses such a browser ("may not be secure") and its search answers it
-         ;; with captchas. We are a person's browser, driven by their keys (§4.5).
+         ;; with captchas. We are a person's browser, driven by their keys (file:../doc/web-browser.org::#saying-chrome-user-agent).
          "--disable-blink-features=AutomationControlled")
    ;; a page's sound and the microphone: ALSA, on the card itself (*WEB-AUDIO-DEVICE*)
    (let ((dev (web-audio-device)))
@@ -557,7 +557,7 @@
             *web-error* (concatenate 'string
                                      "Chrome runs from the host's Debian inside a container, "
                                      "and no container launcher is loaded "
-                                     "(containers.lisp — doc/web-browser.org §6)."))
+                                     "(containers.lisp — file:../doc/web-browser.org::#running-guest)."))
       (return-from web-start-chrome nil))
     (handler-case
         (progn
@@ -693,7 +693,7 @@
     (web-picker-setup tab)
     ;; the microphone, the camera and the screen, for calls (WEB-MEDIA-SETUP, "calls")
     (web-media-setup tab)
-    ;; the pointer's shape over the page (WEB-CURSOR-SETUP, §4.10)
+    ;; the pointer's shape over the page (WEB-CURSOR-SETUP, file:../doc/web-browser.org::#pointer-s-shape-follows)
     (web-cursor-setup tab)
     (setf (web-tab-sent-w tab) 0 (web-tab-screencasting tab) nil)
     ;; an ADOPTED page (a popup) was already loading before we attached, so its
@@ -835,9 +835,9 @@
   "The name of the binding the page script reports through.")
 (defparameter +web-cursor-binding+ "__lolCursor"
   "The binding a page reports the cursor its element under the pointer asks for
-   through (WEB-CURSOR-SETUP, §4.10).")
+   through (WEB-CURSOR-SETUP, file:../doc/web-browser.org::#pointer-s-shape-follows).")
 (defparameter +web-media-binding+ "__lolMedia"
-  "The binding the calls' page script reports through (\"calls\" below, §4.8).")
+  "The binding the calls' page script reports through (\"calls\" below, file:../doc/web-browser.org::#video-calls-google-meet).")
 (defvar *web-media-asks* '()
   "(tab payload context-id) for every question a page's media script asked, oldest
    first. Filled by WEB-EVENT, answered by WEB-SERVICE (like *WEB-PICKS*).")
@@ -1048,7 +1048,7 @@
          ;; THE VIEWPORT: lay the page out as if the window were the pane, in CSS
          ;; pixels (device pixels / zoom), and rasterise at Z device pixels each.
          ;; The SCREEN too: headless says 800 x 600 whatever the window, a screen
-         ;; smaller than the window a page sits in — a headless tell (§4.5). Ours is
+         ;; smaller than the window a page sits in — a headless tell (file:../doc/web-browser.org::#saying-chrome-user-agent). Ours is
          ;; the world's, which holds the pane.
          (multiple-value-bind (sw sh) (web-screen-size w h)
            (web-send tab "Emulation.setDeviceMetricsOverride"
@@ -1092,7 +1092,7 @@
                   (when (and data (null (web-tab-frame-px tab)) (null (web-tab-pending tab)))
                     (setf (web-tab-pending tab) data (web-tab-pending-sharp tab) t)))))))
 
-;;; ---- page zoom: upscale, then sharpen (doc/web-browser.org §4.7) ----------------
+;;; ---- page zoom: upscale, then sharpen (file:../doc/web-browser.org::#page-zoom-fills-pane) ----------------
 ;;; C-+ zooms the way Chrome's own Ctrl-+ does: the page is laid out in fewer CSS
 ;;; pixels (the pane's width / the zoom) and rasterised at ZOOM device pixels each
 ;;; (WEB-SYNC-SCREENCAST's deviceScaleFactor), so window.innerWidth shrinks and text
@@ -1200,7 +1200,7 @@
         (multiple-value-bind (w h px) (lol.image:decode-image (base64-decode data) :orient nil)
           (when w
             ;; a zoomed page's screencast frame is CSS-sized: scale it up to the pane
-            ;; (§4.7); a screenshot is already device-sized
+            ;; (file:../doc/web-browser.org::#page-zoom-fills-pane); a screenshot is already device-sized
             (multiple-value-bind (tw th) (if sharp (values w h) (web-zoomed-size tab w h))
               (let ((soft (and (not sharp) (or (/= tw w) (/= th h)))))
                 (when soft (setf px (web-upscale w h px tw th) w tw h th))
@@ -1488,7 +1488,7 @@
       (declare (type (simple-array (unsigned-byte 32) (*)) src)
                (type fixnum fw cols rows cw x y))
       ;; through BLIT-PIXELS, so the copy honours the canvas's clip (a damage repair,
-      ;; a window over the page — doc/morphic.org §4.1); row by row it is the same
+      ;; a window over the page — file:../doc/morphic.org::#canvas-clip-rectangle); row by row it is the same
       ;; REPLACE this used to do itself
       (lol.canvas:blit-pixels canvas src fw fh x y :w cols :h rows)
       (when (< cols w) (lol.canvas:fill-rect canvas (+ x cols) y (- w cols) h !#FFFFFF))
@@ -1511,7 +1511,7 @@
 ;;; Measured in the guest, 2026-10-13 (Chrome 148): after a real click the select
 ;;; matched :open, the screencast frame held 0 pixels of the popup's highlight blue,
 ;;; and Page.captureScreenshot — which does composite popups — held 2809
-;;; (doc/web-browser.org §4.4). <input type=color> is the same; date/time inputs and <datalist> open
+;;; (file:../doc/web-browser.org::#pickers-popups-screencast-cannot). <input type=color> is the same; date/time inputs and <datalist> open
 ;;; NOTHING headless — Chrome has no picker UI to show.
 ;;;
 ;;; So we draw them. A page script, installed into every document (Page.
@@ -1664,7 +1664,7 @@ window.__lolPickerApply = function(id, v){
     (cdp-send c "Runtime.evaluate" (jobj "expression" +web-picker-js+) :session s)))
 
 
-;;; ---- the pointer's shape (doc/web-browser.org §4.10) ------------------------------
+;;; ---- the pointer's shape (file:../doc/web-browser.org::#pointer-s-shape-follows) ------------------------------
 ;;; A page says how the pointer should look over each of its parts — CSS cursor:
 ;;; pointer over a link or a button, text over what a click would select — and a
 ;;; desktop browser draws it. Headless Chrome works it out and draws nothing (it has
@@ -1838,7 +1838,7 @@ document.addEventListener('mousemove', function(ev){
                               :initial (let ((v (jget msg "value"))) (if (stringp v) v ""))
                               :hint "Enter sets it · C-g leaves it"))))))))
 
-;;; ---- calls: the microphone, the camera, sharing the screen (§4.8) ---------------
+;;; ---- calls: the microphone, the camera, sharing the screen (file:../doc/web-browser.org::#video-calls-google-meet) ---------------
 ;;; A video call (Google Meet) asks the browser for three things a desktop has and we
 ;;; must hand over on purpose:
 ;;;
@@ -2521,7 +2521,7 @@ function share(a){
   "A bare pointer move to the screen point X,Y: over the page, Chrome needs it for
    hover menus, tooltips and cursors-that-highlight — wherever the pane is, a window
    included. The frame that may follow redraws; we do not. It also gives the pointer
-   back its arrow when it leaves the page (§4.10)."
+   back its arrow when it leaves the page (file:../doc/web-browser.org::#pointer-s-shape-follows)."
   ;; a press in progress (a drag selecting text) is the press's: no hover, and the
   ;; shape stays the I-beam or hand it began on
   (when (and (web-visible-tab) (web-press)) (return-from web-hover nil))

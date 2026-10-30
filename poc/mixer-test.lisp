@@ -1,4 +1,4 @@
-;;;; mixer-test.lisp — host test for initramfs/mixer.lisp (doc/screencast.org §3.1).
+;;;; mixer-test.lisp — host test for initramfs/mixer.lisp (file:../doc/screencast.org::#userland-card-device-nodes).
 ;;;;
 ;;;;     sbcl --script poc/mixer-test.lisp
 ;;;;

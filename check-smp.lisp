@@ -6,7 +6,7 @@
 ;;;; Until tag #29 the kernel was built with SMP off (NR_CPUS=1): the laptop's eight
 ;;;; threads ran as one CPU, and the image's threads (agent turns, netd, the
 ;;;; recorder's writer, the run panes' readers) only ever took turns. Tag #30 turns
-;;;; SMP on (doc/kernel-config.org §10). What this check asserts, in a guest booted
+;;;; SMP on (file:doc/kernel-config.org::#processors-smp-new-tag). What this check asserts, in a guest booted
 ;;;; with LOL_QEMU_SMP CPUs (default 4, the harness's own default):
 ;;;;
 ;;;;   - the kernel brought them all up: /sys/devices/system/cpu/online, sysconf;

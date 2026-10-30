@@ -14,7 +14,15 @@
 #      single most common way to get one wrong;
 #   2. the ::search anchor, if present, actually appears in that file — so
 #      [[file:../initramfs/net.lisp::defun bring-up-interface]] fails loudly once
-#      the function is renamed.
+#      the function is renamed. A ::#id search names an Org CUSTOM_ID property,
+#      the stable way to cite a SECTION: [[file:containers.org::#layout]] in a
+#      doc, [[#layout]] within one.
+#
+# It also checks the code (*.lisp, *.c, *.sh): a comment cites a doc's section as
+# the plain Org link  file:../doc/containers.org::#layout  (relative to the
+# citing file; Emacs's org-open-at-point-global and the environment's C-c C-o
+# both follow it). Each must resolve, and a section NUMBER (containers.org §3)
+# is refused — numbers move whenever a doc is reorganised; ids don't.
 #
 # Usage:
 #   ./check-links.sh            # check everything; exit 1 if anything is broken
@@ -35,6 +43,15 @@ FILES=(README.org doc/*.org doc/background/*.org poc/README.org kernel/README.or
 
 bad=0 skipped=0 checked=0
 
+# Does FILE hold the ::SEARCH a link names? "#id" is an Org CUSTOM_ID property
+# (the stable way to cite a section); anything else is searched as plain text.
+has_search() {
+  case "$1:$2" in
+    *.org:\#*) grep -qE "^[[:space:]]*:CUSTOM_ID:[[:space:]]+${2#\#}[[:space:]]*$" "$1" ;;
+    *)   grep -qF -- "$2" "$1" ;;
+  esac
+}
+
 for f in "${FILES[@]}"; do
   [ -f "$f" ] || continue
   dir="$(dirname "$f")"
@@ -45,7 +62,7 @@ for f in "${FILES[@]}"; do
     search=""
     case "$link" in *::*) search="${link#*::}";; esac
 
-    # Prose placeholders: code-browser.org §8½ writes a literal [[file:...]] as an
+    # Prose placeholders: code-browser.org writes a literal [[file:...]] as an
     # EXAMPLE of a link, not as one. Never a real target; skip both spellings.
     case "$path" in "..."|"…") continue;; esac
 
@@ -65,12 +82,45 @@ for f in "${FILES[@]}"; do
       echo "MISSING $f -> $link"
       bad=$((bad + 1)); continue
     fi
-    if [ -n "$search" ] && [ -f "$full" ] && ! grep -qF -- "$search" "$full"; then
+    if [ -n "$search" ] && [ -f "$full" ] && ! has_search "$full" "$search"; then
       echo "ANCHOR  $f -> $link   (no '$search' in $path)"
       bad=$((bad + 1))
     fi
   done < <(grep -o '\[\[file:[^]]*\]' "$f" | sed 's/^\[\[file://; s/\]$//')
+
+  # [[#id][...]]: a section of this same file, by its CUSTOM_ID.
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    checked=$((checked + 1))
+    if ! has_search "$f" "#$id"; then
+      echo "ANCHOR  $f -> #$id   (no CUSTOM_ID '$id' in this file)"
+      bad=$((bad + 1))
+    fi
+  done < <(grep -o '\[\[#[^]]*\]' "$f" | sed 's/^\[\[#//; s/\]$//')
 done
+
+# Code cites a doc's section as  file:RELATIVE/doc.org::#id  (Org's own link
+# syntax: M-x org-open-at-point-global follows it from any buffer, and the
+# environment's C-c C-o does too). The path is relative to the citing file.
+# A section NUMBER (doc.org §4) is refused: numbers move when a doc is rewritten.
+CODE=$(git ls-files '*.lisp' '*.c' '*.sh' | grep -v -e '^poc/org-data/' -e '^check-links.sh$')
+while IFS=: read -r f lineno link; do
+  [ -n "$link" ] || continue
+  path="${link#file:}"; path="${path%%::*}"; id="${link#*::}"
+  full="$(dirname "$f")/$path"
+  checked=$((checked + 1))
+  if [ ! -f "$full" ]; then
+    echo "MISSING $f:$lineno -> $link"; bad=$((bad + 1))
+  elif ! has_search "$full" "$id"; then
+    echo "ANCHOR  $f:$lineno -> $link   (no CUSTOM_ID '${id#\#}')"; bad=$((bad + 1))
+  fi
+done < <(grep -noE 'file:[^] ")]*(doc/[^] ")]*|README)\.org::#[A-Za-z0-9_-]+' $CODE)  # tests' fixtures (file:x.org) are not docs
+
+while IFS= read -r hit; do
+  [ -n "$hit" ] || continue
+  echo "NUMBER  $hit   (cite file:...::#id, not a section number)"
+  bad=$((bad + 1))
+done < <(grep -nE '[A-Za-z0-9_-]+\.org\]?\]?[ ,]*§ ?[0-9]' $CODE)
 
 echo "checked $checked link(s); $bad broken, $skipped skipped"
 [ "$bad" -eq 0 ]

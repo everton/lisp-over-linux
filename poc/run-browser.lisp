@@ -17,7 +17,7 @@
 ;;;; value prompt, the clipboard manager, the cheatsheet, the debugger — because they
 ;;;; are morphs in the same world, and the ones that wait for an answer turn THIS
 ;;;; backend's loop while they wait: HOST-CYCLE, one turn of it, is installed as
-;;;; *WORLD-CYCLE*, the X11 twin of the guest's FB-CYCLE (doc/morphic.org §10, doc/x11.org).
+;;;; *WORLD-CYCLE*, the X11 twin of the guest's FB-CYCLE (file:../doc/morphic.org::#backends, doc/x11.org).
 ;;;; fb-browser.lisp is loaded for the debugger and the cheatsheet it defines; nothing
 ;;;; in it touches /dev/fb0 until RUN-BROWSER-FB, which this file never calls.
 ;;;;
@@ -74,7 +74,7 @@
 (defun x11-world-events (e)
   "X event E as the world's events (poc/morph.lisp): a key, the buttons (X has no
    scroll axis: the wheel is BUTTONS 4 (up) and 5 (down), one press per notch — the
-   host's counterpart of the guest's evdev REL_WHEEL record, doc/input.org §7), a
+   host's counterpart of the guest's evdev REL_WHEEL record, file:../doc/input.org::#same-gesture-host-x11), a
    release, a drag (motion with button 1 held: Button1Mask, #x100) or a bare move."
   (flet ((ev (kind &rest args)
            (list (apply #'lol.morph:make-event :kind kind

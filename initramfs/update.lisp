@@ -20,7 +20,7 @@
 ;;;;      (tag #31 on), else through the firmware and GRUB's first entry, which is ours.
 ;;;;
 ;;;; Whoever may install an image may run any code as root at the next boot; that
-;;;; is what the request is FOR, and doc/storage.org §6 records it.
+;;;; is what the request is FOR, and file:../doc/storage.org::#lol-rootd-process-stays records it.
 
 (defvar *build-root* nil
   "The checkout this image was built from, with a trailing slash — baked by build.sh.

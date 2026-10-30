@@ -435,7 +435,24 @@
   "The one-line role from a ';;;; name.lisp — role' header."
   (let* ((first (if (plusp (length lines)) (aref lines 0) ""))
          (p (search " — " first)))
-    (if p (string-trim " ." (subseq first (+ p 3))) "")))
+    (if p (string-trim " ." (unlink-doc-cites (subseq first (+ p 3)))) "")))
+
+(defun unlink-doc-cites (s)
+  "S with each doc citation (a plain Org link to a doc section) shortened to x.org: the module
+   map prints prose, and an Org link reads as noise there."
+  (let ((a (search "file:" s)))
+    (if (null a)
+        s
+        (let* ((e (or (position-if (lambda (c) (find c " ),;")) s :start a) (length s)))
+               (link (subseq s a e))
+               (path (subseq link 5 (or (search "::" link) (length link))))
+               (name (subseq path (1+ (or (position #\/ path :from-end t) -1))))
+               (rest (unlink-doc-cites (subseq s e)))
+               (again (string-left-trim ", " rest)))
+          ;; two sections of one doc read as that doc once
+          (when (and (> (length again) (length name)) (string= name again :end2 (length name)))
+            (setf rest (subseq again (length name))))
+          (concatenate 'string (subseq s 0 a) name rest)))))
 
 ;;; ---- 3. refs in the guide's HTML ----------------------------------------------
 

@@ -836,7 +836,7 @@
                (path-completions query :cwd cwd :limit limit))))))
 
 ;;; ---- commands: what a folder and a file afford --------------------------------------
-;;; Declarative, as everywhere (§4½): each command's ACTION is a thunk naming a
+;;; Declarative, as everywhere (file:../doc/code-browser.org::#content-talks-back): each command's ACTION is a thunk naming a
 ;;; poc/file-manager.lisp function by SYMBOL (FUNCALL 'FM-…), because that file
 ;;; loads after this one. The KEY strings are the accelerators file-manager.lisp
 ;;; binds, so the menu, the halo and the status line all say the same thing.

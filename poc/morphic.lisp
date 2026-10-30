@@ -2,7 +2,7 @@
 ;;;; window system.
 ;;;;
 ;;;; poc/morph.lisp is Morphic's core and knows nothing about the browser. This file
-;;;; is the browser's side of it (doc/morphic.org §2.1 and §5). Everything the browser
+;;;; is the browser's side of it (file:../doc/morphic.org::#principles file:../doc/morphic.org::#shell-tree-morphs). Everything the browser
 ;;;; puts on screen is a morph, in one tree:
 ;;;;
 ;;;;   THE DESK      the world the environment runs in: one per screen, *WORLD*.
@@ -30,7 +30,7 @@
 ;;;; other way to be on screen: no frame-wide hit maps, no drawing function that lays
 ;;;; out the whole browser, no window context to swap them in and out.
 ;;;;
-;;;; DAMAGE is per morph (doc/morphic.org §4.4). An event damages the morph it reached; everything
+;;;; DAMAGE is per morph (file:../doc/morphic.org::#damage-per-morph). An event damages the morph it reached; everything
 ;;;; else is found by DESK-SYNC, which runs before every repair and after every event:
 ;;;; it lays the tree out from the trails (a morph moved, added or removed is damaged by
 ;;;; that), and compares each morph's SIGNATURE — the few values its picture is a
@@ -726,7 +726,7 @@
    copied."))
 
 (defclass title-bar (watched-morph) ()
-  (:documentation "A window's minimal title bar (doc/morphic.org §6.1)."))
+  (:documentation "A window's minimal title bar (file:../doc/morphic.org::#window)."))
 (defclass window-frame (watched-morph) ()
   (:documentation "A window's outline and its resize grip, drawn over everything in
    the window; under the pointer only at the grip (MORPH-HIT-P)."))
@@ -806,7 +806,7 @@
   (max 8 (floor (line-h) 2)))
 
 (defun draw-window-title (canvas w win focused)
-  "The minimal title bar (doc/morphic.org §6.1), in the tab strip's own
+  "The minimal title bar (file:../doc/morphic.org::#window), in the tab strip's own
    style: the trail's kind stripe on top, its SuperL number quiet, its kind's icon,
    its title bright (the accent when focused), and a close box at the right."
   (let ((trail (window-trail win)) (i (window-trail-index win)))
@@ -1050,7 +1050,7 @@
    is the body's (BODY-PRESS, through PANE-CLICK, which knows the split), and the body
    is what is damaged. A press on a ROW that opens something waits for the release —
    a press that moves first is not a click but a pick-up: the hand carries the row's
-   subject away to be dropped (doc/morphic.org §9.2). A press on a sprite selects it at
+   subject away to be dropped (file:../doc/morphic.org::#picking-up). A press on a sprite selects it at
    once, and moved, picks its instance up. Everything else — the wheel, the menus, the
    halo — goes on to its pane."
   (let ((p (expanded-of (body-pane b)))
@@ -1169,8 +1169,8 @@
 (defmethod lol.morph:handle-event ((s tab-strip) e)
   "A press activates a tab, closes one, opens a Workspace (+) or, on a \" …N \" overflow
    button, lists every tab (OPEN-TAB-LIST); a tab dragged down
-   out of the strip becomes a window, carried by the hand from there (doc/morphic.org
-   §6.2). The right button is a tab's menu, the middle one the halo."
+   out of the strip becomes a window, carried by the hand from there (
+   file:../doc/morphic.org::#keys-gestures). The right button is a tab's menu, the middle one the halo."
   (let ((x (lol.morph:event-x e)) (y (lol.morph:event-y e)))
     (case (lol.morph:event-kind e)
       (:down (press-prelude)
@@ -1240,7 +1240,7 @@
     (area-scroll (window-area w) e)))
 
 ;;; ===========================================================================
-;;; Drag and drop (doc/morphic.org §9)
+;;; Drag and drop (file:../doc/morphic.org::#hand-press-progress-drag)
 ;;; ===========================================================================
 ;;;
 ;;; The hand carries a SUBJECT picked up from a row, a sprite or the caret (by the
@@ -1463,7 +1463,7 @@
   ;; an overlay on top (the Spotter, a menu, the debugger …) is MODAL for input: it
   ;; takes every event, wherever the pointer is — a click off its card is its business
   ;; too (it closes). Nothing else on screen stops: services, steps and the clock go
-  ;; on behind it (doc/morphic.org §7.2).
+  ;; on behind it (file:../doc/morphic.org::#stops-behind-waiting-overlay).
   (let ((ov (top-overlay desk)))
     (when ov
       (overlay-event ov e)
@@ -1474,7 +1474,7 @@
      (let ((key (lol.morph:event-key e)) (state (lol.morph:event-state e)))
        (cond
          ((desk-grab desk) (grab-key desk key state))
-         ;; drag and drop from the keys (doc/morphic.org §9): Esc puts back what the hand carries,
+         ;; drag and drop from the keys (file:../doc/morphic.org::#hand-press-progress-drag): Esc puts back what the hand carries,
          ;; SuperL-p picks the selection up, SuperL-d drops it (Shift: as a new tab)
          ((and (eq key :escape) (lol.morph:hand-payload (lol.morph:world-hand desk)))
           (setf *browser-status*
@@ -1543,7 +1543,7 @@
 ;;; then what it shows; the tab strip a tab and itself; the tray the clipboard icon and
 ;;; itself; the status line the minibuffer and itself. So walking OUT with Up ends on
 ;;; the shell morph, or the window — and Inspect on either shows a CLOS instance with
-;;; its bounds (doc/morphic.org §5.6, §6.3). Rects are on the screen, where the halo
+;;; its bounds (file:../doc/morphic.org::#halo-walks-tree file:../doc/morphic.org::#halo-s-window-handles). Rects are on the screen, where the halo
 ;;; draws them.
 
 (defgeneric morph-drawers (morph)

@@ -151,7 +151,7 @@
 <div style='height:3000px;background:linear-gradient(#fff,#88a)'>tall</div>
 </body>")
   (page "two.html" "<!doctype html><title>LoL page two</title><h1>Page two</h1>")
-  ;; the pickers (doc/web-browser.org §4.4): a <select> with groups and a disabled
+  ;; the pickers (file:../doc/web-browser.org::#pickers-popups-screencast-cannot): a <select> with groups and a disabled
   ;; option whose onchange retitles the page, a datalist, a colour and a date
   (page "pick.html" "<!doctype html><title>LoL pickers</title>
 <body style='font:20px sans-serif;margin:30px'>
@@ -162,7 +162,7 @@
 <p><input id=co type=color> <input id=dt type=date style='font-size:20px'></p></body>")
   (page "three.html" "<!doctype html><title>LoL page three</title><h1>Page three</h1>"))
 
-;;; ---- calls: the microphone, the camera, the shared screen (§4.8) ------------------
+;;; ---- calls: the microphone, the camera, the shared screen (file:../doc/web-browser.org::#video-calls-google-meet) ------------------
 ;;; A file: page has no origin, and nothing can be granted to "null", so the call page
 ;;; is served over http from 127.0.0.1 — a loopback address is a secure context, as
 ;;; an https page is.
@@ -213,7 +213,7 @@ function pixel(x, y){
 
 (defun serve-slow-page (seconds)
   "An HTTP server on 127.0.0.1 whose /slow page answers after SECONDS, its / page
-   linking there at once -> the port. For the loading strip (doc/web-browser.org §4.9)."
+   linking there at once -> the port. For the loading strip (file:../doc/web-browser.org::#loading-page-shows-strip)."
   (let ((s (make-instance 'sb-bsd-sockets:inet-socket :type :stream :protocol :tcp)))
     (setf (sb-bsd-sockets:sockopt-reuse-address s) t)
     (sb-bsd-sockets:socket-bind s #(127 0 0 1) 0)
@@ -459,7 +459,7 @@ function pixel(x, y){
         ;; getUserMedia, so the first denied query must ask us. Chrome is made to
         ;; answer denied with Browser.setPermission (what the page sees is the same;
         ;; that our grant overrides a block really stored in the profile was measured
-        ;; separately, doc/web-browser.org §4.8 M2)
+        ;; separately, file:../doc/web-browser.org::#video-calls-google-meet M2)
         (flet ((call-js (e) (cdp-eval *web-chrome* (web-tab-session call) e)))
           (cdp-send *web-chrome* "Browser.resetPermissions" (jobj))
           (setf *web-grants* '())
@@ -531,14 +531,14 @@ function pixel(x, y){
                 (pump-until (lambda () (search "LoL test index" (trail-title (current-trail))))))
          (check "the viewport is the pane (innerWidth = page rect width)"
                 (pump-until (lambda () (= (js "innerWidth") (third (web-tab-page-rect (tab)))))))
-         ;; what Google's sign-in and search read as a robot (doc/web-browser.org §4.5)
+         ;; what Google's sign-in and search read as a robot (file:../doc/web-browser.org::#saying-chrome-user-agent)
          (check "the page is not told it is automated (navigator.webdriver false)"
                 (eq (js "navigator.webdriver") :false))
          (check "the screen and the window hold the page (none smaller, as headless says)"
                 (eq (js "screen.width >= outerWidth && outerWidth >= innerWidth
                          && screen.height >= outerHeight && outerHeight >= innerHeight
                          && screen.width > 800") t))
-         ;; the pointer's shape follows the page's CSS cursor (doc/web-browser.org §4.10)
+         ;; the pointer's shape follows the page's CSS cursor (file:../doc/web-browser.org::#pointer-s-shape-follows)
          (check "over a link the pointer is the hand"
                 (eq (multiple-value-call #'hover-shape (element-center "go")) :hand))
          (check "over a text input it is the I-beam"
@@ -730,7 +730,7 @@ function pixel(x, y){
                      (equal (web-url-for "localhost:3000") "http://localhost:3000")
                      (equal (web-url-for "10.0.2.2:8000/a") "http://10.0.2.2:8000/a")
                      (search "q=lisp%20machine" (web-url-for "lisp machine"))))
-         ;; page zoom fills the pane (doc/web-browser.org §4.7): Chrome's screencast
+         ;; page zoom fills the pane (file:../doc/web-browser.org::#page-zoom-fills-pane): Chrome's screencast
          ;; frames come at CSS size, so a zoomed page is upscaled at once and then
          ;; replaced by a device-sized screenshot once it is still
          (destructuring-bind (px py pw ph) (web-tab-page-rect (tab))

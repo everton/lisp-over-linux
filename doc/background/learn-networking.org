@@ -48,6 +48,9 @@ Each layer only cares about its own header; it hands the payload up or down.
 *Check yourself:* name the four layers, and what each one adds to a packet.
 
 * 2. Two kinds of address: MAC vs IP
+:PROPERTIES:
+:CUSTOM_ID: kinds-address-mac-vs
+:END:
 
 There are *two* addresses in play, and they're easy to conflate:
 - A *MAC address* (48-bit, e.g. =52:54:00:12:34:56=) belongs to a *NIC* and
@@ -68,6 +71,9 @@ whole way, but its *MAC* src/dst are rewritten at *every* hop.
 every hop?
 
 * 3. Your local street: subnet + netmask
+:PROPERTIES:
+:CUSTOM_ID: local-street-subnet-netmask
+:END:
 
 Hosts on the same *subnet* are like houses on one street: they can hand packets
 directly to each other, no router needed. They are *on-link*.
@@ -76,7 +82,7 @@ The *netmask* says where the "street name" ends and the "house number" begins.
 =255.255.255.0= (written =/24=) means "the first 3 bytes are the network, the last
 byte is the host." So =10.0.2.15/24= is house =15= on street =10.0.2.0=, and every
 address from =10.0.2.0= to =10.0.2.255= is on the same street (on-link). Anything
-else is *off-link* and needs a router (§5).
+else is *off-link* and needs a router ([[#leaving-street-routers-default][Leaving the street: routers + the default gateway]]).
 
 *In the code:*
 - When [[file:../../initramfs/net.lisp::defun bring-up-interface][net.lisp → bring-up-interface]] sets our IP *and mask*, the kernel
@@ -84,13 +90,16 @@ else is *off-link* and needs a router (§5).
   why we can already reach the gateway =10.0.2.2= and DNS =10.0.2.3= with *no*
   default route — they're on our street.
 - The kernel's routing table (FIB): [[file:../../linux/net/ipv4/route.c][linux → net/ipv4/route.c]]
-- The options that turn the IP stack on: [[file:../kernel-config.org][kernel-config.org]] §7.
+- The options that turn the IP stack on: [[file:../kernel-config.org::#networking-new-tag-21][kernel-config.org, Networking (IPv4 + QEMU virtio-net) — NEW in tag #21]].
 
 *Check yourself:* for =10.0.2.15/24=, is =10.0.2.200= on-link? Is =10.0.3.5=?
 
 * 4. ARP: finding the MAC behind an IP
+:PROPERTIES:
+:CUSTOM_ID: arp-finding-mac-behind
+:END:
 
-You want to send to an on-link IP (say =10.0.2.2=), and §2 said you need its *MAC*
+You want to send to an on-link IP (say =10.0.2.2=), and [[#kinds-address-mac-vs][Two kinds of address: MAC vs IP]] said you need its *MAC*
 to build the frame. How do you learn it? *ARP* (Address Resolution Protocol): the
 host broadcasts "who has =10.0.2.2=? tell =10.0.2.15=", and whoever owns that IP
 answers with its MAC. The answer is cached so it isn't asked every time.
@@ -105,6 +114,9 @@ leave the subnet. That's the whole reason off-link traffic needs a router instea
 *Check yourself:* why can't ARP find the MAC for =8.8.8.8=?
 
 * 5. Leaving the street: routers + the default gateway
+:PROPERTIES:
+:CUSTOM_ID: leaving-street-routers-default
+:END:
 
 For an IP that's *not* on your subnet, you can't ARP it (it's not on your link).
 Instead you hand the packet to a *router*: a host with a foot in two networks that
@@ -114,14 +126,14 @@ The *default gateway* is "the router I send everything off-link to." The *defaul
 route* (=0.0.0.0/0=, "match anything") points at it. The neat trick: to send to
 =8.8.8.8= you build a frame whose *IP* destination is =8.8.8.8= but whose *MAC*
 destination is the *gateway's* MAC — local delivery to the router, which then
-rewrites the MAC and passes it along (this is §2's "MAC changes every hop").
+rewrites the MAC and passes it along (this is [[#kinds-address-mac-vs][Two kinds of address: MAC vs IP]]'s "MAC changes every hop").
 
 *In the code:*
 - DHCP told us our gateway is =10.0.2.2= and we stash it: [[file:../../initramfs/dhcp.lisp::defvar *gateway*][dhcp.lisp → *gateway*]]
 - The default route is the =SIOCADDRT= ioctl with a =struct rtentry= whose
   destination and mask are both =0.0.0.0= and whose gateway is that router:
   [[file:../../initramfs/net.lisp::defun add-default-route][net.lisp → add-default-route]], installed from every lease by
-  [[file:../../initramfs/dhcp.lisp::defun apply-lease][dhcp.lisp → apply-lease]] ([[file:../networking.org][networking.org]] §2c). Read the table back with
+  [[file:../../initramfs/dhcp.lisp::defun apply-lease][dhcp.lisp → apply-lease]] ([[file:../networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]). Read the table back with
   =(ipv4-routes)= — it's =/proc/net/route=, parsed.
 - Kernel routing decisions: [[file:../../linux/net/ipv4/fib_frontend.c][linux → net/ipv4/fib_frontend.c]]
 
@@ -150,7 +162,7 @@ sides match their messages by a random *transaction id* (xid).
 - leases on any interface: [[file:../../initramfs/dhcp.lisp::defun dhcp-configure][dhcp.lisp → dhcp-configure]], run at boot by
   [[file:../../initramfs/dhcp.lisp::defun network-up][network-up]]
 - why it works with no IP yet (SO_BINDTODEVICE to send, a packet socket to
-  receive a unicast reply): [[file:../networking.org][networking.org]] §2b
+  receive a unicast reply): [[file:../networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]]
 - The kernel even has its *own* tiny DHCP, for the =ip=dhcp= boot option: [[file:../../linux/net/ipv4/ipconfig.c][linux → net/ipv4/ipconfig.c]]
 
 *Check yourself:* which of the four messages carries the subnet mask and gateway?
@@ -180,6 +192,9 @@ but nobody can reach *in* uninvited — there's no fixed mapping for your host u
 hostfwd, and not just by dialing =10.0.2.15= directly?
 
 * 8. QEMU SLIRP: our NAT in software (and why ping is special)
+:PROPERTIES:
+:CUSTOM_ID: qemu-slirp-nat-software
+:END:
 
 QEMU's "user-mode networking" (a.k.a. *SLIRP*) is a NAT router implemented purely
 *in software inside the QEMU process* — no root, no real NIC. It hands the guest
@@ -208,14 +223,14 @@ while an external =ping= may not?
 
 Now put it all together. When our REPL tries to ping =8.8.8.8=:
 
-1. *Is it on-link?* =8.8.8.8= is not in =10.0.2.0/24= (§3), so we need the
-   *default route* (§5). Without one the kernel returns =ENETUNREACH= and nothing
+1. *Is it on-link?* =8.8.8.8= is not in =10.0.2.0/24= ([[#local-street-subnet-netmask][Your local street: subnet + netmask]]), so we need the
+   *default route* ([[#leaving-street-routers-default][Leaving the street: routers + the default gateway]]). Without one the kernel returns =ENETUNREACH= and nothing
    leaves the box. *(Prerequisite 1: the route — installed from every DHCP lease,
    so a TCP connection out, e.g. =(http-get "http://example.com/")=, works.)*
 2. *Build the frame:* with the route, the packet's IP dst is =8.8.8.8= but its MAC
-   dst is the gateway =10.0.2.2='s MAC (§2, §5) — found via ARP (§4) — and off it
+   dst is the gateway =10.0.2.2='s MAC ([[#kinds-address-mac-vs][Two kinds of address: MAC vs IP]], [[#leaving-street-routers-default][Leaving the street: routers + the default gateway]]) — found via ARP ([[#arp-finding-mac-behind][ARP: finding the MAC behind an IP]]) — and off it
    goes to SLIRP.
-3. *Through the NAT:* SLIRP must relay the ICMP echo to the real internet (§8) →
+3. *Through the NAT:* SLIRP must relay the ICMP echo to the real internet ([[#qemu-slirp-nat-software][QEMU SLIRP: our NAT in software (and why ping is special)]]) →
    needs host ICMP permission → *may not work*. *(Prerequisite 2: SLIRP/host
    cooperation — or sidestep it with a TCP test.)*
 
@@ -229,7 +244,7 @@ it's the more reliable "am I online?" check here.
 - the route itself, beside the other ioctls: [[file:../../initramfs/net.lisp::defun add-default-route][net.lisp → add-default-route]]
   (a ping helper would go there too)
 - the kernel's ICMP socket support: [[file:../../linux/net/ipv4/ping.c][linux → net/ipv4/ping.c]]
-- the whole outbound path: [[file:../networking.org][networking.org]] §2c.
+- the whole outbound path: [[file:../networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]].
 
 *Check yourself:* name the three things that must all be true for our ping to
 =8.8.8.8= to actually get a reply.

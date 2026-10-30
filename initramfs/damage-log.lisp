@@ -1,7 +1,7 @@
 ;;;; damage-log.lisp — the screen as a log of what changed: written while recording,
 ;;;; replayed into frames afterwards.
 ;;;;
-;;;; doc/screencast.org §5.2, the recorder's second mode. A live recording encodes as it
+;;;; file:../doc/screencast.org::#damage-log, the recorder's second mode. A live recording encodes as it
 ;;;; goes (about one thread at 1920x1200); a LOGGED one writes down only the rects each
 ;;;; repair redrew, plus where the pointer was, and encodes after the stop. Typing
 ;;;; repaints a line; an idle screen repaints nothing; so the log is small and costs

@@ -2,7 +2,7 @@
 ;;;;
 ;;;;   sbcl --script poc/run-editor.lisp
 ;;;;
-;;;; What this is testing (doc/code-browser.org §9's "hardest" piece):
+;;;; What this is testing (file:../doc/code-browser.org::#risks-honestly's "hardest" piece):
 ;;;;   - a caret you can place with the MOUSE, in pixels
 ;;;;   - drag-SELECTION across lines
 ;;;;   - real typing, with syntax colour and auto-indent
@@ -27,7 +27,7 @@
 (use-package :lol.canvas)
 
 ;;; The definitions we are "browsing". In the real browser these come out of the
-;;; definition registry (doc/code-browser.org §2); here they are just text.
+;;; definition registry (file:../doc/code-browser.org::#model-layer-unit-code); here they are just text.
 (defparameter *defs*
   '(("greeting"
      "(defun greeting ()
@@ -152,7 +152,7 @@
                      (setf pending-c-c nil)
                      (when (eq :accept (lol.textview:tv-key tv key st))
                        (accept tv))))))
-               ;; buttons 4/5 are the wheel under X (doc/input.org §7), not clicks
+               ;; buttons 4/5 are the wheel under X (file:../doc/input.org::#same-gesture-host-x11), not clicks
                (:button-press
                 (case (lol.x11:event-detail e)
                   (4 (lol.textview:tv-wheel tv -3))

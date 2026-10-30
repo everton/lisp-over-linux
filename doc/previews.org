@@ -3,7 +3,7 @@
 
 Sibling docs: [[file:framebuffer.org][framebuffer.org]] (where the pixels end up) ·
 [[file:fonts.org][fonts.org]] (the other thing we turn into pixels by hand) ·
-[[file:processes.org][processes.org]] §6 (the FFI rule this design had to respect).
+[[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]] (the FFI rule this design had to respect).
 
 Code: [[file:../poc/inflate.lisp][poc/inflate.lisp]] (package =LOL.INFLATE=) ·
 [[file:../poc/image.lisp][poc/image.lisp]] (package =LOL.IMAGE=) ·
@@ -34,7 +34,7 @@ A preview is a picture the shell can draw. The shell draws with
 [[file:../poc/canvas.lisp][poc/canvas.lisp]], whose pixel is one =(unsigned-byte 32)= holding =#x00RRGGBB= —
 chosen because on x86 that sits in memory as B,G,R,0, which is exactly what
 =efifb= and a 24-bit X server want (canvas.lisp's header, and
-[[file:framebuffer.org][framebuffer.org]] §8). So every decoder here ends in that format, row-major,
+[[file:framebuffer.org::#drawing-image-corner][framebuffer.org, Drawing an image (the Land-of-Lisp alien) in a corner]]). So every decoder here ends in that format, row-major,
 top row first, and the caller can blit it with no conversion.
 
 Three rules shape the API, all because the caller is PID 1:
@@ -58,6 +58,9 @@ Three rules shape the API, all because the caller is PID 1:
   =nil= to drop alpha. One compositing rule for nine formats.
 
 * 2. DEFLATE — the decompressor everything else needs
+:PROPERTIES:
+:CUSTOM_ID: deflate-decompressor-everything-else
+:END:
 
 [[file:../poc/inflate.lisp][poc/inflate.lisp]] is the reading half; [[file:../poc/deflate.lisp][poc/deflate.lisp]] (=lol.deflate=, used by
 [[file:../host-client/png.lisp][host-client/png.lisp]] and the log archives) writes DEFLATE. PNG needs it (every
@@ -113,7 +116,7 @@ Two things, as in every serious inflater:
    the rarest symbols — leave their slots 0 and fall to a slow canonical walk
    (=huff-slow=, the method of zlib's reference decoder /puff/).
 
-Measured on the host (§10): 2 MB of incompressible data (all stored blocks) in
+Measured on the host ([[#measured][Measured]]): 2 MB of incompressible data (all stored blocks) in
 ~8 ms, 0.5 MB of source text in ~4 ms.
 
 ** zlib and gzip
@@ -172,6 +175,9 @@ whole picture early. Each pass is filtered on its own; we unfilter each and
 scatter its pixels to their place.
 
 * 4. JPEG — and why this one is C
+:PROPERTIES:
+:CUSTOM_ID: jpeg-c
+:END:
 
 ** The pipeline
 
@@ -226,7 +232,7 @@ return =NIL= with "needs libstbi.so: ..." and everything else still works.
 
 The functions are looked up by name at call time and called through
 =sap-alien=, so =image.lisp= compiles and loads where the library has never
-existed — and, unlike =sb-posix='s inline wrappers ([[file:processes.org][processes.org]] §6), every call
+existed — and, unlike =sb-posix='s inline wrappers ([[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]), every call
 uses only the primitive alien types =int=, pointer and =c-string=, so a function
 here can still be recompiled live in the guest with =C-c C-c=.
 
@@ -304,7 +310,7 @@ compact design worth having in Lisp:
   idea generalised), decorrelate colours, subtract green from red and blue, or
   index a palette with 2/4/8 pixels packed per word.
 
-Its =VP8 = chunk is /lossy/ WebP: a VP8 video keyframe. Not supported (§9).
+Its =VP8 = chunk is /lossy/ WebP: a VP8 video keyframe. Not supported ([[#supported][What is NOT supported, and why]]).
 
 * 8. Thumbnails — scale-to-fit
 
@@ -318,17 +324,20 @@ the input itself when it already fits. Against ImageMagick's =-filter box= the
 mean difference is 0.65/255 (the box edges are placed slightly differently).
 
 * 9. What is NOT supported, and why
+:PROPERTIES:
+:CUSTOM_ID: supported
+:END:
 
 | Format            | Why not                                                                                                                                                            |
 |-------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| Lossy WebP (VP8)  | A video codec's keyframe: intra prediction, a DCT variant, a boolean arithmetic coder. =libwebp= could do it (§4: 600 KB + =libsharpyuv=), not taken               |
+| Lossy WebP (VP8)  | A video codec's keyframe: intra prediction, a DCT variant, a boolean arithmetic coder. =libwebp= could do it ([[#jpeg-c][JPEG — and why this one is C]]: 600 KB + =libsharpyuv=), not taken               |
 | AVIF              | An AV1 video frame in an ISO-BMFF box: =libavif= + =dav1d=, megabytes                                                                                              |
 | HEIC              | HEVC in the same box, patent-encumbered; =libheif= + =libde265=                                                                                                    |
 | JPEG XL           | =libjxl= is C++ (=libstdc++=), and large                                                                                                                           |
 | TIFF              | A container of /everything/ (LZW, JPEG, Deflate, planar, tiles, 32-bit float). Uncompressed + LZW TIFF would be cheap with the GIF and inflate code if ever needed |
 | SVG               | Not an image but a program: XML + CSS + path rasterising. =librsvg= drags in cairo, pango, glib                                                                    |
 | PDF               | A page-description language with fonts; =mupdf= / =poppler=                                                                                                        |
-| Video             | Container + codec, AVIF's story many times over. The file manager previews a frame cut by the host's =ffmpeg= instead ([[file:file-manager.org][file-manager.org]] §6) |
+| Video             | Container + codec, AVIF's story many times over. The file manager previews a frame cut by the host's =ffmpeg= instead ([[file:file-manager.org::#previews-preview-side-drill][file-manager.org, Previews: preview = side, drill = vertical]]) |
 | Animation         | GIF and WebP previews show the first frame                                                                                                                         |
 | Colour management | ICC profiles, PNG =gAMA=/=cHRM= are ignored — pixels are taken as sRGB                                                                                             |
 | 16-bit precision  | Rounded to 8 bits: the framebuffer has 8 per channel                                                                                                               |
@@ -338,6 +347,9 @@ magic bytes, so the file manager can say "HEIC — no preview" rather than
 "unknown".
 
 * 10. Measured
+:PROPERTIES:
+:CUSTOM_ID: measured
+:END:
 
 Host numbers — Intel i7-1065G7, SBCL 2.6.8 (=./sbcl=), files loaded with
 plain =load= (SBCL compiles each top-level form natively as it loads, so this is
@@ -370,7 +382,7 @@ and the transforms, and averaging bytes with the
 
 What it looks like in the guest: a 320x200 JPEG from the stand-in disk,
 through =libstbi.so=, scaled to fit the file manager's preview pane
-([[file:file-manager.org][file-manager.org]] §6; =./refresh-screenshot.sh --scene files=).
+([[file:file-manager.org::#previews-preview-side-drill][file-manager.org, Previews: preview = side, drill = vertical]]; =./refresh-screenshot.sh --scene files=).
 
 [[file:../media/screenshots/files-2026-10-20.png]]
 

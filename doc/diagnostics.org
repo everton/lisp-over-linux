@@ -8,6 +8,9 @@ host. Code: [[file:../initramfs/session-log.lisp][=initramfs/session-log.lisp=]]
 gzip writer in [[file:../poc/deflate.lisp][=poc/deflate.lisp=]].
 
 * 1. Four ways a screen "freezes"
+:PROPERTIES:
+:CUSTOM_ID: four-ways-screen-freezes
+:END:
 
 The environment draws into =/dev/fb0= with the console switched to =KD_GRAPHICS=
 ([[file:framebuffer.org][framebuffer.org]]): the kernel stops painting text, so *whatever happens underneath,
@@ -38,7 +41,7 @@ different witness:
      ceiling) is 1 GiB, and the agent, Chrome's screencast frames and the glyph
      cache all allocate.
 4. *The kernel is stuck* (a driver, Wi-Fi firmware, the display). No Lisp code sees
-   that. §6.
+   that. [[#when-kernel-stuck-tag][When the kernel is the one stuck — tag #28]].
 
 ** A special case of 1: the stopped console
 
@@ -51,7 +54,7 @@ on, Ctrl-S (XOFF) is taken by the kernel — it never reaches the program — an
   A =C-s= (alone or in =C-x C-s=) stopped the console silently; the freeze came at
   the next write, e.g. a compiler warning printed to =*error-output*= (the
   console), with the thread waiting in =FLUSH-OUTPUT-BUFFER= — exactly what the
-  STALL report (§3) showed.
+  STALL report ([[#pulse-stall-watcher][The pulse and the stall watcher]]) showed.
 - *The fixes.* Raw mode clears =IXON= and =IXOFF= ([[file:../initramfs/line-editor.lisp::defconstant +ixon][line-editor.lisp]]), so =C-s= /
   =C-q= are ordinary keys. The Workspace's =ws-eval= captures =*error-output*= as it
   does =*standard-output*=, so a warning lands in the Workspace as a short note
@@ -78,13 +81,13 @@ is what the QEMU tests do.
 |---------------+----------------------------------------------------+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | =session.log= | [[file:../initramfs/session-log.lisp::defun session-log][=session-log=]], from every thread                   | the boot, entering/leaving the environment, every agent turn and tool call (with its input, clipped) and how it ended, retries, errors caught and uncaught, debugger entries, the *pulse*, *STALL* reports, the shutdown |
 | =stderr.log=  | file descriptor 2 — the C runtime, child processes | =lose()='s last words and backtrace, heap-exhaustion reports, Chrome's and =wpa_supplicant='s complaints                                                                                                                 |
-| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                      | DHCP, Wi-Fi events ([[file:networking.org][networking.org]] §2b)                                                                                                                                                                                  |
+| =network.log= | [[file:../initramfs/dhcp.lisp::defun network-log][=network-log=]]                                      | DHCP, Wi-Fi events ([[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]])                                                                                                                                                                                  |
 | =kernel.log=  | the =kmsg= thread ([[file:../initramfs/session-log.lisp::defun kmsg-loop][=kmsg-loop=]])                    | the kernel's log from =/dev/kmsg=, as =dmesg= prints it; records at =err= or worse are also written to =session.log= as =kernel: …=                                                                                     |
 
 - *Every line is =fsync='d.* A line still in the page cache is lost to a hard reset,
   which is exactly when it's wanted. At a few lines a second it costs nothing
   measurable. =kernel.log= is drained every 2 s with one =fsync= per batch (the
-  boot alone is a thousand records), so its last two seconds can be missing; §6's
+  boot alone is a thousand records), so its last two seconds can be missing; [[#when-kernel-stuck-tag][When the kernel is the one stuck — tag #28]]'s
   EFI pstore catches a dying kernel's last words.
 - *Private.* Files 0600, directories 0700: they quote what the agent ran and what
   the network did. A =file-write= call is logged as path and size, never content
@@ -129,6 +132,9 @@ A line is a UTC stamp, the thread, the event:
   closed again.
 
 * 3. The pulse and the stall watcher
+:PROPERTIES:
+:CUSTOM_ID: pulse-stall-watcher
+:END:
 
 One thread, =lol-watch=, wakes every second ([[file:../initramfs/session-log.lisp::defun watch-loop][=watch-loop=]]).
 
@@ -245,7 +251,7 @@ anything that can block in C (OpenSSL, a pipe to Chrome, a container),
 
 Right after, the supervisor runs [[file:../initramfs/lol-home.lisp::defun migrate-lol-home][=migrate-lol-home=]], which moves files left at the
 old XDG places into =~/.lol/= and logs one =lol-home: moved OLD -> NEW= (or =NOT
-moved …= with the reason) line each ([[file:session-persistence.org][session-persistence.org]] §3).
+moved …= with the reason) line each ([[file:session-persistence.org::#where-things-live-when][session-persistence.org, Where things live, and when there is no disk]]).
 =grep lol-home ~/.lol/log/session.log= shows what a boot moved.
 
 A log that passes 16 MB mid-session is set aside the same way and restarted, so a
@@ -258,9 +264,12 @@ LZ77 with DEFLATE's fixed Huffman code: about 10% of the text on a real
 =network.log= (=gzip -9=: 8.4%), about 10 MB/s, and every file passes =gzip -t=.
 
 * 6. When the kernel is the one stuck — tag #28
+:PROPERTIES:
+:CUSTOM_ID: when-kernel-stuck-tag
+:END:
 
 A kernel that stops can't be heard from Lisp: the pulses just end, as a
-whole-process GC deadlock would look. Kernel tag #28 ([[file:kernel-config.org][kernel-config.org]] §6) adds the
+whole-process GC deadlock would look. Kernel tag #28 ([[file:kernel-config.org::#debug-serial][kernel-config.org, Debug / serial (for QEMU testing, not the laptop)]]) adds the
 kernel's own witnesses:
 
 - *Magic SysRq.* Hold Alt and SysRq (PrintScreen) and press a letter. It's an input
@@ -287,7 +296,7 @@ kernel's own witnesses:
   zcat "$(ls -t ~/.lol/log/archive/session.*.gz | head -1)" | tail -60
   zcat ~/.lol/log/archive/stderr.*.gz | tail             # the runtime's last words, if any
   zcat "$(ls -t ~/.lol/log/archive/kernel.*.gz | head -1)" | tail -40
-  sudo ls /var/lib/systemd/pstore/                       # a kernel panic's log (§6)
+  sudo ls /var/lib/systemd/pstore/                       # a kernel panic's log (see "When the kernel is the one stuck")
 #+end_src
 
 Read it as:
@@ -312,7 +321,7 @@ Read it as:
   10, fd 2, the pulse, idle while waiting; the environment's thread made to spin
   13 s (an =INTERRUPT-THREAD= from the net REPL) and the STALL report, its activity,
   the backtrace through the spinning function and its end; the same stuck in libc's
-  =sleep(3)= (§3's hole); =kernel.log=, the 0600 modes, tag #28's SysRq, detectors
+  =sleep(3)= ([[#pulse-stall-watcher][The pulse and the stall watcher]]'s hole); =kernel.log=, the 0600 modes, tag #28's SysRq, detectors
   and =efi_pstore=; an unhandled error on a thread; archiving; one failing turn of
   the environment survived with both tabs, a failure every turn leaving.
 - [[file:../check-crash.lisp][=check-crash.lisp=]] (guest, 13 checks, three boots on a writable copy of
@@ -325,6 +334,9 @@ Read it as:
   modules log, and a host test must never write the real =~/.lol/log=.
 
 * 9. Should the agent run in its own process?
+:PROPERTIES:
+:CUSTOM_ID: should-agent-run-own
+:END:
 
 Less changes than it seems. Tools already run in the environment's image through a
 job queue, so a separate agent process would keep the conversation, HTTPS and JSON
@@ -335,9 +347,9 @@ image.
 - *It wouldn't protect it* from a tool's =lisp-eval= wedging the environment's
   thread, which runs there either way.
 - *It would cost* the conversation as a live object to inspect (it becomes a view,
-  like [[file:processes.org][processes.org]] §2's worker) and a second heap.
+  like [[file:processes.org::#scenario-peer-sends-view][processes.org, Scenario A — a peer that sends a VIEW]]'s worker) and a second heap.
 
 Deferred until a STALL or an =UNHANDLED= in these logs shows which part fails.
-Meanwhile the tools can't wedge it for long ([[file:agent.org][agent.org]] §7.5): =container-run= and
+Meanwhile the tools can't wedge it for long ([[file:agent.org::#tools-can-t-freeze][agent.org, Tools that can't freeze the environment]]): =container-run= and
 =web-fetch= run on the turn's thread once approved, where C-g reaches them;
 =lisp-eval= stops after 60 s; every tool's output is capped as it's written.

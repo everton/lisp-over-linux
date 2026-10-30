@@ -1,4 +1,4 @@
-;;;; agent-store.lisp — a conversation survives power-off (doc/agent.org §10).
+;;;; agent-store.lisp — a conversation survives power-off (file:../doc/agent.org::#persistence).
 ;;;;
 ;;;;   ~/.lol/agent/conversations/20261016-141503-3.json      one file per conversation
 ;;;;
@@ -12,7 +12,7 @@
 ;;;;     block's signature included, byte for byte, or the next request is refused;
 ;;;;   - the tools array as first sent (CONVERSATION-TOOLS): a thinking signature is
 ;;;;     bound to the request that produced it, tools included, so a reopened
-;;;;     conversation must send the very same tools, not today's (doc/agent.org §7.4);
+;;;;     conversation must send the very same tools, not today's (file:../doc/agent.org::#conversation-s-tools-never);
 ;;;;   - the turns (question, notes, failure, cost), the tool calls (input, result,
 ;;;;     summary), the plan — what the pane shows.
 ;;;; The format is JSON (lol.json), because the messages and tools already ARE JSON:

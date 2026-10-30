@@ -10,7 +10,7 @@
 ;;;;
 ;;;; Checks, in the order the doc tells them (doc/session-persistence.org):
 ;;;;   - an Accept appends one record, stamped with the build and the right package
-;;;;     (a lol.* edit lands in its package, doc §4), and fsync'd text reads back;
+;;;;     (a lol.* edit lands in its package, file:../doc/session-persistence.org::#change-journal), and fsync'd text reads back;
 ;;;;   - replay: replayed / failed (no package, unreadable, a compile error, a runaway
 ;;;;     form stopped by the timeout) / retired / pending / needs-rebuild, a failure
 ;;;;     never stopping the rest, and replay journalling nothing itself;

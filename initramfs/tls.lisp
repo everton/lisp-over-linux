@@ -2,7 +2,7 @@
 ;;;;
 ;;;; TLS (the "S" in HTTPS) is a handshake — agree on keys, check the server's
 ;;;; certificate chain up to a trusted root, check the name — and then a record layer
-;;;; that encrypts every byte. Writing it ourselves is agent.org §12's
+;;;; that encrypts every byte. Writing it ourselves is the sub-project of file:../doc/agent.org::#tls-1-3-lisp —
 ;;;; sub-project (~1500 lines of carefully tested crypto). Until then we do what the
 ;;;; project allows when writing it ourselves is unrealistic (common.md, steps.org):
 ;;;; call a host library. The laptop's Debian has OpenSSL 3 (libssl.so.3 +

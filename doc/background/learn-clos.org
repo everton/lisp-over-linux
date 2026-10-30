@@ -32,6 +32,9 @@ Tick a box as you finish a section (in Emacs: =C-c C-c= on the checkbox).
 - [ ] 10. Synthesis: how the browser is *only* these ideas
 
 * 1. The one big idea: methods do not live in classes
+:PROPERTIES:
+:CUSTOM_ID: big-idea-methods-do
+:END:
 
 If you come from Java, Python or C++, an object is *a bundle of data and the
 functions that act on it*, and you call one with =object.method(args)=. The
@@ -80,7 +83,7 @@ Slot options do the work:
 - =:initform "?"= — the default when no initarg is passed.
 
 Multiple inheritance is allowed: =(defclass x (a b) …)= is legal and normal, not
-exotic. §4 is how CLOS keeps that unambiguous.
+exotic. [[#specificity-clos-picks-method][Specificity: how CLOS picks a method]] is how CLOS keeps that unambiguous.
 
 *In the code:* [[file:../../initramfs/examples.lisp][=examples.lisp=]] defines a deliberately small hierarchy —
 =space-object= with =asteroid=, =ship=, =station= and =missile= under it — that
@@ -89,6 +92,9 @@ exists purely to be looked at in the browser.
 *Check yourself:* what is the difference between =:initarg= and =:initform=?
 
 * 3. Generic functions and multiple dispatch
+:PROPERTIES:
+:CUSTOM_ID: generic-functions-multiple-dispatch
+:END:
 
 A generic function declares the name; methods fill it in.
 
@@ -114,7 +120,7 @@ Multiple dispatch is why a generic function's coverage is a *grid*, not a list �
 one axis per specialized argument. Our browser draws exactly that grid.
 
 *In the code:* =collide= in [[file:../../initramfs/examples.lisp][=examples.lisp=]] is the project's showcase: 13
-methods (10 primary, plus an =:around=/=:before=/=:after= trio — see §5) over 4
+methods (10 primary, plus an =:around=/=:before=/=:after= trio — see [[#method-combination-before-after][Method combination: =:before=, =:after=, =:around=]]) over 4
 classes, dispatching on *both* arguments, with real gaps where nobody wrote a
 rule. Our own =present= dispatches on one argument, so its matrix
 honestly degrades to a list — the reason =collide= exists at all.
@@ -123,6 +129,9 @@ honestly degrades to a list — the reason =collide= exists at all.
 directly?
 
 * 4. Specificity: how CLOS picks a method
+:PROPERTIES:
+:CUSTOM_ID: specificity-clos-picks-method
+:END:
 
 Several methods can apply at once. =(collide missile ship)= matches the
 =(missile ship)= method, and would also match a hypothetical
@@ -150,6 +159,9 @@ specific first — the browser's "effective method preview".
 a tie — =missile='s CPL or =ship='s?
 
 * 5. Method combination: =:before=, =:after=, =:around=
+:PROPERTIES:
+:CUSTOM_ID: method-combination-before-after
+:END:
 
 CLOS does not only pick *one* method. By default it builds an *effective
 method* out of all applicable ones, using their *qualifiers*:
@@ -309,12 +321,12 @@ Put the pieces together and the code browser stops looking like a big program:
    methods, specializers, applicability. No parsing. No index. The live image
    already knows.
 3. *The protocol* ([[file:../../initramfs/present.lisp][=present.lisp=]]) is *one generic function*, =present=, with a
-   method per kind of subject and a =t= fallback — §1 and §4 doing the work.
+   method per kind of subject and a =t= fallback — [[#big-idea-methods-do][The one big idea: methods do not live in classes]] and [[#specificity-clos-picks-method][Specificity: how CLOS picks a method]] doing the work.
 4. *The shell* renders whatever =present= returned, and knows nothing about
    classes, methods or the MOP.
 
 So "add a new kind of thing to the browser" = *write one method*. That is why
-§4⅔'s module index was a predicate and two small methods rather than a feature,
+[[file:../code-browser.org::#module-index-files-categories][The module index — our files ARE our categories  (DONE)]]'s module index was a predicate and two small methods rather than a feature,
 and it is the payoff for everything in this file.
 
 *Check yourself:* you want the browser to display a new subject — say, a network
@@ -322,8 +334,8 @@ socket. What is the minimum you must write?
 
 * Where to go next
 
-- [[file:../code-browser.org][code-browser.org]] — the design this all serves, especially §4½ (the drill-down
-  protocol) and §3 (the Smalltalk → Lisp concept map).
+- [[file:../code-browser.org][code-browser.org]] — the design this all serves, especially [[file:../code-browser.org::#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]] (the drill-down
+  protocol) and [[file:../code-browser.org::#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]] (the Smalltalk → Lisp concept map).
 - *The Art of the Metaobject Protocol* (Kiczales, des Rivières, Bobrow) — the
   book the MOP comes from. Chapters 1–2 are the readable part.
 - =(show-class 'ship)=, =(show-gf 'collide)=, =(applicable-methods 'collide

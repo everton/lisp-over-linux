@@ -1,6 +1,6 @@
 ;;;; agent-wire.lisp — the agent's wire: Server-Sent Events.
 ;;;;
-;;;; doc/agent.org §3 stacks an LLM client as transport → wire format → protocol →
+;;;; file:../doc/agent.org::#layers stacks an LLM client as transport → wire format → protocol →
 ;;;; tools. The transport is the networking track's HTTP-REQUEST (initramfs/http.lisp:
 ;;;; https through the host's libssl, chunked bodies, an ON-CHUNK callback that hands
 ;;;; the body over as it arrives). The wire format is JSON (json.lisp) and this:
@@ -14,7 +14,7 @@
 ;;;;
 ;;;; Until HTTP-REQUEST landed, this file also carried a plain-http stand-in with the
 ;;;; same signature, so the agent could be written and tested in parallel; it was
-;;;; removed once the real client was in the image (doc/agent.org §4.1).
+;;;; removed once the real client was in the image (file:../doc/agent.org::#https-through-http-request).
 ;;;;
 ;;;; All original code, under this project's MIT licence.
 

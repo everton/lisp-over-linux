@@ -1,7 +1,7 @@
 ;;;; org-mode.lisp — Org files in the environment: colour, the outline, links, keys.
 ;;;;
 ;;;; The structure itself is pure and lives in poc/org.lisp (LOL.ORG). This file is the
-;;;; shell's side of it, in the order doc/org.org §4–6 describes:
+;;;; shell's side of it, in the order doc/org.org describes it (file:../doc/org.org::#seeing-org-file, ::#folding-change-text-view, ::#moving-editing):
 ;;;;
 ;;;;   - the COLOURER: :syntax :org, registered with the text view (lol.textview's
 ;;;;     *SYNTAXES*), so any view of an .org file — the editor, a preview — reads as
@@ -380,7 +380,7 @@
         (and (= 1 (length hits)) (first hits))))))
 
 (defun org-follow-link (target base-file &optional pane)
-  "Open what the Org link TARGET names, as Org would (doc/org.org §4.3). BASE-FILE is
+  "Open what the Org link TARGET names, as Org would (file:../doc/org.org::#links). BASE-FILE is
    the file the link is in; PANE, when the link is in an open pane, is where a link
    into the same file moves the caret."
   (let ((link (lol.org:parse-link target)))

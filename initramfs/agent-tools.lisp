@@ -1,4 +1,4 @@
-;;;; agent-tools.lisp — the rest of the agent's tool surface (doc/agent.org §7.2, §8.5):
+;;;; agent-tools.lisp — the rest of the agent's tool surface (file:../doc/agent.org::#tools file:../doc/agent.org::#can-show-things):
 ;;;; inspect a live object, preview a generic function's dispatch, read the stack the
 ;;;; debugger stood on, show the user a subject, and fetch a web page.
 ;;;;
@@ -8,7 +8,7 @@
 ;;;;                    some classes — the effective-method onion (EFFECTIVE-METHOD-ONION)
 ;;;;   lisp-backtrace   the frames and locals of the condition a debugger conversation
 ;;;;                    was opened on (a SNAPSHOT taken when ASK was chosen — below)
-;;;;   browse           §8.5 "it can show you things": put a subject in front of the
+;;;;   browse           "it can show you things" (file:../doc/agent.org::#can-show-things): put a subject in front of the
 ;;;;                    user, BESIDE the conversation, never in place of what they see
 ;;;;   web-fetch        GET a URL with the image's own HTTP-REQUEST, return its text —
 ;;;;                    GATED like a write, because a URL can carry data out
@@ -20,7 +20,7 @@
 ;;;; panes — always through FBOUNDP / BOUNDP guards, so the host test (which loads no
 ;;;; shell) runs them too.
 ;;;;
-;;;; One rule holds for all of them (doc/agent.org §7.4): a
+;;;; One rule holds for all of them (file:../doc/agent.org::#conversation-s-tools-never): a
 ;;;; conversation's tools are frozen at its first request. These reach the model in
 ;;;; conversations started after this file is loaded — or, on a running image, after
 ;;;; C-c C-c on one of them.
@@ -247,7 +247,7 @@
            (format s "frame N gives a frame's locals and source.~%")))))))
 
 ;;; ===========================================================================
-;;; browse — §8.5: "it can show you things"
+;;; browse — "it can show you things" (file:../doc/agent.org::#can-show-things)
 ;;; ===========================================================================
 ;;; The answer to "where is this used?" should be the senders view, open and
 ;;; drillable, not a list of names in prose. The consent rule is OPEN BESIDE, NEVER

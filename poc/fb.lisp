@@ -2,7 +2,7 @@
 ;;;;
 ;;;; Note how little there is here. Presenting to the framebuffer is a memcpy:
 ;;;; the canvas is already #x00RRGGBB words = B,G,R,pad bytes = exactly BGRX,
-;;;; exactly what efifb scans out. (framebuffer.org §1, §8.)
+;;;; exactly what efifb scans out. (file:../doc/framebuffer.org::#framebuffer-physically file:../doc/framebuffer.org::#drawing-image-corner.)
 ;;;;
 ;;;; The one wrinkle is fbcon: it shares /dev/fb0 with us and its cursor/printk
 ;;;; will scribble over the picture. KDSETMODE -> KD_GRAPHICS tells the kernel
@@ -60,7 +60,7 @@
 ;;; did a seek + write per row. Measured in the guest at 1280x800 (tag #24, averaged
 ;;; over 50 frames), that was 4.0 ms a frame under KVM and 47.7 ms under QEMU's TCG —
 ;;; more than drawing the whole browser (2.2 ms and 18.8 ms). One pwrite straight from
-;;; the pinned pixel vector is 0.2-0.6 ms and about 2 ms. (doc/framebuffer.org §9.4.)
+;;; the pinned pixel vector is 0.2-0.6 ms and about 2 ms. (file:../doc/framebuffer.org::#done-blit-single-copy.)
 ;;;
 ;;; Two pieces make that possible:
 ;;;

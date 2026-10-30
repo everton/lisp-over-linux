@@ -34,7 +34,7 @@
 <h1>Live editing, the debugger</h1>
 <p class="lede">The Smalltalk part. You change a definition and the running image changes. The old text is kept,
 the change is listed, and an error opens a debugger while the stack that raised it is still there.
-Design: <a href="../code-browser.org">code-browser.org</a> §3, §3a, §6.</p>
+Design: <a href="../code-browser.org">code-browser.org</a>: “The Smalltalk → Lisp concept map”, “The Workspace” and “Phase 6 — the live system”.</p>
 
 <h2>Accept: <kbd>C-c C-c</kbd></h2>
 <figure>
@@ -112,7 +112,7 @@ cannot take PID 1 down.</p>
 <code>handler-case</code>, which unwinds first. This is the whole trick, and it is why the restarts listed are live.</figcaption>
 </figure>
 <ul>
-  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:2213</span></a>: a modal loop over the same canvas and the
+  <li><a class="ref" data-ref="initramfs/fb-browser.lisp#run-debugger-fb" href="../../initramfs/fb-browser.lisp"><code>run-debugger-fb</code><span class="loc">initramfs/fb-browser.lisp:2215</span></a>: a modal loop over the same canvas and the
     same three fds, published in <code>*fb-canvas*</code> and friends.</li>
   <li>Data from the model: <a class="ref" data-ref="initramfs/model.lisp#restart-list" href="../../initramfs/model.lisp"><code>restart-list</code><span class="loc">initramfs/model.lisp:724</span></a> (<code>compute-restarts</code>),
     <a class="ref" data-ref="initramfs/model.lisp#backtrace-frame-objects" href="../../initramfs/model.lisp"><code>backtrace-frame-objects</code><span class="loc">initramfs/model.lisp:734</span></a> (walks <code>sb-di</code> frames),
@@ -122,7 +122,7 @@ cannot take PID 1 down.</p>
     (<a class="ref" data-ref="initramfs/model.lisp#set-frame-var" href="../../initramfs/model.lisp"><code>set-frame-var</code><span class="loc">initramfs/model.lisp:924</span></a>), then CONTINUE runs on with it, or <kbd>R</kbd>
     calls the frame again with the arguments it now holds
     (<a class="ref" data-ref="initramfs/model.lisp#restart-frame" href="../../initramfs/model.lisp"><code>restart-frame</code><span class="loc">initramfs/model.lisp:1003</span></a>). Why only some locals can be set, and the SBCL
-    setter that faults on one kind: <a href="../inspector-history.org">inspector-history.org</a> §5.4.</li>
+    setter that faults on one kind: <a href="../inspector-history.org">inspector-history.org</a>, “Set a local in a debugger frame — and re-enter it”.</li>
   <li>The stage arms the same handler around every simulation tick
     (<a class="ref" data-ref="poc/morphic.lisp#step-stage-pane" href="../../poc/morphic.lisp"><code>step-stage-pane</code><span class="loc">poc/morphic.lisp:1894</span></a>), so a collision with no method opens the
     debugger with the stage's own restarts (<code>define-method</code> drops a method template into the Workspace).</li>

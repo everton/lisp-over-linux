@@ -15,8 +15,8 @@ separate so the boundary is obvious.
 | =screenshot.lisp=       | CLI: QMP screendump → PPM → PNG. Used by =build.sh= and =poc/build-poc.sh=.                                                                                                                                                                           |
 | =ppm2png.lisp=          | CLI: just the conversion. Used by =refresh-screenshot.sh=.                                                                                                                                                                                            |
 | =drive-scene.lisp=      | CLI: drive the guest through a named scene and screendump it. The engine behind =refresh-screenshot.sh=.                                                                                                                                             |
-| =http-test-server.lisp= | a tiny HTTP/1.1 server with one path per body framing (length, read-to-close, chunked with an extension and a trailer, redirect, echo, UTF-8), which =poc/http-test.lisp= (loopback) and =check-net.lisp= (the guest, at =10.0.2.2=) test against ([[file:../doc/networking.org][networking.org]] §8). |
-| =mock-anthropic.lisp=   | a *mock Messages API* on plain HTTP (default :18014): streamed SSE replies with thinking signatures, tool calls, 529s and mid-stream errors, steered by the words of the question; it 400s what the real API would refuse. =check-agent.lisp= and =poc/agent-test.lisp= load it; =sbcl --script host-client/mock-anthropic.lisp PORT= serves it alone ([[file:../doc/agent.org][agent.org]] §13). |
+| =http-test-server.lisp= | a tiny HTTP/1.1 server with one path per body framing (length, read-to-close, chunked with an extension and a trailer, redirect, echo, UTF-8), which =poc/http-test.lisp= (loopback) and =check-net.lisp= (the guest, at =10.0.2.2=) test against ([[file:../doc/networking.org::#testing][networking.org, Testing it]]). |
+| =mock-anthropic.lisp=   | a *mock Messages API* on plain HTTP (default :18014): streamed SSE replies with thinking signatures, tool calls, 529s and mid-stream errors, steered by the words of the question; it 400s what the real API would refuse. =check-agent.lisp= and =poc/agent-test.lisp= load it; =sbcl --script host-client/mock-anthropic.lisp PORT= serves it alone ([[file:../doc/agent.org::#testing][agent.org, Testing]]). |
 
 * Why the tools are Lisp
 
@@ -38,7 +38,7 @@ anything here.*
 
 * lol-repl-client.c — a host terminal for the guest's network REPL
 
-Connects your terminal to the guest's TCP REPL on port 4005 ([[file:../doc/networking.org][networking.org]] §6a).
+Connects your terminal to the guest's TCP REPL on port 4005 ([[file:../doc/networking.org::#exposing-repl-over-network][networking.org, Exposing the REPL over the network]]).
 It puts your *local* terminal in raw mode and forwards keystrokes byte by byte, so
 the line editor *inside the guest* gets arrows, Ctrl-C and Ctrl-D and drives
 history and editing remotely. No PTY is needed on the guest side.

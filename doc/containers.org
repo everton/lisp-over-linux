@@ -7,7 +7,7 @@ compiler toolchain, a language runtime with native libraries, a database
 server — without baking any of it into the image.
 
 The container's root is the host's own distribution, already mounted read-only
-at =/mnt/host= ([[file:storage.org][storage.org]] §4). Writable overlays sit on top, and everything
+at =/mnt/host= ([[file:storage.org::#mount-layout-host-s][storage.org, The mount layout: the host's / stays apart]]). Writable overlays sit on top, and everything
 runs in a user namespace, so PID 1 needs no new capability.
 
 Code: [[file:../initramfs/lol-ct.c][=lol-ct.c=]] (the namespace helper, =/sbin/lol-ct=),
@@ -17,6 +17,9 @@ later. Related: [[file:storage.org][storage.org]] (the disk and why PID 1 runs a
 [[file:processes.org][processes.org]] (second processes), [[file:terminal.org][terminal.org]] (the terminal pane).
 
 * 1. What it gives you
+:PROPERTIES:
+:CUSTOM_ID: what-it-gives-you
+:END:
 
 - *The host's toolchain, unchanged.* Inside, =/usr=, =/etc=, =/var= and =/opt= are
   the host's. A program finds the same libraries, certificates and paths it finds
@@ -83,7 +86,7 @@ Two kernel rules shape the layout:
   ("overlapping", =fs/overlayfs/super.c=). The uppers live under =/home=, which
   may be on the same ext4 as =/mnt/host/usr=, but outside it — that's allowed.
 - *An overlay can't be another overlay's upper.* This matters only in testing
-  (§9).
+  ([[#tests-known-pitfalls][Tests and known pitfalls]]).
 
 The root is built *one directory at a time* rather than as one overlay over the
 whole host root. That keeps the host's =/boot=, =/root= and =lost+found= out of
@@ -129,6 +132,9 @@ then pivot_root into it, and detach the old root
   outcome and any reasons to =~/.lol/ct/<name>/layout=.
 
 * 4. What you can and can't change
+:PROPERTIES:
+:CUSTOM_ID: can-can-t-change
+:END:
 
 The user namespace maps exactly one uid. Every host file owned by anyone else
 shows up inside as =nobody= (65534), and overlayfs checks permissions against
@@ -164,8 +170,14 @@ through a fixed =lol-rootd= request instead
 ([[file:sbcl-init.org::Updating from inside — build, install, restart][sbcl-init.org → Updating from inside]]).
 
 * 5. =lol-ct=, the helper
+:PROPERTIES:
+:CUSTOM_ID: lol-ct-helper
+:END:
 
 ** 5.1 Why it's C
+:PROPERTIES:
+:CUSTOM_ID: s-c
+:END:
 
 =unshare(CLONE_NEWUSER)= silently adds =CLONE_THREAD=, and =check_unshare_flags=
 then refuses any caller with other threads (=linux/kernel/fork.c=). PID 1 is
@@ -182,7 +194,7 @@ lol-ct --probe-root [-r HOSTROOT]
 #+end_example
 
 =-N= makes stdin =/dev/null=. =--probe-root= tests whether an overlay with the
-whole host root as its lower layer mounts here (§9).
+whole host root as its lower layer mounts here ([[#tests-known-pitfalls][Tests and known pitfalls]]).
 
 |          Exit | Means                                                       |
 |---------------+-------------------------------------------------------------|
@@ -235,6 +247,9 @@ the Lisp ── lol-ct (OUTER)   unshare user+mount+uts, write the id maps,
   warning.
 
 ** 6.2 Run panes
+:PROPERTIES:
+:CUSTOM_ID: run-panes
+:END:
 
 A *run pane* is a read-only text pane that fills while the command runs.
 
@@ -309,13 +324,16 @@ result goes through the environment, not the container
 
 | Option                                                           | Why not the default                                                   |
 |------------------------------------------------------------------+-----------------------------------------------------------------------|
-| Run =/mnt/host/usr/bin/…= directly through the host's loader     | Programs hard-code absolute paths (stdlib dirs, =/etc/ssl=, =#!= lines); only a mount namespace makes =/mnt/host= look like =/=. Fine for a single self-contained binary — Wi-Fi does this ([[file:networking.org][networking.org]] §7). |
+| Run =/mnt/host/usr/bin/…= directly through the host's loader     | Programs hard-code absolute paths (stdlib dirs, =/etc/ssl=, =#!= lines); only a mount namespace makes =/mnt/host= look like =/=. Fine for a single self-contained binary — Wi-Fi does this ([[file:networking.org::#wi-fi][networking.org, Wi-Fi]]). |
 | A separate root filesystem per project (=debootstrap= into =~=)  | Every file is the user's, so the =0 uid 1= map lets =apt= write it. The route for a different release, or for system packages without rebooting. Packages that =chown= to a second system user still fail. |
 | A full uid range written by =lol-rootd= (like =newuidmap=)      | Needs =CAP_SETUID= in the parent namespace; widens the root helper. Not built. |
 | A VM (KVM + the host's =qemu= run inside a container)           | For projects needing systemd or Docker. Needs =VIRTUALIZATION= + =KVM_*= (off) and =/dev/kvm= for the user. |
 | A remote machine over SSH                                       | The host's =ssh= binary runs inside a container, so this builds on containers anyway. |
 
 * 9. Tests and known pitfalls
+:PROPERTIES:
+:CUSTOM_ID: tests-known-pitfalls
+:END:
 
 =check-containers.lisp= boots the image in two modes, because no single QEMU
 setup matches real hardware:

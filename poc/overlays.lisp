@@ -1,4 +1,4 @@
-;;;; overlays.lisp — the browser's modal cards as morphs (doc/morphic.org §7).
+;;;; overlays.lisp — the browser's modal cards as morphs (file:../doc/morphic.org::#overlays-modal-cards-loop).
 ;;;;
 ;;;; The Spotter, the menus and the halo, the clipboard manager and the value prompt
 ;;;; were once loops of their own in the framebuffer backend (fb-browser.lisp's
@@ -161,7 +161,7 @@
    middle-click — and each step rebuilds the handles for the new layer.
 
    A :SELECT is the menu card standing in for a web page's <select> popup
-   (doc/web-browser.org §4.4): it opens on the entry marked :SELECTED, never lands on
+   (file:../doc/web-browser.org::#pickers-popups-screencast-cannot): it opens on the entry marked :SELECTED, never lands on
    or picks one marked :DISABLED, and TYPING jumps to the next entry whose label
    starts with what was typed (within a second, letters accumulate: \"ba\" finds
    Banana past Apple), the way every desktop's list box behaves — so digits are

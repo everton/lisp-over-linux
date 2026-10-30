@@ -11,13 +11,13 @@ the write, find every object pointing at an object, ask the garbage collector wh
 something was alive, list every instance of a class, break on a single slot, swap
 identities, and re-enter a stack frame with edited arguments.
 
-This doc catalogues those powers (§§1–3), then says which are reachable from a frozen
+This doc catalogues those powers (from the history through [[#powers-catalogued][The powers, catalogued]]), then says which are reachable from a frozen
 SBCL core running as PID 1 — each prototyped against =./sbcl= 2.6.8 before it was
-built (§5).
+built ([[#powers-built][The powers we built]]).
 
-STATUS: *all of §5 ships* — every instance of a class (§5.1), why is this alive
-(§5.2), evaluate in the object's context (§5.3), settable debugger frame locals with
-restart frame (§5.4), and the function/closure inspector (§5.5). §5.6 is a separate
+STATUS: *all of [[#powers-built][The powers we built]] ships* — every instance of a class ([[#every-instance-class][Every instance of a class (#6)]]), why is this alive
+([[#still-alive][Why is this still alive? (#5, and the honest version of #4)]]), evaluate in the object's context ([[#evaluate-object-s-context][Evaluate in the object's context (#3)]]), settable debugger frame locals with
+restart frame ([[#set-local-debugger-frame][Set a local in a debugger frame (#9) — and re-enter it]]), and the function/closure inspector ([[#function-leaf][A function is not a leaf (#14)]]). [[#runtime-arithmetic-did-compile][Runtime arithmetic did not compile in the guest (fixed)]] is a separate
 finding: SBCL 2.6.8 miscompiled runtime arithmetic on CPUs without POPCNT (QEMU's
 default), fixed at build time by [[file:../initramfs/logcount-fix.lisp][logcount-fix.lisp]].
 
@@ -38,6 +38,9 @@ what it just described.
 * 2. The lineage
 
 ** 2.1 Interlisp and Interlisp-D (BBN/Xerox PARC, ~1974 onward)
+:PROPERTIES:
+:CUSTOM_ID: interlisp-interlisp-d
+:END:
 
 - *The Programmer's Assistant.* Warren Teitelman's *History List* recorded everything
   you did, side effects included, and =UNDO= retracted it. Inspector edits went through
@@ -46,33 +49,36 @@ what it just described.
   Medley) replaced a clicked value in the live heap immediately.
 - *Programs as list structure.* =EDITF= was a /structure editor/ over the conses that
   were the function; inspecting and editing a function were one act. That's the
-  maximum form of the idea, and the one thing here we deliberately don't want (§7).
+  maximum form of the idea, and the one thing here we deliberately don't want ([[#deliberately-doing][What we are deliberately not doing]]).
 
 ** 2.2 The Lisp Machines — MIT CADR, LMI, TI Explorer, Symbolics Genera
 
-The high-water mark; most of §3 comes from here. Two structural facts made it possible:
+The high-water mark; most of [[#powers-catalogued][The powers, catalogued]] comes from here. Two structural facts made it possible:
 
 1. *The locative.* A first-class /pointer to a cell/ — the storage location, not the
    value. =(locf (aref a 3))= handed you an array element's cell to =setf= through
    later. The inspector displayed cells, so typing into a row stored into memory.
-2. *Presentation types* (Dynamic Windows, later CLIM — §2.4). Output carried the object
+2. *Presentation types* (Dynamic Windows, later CLIM — [[#clim-idea-standardised][CLIM — the idea standardised]]). Output carried the object
    it came from, so anything printed anywhere stayed a live handle with a menu of the
    operations its type allowed.
 
 Together: no dead text on screen and no read-only view of anything. Genera also
 inspected non-data: a *process* (arrest it, inspect its stack), a *window*, a
 *stream*, a *flavor* (the pre-CLOS object system: its component flavors and method
-combination order), and a *stack frame* (§3.9).
+combination order), and a *stack frame* ([[#stack-frames-objects-big][Stack frames as objects — the big one]]).
 
 ** 2.3 Smalltalk-80, in parallel
 
 The direct model for this project's browser. Its inspector's distinguishing feature is
 a *code pane with =self= bound to the inspected object*: type an expression, it
 evaluates in the object's context and can change it. Squeak and Pharo keep
-=allInstances=, =pointersTo:=, "chase pointers", =become:= and the Morphic halo. §5.3
+=allInstances=, =pointersTo:=, "chase pointers", =become:= and the Morphic halo. [[#evaluate-object-s-context][Evaluate in the object's context (#3)]]
 ports the code pane.
 
 ** 2.4 CLIM — the idea standardised
+:PROPERTIES:
+:CUSTOM_ID: clim-idea-standardised
+:END:
 
 The Common Lisp Interface Manager made Dynamic Windows portable. Two central concepts:
 
@@ -94,25 +100,31 @@ catalogue of ideas tried against real users for a decade.
   [[file:../initramfs/net.lisp][net.lisp]], the REPL on :4005.
 
 * 3. The powers, catalogued
+:PROPERTIES:
+:CUSTOM_ID: powers-catalogued
+:END:
 
 |  # | Power                                 | Where it came from        | In our image                  |
 |----+---------------------------------------+---------------------------+-------------------------------|
 |  1 | Write a slot (places, not values)     | Interlisp-D, locatives    | *shipped* (=inspect-places=)  |
 |  2 | Undo the write                        | Interlisp Assistant       | possible; not designed        |
-|  3 | Eval arbitrary code in the object     | Smalltalk                 | *shipped* — §5.3              |
-|  4 | Who points at this object?            | Smalltalk, Lisp Machine   | subsumed by #5 — §5.2         |
-|  5 | Why is this still alive? (GC path)    | (modern SBCL)             | *shipped* — §5.2              |
-|  6 | Every instance of a class             | Smalltalk =allInstances=  | *shipped* — §5.1              |
+|  3 | Eval arbitrary code in the object     | Smalltalk                 | *shipped* — [[#evaluate-object-s-context][Evaluate in the object's context (#3)]]              |
+|  4 | Who points at this object?            | Smalltalk, Lisp Machine   | subsumed by #5 — [[#still-alive][Why is this still alive? (#5, and the honest version of #4)]]         |
+|  5 | Why is this still alive? (GC path)    | (modern SBCL)             | *shipped* — [[#still-alive][Why is this still alive? (#5, and the honest version of #4)]]              |
+|  6 | Every instance of a class             | Smalltalk =allInstances=  | *shipped* — [[#every-instance-class][Every instance of a class (#6)]]              |
 |  7 | The representation underneath         | Genera areas/storage      | possible (=room=, widetags)   |
 |  8 | Behaviour, not just state             | Genera flavor inspector   | *shipped*                     |
-|  9 | Stack frames as objects (set a local) | Genera, =sldb=            | *shipped* — §5.4              |
-| 10 | Watchpoint on one cell                | Genera =Monitor Variable= | hard; a shim is possible — §7 |
-| 11 | Identity surgery (=become:=)          | Smalltalk, forwarding     | no — §7                       |
+|  9 | Stack frames as objects (set a local) | Genera, =sldb=            | *shipped* — [[#set-local-debugger-frame][Set a local in a debugger frame (#9) — and re-enter it]]              |
+| 10 | Watchpoint on one cell                | Genera =Monitor Variable= | hard; a shim is possible — [[#deliberately-doing][What we are deliberately not doing]] |
+| 11 | Identity surgery (=become:=)          | Smalltalk, forwarding     | no — [[#deliberately-doing][What we are deliberately not doing]]                       |
 | 12 | Every printed object is a handle      | Dynamic Windows / CLIM    | *shipped* (=present=)         |
 | 13 | Inspect a remote image                | SLIME, Genera             | transport exists, unwired     |
-| 14 | A function/closure as a record        | Lisp Machine, Smalltalk   | *shipped* — §5.5              |
+| 14 | A function/closure as a record        | Lisp Machine, Smalltalk   | *shipped* — [[#function-leaf][A function is not a leaf (#14)]]              |
 
 ** 3.1 Write, not read — the place rather than the value
+:PROPERTIES:
+:CUSTOM_ID: write-read-place-rather
+:END:
 
 A /value/ has no identity as a location: you can't write to "the string the object
 holds", only to the *cell* holding it. An editing inspector must carry the cell along.
@@ -130,27 +142,27 @@ hands over the old value and the setter — but nobody has designed the gesture.
 
 ** 3.3 Evaluate arbitrary code in the object's context
 
-Smalltalk's =self=-bound code pane. §5.3.
+Smalltalk's =self=-bound code pane. [[#evaluate-object-s-context][Evaluate in the object's context (#3)]].
 
 ** 3.4 Who points at this object?
 
 A *backwards* pointer query — scan the heap for everything whose slots contain an
 object (Smalltalk's =pointersTo:=). It's the object-level twin of
 [[file:../initramfs/registry.lisp][registry.lisp]]'s =senders=: "who mentions this name" vs "who holds this object". Done
-by hand it runs into a real SBCL constraint; the better answer is #5 (§5.2).
+by hand it runs into a real SBCL constraint; the better answer is #5 ([[#still-alive][Why is this still alive? (#5, and the honest version of #4)]]).
 
 ** 3.5 Why is this still alive?
 
 Not "who points at it" but "what's the chain from a *GC root*" — something the
 collector treats as live by definition (a global, a stack slot, the image's static
 space). That's the actual debugging question. It's the one power that's *stronger in
-modern SBCL than on a Lisp Machine*, and it's in our core. §5.2.
+modern SBCL than on a Lisp Machine*, and it's in our core. [[#still-alive][Why is this still alive? (#5, and the honest version of #4)]].
 
 ** 3.6 Every instance of a class
 
 CLOS has no =allInstances=: instances aren't registered anywhere, so the MOP knows
 everything about a class except who its instances are. A *heap walk* does — iterate
-every allocated object and test its type. §5.1.
+every allocated object and test its type. [[#every-instance-class][Every instance of a class (#6)]].
 
 ** 3.7 The representation underneath
 
@@ -164,23 +176,26 @@ can't explain a bug that lives in the representation.
 
 Inspect a function for its disassembly and source; a flavor for its components and
 method-combination order. This is the browser's best-developed side: the dispatch
-matrix, the effective-method onion, Senders/Implementors, the module index. Hence §5's
+matrix, the effective-method onion, Senders/Implementors, the module index. Hence [[#powers-built][The powers we built]]'s
 additions are all on the state side.
 
 ** 3.9 Stack frames as objects — the big one
+:PROPERTIES:
+:CUSTOM_ID: stack-frames-objects-big
+:END:
 
 In the Genera debugger a frame was an object: read its locals, *set* one, *return a
 value* from it, or *restart* it — re-enter it with edited arguments against a
 just-recompiled function. That changes what a debugger is: you fix the function,
 restart the frame, and the computation continues as if it had never been wrong. Our
-framebuffer debugger ([[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][=run-debugger-fb=]]) walks frames with =sb-di=; §5.4 makes
+framebuffer debugger ([[file:../initramfs/fb-browser.lisp::defun run-debugger-fb][=run-debugger-fb=]]) walks frames with =sb-di=; [[#set-local-debugger-frame][Set a local in a debugger frame (#9) — and re-enter it]] makes
 their locals settable and adds restart.
 
 ** 3.10 A watchpoint on one cell
 
 Genera's =Monitor Variable= trapped a single location using a pointer type the
 microcode checked on every reference — a breakpoint on a slot, set from the inspector.
-We have no microcode; see §7.
+We have no microcode; see [[#deliberately-doing][What we are deliberately not doing]].
 
 ** 3.11 Identity surgery
 
@@ -203,12 +218,15 @@ we journal each Accept and keep the desk, but don't snapshot the heap
 
 * 4. Where our inspector stands
 
-Before §5 we had the three structural powers — *#1, #8, #12*: places, behaviour, and
+Before [[#powers-built][The powers we built]] we had the three structural powers — *#1, #8, #12*: places, behaviour, and
 everything-is-a-handle. Having them makes the rest cheap: each addition is "a function
-in [[file:../initramfs/model.lisp][model.lisp]], a row in [[file:../initramfs/present.lisp][present.lisp]], a gesture in [[file:../poc/shell.lisp][shell.lisp]]". §5 added #3, #5
-(covering #4), #6, #9 and #14. Still open: #2, #7, #13; refused: #10, #11 (§7).
+in [[file:../initramfs/model.lisp][model.lisp]], a row in [[file:../initramfs/present.lisp][present.lisp]], a gesture in [[file:../poc/shell.lisp][shell.lisp]]". [[#powers-built][The powers we built]] added #3, #5
+(covering #4), #6, #9 and #14. Still open: #2, #7, #13; refused: #10, #11 ([[#deliberately-doing][What we are deliberately not doing]]).
 
 * 5. The powers we built
+:PROPERTIES:
+:CUSTOM_ID: powers-built
+:END:
 
 Each was prototyped against =./sbcl= 2.6.8 on the host first; the numbers are host
 measurements unless marked. A saved image is a *frozen heap*, so everything used must
@@ -219,13 +237,16 @@ already be in the core:
 | =sb-ext:search-roots=          | EXTERNAL       | [[file:../sbcl/src/code/traceroot.lisp::defun search-roots][=sbcl/src/code/traceroot.lisp=]]                                          |
 | =sb-vm:map-allocated-objects=  | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun map-allocated-objects][=sbcl/src/code/room.lisp=]]                                               |
 | =sb-vm:list-allocated-objects= | EXTERNAL       | [[file:../sbcl/src/code/room.lisp::defun list-allocated-objects][=sbcl/src/code/room.lisp=]]                                               |
-| =(setf sb-di:debug-var-value)= | =fboundp= ⇒ T  | [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=sbcl/src/code/debug-int.lisp=]] — *unsafe on an indirect variable*, §5.4 |
+| =(setf sb-di:debug-var-value)= | =fboundp= ⇒ T  | [[file:../sbcl/src/code/debug-int.lisp::defun (setf debug-var-value)][=sbcl/src/code/debug-int.lisp=]] — *unsafe on an indirect variable*, [[#set-local-debugger-frame][Set a local in a debugger frame (#9) — and re-enter it]] |
 | =sb-ext:make-weak-pointer=     | EXTERNAL       | core                                                                    |
 
-None is a contrib, so none hits [[file:processes.org][processes.org]] §6's rule about inline entry points
+None is a contrib, so none hits [[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]'s rule about inline entry points
 that can't be recompiled in the guest.
 
 ** 5.1 Every instance of a class (#6)
+:PROPERTIES:
+:CUSTOM_ID: every-instance-class
+:END:
 
 Don't walk the heap pushing matches into a list. =room.lisp='s own comment:
 
@@ -259,8 +280,11 @@ vector), provided =:test= doesn't cons. =typep= against a class doesn't.
 view's *live instances* row.
 
 ** 5.2 Why is this still alive? (#5, and the honest version of #4)
+:PROPERTIES:
+:CUSTOM_ID: still-alive
+:END:
 
-A hand-rolled "who points at this" hits §5.1's constraint: testing an object's slots
+A hand-rolled "who points at this" hits [[#every-instance-class][Every instance of a class (#6)]]'s constraint: testing an object's slots
 means asking for them, and =sb-mop:class-slots= conses. Going below that to
 =sb-kernel:%instance-ref= is unsafe with /raw slots/ (unboxed structure slots, where a
 word is a double-float, not a pointer).
@@ -298,6 +322,9 @@ thread-stack marker, =(HOLDER . SLOT)=) into plists, each carrying its holder;
 =subj-retention= presents them; *Why is this alive?* is on every object's =commands-for=.
 
 ** 5.3 Evaluate in the object's context (#3)
+:PROPERTIES:
+:CUSTOM_ID: evaluate-object-s-context
+:END:
 
 The best addition on the page: it turns a fixed set of affordances into an open one.
 Anything without a button, you can type. The CLOS version goes past Smalltalk — bind
@@ -351,9 +378,12 @@ the value prompt ([[file:../poc/shell.lisp::defvar *value-prompt*][=*value-promp
 take down PID 1), and [[file:../poc/shell.lisp::defun set-field][=set-field=]]'s shape — prompt, read, eval, apply, then
 *re-present the object*, since =(incf hp 100)= mutating it is the point. The result
 goes to the status line (Do it), not the trail; applying a /function/ is the exception
-(§5.5).
+([[#function-leaf][A function is not a leaf (#14)]]).
 
 ** 5.4 Set a local in a debugger frame (#9) — and re-enter it
+:PROPERTIES:
+:CUSTOM_ID: set-local-debugger-frame
+:END:
 
 *What "a local" is to sb-di.* For every variable it kept debug info about, the
 compiler records a /storage class plus offset/ (=SC+OFFSET=): which kind of storage
@@ -442,6 +472,9 @@ then =R= ⇒ 42, the indirect =acc= ⇒ 103 with the guest alive, a =(debug 0)= 
 refusing both with reasons).
 
 ** 5.5 A function is not a leaf (#14)
+:PROPERTIES:
+:CUSTOM_ID: function-leaf
+:END:
 
 Before this, a function fell to the =T= fallback of =inspect-places= and showed two
 inert rows, =:value #<FUNCTION FOO>= and =:type FUNCTION=. But *a closure is a record
@@ -459,7 +492,7 @@ expresses exactly that. On
 | capture 1 | =step=   | inline     | no       |
 
 Writing 900 into capture 0 and calling the closure returns 902 — the locative move
-(§3.1) on the object type most tooling shows nothing for.
+([[#write-read-place-rather][Write, not read — the place rather than the value]]) on the object type most tooling shows nothing for.
 
 In the booted machine, on =(make-counter 10 2)= from [[file:../initramfs/examples.lisp][examples.lisp]]:
 
@@ -504,10 +537,13 @@ clause of =inspect-places= in model.lisp; [[file:../initramfs/present.lisp::defm
 
 *Worked example.* The Workspace primer in [[file:../initramfs/present.lisp][present.lisp]] has two closure makers: a call
 to the build-time =lol.examples:make-counter= and, last, a =COMPILE= of the same maker
-at runtime (live since §5.6's fix). Put point after either and =C-c C-i=: the same two
+at runtime (live since [[#runtime-arithmetic-did-compile][Runtime arithmetic did not compile in the guest (fixed)]]'s fix). Put point after either and =C-c C-i=: the same two
 captures either way.
 
 ** 5.6 Runtime arithmetic did not compile in the guest (fixed)
+:PROPERTIES:
+:CUSTOM_ID: runtime-arithmetic-did-compile
+:END:
 
 *Symptom.* In the QEMU guest, compiling untyped generic arithmetic — =(+ x 1)=,
 =(* x 2)=, =(< x y)=, =(1+ x)=, a =defun= doing any of them — died with
@@ -579,14 +615,14 @@ guest is still alive" fail.
 
 * 6. Lessons
 
-The four powers cost roughly twice the first estimate, almost all of it §5.5, which
+The four powers cost roughly twice the first estimate, almost all of it [[#function-leaf][A function is not a leaf (#14)]], which
 the estimate didn't contain. Every surprise was found by running a prototype, not by
 reading code:
 
 - *The model is the cheap part.* Three of the four model functions are under 20 lines;
-  the work is guards and labels — the class prototype (§5.1), our own stack in a
-  retention path (§5.2), unmappable capture names (§5.5), the three frame-local traps
-  (§5.4). =restart-frame= is about twenty lines because SBCL's debugger already had
+  the work is guards and labels — the class prototype ([[#every-instance-class][Every instance of a class (#6)]]), our own stack in a
+  retention path ([[#still-alive][Why is this still alive? (#5, and the honest version of #4)]]), unmappable capture names ([[#function-leaf][A function is not a leaf (#14)]]), the three frame-local traps
+  ([[#set-local-debugger-frame][Set a local in a debugger frame (#9) — and re-enter it]]). =restart-frame= is about twenty lines because SBCL's debugger already had
   both halves.
 - *Nothing may kill PID 1.* Every eval path uses a =serious-condition= handler that
   puts the error in the status line — not =ignore-errors=, which would swallow a
@@ -598,14 +634,17 @@ reading code:
   headless test would.
 
 * 7. What we are deliberately not doing
+:PROPERTIES:
+:CUSTOM_ID: deliberately-doing
+:END:
 
 - *Watchpoints (#10).* No microcode, so no cell-level trap. A shim for
   =standard-object= only — replace a slot's accessor generic function with one that
   signals first — catches only accesses /through/ the accessor, missing =slot-value=
-  and =with-slots= (§5.3's included). A watchpoint with silent holes is worse than none.
+  and =with-slots= ([[#evaluate-object-s-context][Evaluate in the object's context (#3)]]'s included). A watchpoint with silent holes is worse than none.
 - *=become:= (#11).* =update-instance-for-redefined-class= solves the real problem
   (migrating instances after a class change) without identity surgery.
-- *Structure editing of code (§2.1).* We keep captured *source text* in
+- *Structure editing of code ([[#interlisp-interlisp-d][Interlisp and Interlisp-D (BBN/Xerox PARC, ~1974 onward)]]).* We keep captured *source text* in
   [[file:../initramfs/registry.lisp][registry.lisp]] and Accept it with =C-c C-c=: the text carries comments and formatting,
   and this project is didactic before it's clever.
 - *Undo of data writes (#2).* Wanted and mechanically straightforward given

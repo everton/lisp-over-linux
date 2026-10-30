@@ -268,14 +268,14 @@
                   (and (fboundp 'network-tray-item)
                        (ignore-errors (funcall 'network-tray-item)))
                   ;; the agent's authority and the session's cost (initramfs/agent-ui.lisp,
-                  ;; loaded later — doc/agent.org §8.9: a meter that is always on screen)
+                  ;; loaded later — file:../doc/agent.org::#modes-because-actors-now: a meter that is always on screen)
                   (and (fboundp 'agent-tray-item) (ignore-errors (funcall 'agent-tray-item)))
                   ;; pt-BR typed by the plain keys (keyboard-layout.lisp): BR, like the host's
                   ;; Caps Lock light
                   (and (fboundp 'layout-tray-item) (ignore-errors (funcall 'layout-tray-item)))
                   ;; a recording in progress (initramfs/recorder.lisp): REC 01:23 and the mic
                   (and (fboundp 'recorder-tray-item) (ignore-errors (funcall 'recorder-tray-item)))
-                  ;; the screen shared into a call (initramfs/web.lisp, doc/web-browser.org §4.8)
+                  ;; the screen shared into a call (initramfs/web.lisp, file:../doc/web-browser.org::#video-calls-google-meet)
                   (and (fboundp 'web-call-tray-item) (ignore-errors (funcall 'web-call-tray-item)))
                   ;; the sound card's volume (initramfs/mixer.lisp, tag #29): nothing
                   ;; without a card

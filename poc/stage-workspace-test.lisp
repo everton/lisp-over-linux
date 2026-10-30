@@ -1,5 +1,5 @@
 ;;;; stage-workspace-test.lisp — host test: the Workspace beside the stage reads in
-;;;; LOL.STAGE (doc/code-browser.org §3b).
+;;;; LOL.STAGE (file:../doc/code-browser.org::#stage-dispatch-happening-done).
 ;;;;
 ;;;;     sbcl --script poc/stage-workspace-test.lisp     ; exits 0 if every check passes
 ;;;;

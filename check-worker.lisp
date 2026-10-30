@@ -23,7 +23,7 @@
 ;;;;
 ;;;;   NAMES TRAVEL, SUBJECTS ARE REBUILT. A row computed in another process must
 ;;;;   still drill into THIS image's condition view. That is the whole handle idea
-;;;;   of doc/processes.org §2 in its simplest form, and the assertion that a
+;;;;   of file:doc/processes.org::#scenario-peer-sends-view in its simplest form, and the assertion that a
 ;;;;   SUBJ-CONDITION comes back — and presents — is what keeps it honest.
 ;;;;
 ;;;;   THE READER STAYS GUARDED. A pipe is untrusted input even when we wrote the

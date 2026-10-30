@@ -7,7 +7,7 @@
 ;;;; failed with "NIL is not of type SPECIALIZED-ARRAY-ELEMENT-TYPE-PROPERTIES",
 ;;;; and so C-c C-c could not accept most real definitions. The cause was SBCL
 ;;;; 2.6.8's LOGCOUNT on CPUs without POPCNT — QEMU's default qemu64 is one — and
-;;;; the repair is initramfs/logcount-fix.lisp. Story: doc/inspector-history.org §5.6.
+;;;; the repair is initramfs/logcount-fix.lisp. Story: file:doc/inspector-history.org::#runtime-arithmetic-did-compile.
 ;;;;
 ;;;; This test is only meaningful on a CPU WITHOUT popcnt, so it first checks that
 ;;;; it got one (the harness boots QEMU's default CPU unless LOL_QEMU_CPU says

@@ -16,7 +16,7 @@
 ;;;;     its last run was actually given), and x to run a command in one, streamed
 ;;;;     into a run pane (runs.lisp).
 ;;;;
-;;;; Decisions taken with the user's design doc (answered 2026-10-12; now its §1–§4):
+;;;; Decisions taken with the user's design doc (answered 2026-10-12; now file:../doc/containers.org::#what-it-gives-you through file:../doc/containers.org::#can-can-t-change):
 ;;;; inside you are YOURSELF (uid 1000, not a fake root); state lives under
 ;;;; ~/.lol/ct/<name>/; no uid range and no new job for lol-rootd; run-and-stream
 ;;;; first — a real terminal is the terminal pane's work, not this file's.

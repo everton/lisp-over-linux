@@ -61,8 +61,8 @@
 ;;;; does not recognise byte for byte (another SBCL version gets a loud warning,
 ;;;; never a silent half-patch), and it proves itself on the build host by
 ;;;; switching POPCNT OFF — clearing that same feature bit — and running the
-;;;; slow path for real. Measurements and the dead ends: doc/inspector-history.org
-;;;; §5.6.
+;;;; slow path for real. Measurements and the dead ends:
+;;;; file:../doc/inspector-history.org::#runtime-arithmetic-did-compile.
 ;;;;
 ;;;; All original code, under this project's MIT licence.
 
@@ -130,7 +130,7 @@
           ((not (equalp now +logcount-routine-original+))
            (warn "logcount-fix: the LOGCOUNT routine is not the SBCL 2.6.8 one I ~
                   know; left untouched. Check whether this SBCL still has the bug ~
-                  (doc/inspector-history.org §5.6).")
+                  (file:../doc/inspector-history.org::#runtime-arithmetic-did-compile).")
            :unrecognised)
           (t (let ((sap (logcount-routine-sap)))
                (loop for i from 0 for b across (logcount-routine-patched)

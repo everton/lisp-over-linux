@@ -86,13 +86,13 @@
     ("windows"   "e" ((:wait 2.0) (:hold "meta_l" "m") (:wait 1.5)
                       (:hold "meta_l" "g") (:wait 1.0)
                       (:key "ret") (:wait 1.5)))
-    ;; the module index (§4⅔): the table of contents, first module previewed beside
+    ;; the module index (file:../doc/code-browser.org::#module-index-files-categories): the table of contents, first module previewed beside
     ("modules"   "b" ())
     ;; the flat CL-USER package view — the old default root, kept on 'l'
     ("package"   "l" ())
-    ;; the Workspace (§3a): a scratch buffer whose verbs eval
+    ;; the Workspace (file:../doc/code-browser.org::#workspace-scratch-buffer-editor): a scratch buffer whose verbs eval
     ("workspace" "p" ())
-    ;; the dispatch matrix (§4a) for COLLIDE, the 2-axis showcase in examples.lisp:
+    ;; the dispatch matrix (file:../doc/code-browser.org::#phase-4a-lisp-native-views) for COLLIDE, the 2-axis showcase in examples.lisp:
     ;;   modules -> initramfs/examples (12th) -> collide (3rd) -> "dispatch matrix"
     ;; The row is COUNTED, so every new initramfs/ module sorting before "examples"
     ;; moves it: it was 3rd until the agent-* modules arrived, and the matrix and
@@ -113,7 +113,7 @@
                       (:chord "ctrl" "c") (:chord "ctrl" "d") (:wait 2.0)
                       (:key "tab") (:key "down") (:key "down") (:key "tab")
                       (:wait 0.6)))
-    ;; the stage (§3b): the same drill as 'matrix', one row further down —
+    ;; the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): the same drill as 'matrix', one row further down —
     ;;   modules -> initramfs/examples (12th) -> collide (3rd) -> "stage"
     ;; The long dwell at the end is the point. Every other scene is finished the
     ;; instant the last key lands; a stage keeps running, so the shot is of a world
@@ -121,7 +121,7 @@
     ("stage"     "b" ((:down 11) (:key "ret")
                       (:key "down") (:key "down") (:key "ret")
                       (:wait 1.0) (:key "down") (:key "ret") (:wait 13.0)))
-    ;; the stage meeting a HOLE (§3b): drill to the stage, then spawn missiles until
+    ;; the stage meeting a HOLE (file:../doc/code-browser.org::#stage-dispatch-happening-done): drill to the stage, then spawn missiles until
     ;; two of them meet. (missile missile) is one of the three total absences in
     ;; COLLIDE — nothing specialises either argument on a missile — so it signals for
     ;; real and the debugger opens on the standing stack.
@@ -136,7 +136,7 @@
                            (:key "m") (:key "m") (:key "m") (:key "m") (:key "m")
                            (:key "m") (:key "m") (:key "m")
                            (:wait 14.0)))
-    ;; beat 4 of §3b's loop: the hole hands you a method, you Accept it, the world
+    ;; beat 4 of the stage's loop (file:../doc/code-browser.org::#beat-4): the hole hands you a method, you Accept it, the world
     ;; changes. Drill to the stage, spawn missiles until two meet (the debugger opens),
     ;; (Random: at 1920x1200 the stage is roomier and 5 missiles in 8 s sometimes miss —
     ;; stage-debugger spawns 8 and waits 14. Re-run a scene whose picture shows no meeting.)
@@ -164,7 +164,7 @@
                           (:key "spc")                       ; pause, so it holds still
                           (:key "tab") (:key "tab") (:wait 0.5)
                           (:key "ret") (:wait 1.5)))
-    ;; the Workspace beside the stage (§3b): 'w' opens it on a primer written for the
+    ;; the Workspace beside the stage (file:../doc/code-browser.org::#stage-dispatch-happening-done): 'w' opens it on a primer written for the
     ;; stage rather than the generic scratch-buffer cheatsheet. The only coverage of
     ;; the w path, and the only place the editable side pane is shown holding something
     ;; other than a defmethod template.
@@ -172,11 +172,11 @@
                             (:key "down") (:key "down") (:key "ret")
                             (:wait 1.0) (:key "down") (:key "ret") (:wait 2.0)
                             (:key "w") (:wait 1.5)))
-    ;; the Spotter (§4¾): the floating palette over the dimmed browser. Super must be
+    ;; the Spotter (file:../doc/code-browser.org::#spotter): the floating palette over the dimmed browser. Super must be
     ;; HELD — a send-key chord releases it too fast to survive the evdev-modifier /
     ;; cooked-tty split (lol.qmp:hold explains why).
     ("spotter"   "l" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5) (:type "coll")))
-    ;; a FUNCTION as an object (doc/inspector-history.org §5.5): the primer fits one
+    ;; a FUNCTION as an object (file:../doc/inspector-history.org::#function-leaf): the primer fits one
     ;; screen, so ONE PageDown parks point on its last line; the last form above it is
     ;; the COMPILE-d twin of MAKE-COUNTER (runnable in the guest since logcount-fix),
     ;; so Inspect it opens that closure — the same two captures.
@@ -185,7 +185,7 @@
     ;; ever read: a decision the compiler made about your code, made visible.
     ("closure"   "p" ((:wait 1.0) (:key "pgdn")
                       (:chord "ctrl" "c") (:chord "ctrl" "i") (:wait 2.5)))
-    ;; a SECOND PROCESS contributing a view (doc/processes.org §7). Typed rather than
+    ;; a SECOND PROCESS contributing a view (file:../doc/processes.org::#worked-example-shot-worker). Typed rather than
     ;; paged to, because what is being shown is that the pid in the provenance row is
     ;; not 1.
     ("worker"    "p" ((:wait 1.0) (:type "(subj-worker :self)") (:wait 0.8)
@@ -208,7 +208,7 @@
     ("files-archive" "e" ((:hold "meta_l" "f") (:wait 1.5)
                           (:key "slash") (:type "Doc") (:key "ret") (:key "ret") (:wait 1.0)
                           (:key "slash") (:type "backup") (:key "ret") (:wait 2.0)))
-    ;; the Spotter reading a PATH (doc/file-manager.org §9): "~/Pic" completes to the
+    ;; the Spotter reading a PATH (file:../doc/file-manager.org::#spotter-reads-paths): "~/Pic" completes to the
     ;; Pictures folder of the stand-in home.
     ("spotter-path" "e" ((:wait 1.0) (:hold "meta_l" "spc") (:wait 1.5)
                          (:type "~/Pic") (:wait 1.5)))

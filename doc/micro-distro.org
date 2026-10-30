@@ -88,7 +88,7 @@ OVMF firmware on Debian:
 *KVM vs TCG.* Every QEMU launch here passes =-machine q35,accel=kvm:tcg=: KVM
 (the guest runs on the real CPU) with a fallback to TCG (QEMU translating every
 instruction in software). The difference is large — one browser frame cost 67 ms
-under TCG against 6.5 ms under KVM at 1280x800 (tag #24, [[file:framebuffer.org][framebuffer.org §9.4]]).
+under TCG against 6.5 ms under KVM at 1280x800 (tag #24, [[file:framebuffer.org][[[file:framebuffer.org::#done-blit-single-copy][framebuffer.org, DONE: the blit is a single copy]]]]).
 
 - *Check access.* =test -r /dev/kvm -a -w /dev/kvm=.
 - *Pitfall: the =kvm= group isn't required.* udev tags =/dev/kvm= =uaccess=, so
@@ -200,6 +200,9 @@ embedded initramfs + a *visible* console work. From the project root:
 | =FB= + =FB_EFI= + =FRAMEBUFFER_CONSOLE= | *The* fix for a visible screen on real hardware: efifb drives the UEFI GOP framebuffer and fbcon renders text on it                                               |
 
 ** Real-hardware input (PCI/USB/HID) — and why ACPI power-off needs PCI too
+:PROPERTIES:
+:CUSTOM_ID: real-hardware-input
+:END:
 
 =defconfig= plus the deltas above boots in QEMU and shows the screen on real
 hardware — but there the *keyboard is dead* and ACPI power-off only halts. Both
@@ -494,6 +497,9 @@ Details: [[file:sbcl-init.org::Updating from inside — build, install, restart]
   kernel under shim.
 
 * Shrinking init with musl libc
+:PROPERTIES:
+:CUSTOM_ID: shrinking-init-musl
+:END:
 
 Every C program needs a libc: =printf=, =malloc=, the startup code that calls
 =main=, the syscall wrappers. Debian's default is *glibc*, large and not designed
@@ -514,7 +520,7 @@ from the start (Alpine Linux uses it). Same source, different libc.
   glibc =.so=s). The shim has to reimplement symbol versioning, all four TLS
   models, IFUNC resolvers, C++ exception unwinding and =getcontext=/=makecontext=.
   Nothing here needs it; the one hypothetical where it would come up is
-  [[file:framebuffer.org][framebuffer.org]] §6½.
+  [[file:framebuffer.org::#gpu-give-up-real][framebuffer.org, No GPU — what we give up, and what a real driver would cost]].
 
 Install the toolchain (it provides the =musl-gcc= wrapper) and swap the compiler:
 

@@ -14,7 +14,7 @@ Code:
   font for every distance.
 - [[file:../initramfs/settings.lisp][initramfs/settings.lisp]] — where the chosen size is remembered.
 
-Design context: [[file:code-browser.org][code-browser.org §6.2]].
+Design context: [[file:code-browser.org][[[file:code-browser.org::#must-write-ourselves][code-browser.org, What we must write ourselves]]]].
 
 * 0. The one-paragraph essence
 
@@ -31,7 +31,7 @@ because nothing that positions text holds a number of its own — it asks the fo
 - *Bitmap.* A glyph is a rectangle of bits: 1 = ink, 0 = background. Cozette is 6
   pixels wide and 15 tall, one byte per row (most significant bit = leftmost pixel),
   256 glyphs indexed by character code. Drawing copies lit bits: crisp, fast, and
-  *fixed* — making it bigger means stamping each pixel as a 2×2 block (§8).
+  *fixed* — making it bigger means stamping each pixel as a 2×2 block ([[#bitmap-fallback][The bitmap fallback]]).
 - *Outline.* A glyph is a set of closed *contours* — the boundary of the ink, like a
   cookie cutter. Coordinates are in *font units* on an "em square" (2048 units a side
   in DejaVu Sans Mono; the em was historically the height of the metal block a letter
@@ -41,7 +41,7 @@ because nothing that positions text holds a number of its own — it asks the fo
 A curve rarely lands on pixel boundaries, so an edge pixel is *partly* inside. Painting
 it fully on or off gives jagged stairs; painting it in proportion — a grey — gives
 smooth edges. That proportion is the pixel's *coverage*, and computing it exactly is
-the rasteriser's whole job (§4).
+the rasteriser's whole job ([[#coverage-signed-area-accumulator][Coverage: the signed-area accumulator]]).
 
 * 2. Inside a .ttf: a directory of tables
 
@@ -93,7 +93,7 @@ and =fc-query= for the charset), not with our parser; [[file:../poc/font-test.li
 *Deliberately skipped:*
 
 - *Hinting* — TrueType's bytecode VM that nudges outlines onto the pixel grid at small
-  sizes. Without it, small sizes are a little softer than a desktop renders them (§4's
+  sizes. Without it, small sizes are a little softer than a desktop renders them ([[#coverage-signed-area-accumulator][Coverage: the signed-area accumulator]]'s
   gamma buys some of that back).
 - *Kerning and shaping* — a monospace cell grid needs neither.
 - *CFF outlines* — the cubic curves of OpenType/PostScript =.otf= files; =parse-ttf=
@@ -127,6 +127,9 @@ triangle of the three points. So the points' bounding box bounds the glyph, whic
   =t= of the way from =C= to =P1=, then =t= of the way between those two.
 
 * 4. Coverage: the signed-area accumulator
+:PROPERTIES:
+:CUSTOM_ID: coverage-signed-area-accumulator
+:END:
 
 The rasteriser is the method Raph Levien popularised in *font-rs*
 ([[file:../poc/ttf.lisp::defun accumulate-line][=accumulate-line=]]). It needs no edge sorting, no scanline lists and no
@@ -161,6 +164,9 @@ So coverage is raised to =1/γ= before it becomes a byte (=lol.ttf:*gamma*=, 1.4
 - *Changing it* needs the glyph caches emptied (=lol.canvas::clear-font-cache=).
 
 * 5. The FONT object, the glyph cache, and blending
+:PROPERTIES:
+:CUSTOM_ID: font-object-glyph-cache
+:END:
 
 =lol.canvas:font= has two kinds ([[file:../poc/canvas.lisp::defstruct font][=defstruct font=]]): a *bitmap* one (the 256 glyph
 vectors) and an *outline* one (a =lol.ttf:face=). Both answer the questions layout asks
@@ -196,7 +202,7 @@ For DejaVu Sans Mono (computed with the code itself):
 29 × 18 cm, about 168 pixels to the inch), the 6×15 bitmap's capitals are about 1.4 mm
 tall. At 18 px a capital is about 2.1 mm (close to 10-point type at arm's length), and
 a full-width pane still holds 170 columns. =lol.canvas:*default-font-size*= holds it;
-a saved choice overrides it (§6).
+a saved choice overrides it ([[#size-change-reaches-every][How a size change reaches every pixel of layout]]).
 
 ** The glyph cache
 
@@ -232,9 +238,12 @@ canvas has no alpha channel and needs none: the background is the pixels already
 - *Guest* (KVM, 1280×800, tag #26): [[file:../check-pointer.lisp][check-pointer.lisp]] measured a whole frame
   (draw + present) at 4 ms.
 
-That's why there's no C rasteriser here (§11).
+That's why there's no C rasteriser here ([[#gotchas-was-ruled-out][Gotchas, and what was ruled out]]).
 
 * 6. How a size change reaches every pixel of layout
+:PROPERTIES:
+:CUSTOM_ID: size-change-reaches-every
+:END:
 
 The rule: *no layout code may hold a text metric in a constant.* Every distance that
 depends on text is computed from the current font *at draw time*.
@@ -318,11 +327,14 @@ file and a rename). =run-browser-fb= reads it at start.
   dies at power-off.
 - *Survives reboots* because =/home= is the host's own =/home= ([[file:storage.org][storage.org]]).
 - *Older location.* A file at =~/.config/lol/settings= is moved into =~/.lol= at boot
-  ([[file:session-persistence.org][session-persistence.org]] §3).
+  ([[file:session-persistence.org::#where-things-live-when][session-persistence.org, Where things live, and when there is no disk]]).
 - *Not in rendered frames.* =render-frame.lisp= never loads it, so a rendered frame
   doesn't depend on your preferences.
 
 * 7. Which font ships, and changing it
+:PROPERTIES:
+:CUSTOM_ID: which-font-ships-changing
+:END:
 
 - *At build time.* [[file:../build.sh][build.sh]] copies a monospace TrueType file *from the build host*
   into the gitignored =initramfs/mono.ttf=, and the cpio list puts it at
@@ -344,6 +356,9 @@ file and a rename). =run-browser-fb= reads it at start.
   but on the monospace grid — each glyph centred in a cell as wide as its =M=.
 
 * 8. The bitmap fallback
+:PROPERTIES:
+:CUSTOM_ID: bitmap-fallback
+:END:
 
 Cozette (MIT), 6×15, ships as =/cozette.lolf=. [[file:../poc/bdf2font.lisp][=bdf2font.lisp=]] converts it from its BDF
 into our own =.lolf= blob: magic =LF=, a width byte, a height byte, then 256 glyphs of
@@ -369,7 +384,7 @@ one byte per row, *indexed by real codepoint*.
   (both formats, agreeing), advances, rasterised coverage (a space is empty, =l= has a
   solid stem *and* grey edges, =g= descends, =O= keeps its hole, =é= is a composite),
   the cell at 18 px, clamping, the cache (one miss per distinct glyph, then hits; a new
-  size misses again), blending, the bitmap fallback's magnification; then §5's
+  size misses again), blending, the bitmap fallback's magnification; then [[#font-object-glyph-cache][The FONT object, the glyph cache, and blending]]'s
   timings.
 - *Host, the pixels.* =poc/render-frame.lisp SUBJECT --size N= at 12, 18 and 28 — look
   at the frames; =-k "s-= s-="= replays the keys and shows the status line.
@@ -398,19 +413,22 @@ one byte per row, *indexed by real codepoint*.
 | the pixels reach the screen          | [[file:../poc/fb.lisp][fb.lisp]] / [[file:../poc/x11.lisp][x11.lisp]] + [[file:framebuffer.org][framebuffer.org]]                             |
 
 * 11. Gotchas, and what was ruled out
+:PROPERTIES:
+:CUSTOM_ID: gotchas-was-ruled-out
+:END:
 
 - *Never copy a metric into a constant.* A =(defparameter +foo-h+ 20)= sized for one
   font is exactly the bug runtime resizing removed; ask =line-h= at draw time. Every
-  track's code is held to this rule ([[file:code-browser.org][code-browser.org §6.2]]).
+  track's code is held to this rule ([[file:code-browser.org][[[file:code-browser.org::#must-write-ourselves][code-browser.org, What we must write ourselves]]]]).
 - *Cell vs glyph.* =cw=/=ch= are the *cell*; ink usually fills less, and =g=/=y= descend
   below the baseline into the cell's bottom. Drawing takes the cell's top-left, not the
   baseline.
 - *A pane's text is clipped, not wrapped.* Long lines scroll sideways with the caret
-  (§6); lists elide with =..=.
-- *Ctrl-digit and Ctrl-punctuation may be silent on the console* (§6). Before binding
+  ([[#size-change-reaches-every][How a size change reaches every pixel of layout]]); lists elide with =..=.
+- *Ctrl-digit and Ctrl-punctuation may be silent on the console* ([[#size-change-reaches-every][How a size change reaches every pixel of layout]]). Before binding
   one, check =defkeymap.map= for a =control= line, or read the chord from evdev.
 - *Ruled out: stb_truetype.* A C rasteriser through the =libstbi.so= pattern
   ([[file:previews.org][previews.org]]) was the fallback if pure Lisp proved too slow or too ugly. Measured
-  (§5), it's neither.
+  ([[#font-object-glyph-cache][The FONT object, the glyph cache, and blending]]), it's neither.
 - *Not a finding: "0.0 ms".* A single cold run of 94 glyphs is too short to time; the
   test times twenty cold runs and reports 0.6 ms.

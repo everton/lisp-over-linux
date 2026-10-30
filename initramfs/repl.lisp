@@ -81,7 +81,7 @@
               (if (string= text "")
                   (return-from editing-repl)   ; EOF at a fresh prompt: leave the REPL
                   (return-from one-form)))      ; EOF mid-form: drop it, start fresh
-            ;; ?prose — a question for the agent, not a form (doc/agent.org §8.2). A bare ?
+            ;; ?prose — a question for the agent, not a form (file:../doc/agent.org::#repl-character). A bare ?
             ;; opens prose mode: lines accumulate until a blank one, like an open form.
             (cond
               (prose

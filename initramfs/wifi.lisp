@@ -1,6 +1,6 @@
 ;;;; wifi.lisp — Wi-Fi: the radio, the host's wpa_supplicant, and our own control of it.
 ;;;;
-;;;; The laptop has no Ethernet port; Wi-Fi is its only network (networking.org §7).
+;;;; The laptop has no Ethernet port; Wi-Fi is its only network (file:../doc/networking.org::#wi-fi).
 ;;;; Four layers have to line up, and only the last is ours:
 ;;;;
 ;;;;   1. the kernel's 802.11 stack + the iwlwifi driver (tag #26: CFG80211,
@@ -139,7 +139,7 @@
                                  (host-file "/usr/sbin/wpa_supplicant")))
     (return-from start-wpa-supplicant nil))
   (ensure-directories-exist *wifi-dir*)
-  (%chmod *wifi-dir* #o700)        ; files.lisp's libc chmod — no sb-posix (processes.org §6)
+  (%chmod *wifi-dir* #o700)        ; files.lisp's libc chmod — no sb-posix (file:../doc/processes.org::#sb-posix-audit-nothing)
   (let ((conf (concatenate 'string *wifi-dir* "wpa_supplicant.conf")))
     ;; The config holds no networks: they are added over the socket, so no secret
     ;; is ever written into it. update_config=0: the supplicant never rewrites it.

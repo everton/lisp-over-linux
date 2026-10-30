@@ -53,7 +53,7 @@
 # To change WHAT the repl demo types, edit the *forms* list in the Lisp driver
 # below; for the browser demo, edit BROWSER_KEYS.
 #
-# See doc/sbcl-init.org / doc/framebuffer.org (§9 for KD_GRAPHICS) and
+# See doc/sbcl-init.org / doc/framebuffer.org (file:doc/framebuffer.org::#kd-graphics-telling-fbcon for KD_GRAPHICS) and
 # doc/code-browser.org for the surrounding machinery.
 
 set -euo pipefail

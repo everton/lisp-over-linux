@@ -1,7 +1,7 @@
 #+TITLE: The systray — battery from sysfs, time from the CMOS clock
 #+STARTUP: showall
 
-Sibling docs: [[file:kernel-config.org][kernel-config.org]] §4 (the options that make the battery
+Sibling docs: [[file:kernel-config.org::#platform-power][kernel-config.org, Platform & power]] (the options that make the battery
 visible) · [[file:code-browser.org][code-browser.org]] (the browser whose tab strip carries the tray) ·
 [[file:input.org][input.org]] (the same "the kernel already exposes it as a file" lesson, for
 the mouse).
@@ -17,6 +17,9 @@ The battery is a handful of one-line text files the kernel keeps under
 number — the UTC offset — because the image has no time-zone database.
 
 * 1. The fields
+:PROPERTIES:
+:CUSTOM_ID: fields
+:END:
 
 The tray follows a StumpWM mode line (=*screen-mode-line-format*=): right-aligned
 fields separated by =" | "=.
@@ -56,7 +59,7 @@ so it must never wait on a socket.
 | no radio, no lease                    | (no item)        |                                           |
 
 The percentage is NetworkManager's rough mapping, =2 × (dBm + 100)= clamped to
-0–100. Details: [[file:networking.org][networking.org]] §7.3.
+0–100. Details: [[file:networking.org::#environment][networking.org, In the environment]].
 
 *Known limit:* a machine with two batteries shows the first one, as =acpi -b='s
 first line does.
@@ -88,7 +91,7 @@ evaluates the firmware's =_BIF=/=_BST= methods and registers the battery;
 =CONFIG_ACPI_AC= ([[file:../linux/drivers/acpi/ac.c][=drivers/acpi/ac.c=]]) does the adapter. Both are =default y= in
 [[file:../linux/drivers/acpi/Kconfig][=drivers/acpi/Kconfig=]] and both =select POWER_SUPPLY=, so they've been in our
 kernel since =CONFIG_ACPI= went on at tag #19. The tray needed no kernel change
-(checked at tag #24; the =grep= is in [[file:kernel-config.org][kernel-config.org]] §4).
+(checked at tag #24; the =grep= is in [[file:kernel-config.org::#platform-power][kernel-config.org, Platform & power]]).
 
 Four details the code honours, each taken from the kernel source:
 
@@ -136,7 +139,7 @@ early:
 
 Without =RTC_CLASS= the kernel can't *write* the time back or let userspace read
 the chip. That's fine for a machine that only displays the time. (Setting the
-system clock from the network is SNTP's job: [[file:networking.org][networking.org]] §2e.)
+system clock from the network is SNTP's job: [[file:networking.org::#userland-half-reaching-network][networking.org, Userland half — reaching the network from SBCL]].)
 
 ** UTC or local?
 
@@ -192,28 +195,31 @@ repoints at a scratch directory.
 Other modules add their own items, each called by name so the tray works without
 them:
 
-- *Network.* =network-tray-item= (=wifi.lisp=), §1 above.
+- *Network.* =network-tray-item= (=wifi.lisp=), [[#fields][The fields]] above.
 - *Agent cost.* From =agent-ui.lisp=.
 - *Volume.* =VOL 50%= or =VOL mute= (=sound-tray-item= in [[file:../initramfs/mixer.lisp][mixer.lisp]], tag #29;
   nothing without a card, the card read at most every 2 s).
 - *Recording.* =REC 01:23 ###...= (the mic's level as a bar), =PAUSED 01:23= or
-  =SAVING 42%= (=recorder-tray-item=, [[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:screencast.org][screencast.org]] §7.2).
+  =SAVING 42%= (=recorder-tray-item=, [[file:../initramfs/recorder.lisp][recorder.lisp]], [[file:screencast.org::#recorder-pane-tray][screencast.org, The recorder pane and the tray]]).
 
 * 5. Drawing it: one strip, repainted by itself
+:PROPERTIES:
+:CUSTOM_ID: drawing-strip-repainted-itself
+:END:
 
 [[file:../poc/shell.lisp::defun draw-tray][=draw-tray=]] draws the tray at the right end of the tab strip: the clipboard
 icon (lit while the history holds something; a click opens the manager,
-[[file:clipboard.org][clipboard.org]] §7), then each item of =tray-items=, battery coloured by its
+[[file:clipboard.org::#manager][clipboard.org, The manager]]), then each item of =tray-items=, battery coloured by its
 tone. The tabs stop short of it ([[file:../poc/shell.lisp::defun tray-width][=tray-width=]]).
 
 The clock changes every second with nobody touching anything. Redrawing the frame
 for it would be cheap — 3 ms under KVM, 5 ms on real hardware
-([[file:framebuffer.org][framebuffer.org]] §9.4) — but it isn't needed:
+([[file:framebuffer.org::#done-blit-single-copy][framebuffer.org, DONE: the blit is a single copy]]) — but it isn't needed:
 
 - *Wake on the second.* The browser's loop wakes at the next wall-clock second
   ([[file:../initramfs/fb-browser.lisp::defun tray-timeout][=tray-timeout=]], from =sb-ext:get-time-of-day=); with =*clock-seconds*= nil,
   once a minute.
-- *Repaint the tray alone.* The tray is a morph of its own ([[file:morphic.org][morphic.org]] §5.1);
+- *Repaint the tray alone.* The tray is a morph of its own ([[file:morphic.org::#tree][morphic.org, The tree]]);
   [[file:../poc/morphic.lisp::defun tick-tray][=tick-tray=]] repaints it into the canvas and sends only that rectangle — the
-  same economy as the pointer (framebuffer.org §9.5).
+  same economy as the pointer ([[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]]).
 - *Pointer on top.* If the pointer is parked over the tray, it's put back on top.

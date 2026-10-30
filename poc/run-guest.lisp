@@ -7,7 +7,7 @@
 ;;;;    guest :  (lol.fb:present-fb canvas)      -> the bare framebuffer, PID 1
 ;;;;
 ;;;; canvas.lisp and scene.lisp are byte-for-byte identical in both. That is the
-;;;; whole architectural claim of doc/code-browser.org §1, and this file is the
+;;;; whole architectural claim of file:../doc/code-browser.org::#framebuffer-x-question-answered, and this file is the
 ;;;; half of the proof that runs on the metal.
 ;;;;
 ;;;; This is PID 1, so it must never return: we draw, then park forever.

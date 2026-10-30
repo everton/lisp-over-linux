@@ -7,7 +7,7 @@ no libinput, no udev and no mouse daemon. The answer is one character device, on
 
 Related: [[file:line-editing.org][line-editing.org]] (the other half of input — raw-mode termios and the
 tty) · [[file:framebuffer.org][framebuffer.org]] (the output half, =/dev/fb0=) · [[file:kernel-config.org][kernel-config.org]] (the
-options that create these device nodes) · [[file:code-browser.org][code-browser.org]] §6.3 (what the browser
+options that create these device nodes) · [[file:code-browser.org::#guest-specifics][code-browser.org, Guest specifics (framebuffer)]] (what the browser
 does with them).
 
 * The one-sentence essence
@@ -17,6 +17,9 @@ The kernel turns every input device into a file at =/dev/input/eventN= that emit
 whole mouse driver is a loop that reads 24 bytes at a time and adds the numbers up.
 
 * 1. Why the tty is not enough
+:PROPERTIES:
+:CUSTOM_ID: tty-enough
+:END:
 
 The keyboard's text comes through the *terminal*: fd 0 in raw mode, one byte per
 keystroke ([[file:line-editing.org][line-editing.org]]). That's right for text and useless for two things:
@@ -27,7 +30,7 @@ keystroke ([[file:line-editing.org][line-editing.org]]). That's right for text a
    arrives as byte 7, and the Ctrl-ness is gone.
 
 The browser needs both — a pointer, and =Ctrl-click= / =SuperL-click= as distinct
-gestures ([[file:code-browser.org][code-browser.org]] §4¾). So it opens more doors onto the hardware,
+gestures ([[file:code-browser.org::#environment-trails-spotter-tiled][code-browser.org, The environment — trails, the Spotter, and the tiled shell]]). So it opens more doors onto the hardware,
 underneath the terminal: the raw input devices.
 
 ** A bare modifier needs the keyboard's own evdev
@@ -41,7 +44,7 @@ Three kinds of fd, three jobs, deliberately not interchangeable:
 | every keyboard's own =eventN= | *only* Ctrl / Shift / Super / Alt held state | the tty cannot report a bare modifier                                                |
 
 "Every": a laptop with an external mouse and keyboard has two of each, all open at once
-(§4¾).
+([[#every-device-once-ones][Every device at once, and the ones plugged in later]]).
 
 The keyboard is read *twice*, on purpose. Text comes from the tty because that's where
 the keymap lives (evdev would say "keycode 30", not =a=). Modifier *state* comes from
@@ -54,8 +57,8 @@ modifier bits into the state word before dispatching the tty's key
 Some chords never reach the tty, so =note-modifier-key= reports them from the
 keyboard's evdev instead:
 
-- *Menu key* (=KEY_COMPOSE=, 127). No byte at all; it opens the context menu (§4½).
-- *Ctrl-= and Ctrl-0* (the text-size chord =C-x C-= / C-x C-0=, [[file:fonts.org][fonts.org]] §6). The
+- *Menu key* (=KEY_COMPOSE=, 127). No byte at all; it opens the context menu ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]).
+- *Ctrl-= and Ctrl-0* (the text-size chord =C-x C-= / C-x C-0=, [[file:fonts.org::#size-change-reaches-every][fonts.org, How a size change reaches every pixel of layout]]). The
   default keymap (=drivers/tty/vt/defkeymap.map=) gives keycodes 11 and 13 no =control=
   column. Reported as =#\== / =#\+= / =#\0= and handed to =browser-key= with the Ctrl
   bit. (=Ctrl--= needs no help: =Control_underscore=, byte 31.)
@@ -69,14 +72,14 @@ keyboard's evdev instead:
   =control= column; reported as =#\;=.
 - *Shift-PageUp / Shift-PageDown.* The default keymap binds them to the console's own
   scrollback (=shift_map[104]= = Scroll_Backward) and sends nothing. The terminal pane
-  scrolls its history with them ([[file:terminal.org][terminal.org]] §8); elsewhere they reach =browser-key=.
+  scrolls its history with them ([[file:terminal.org::#keys-become-bytes][terminal.org, Keys become bytes]]); elsewhere they reach =browser-key=.
 
 Before binding any new Ctrl-digit or Ctrl-punctuation chord, check =defkeymap.map= for a
 =control= line.
 
 ** Alt with the arrows, Return and Tab: what the console sends
 
-Org's keys ([[file:org.org][org.org]] §6.3) need Meta on keys the console treats specially.
+Org's keys ([[file:org.org::#keys-console][org.org, The keys on the console]]) need Meta on keys the console treats specially.
 [[file:../check-org.lisp][check-org.lisp]] presses each over QMP in the guest.
 
 - *Alt-Up / Alt-Down arrive with their Alt.* In kernel 7.2, =k_cur= (the cursor-key
@@ -84,7 +87,7 @@ Org's keys ([[file:org.org][org.org]] §6.3) need Meta on keys the console treat
   is =ESC [ 1 ; 3 A=, Shift-Alt-Up =ESC [ 1 ; 4 A=. =fb-read-csi= decodes the parameter
   into the state bits.
 - *Alt-Left / Alt-Right are rebound from VT switching.* By default =alt_map[105]= /
-  =[106]= are =K_DECRCONSOLE= / =K_INCRCONSOLE= ([[file:web-browser.org][web-browser.org]] §2).
+  =[106]= are =K_DECRCONSOLE= / =K_INCRCONSOLE= ([[file:web-browser.org::#user-sees][web-browser.org, What the user sees]]).
   [[file:../initramfs/fb-browser.lisp::defun unbind-console-alt-arrows][=unbind-console-alt-arrows=]] binds them, in every keymap table with the Alt bit, to
   plain =K_LEFT= / =K_RIGHT= (what alt_map already holds for Up and Down), so they
   arrive as =ESC [ 1 ; 3 D= / =C=. =Ctrl-Alt-F1…= still switch VTs. In a text view they
@@ -156,6 +159,9 @@ reads the host's =/etc/default/keyboard=): Right Alt + =;= → ç, the three dea
 back) and off, and =ç= reaching a program in a terminal.
 
 * 2. What evdev is
+:PROPERTIES:
+:CUSTOM_ID: evdev
+:END:
 
 =CONFIG_INPUT_EVDEV=y= builds [[file:../linux/drivers/input/evdev.c][=drivers/input/evdev.c=]], a *generic* handler that
 attaches to every input device and exposes each as a character device
@@ -173,7 +179,7 @@ Reading the device returns a whole number of =struct input_event= records
 
 | offset | size | field     | meaning                                            |
 |--------+------+-----------+----------------------------------------------------|
-|      0 |    8 | =tv_sec=  | timestamp, seconds — read by the tap gesture (§4½) |
+|      0 |    8 | =tv_sec=  | timestamp, seconds — read by the tap gesture ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]) |
 |      8 |    8 | =tv_usec= | timestamp, microseconds — likewise                 |
 |     16 |    2 | =type=    | *what kind* of event (a key? motion?)              |
 |     18 |    2 | =code=    | *which* one (which key, which axis)                |
@@ -220,18 +226,18 @@ Of the ~30 event types, the browser needs four. Constants from
 |--------------+-------------------------------------------------------+---------------------------------------+-----------------------------------------------------------------------------------|
 | =2= =EV_REL= | =0= =REL_X=                                           | delta, signed                         | =(incf *cursor-x* val)=, clamped                                                  |
 | =2= =EV_REL= | =1= =REL_Y=                                           | delta, signed                         | =(incf *cursor-y* val)=, clamped                                                  |
-| =2= =EV_REL= | =8= =REL_WHEEL=                                       | notches, ±1                           | sum into =wheel= (see §6)                                                         |
-| =3= =EV_ABS= | =0= / =1= =ABS_X/Y=                                   | absolute, in the *device's own* range | scale onto the screen, or difference it (§4½)                                     |
+| =2= =EV_REL= | =8= =REL_WHEEL=                                       | notches, ±1                           | sum into =wheel= (see [[#wheel-end-end][The wheel, end to end]])                                                         |
+| =3= =EV_ABS= | =0= / =1= =ABS_X/Y=                                   | absolute, in the *device's own* range | scale onto the screen, or difference it ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]])                                     |
 | =1= =EV_KEY= | =#x110= =BTN_LEFT=                                    | =1= press / =0= release               | on press: a =:down= event, to the morph under the pointer (a pane's =pane-click=) |
-| =1= =EV_KEY= | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up                     | a contact changed: forget the last pad position, and open or close a *tap* (§4½)  |
+| =1= =EV_KEY= | =#x14a= =BTN_TOUCH=, =#x145/#x14d/#x14e= =BTN_TOOL_*= | =1= down / =0= up                     | a contact changed: forget the last pad position, and open or close a *tap* ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]])  |
 | =1= =EV_KEY= | =29=/=97= Ctrl, =42=/=54= Shift, =125=/=126= Meta     | =1= down =2= repeat =0= up            | set =*ctrl-down*= / =*shift-down*= / =*super-down*=                               |
 | =1= =EV_KEY= | =115= / =114= =KEY_VOLUMEUP= / =DOWN=, =113= =KEY_MUTE=, =248= =KEY_MICMUTE= | =1= press, =2= repeat (volume only) | =mixer.lisp='s =audio-key= (tag #29): no tty byte exists for these keys |
 | =0= =EV_SYN= | =0= =SYN_REPORT=                                      | —                                     | end of packet: apply the gathered position                                        |
 
 - *Relative and absolute both matter.* QEMU's default PS/2 mouse is relative;
   =-device usb-tablet= is absolute and maps onto the screen (so a scripted click lands
-  predictably — the QMP harness relies on it, [[file:code-browser.org][code-browser.org]] §8); a laptop
-  *touchpad* is absolute but is not a screen (§4½).
+  predictably — the QMP harness relies on it, [[file:code-browser.org::#phases][code-browser.org, Phases (each independently demoable — this repo likes screenshots)]]); a laptop
+  *touchpad* is absolute but is not a screen ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]).
 - *=EV_SYN= ends a packet.* A packet is several records — =ABS_X=, =ABS_Y=, perhaps
   =BTN_TOUCH= — and =SYN_REPORT= says "that was one report". Acting record by record
   moves an absolute pointer in an L instead of a line, so we gather and act at the
@@ -239,6 +245,9 @@ Of the ~30 event types, the browser needs four. Constants from
 - *=EV_KEY= covers buttons and keys.* A mouse button is a key whose code is =0x110=.
 
 * 4. Finding the device without udev
+:PROPERTIES:
+:CUSTOM_ID: finding-device-without-udev
+:END:
 
 [[file:../initramfs/fb-browser.lisp::defun scan-input-devices][=scan-input-devices=]] exists because of two non-obvious facts:
 
@@ -282,8 +291,8 @@ The rules, one line each ([[file:../initramfs/fb-browser.lisp::defun input-devic
   seemed held.
 
 Within the pointers, the kind decides how positions are read: a =:mouse= adds deltas, a
-=:tablet= maps positions onto the screen, a =:pad= differences them (§4½). Every
-pointer is opened, each read as its own kind (§4¾).
+=:tablet= maps positions onto the screen, a =:pad= differences them ([[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]). Every
+pointer is opened, each read as its own kind ([[#every-device-once-ones][Every device at once, and the ones plugged in later]]).
 
 ** The other bitmask on the line above: =B: PROP=
 
@@ -309,6 +318,9 @@ words, and =ABS_X= is in the second. Taking the first word would silently read t
 wrong end.
 
 * 4½. The touchpad: absolute, but not a position
+:PROPERTIES:
+:CUSTOM_ID: touchpad-absolute-but-position
+:END:
 
 A laptop pad is described the way a drawing tablet is: =EV_ABS=, =ABS_X=, =ABS_Y=, one
 position per packet. Read it like a =usb-tablet= and the cursor sits in the *top-left
@@ -336,7 +348,7 @@ works. But then the cursor is wherever your finger is: lift it, put it down 3 cm
 and the cursor teleports. A far corner can't be reached with a short motion, and the
 cursor can't be nudged by two pixels.
 
-A tablet wants that; a pad never does. =B: PROP= tells them apart (§4): bit 0 or bit 2
+A tablet wants that; a pad never does. =B: PROP= tells them apart ([[#finding-device-without-udev][Finding the device without udev]]): bit 0 or bit 2
 — POINTER or BUTTONPAD — means *difference the positions, don't map them*.
 
 ** Differencing without the jumps
@@ -421,15 +433,15 @@ clickpad: press the pad down, and slide.
   view's body morph — and the *hand* remembers what it placed the caret in (its press,
   =(:text :tv … :origin …)=, [[file:../poc/morph.lisp::defclass hand (morph)][the hand]]'s =press= slot). The world sends the drag to
   that morph (the hand's capture), so a drag extends that view even when the pointer
-  wanders over another pane ([[file:morphic.org][morphic.org]] §5.5, §9.1). Release clears it.
+  wanders over another pane ([[file:morphic.org::#routing-presses-keys][morphic.org, Routing presses and keys]], [[file:morphic.org::#press-progress][The press in progress]]). Release clears it.
 - *A press on a row waits for its release.* A list row acts when the button comes up.
   A press that moves 8 px first (=+pick-up-travel+=) is a *pick-up*: the hand carries
-  the row's subject to drop on another morph ([[file:morphic.org][morphic.org]] §9.2). A *tap* has no
+  the row's subject to drop on another morph ([[file:morphic.org::#picking-up][morphic.org, Picking up]]). A *tap* has no
   release of its own, so its press is marked =:tap= and acts at once.
 - *A 3-pixel slop* (=+drag-slop+=) before the first extension. Pressing a clickpad rolls
   the fingertip a pixel or two; without the slop every press would select a character.
 - *No two-finger scroll while pressed.* On a clickpad the press is often a thumb and the
-  moving finger a second one — otherwise the two-finger scroll (§6). So =pad-motion=
+  moving finger a second one — otherwise the two-finger scroll ([[#wheel-end-end][The wheel, end to end]]). So =pad-motion=
   scrolls only with the button up. Which finger =ABS_X/Y= follows while two are down is
   the pad's choice; pressing and sliding the same finger is the sure way.
 
@@ -463,10 +475,10 @@ Keyboard routes, for a pointer without a middle button and a hand already on the
 - *Alt-click* is the middle button. Alt is tracked from the keyboard's evdev
   (=KEY_LEFTALT= 56 / =KEY_RIGHTALT= 100), like Ctrl, Shift and Super. (Ctrl-click
   already jumps to a definition.)
-- *Menu key* (=KEY_COMPOSE=, 127, read from evdev — §1) and *Shift-F10* (=ESC [ 34 ~=,
+- *Menu key* (=KEY_COMPOSE=, 127, read from evdev — [[#tty-enough][Why the tty is not enough]]) and *Shift-F10* (=ESC [ 34 ~=,
   the keymap's F20) open the context menu at the caret or selected row.
 - *Ctrl + wheel* resizes the text, one step per notch, three at most per event
-  ([[file:fonts.org][fonts.org]] §6). The wheel handler in =poc/shell.lisp= reads =fb-browser.lisp='s
+  ([[file:fonts.org::#size-change-reaches-every][fonts.org, How a size change reaches every pixel of layout]]). The wheel handler in =poc/shell.lisp= reads =fb-browser.lisp='s
   =*ctrl-down*= by name, because =shell.lisp= loads first.
 
 A right or middle press isn't a click to the overlays (Spotter, debugger, cheatsheet):
@@ -475,6 +487,9 @@ A right or middle press isn't a click to the overlays (Spotter, debugger, cheats
 emulated ones, like the tap, by replaying synthetic Synaptics packets.
 
 * 4¾. Every device at once, and the ones plugged in later
+:PROPERTIES:
+:CUSTOM_ID: every-device-once-ones
+:END:
 
 A laptop used with an external USB mouse and keyboard has several pointers and several
 keyboards, and any of them may come and go. The environment opens every keyboard and
@@ -489,7 +504,7 @@ Opening one pointer and one keyboard, chosen once at startup, fails three ways:
 2. *One keyboard.* The first device with =EV_KEY= + =EV_REP= is the built-in keyboard
    (the i8042 is probed long before USB), so an external keyboard's evdev is never read.
    Typing still works — the console merges every keyboard into fd 0 — which hides it,
-   but Ctrl, Shift, Super and Alt come from evdev (§1), so Ctrl-click, Shift-arrow
+   but Ctrl, Shift, Super and Alt come from evdev ([[#tty-enough][Why the tty is not enough]]), so Ctrl-click, Shift-arrow
    selection and every =SuperL-= binding die on the external keyboard.
 3. *Once.* Anything plugged in later doesn't exist. That includes devices present at
    boot: USB enumerates asynchronously, after PID 1 is running (hence the supervisor's
@@ -498,7 +513,7 @@ Opening one pointer and one keyboard, chosen once at startup, fails three ways:
 
 *An example* (=cat /proc/bus/input/devices= on a Dell XPS 13 9300 under Debian, with an
 external USB mouse and gaming keyboard; abridged — the touchpad's node differs under our
-kernel, §8):
+kernel, [[#makes-work][What makes it work (kernel side)]]):
 
 | node    | name                                   | =EV=     | what a one-of-each ranking makes of it        |
 |---------+----------------------------------------+----------+-----------------------------------------------|
@@ -511,7 +526,7 @@ kernel, §8):
 | event22 | SINO WEALTH Gaming KB Mouse            | =17=     | rule 2, a mouse                               |
 
 - *Consumer Control as a mouse.* Under an "any =EV_REL=" rule the keyboard's volume knob
-  counts as a pointer; if it's the one chosen, nothing moves the cursor. Hence §4's X
+  counts as a pointer; if it's the one chosen, nothing moves the cursor. Hence [[#finding-device-without-udev][Finding the device without udev]]'s X
   axis requirement.
 - *Two keyboard nodes.* Gaming keyboards expose a second one (the N-key-rollover
   interface); which carries the modifiers is the keyboard's business, so both are read.
@@ -525,7 +540,7 @@ Every keyboard and every pointer is open at once, each an =input-dev= in
   =:keyboard=. A device that's none of these (power button, lid switch, PC speaker) is
   listed but not opened.
 - *One poll over all.* [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]] lays out one =pollfd= per device after the
-  tty's and the hotplug watch's (§5), marks each device with records, and
+  tty's and the hotplug watch's ([[#waiting-many-things-once][Waiting on many things at once: =poll(2)=]]), marks each device with records, and
   [[file:../initramfs/fb-browser.lisp::defun read-pointers][=read-pointers=]] / [[file:../initramfs/fb-browser.lisp::defun read-keyboards][=read-keyboards=]] drain exactly those. Loops still call
   =(fbb-wait 0 *fb-mouse* *fb-kbd*)= and =(read-mouse *fb-mouse* w h)=: =*fb-mouse*= is
   =:pointers=, and =read-mouse= given a non-fd reads every ready pointer.
@@ -587,11 +602,14 @@ says =ENODEV=; ignore that and the loop spins at 100 % CPU. So =POLLHUP= / =POLL
 ** Pointer speed
 
 Two special variables, settable in the Workspace: =*pad-speed*= (screens per full sweep
-of the touchpad, =3/2=, §4½) and =*mouse-speed*= (pixels per mouse count, =1= — what the
+of the touchpad, =3/2=, [[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]) and =*mouse-speed*= (pixels per mouse count, =1= — what the
 console and X's flat profile do; a 1000-dpi mouse crosses a 1920 px screen in about
 5 cm). Both carry the fraction, so any rational works. There's no acceleration curve.
 
 ** Seeing what the environment sees
+:PROPERTIES:
+:CUSTOM_ID: seeing-what-environment-sees
+:END:
 
 =SuperL-Space=, type =input devices=: one row per open device (node, kind, name, records
 read, clicks, what it holds now, where it hangs), then any it wanted and couldn't open
@@ -668,8 +686,11 @@ Boot with the external mouse and keyboard attached, then:
    =*pad-speed*=.
 
 * 5. Waiting on many things at once: =poll(2)=
+:PROPERTIES:
+:CUSTOM_ID: waiting-many-things-once
+:END:
 
-The tty, every device of §4¾ and the hotplug watch may all be idle. Busy-polling would
+The tty, every device of [[#every-device-once-ones][Every device at once, and the ones plugged in later]] and the hotplug watch may all be idle. Busy-polling would
 spin PID 1 at 100 % CPU; blocking on one would ignore the rest. [[file:../initramfs/fb-browser.lisp::defun poll-input-once][=poll-input-once=]]
 (under [[file:../initramfs/fb-browser.lisp::defun fbb-wait][=fbb-wait=]]) builds =poll(2)='s argument array by hand:
 
@@ -684,20 +705,23 @@ spin PID 1 at 100 % CPU; blocking on one would ignore the rest. [[file:../initra
   until something happens and the browser costs nothing while untouched.
 - *=revents=.* Bit 0 (=POLLIN=) is records waiting; =POLLHUP= (=0x10=) and =POLLERR=
   (=0x8=) are an unplugged device, which must be closed at once or poll reports it
-  forever (§4¾).
+  forever ([[#every-device-once-ones][Every device at once, and the ones plugged in later]]).
 - *An absent fd* (no inotify, say) still gets its slot, holding =fd -1=: poll ignores a
   negative fd, so the offsets stay put and there's no separate code path.
 
-=sb-posix= has no =poll= (nor =select= nor =epoll= — [[file:processes.org][processes.org]] §6), so the array is
+=sb-posix= has no =poll= (nor =select= nor =epoll= — [[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]), so the array is
 ours, and =%put-pollfd= writes the one field that's easy to get wrong, for every caller.
 
 *Pitfall: =fd= is a full 32-bit =int=.* Writing only its low byte works while every
 descriptor is small, then silently polls a *different* fd: a pipe at fd 300 was polled
 as fd 44 (=300 & 0xff=), which returned =POLLNVAL= — "nothing to read" while data
 waited. All four bytes are written, little-endian. That matters for any slot holding a
-socket or pipe ([[file:processes.org][processes.org]] §2).
+socket or pipe ([[file:processes.org::#scenario-peer-sends-view][processes.org, Scenario A — a peer that sends a VIEW]]).
 
 * 6. The wheel, end to end
+:PROPERTIES:
+:CUSTOM_ID: wheel-end-end
+:END:
 
 There's no scroll *axis* and no scroll *position*: the wheel is a relative device that
 moves in detents. One notch is one record:
@@ -722,7 +746,7 @@ away moves you *up* the document, so one =-= reconciles them.
 =browser-scroll= then dispatches on the pane. Every kind scrolls its *view* and leaves
 the caret or selection alone — scrolling is looking, not moving:
 
-- *Ctrl held:* resizes the text instead ([[file:fonts.org][fonts.org]] §6).
+- *Ctrl held:* resizes the text instead ([[file:fonts.org::#size-change-reaches-every][fonts.org, How a size change reaches every pixel of layout]]).
 - *A web page* gets the wheel sent to Chrome (=web-wheel=).
 - *A terminal* scrolls its history, or passes the wheel to the program (=terminal-wheel=).
 - *A text pane* scrolls its viewport via [[file:../poc/textview.lisp::defun tv-wheel][=tv-wheel=]], the caret staying put.
@@ -741,6 +765,9 @@ of rolling a wheel toward you, so it produces the same negative notch, and the s
 wheel.
 
 * 7. The same gesture on the host: X11 buttons 4 and 5
+:PROPERTIES:
+:CUSTOM_ID: same-gesture-host-x11
+:END:
 
 On the dev host the X server owns the devices and sends protocol events
 ([[file:x11.org][x11.org]]). X's answer to the wheel predates scroll axes: *the wheel is a pair of
@@ -763,6 +790,9 @@ second keyboard fd — that asymmetry is why the guest has one.
 and a =:motion= whose state carries =Button1Mask= calls =browser-drag=.
 
 * 8. What makes it work (kernel side)
+:PROPERTIES:
+:CUSTOM_ID: makes-work
+:END:
 
 | Option                            | State | Why                                                        |
 |-----------------------------------+-------+------------------------------------------------------------|
@@ -783,9 +813,9 @@ I2C-HID needs an I2C *bus*, and on an Intel laptop that controller wants
 =i2c-designware-platdrv.o= doesn't), so the bus never appears and neither does the I2C
 touchpad. =psmouse= picks the pad up over the legacy i8042 port instead, and with
 =CONFIG_RMI4_CORE= off it can't hand over to SMBus, so it stays in the *absolute*
-Synaptics PS/2 protocol — the device §4½ is about.
+Synaptics PS/2 protocol — the device [[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]] is about.
 
-Enabling the platform driver would give the pad a relative node, but wouldn't make §4½
+Enabling the platform driver would give the pad a relative node, but wouldn't make [[#touchpad-absolute-but-position][The touchpad: absolute, but not a position]]
 optional: the PS/2 absolute fallback is what every machine without that driver gets.
 
 Full table and reasoning: [[file:kernel-config.org][kernel-config.org]]. Device nodes appear without being listed
@@ -813,4 +843,4 @@ in the cpio because =/dev= is devtmpfs, mounted by [[file:../initramfs/preinit.c
 
 There's no hardware cursor. No sprite, no overlay plane: =*cursor-x*= and =*cursor-y*=
 are two integers, and a small bitmap is painted into a patch composited over the frame
-on its way to the screen, never into the frame itself ([[file:framebuffer.org][framebuffer.org]] §9.5).
+on its way to the screen, never into the frame itself ([[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]]).

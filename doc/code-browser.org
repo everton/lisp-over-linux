@@ -6,13 +6,13 @@ inside itself — what a Smalltalk/Pharo browser gives you — without pretendin
 Common Lisp is Smalltalk, and without a window system that would dwarf the rest of
 the project.
 
-*Status: built.* Phases 0–7 are done (§8 is the authoritative per-phase status).
+*Status: built.* Phases 0–7 are done ([[#phases][Phases]] is the authoritative per-phase status).
 The browser runs full-screen on =/dev/fb0= as PID 1 — the image boots into it, and
 =b= at the supervisor menu reopens it. It browses and *edits* its own source,
 carries a live debugger, and sits on a widget toolkit. Phase 7 (Morphic,
 [[file:morphic.org][morphic.org]]) made it the first window of a Lisp window system: everything on
 screen, down to each pane's body, is a morph, with drag and drop through the hand.
-The screenshots are captured from the running system (§8, "Reproducible
+The screenshots are captured from the running system ([[#phases][Phases (each independently demoable — this repo likes screenshots)]], "Reproducible
 screenshots").
 
 Related docs:
@@ -30,9 +30,12 @@ powers that were cheap here).
 Both were checked against the actual tree, not assumed.
 
 ** 0.1 The source code is NOT in the image (the keystone problem)
+:PROPERTIES:
+:CUSTOM_ID: source-code-image
+:END:
 
 =build.sh= bakes the =.lisp= files into =lisp-init= with =save-lisp-and-die= and
-ships *only the binary*: the sources aren't in the cpio (=build.sh= §2,
+ships *only the binary*: the sources aren't in the cpio (=build.sh= [[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]],
 =initramfs.sbcl.list=). And =sb-introspect='s source locations record the *build
 host's* path:
 
@@ -50,10 +53,13 @@ file-based browser is an editor with a directory tree; an image-based browser is
 
 *Decision: the image owns the source.* At build time we capture the verbatim text
 of every top-level form into a table frozen into the heap beside the code. The
-browser reads *that*, never a file (§2). This one decision, about 60 lines, is what
+browser reads *that*, never a file ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]). This one decision, about 60 lines, is what
 makes everything else Smalltalk-shaped rather than Emacs-shaped.
 
 ** 0.2 The cross-reference database already works
+:PROPERTIES:
+:CUSTOM_ID: cross-reference-database-already
+:END:
 
 SBCL usually records xref (=who-calls= and friends) during =compile-file=, and
 =build.sh= uses plain =load=. Without xref we'd lose *Senders/Implementors*, the most
@@ -72,6 +78,9 @@ and is baked in with =(require :sb-introspect)= in the generated build script, a
 =sb-bsd-sockets= is.
 
 * 1. Framebuffer or X? — the question, answered
+:PROPERTIES:
+:CUSTOM_ID: framebuffer-x-question-answered
+:END:
 
 *Build on the framebuffer; never run an X server.* The insulation you need is an
 abstraction layer, not a technology choice.
@@ -80,7 +89,7 @@ abstraction layer, not a technology choice.
 
 - *No DRM.* =CONFIG_DRM is not set=. X.org wants DRM/KMS; its old fbdev path is
   deprecated. "Add X" starts with "add a GPU driver stack", which
-  [[file:framebuffer.org][framebuffer.org §6]] rejects as vendor-specific.
+  [[file:framebuffer.org][[[file:framebuffer.org::#limits-efifb-vs-drm][framebuffer.org, Limits: efifb vs DRM/KMS]]]] rejects as vendor-specific.
 - *No userland for it.* X.org is a C server plus drivers, xkb, fontconfig, shared
   libraries and a =/usr=. We have a static musl =preinit=, one frozen SBCL heap, no
   shell, no dynamic-library userland. Several hundred thousand lines of C against a
@@ -109,7 +118,7 @@ Rendering into the 160x50 fbcon grid first (reusing [[file:../initramfs/ansi.lis
 line editor) was considered and rejected:
 
 - *No faster to iterate.* A pixel backend prototypes on the *host* just as easily
-  (§6.1), with no QEMU.
+  ([[#host-dev-loop][The host dev loop (build this first)]]), with no QEMU.
 - *It forfeits the point.* The Smalltalk browser was pixel-native from day one, on a
   1-bit 606x808 Alto: proportional fonts, a real caret, selection, scrollbars, a
   mouse. That *is* the idea, and a character grid can't express it.
@@ -157,9 +166,12 @@ we do all our own drawing we need only a slice of the protocol: the handshake,
 3. *No new C*, and no kernel change.
 
 The endgame is a window system of our own on the framebuffer — Morphic. /Smalltalk
-was never an X application; Smalltalk was the window system./ Phase 7 (§8) built it.
+was never an X application; Smalltalk was the window system./ Phase 7 ([[#phases][Phases (each independently demoable — this repo likes screenshots)]]) built it.
 
 * 2. The model layer — what is a "unit of code" in Lisp?
+:PROPERTIES:
+:CUSTOM_ID: model-layer-unit-code
+:END:
 
 Smalltalk's browser rests on the =CompiledMethod=: one class, one category, one
 source string, a version history. Lisp has no such object, so we build one.
@@ -178,13 +190,13 @@ From [[file:../initramfs/registry.lisp][registry.lisp]]:
     label         ; for methods: qualifiers + specializers, to tell them apart
     versions      ; previously-accepted source strings, most-recent first (Smalltalk Versions)
     package       ; the package its text was READ in (a name), so Accept reads it there too
-    born)         ; T when Accepted into being at runtime rather than edited (§3b, "Beat 4")
+    born)         ; T when Accepted into being at runtime rather than edited (see The Stage, "Beat 4")
 #+end_src
 
 Entries are keyed by kind and name, *not* by name alone: one symbol can be a
 function, a variable, a class and a type at once. Smalltalk never faces this, and the
 browser shows it plainly rather than hiding it. Categories aren't stored; they're
-computed (§3, "categories").
+computed ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]], "categories").
 
 ** Build-time source capture (the keystone, ~60 lines)
 
@@ -325,6 +337,9 @@ sbcl-source=; asserted in the guest by [[file:../check-files.lisp][check-files.l
 [[file:../media/screenshots/sbcl-source-2026-10-20.png]]
 
 * 3. The Smalltalk → Lisp concept map
+:PROPERTIES:
+:CUSTOM_ID: smalltalk-lisp-concept-map
+:END:
 
 Some concepts translate, some invert, some have no counterpart either way. The honest
 translation is what makes this worth building instead of cloning.
@@ -334,13 +349,13 @@ translation is what makes this worth building instead of cloning.
 | Smalltalk / Pharo                                                        | In our system                                                                                                                                                                      |
 |--------------------------------------------------------------------------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | The image is live; accept compiles into the running system               | =eval=/=compile= are *always* in an SBCL image. The frozen heap can't load fasls, but it can compile. This is the whole point.                                                     |
-| Source lives in the image                                                | The definition registry (§2). Without it there is no browser.                                                                                                                      |
-| Senders / Implementors / References                                      | =sb-introspect:who-calls=, =who-references=, =who-binds=, =who-sets=, =who-macroexpands=, =who-specializes-directly=. Verified working (§0.2). Arguably *richer* than Smalltalk's. |
+| Source lives in the image                                                | The definition registry ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]). Without it there is no browser.                                                                                                                      |
+| Senders / Implementors / References                                      | =sb-introspect:who-calls=, =who-references=, =who-binds=, =who-sets=, =who-macroexpands=, =who-specializes-directly=. Verified working ([[#cross-reference-database-already][The cross-reference database already works]]). Arguably *richer* than Smalltalk's. |
 | Do it / Print it / Inspect it                                            | On any selection, anywhere in the browser.                                                                                                                                         |
-| The Inspector                                                            | A real object inspector: slots, sequence elements, hash entries, a symbol's cells; drill-down with a back-stack; and *mutation* (§4¾, "Editing a value from the inspector").      |
+| The Inspector                                                            | A real object inspector: slots, sequence elements, hash entries, a symbol's cells; drill-down with a back-stack; and *mutation* ([[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]], "Editing a value from the inspector").      |
 | The Debugger as a browser                                                | SBCL's condition system + restarts is *stronger* than Smalltalk's. Live backtrace, frame locals (=sb-di=), pick a restart, redefine, retry.                                        |
 | Versions (per-method history)                                            | The =versions= slot. Free once source is in the image.                                                                                                                             |
-| The change set / =.changes=                                              | The change set view, journalled per Accept and replayed at boot (§5).                                                                                                              |
+| The change set / =.changes=                                              | The change set view, journalled per Accept and replayed at boot ([[#persistence-kernel-gap][Persistence — and the kernel gap]]).                                                                                                              |
 | Class comments                                                           | Docstrings — native, and =(setf (documentation …))= works.                                                                                                                         |
 | No dead ends: everything is browsable from everywhere                    | Every object printed anywhere is inspectable; every name is jumpable.                                                                                                              |
 | The browser is written in the language it browses, and can browse itself | Browse the browser, edit it live, watch it change under you. The fixed point is the demo.                                                                                          |
@@ -364,6 +379,9 @@ translation is what makes this worth building instead of cloning.
   variables: all browsable.
 
 ** The hard one: classes vs generic functions
+:PROPERTIES:
+:CUSTOM_ID: classes-vs-generic-functions
+:END:
 
 The deep impedance mismatch; the design stands or falls on it. A *visual design spec*
 for the views below is [[file:../media/browser-views-design.html][media/browser-views-design.html]] (open it locally,
@@ -483,19 +501,25 @@ a source, 0 registry labels without a live match. Rules:
   string a method dispatches on.
 
 ** And "categories", which Lisp does not have
+:PROPERTIES:
+:CUSTOM_ID: categories
+:END:
 
 Smalltalk's method categories (=accessing=, =printing=, =private=) are metadata
 attached to a method. =categorize= in [[file:../initramfs/model.lisp][model.lisp]] derives them:
 
 - *By kind* — Functions / Macros / Classes / Generic Functions / Variables.
 - *By file* — in this project *the files already are the categories*. This is
-  =categorize='s default scheme and what the module index shows (§4⅔).
+  =categorize='s default scheme and what the module index shows ([[#module-index-files-categories][The module index — our files ARE our categories  (DONE)]]).
 - *By export status* — external vs internal ≈ public vs private.
 
 User-assigned categories, recorded in the change log, would give Smalltalk's
 protocols back by the same mechanism (metadata). Not built.
 
 ** The other hard one: the condition system
+:PROPERTIES:
+:CUSTOM_ID: condition-system
+:END:
 
 Not structure but *dynamic control flow*, invisible in the source. Its spec is beside
 the generics one in [[file:../media/browser-views-design.html][media/browser-views-design.html]].
@@ -556,9 +580,12 @@ debugger=./
 
 *The static half* is built too: =(present (subj-condition 'foo))= renders anatomy,
 Signallers, Handlers and nearby restarts as one sectioned, drillable list, derived from
-the registry's source (§8, Phase 4a).
+the registry's source ([[#phases][Phases (each independently demoable — this repo likes screenshots)]], Phase 4a).
 
 * 3a. The Workspace — a scratch buffer with the editor's hands
+:PROPERTIES:
+:CUSTOM_ID: workspace-scratch-buffer-editor
+:END:
 
 Smalltalk's Workspace: the piece that makes the browser a place you *work*. It reuses
 the source pane's text view ([[file:../poc/textview.lisp][poc/textview.lisp]]: caret, selection, kill ring, syntax
@@ -569,11 +596,11 @@ whole definition:
 - *Print it* (=C-c C-p=) — eval and insert the printed result *inline*, after the
   form. The buffer accretes an editable, re-runnable session.
 - *Inspect it* (=C-c C-i=) — eval and open the value in the Inspector.
-- *Debug it* (=C-c C-d=) — eval with the debugger armed (§3).
-- *Accept* (=C-c C-c=) — compile the top-level form at point as a definition (§3b,
+- *Debug it* (=C-c C-d=) — eval with the debugger armed ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]).
+- *Accept* (=C-c C-c=) — compile the top-level form at point as a definition ([[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]],
   "Beat 4").
 
-Which form the verbs take, and how output is captured, is in §8 (Phase 3a).
+Which form the verbs take, and how output is captured, is in [[#phases][Phases (each independently demoable — this repo likes screenshots)]] (Phase 3a).
 
 It is *not* the REPL. [[file:../initramfs/repl.lisp][repl.lisp]] is the *typewriter* (one form, history,
 transcript); the Workspace is the *notebook* (multi-form, editable, results woven
@@ -590,8 +617,11 @@ default font. The verbs also sit in the status bar:
 /The Workspace. =./refresh-screenshot.sh --scene workspace=./
 
 * 3b. The Stage — dispatch, happening  [DONE]
+:PROPERTIES:
+:CUSTOM_ID: stage-dispatch-happening-done
+:END:
 
-The dispatch matrix (§3) shows which collisions *have a rule*. The Stage shows
+The dispatch matrix ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]) shows which collisions *have a rule*. The Stage shows
 collisions *happening*: every sprite is a live CLOS instance from
 [[file:../initramfs/examples.lisp][=examples.lisp=]], every contact a real =collide= call, and every hole in the matrix a
 =no-applicable-method= that opens the debugger with the stack standing. Code:
@@ -727,9 +757,12 @@ transcript reads as a small history:
 
 There is no alien class: inventing one to reference =draw-alien= would be unrelated
 fiction. The names live in one =*stage-names*= table and the four seeds in
-=make-collide-stage=. The environment itself keeps its name (§4¾, "Naming").
+=make-collide-stage=. The environment itself keeps its name ([[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]], "Naming").
 
 ** Beat 4: the method you write from the debugger
+:PROPERTIES:
+:CUSTOM_ID: beat-4
+:END:
 
 The loop closes. =w= opens a Workspace *beside* the stage; =SuperL-o= or a click in
 either half moves focus. =[define-method]= opens it holding the =defmethod= the debugger
@@ -781,7 +814,7 @@ still in the trail behind. =./refresh-screenshot.sh --scene stage-inspect=./
 * 4. The browser itself
 
 The first design was a Smalltalk System Browser: fixed columns over one root axis.
-§4½'s drill-down accordion replaced the mechanism; this section keeps the vocabulary.
+[[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]'s drill-down accordion replaced the mechanism; this section keeps the vocabulary.
 
 ** The one structural departure from Smalltalk: a switchable root axis
 
@@ -792,8 +825,8 @@ mistake every Smalltalk-in-Lisp browser makes.
 
 So the root is a choice, and everything downstream of it is the same: pick =Classes=
 and you get the DAG, the protocol, the methods; pick =Generics= and you get the
-dispatch matrix and the onion (§3); a =Search= result is a valid root too, as in
-Pharo's Spotter. In the accordion (§4½) a "root axis" is simply which subject you
+dispatch matrix and the onion ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]); a =Search= result is a valid root too, as in
+Pharo's Spotter. In the accordion ([[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]) a "root axis" is simply which subject you
 =present= first, and the columns are the first few drill levels.
 
 ** Interaction
@@ -801,9 +834,12 @@ Pharo's Spotter. In the accordion (§4½) a "root axis" is simply which subject 
 Mouse and keyboard both, like the original: click to select, click to place the caret,
 drag to select, right-click for the context menu — Smalltalk's *yellow-button menu*,
 where Do it / Print it / Inspect it / Senders / Implementors live. Every menu item has
-an Emacs-flavoured key. The current key tables are in §4¾.
+an Emacs-flavoured key. The current key tables are in [[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]].
 
 * 4½. The drill-down protocol — one =present=, everything browsable
+:PROPERTIES:
+:CUSTOM_ID: drill-down-protocol-present
+:END:
 
 *This is the UI architecture.* It's Glamorous Toolkit's Miller-column browser (Pharo's
 before it) and, underneath, an old Lisp idea — *CLIM presentations*: display an object,
@@ -847,7 +883,7 @@ means by /that/ package — a method on =print-object= isn't marked, nor is a
 
 Drill a few levels and parents collapse into stacked breadcrumb bars, each labelled on
 the right with *what was picked from it* (=picked initramfs/examples=, =picked
-collide=, =picked dispatch matrix=) — the matrix shot in §3 shows three.
+collide=, =picked dispatch matrix=) — the matrix shot in [[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]] shows three.
 
 ** One generic function and one data rule
 
@@ -860,7 +896,7 @@ collide=, =picked dispatch matrix=) — the matrix shot in §3 shows three.
 | =present= method                  | the view it returns                      | each item targets   |
 |-----------------------------------+------------------------------------------+---------------------|
 | =(present (p package))=           | its defpackage, then exported / internal | a definition        |
-| =(present (gf generic-function))= | the dispatch matrix (§3)                 | a =dispatch-query=  |
+| =(present (gf generic-function))= | the dispatch matrix ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]])                 | a =dispatch-query=  |
 | =(present (q dispatch-query))=    | the effective-method onion               | a method            |
 | =(present (m method))=            | its source, editable                     | a called function   |
 | =(present (r restart))=           | its report line                          | /action:/ invoke it |
@@ -883,6 +919,9 @@ take =(present subject aspect)= with a switcher on the panel header. Not built.
 =present-preview= already lets the side preview differ from the drill.
 
 ** Content that talks back: affordances & =commands-for= (external side effects)
+:PROPERTIES:
+:CUSTOM_ID: content-talks-back
+:END:
 
 Some content needs to influence the *shell*: open a target in a NEW trail (like
 =target="_blank"=), add menu entries, hang handles on a halo. Letting content call
@@ -923,7 +962,7 @@ disposition the browser may honour, a popup blocker veto, a middle-click overrid
 
 *Liveness is separate.* "This content changed, re-render me" is the shell
 re-presenting a subject, not a command. Since Morphic it's a morph's /signature/
-changing ([[file:morphic.org][morphic.org]] §4.4).
+changing ([[file:morphic.org::#damage-per-morph][morphic.org, Damage per morph]]).
 
 ** The right button and the halo
 
@@ -931,7 +970,7 @@ Both start from *what* is under the pointer, answered by
 [[file:../poc/shell.lisp::defun pane-target][=pane-target=]] from what the pane recorded when it drew: a *row* (and the subject
 it opens), a *word* in text (and the symbol it names), an *instance* on the stage, or
 the pane itself — and by the tab strip for a *tab*. Each is asked by the morph the
-press lands on ([[file:morphic.org][morphic.org]] §5.5).
+press lands on ([[file:morphic.org::#routing-presses-keys][morphic.org, Routing presses and keys]]).
 
 - *Right button* → [[file:../poc/shell.lisp::defun context-menu-entries][=context-menu-entries=]]: the obvious verbs for that kind of thing
   first (Cut / Copy / Paste / Paste the selection / Select all in text, then Go to
@@ -991,7 +1030,7 @@ For a word in the Workspace:
 
 *** Buttons, gestures and the chooser
 
-- *The middle button's two jobs.* X's PRIMARY paste ([[file:clipboard.org][clipboard.org]] §3) and the halo
+- *The middle button's two jobs.* X's PRIMARY paste ([[file:clipboard.org::#selections-clipboard-primary][clipboard.org, Two selections: CLIPBOARD and PRIMARY]]) and the halo
   both want it. [[file:../poc/shell.lisp::defun pane-middle-click][=pane-middle-click=]] splits by *place*: in editable text with
   something to paste, it pastes at the pointer; anywhere else (a row, a sprite,
   read-only text) it opens the halo; =SuperL=-middle forces the halo even in editable
@@ -1011,10 +1050,13 @@ For a word in the Workspace:
   opening =tv-draw= from the Workspace's text view.
 
 * 4⅔. The module index — our files ARE our categories  [DONE]
+:PROPERTIES:
+:CUSTOM_ID: module-index-files-categories
+:END:
 
 A package view answers *"what exists"* and is the wrong shape for *"where does this
 live"*: rooted at =CL-USER= it's a 300-plus-row list. Smalltalk's class categories are
-what Lisp doesn't give us (§3) — but [[file:../initramfs/registry.lisp][=load-recording=]] stamps every =DEFN= with
+what Lisp doesn't give us ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]) — but [[file:../initramfs/registry.lisp][=load-recording=]] stamps every =DEFN= with
 its file, and [[file:../initramfs/model.lisp::defun categorize][=categorize=]] groups by it (=:file= is its default scheme). Two
 subjects in [[file:../initramfs/present.lisp][=present.lisp=]] surface it:
 
@@ -1047,21 +1089,24 @@ under =NIL= (currently none). Only Accepted definitions are recorded at runtime:
 definition merely evaluated with Do it appears in neither the index nor a package view.
 
 * 4¾. The environment — trails, the Spotter, and the tiled shell
+:PROPERTIES:
+:CUSTOM_ID: environment-trails-spotter-tiled
+:END:
 
-The accordion (§4½) is *one investigation*. This section is the container above it:
+The accordion ([[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]) is *one investigation*. This section is the container above it:
 how several investigations coexist, how you jump to something unrelated without losing
 your place, and where the Workspace, Debugger and other surfaces live. First figure in
 [[file:../media/browser-views-design.html][media/browser-views-design.html]].
 
 *Tiled by default, keyboard first.* Tiled panes suit a keyboard-first machine and need
 no window manager. The =present=/trail model underneath doesn't care, so with Morphic
-(§8, Phase 7) a trail can also be torn off into a draggable window.
+([[#phases][Phases (each independently demoable — this repo likes screenshots)]], Phase 7) a trail can also be torn off into a draggable window.
 
 *Three nested levels*, each keyboard-reachable:
 
 | level | what it is                                                                                    | how you move                    |
 |-------+-----------------------------------------------------------------------------------------------+---------------------------------|
-| trail | one investigation (a drill-down accordion, §4½) — or a pinned surface: Workspace · Debugger · … | tabs · =SuperL-1…9=            |
+| trail | one investigation (a drill-down accordion, [[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]) — or a pinned surface: Workspace · Debugger · … | tabs · =SuperL-1…9=            |
 | drill | a panel opened from the previous panel's selection                                            | =↵= · breadcrumb · =SuperL-←=   |
 | item  | a presented thing with a =target= (drill) or =action= (do)                                    | click · =SuperL-click=          |
 
@@ -1071,7 +1116,7 @@ object)= the Inspector. They live in the *same tab strip* as everything else; th
 no separate rail listing them twice. New surfaces arrive the same way — the process
 view did: [[file:../initramfs/worker.lisp][worker.lisp]] runs a job in a second process and presents the view it sends
 back, [[file:../initramfs/worker-live.lisp][worker-live.lisp]] keeps such a view live, and [[file:../initramfs/sandbox.lisp][sandbox.lisp]] tries every
-Accept in a child first ([[file:processes.org][processes.org]] §2, §7, §7½, §7¾).
+Accept in a child first ([[file:processes.org::#scenario-peer-sends-view][processes.org, Scenario A — a peer that sends a VIEW]], [[file:processes.org::#worked-example-shot-worker][The worked example: a one-shot worker]], [[file:processes.org::#live-worker-handles-pipe][A live worker: handles, (:invalidate h), a pipe in the poll]], [[file:processes.org::#accept-tries-definition-child][Accept tries a definition in a child first]]).
 
 *"I need to look at something else" has three answers, by intent:*
 
@@ -1101,6 +1146,9 @@ opens =open-tab-list=: every trail in tab order, a windowed one marked =(window)
 Host-tested by =poc/morphic-test.lisp= ("more tabs than fit").
 
 ** The Spotter
+:PROPERTIES:
+:CUSTOM_ID: spotter
+:END:
 
 =SuperL-Space= summons a universal search *over subjects*. Everything is a subject, so
 it's one search, and opening a hit is =(present hit)=. Pharo's Spotter, GT's search, a
@@ -1126,18 +1174,21 @@ like =colorize-lisp=. =./refresh-screenshot.sh --scene spotter=./
   =↵= opens — is still the best match.
 - *Dense rows.* Kind-coloured, a live match count in the header, a footer saying what
   the keys do, and the matched characters lit in *white* (=*ui-lit*=) — not the accent,
-  which is also every function row's colour (§6.4).
+  which is also every function row's colour ([[#looks-like-visual-conventions][What it looks like — the visual conventions]]).
 - *An empty query opens on recents* (=note-recent=, filled by =trail-push= /
   =new-trail=): "where was I" is the one question an empty finder can answer.
 - *Paths.* A query starting with =/=, =~=, =./=, =../= or =file://= lists the folder's
   entries completing the last component; =Tab= completes like a shell; =↵= opens the
   file manager there (on a file: its folder, with it selected). =./= is relative to the
-  focused file manager's folder ([[file:file-manager.org][file-manager.org]] §9).
+  focused file manager's folder ([[file:file-manager.org::#spotter-reads-paths][file-manager.org, The Spotter reads paths]]).
 - *Backend-blind.* The input is the =open-spotter= overlay ([[file:../poc/overlays.lisp][poc/overlays.lisp]]), so the
   palette renders on the host: =sbcl --script poc/render-frame.lisp modules --spotter
   coll=.
 
 ** Keys: two non-colliding layers
+:PROPERTIES:
+:CUSTOM_ID: keys-two-layers
+:END:
 
 =SuperL= (the window-manager modifier) owns *spatial* navigation; =Ctrl/Meta= own
 *editing and semantic actions* inside the focused panel. Disjoint by modifier, they
@@ -1193,6 +1244,9 @@ tab's number badge maps to =SuperL-1…9=.
   =SuperL-?= is one of the hints.
 
 ** Editing a definition in place — the modifier split
+:PROPERTIES:
+:CUSTOM_ID: modifier-split
+:END:
 
 A source pane backed by the registry (*your* code) is an editable buffer: plain keys and
 =Ctrl/Meta= are the editor's (Backspace deletes, =↵= inserts a newline, =↑↓= move the
@@ -1205,7 +1259,7 @@ navigation lives *only* on =SuperL=: =SuperL-←= is "back", never Backspace.
 | *reference* (a builtin) | read-only (scroll only)                                   | navigate |
 | *list* (class/pkg/xref) | navigate (=↑↓= select · =↵= drill · Backspace back)       | navigate |
 
-Only your code is editable (§2, "Two kinds of subject"). A static map of these flows —
+Only your code is editable ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]], "Two kinds of subject"). A static map of these flows —
 which routes end read-only vs editable — is [[file:../media/navigation-flows.html][media/navigation-flows.html]].
 
 ** Focusing the right-hand column — =→=, and why it is not navigation
@@ -1257,6 +1311,9 @@ cell, an array element. The pane redraws around it.
   coalesced — an implementation detail, not a guarantee.)
 
 ** Naming — "environment", settled
+:PROPERTIES:
+:CUSTOM_ID: naming-environment-settled
+:END:
 
 The whole thing is called the *environment*. It has the strongest pedigree of the
 options: Interlisp-D and Symbolics Genera both called the whole live thing "the
@@ -1264,9 +1321,12 @@ environment". For the record, Smalltalk's terms: the persistent live world is th
 *image* (=save-lisp-and-die= literally writes one); the code browser is the *System
 Browser* (Pharo's is *Calypso*); the scratch buffer the *Workspace* → *Playground*.
 Self calls its live world "the world". Space-themed names (=orrery=, =mothership=) were
-weighed and declined; the space joke lives on the Stage's sprites instead (§3b).
+weighed and declined; the space joke lives on the Stage's sprites instead ([[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]).
 
 * 5. Persistence — and the kernel gap
+:PROPERTIES:
+:CUSTOM_ID: persistence-kernel-gap
+:END:
 
 A Smalltalk browser whose edits evaporate at power-off is a toy. The initramfs is a
 tmpfs, so persistence needs a disk; the kernel gained NVMe + ext4 at tag #25
@@ -1281,21 +1341,27 @@ tmpfs, so persistence needs a disk; the kernel gained NVMe + ext4 at tag #25
 
 *Saving the image* (=save-lisp-and-die= from inside) is not built. It demands a single
 thread and then *exits*, and PID 1 exiting is a kernel panic, so a forked child would
-have to save it. Two findings from [[file:processes.org][processes.org]] §5 and §6:
+have to save it. Two findings from [[file:processes.org::#memory-fork-exec-copy][processes.org, Memory: fork, exec, and what copy-on-write does not buy]], [[file:processes.org::#sb-posix-audit-nothing][sb-posix — the audit, and why nothing was migrated]]:
 
 - *=sb-posix:fork= refuses with threads running* ("Cannot fork with multiple threads
   running"), turning the classic fork-in-a-threaded-program deadlock into a legible
   error.
 - *But shipping =sb-posix= costs live editing.* Code calling its inline entry points
   can't be recompiled in the guest. A hand-rolled fork has been proven on the host
-  ([[file:session-persistence.org][session-persistence.org]] §9.2).
+  ([[file:session-persistence.org::#fork-without-sb-posix][session-persistence.org, Fork without =sb-posix=]]).
 
 * 6. The graphics layer, concretely
+:PROPERTIES:
+:CUSTOM_ID: graphics-layer
+:END:
 
 Pixel-native means a small 2D toolkit of our own — the bulk of the work, and entirely
 pure Lisp: no kernel option we lack, no C, no library.
 
 ** 6.1 The host dev loop (build this first)
+:PROPERTIES:
+:CUSTOM_ID: host-dev-loop
+:END:
 
 The same browser runs on the host from a plain =sbcl=, presenting through the
 pure-Lisp X11 client into a desktop window: real keyboard and mouse, no QEMU, no
@@ -1311,6 +1377,9 @@ A third, headless backend renders a frame to an image file:
 change").
 
 ** 6.2 What we must write ourselves
+:PROPERTIES:
+:CUSTOM_ID: must-write-ourselves
+:END:
 
 - *Drawing primitives.* =fill-rect=, =blit=, =draw-line=, clipping, alpha compositing, on
   =(unsigned-byte 32)= arrays with type declarations. A full 1280x800 clear is ~1 M
@@ -1333,7 +1402,7 @@ handed. So font choice is data, and adding a backend is additive.
   coverage, gamma 1.45) with per-pixel blending and a (size, codepoint) glyph cache.
   The file is the build host's DejaVu Sans Mono (=LOL_FONT= overrides), copied into the
   cpio, never committed. stb_truetype was the allowed escape hatch and proved
-  unnecessary (numbers in [[file:fonts.org][fonts.org]] §5).
+  unnecessary (numbers in [[file:fonts.org::#font-object-glyph-cache][fonts.org, The FONT object, the glyph cache, and blending]]).
 - *Resizable at run time.* The size lives in one shared =font= object: =SuperL-= / - / 0=
   and =C-x C-= / C-- / C-0= change it, the status line says so, =~/.lol/settings=
   remembers it. Default 18 px (11×21 cells), sized for a 13.4-inch 1920×1200 panel.
@@ -1343,7 +1412,7 @@ handed. So font choice is data, and adding a backend is additive.
   =line-h= (or =+row-h+=) at draw time.
 - *The bitmap fallback.* *Cozette (MIT)*, baked into our =.lolf= blob
   ([[file:../poc/cozette.lolf][poc/cozette.lolf]], 6×15) by the build-host converter [[file:../poc/bdf2font.lisp][poc/bdf2font.lisp]] (BDF →
-  blob), like =alien.rgba= ([[file:framebuffer.org][framebuffer.org §8]]). It indexes glyphs by *real
+  blob), like =alien.rgba= ([[file:framebuffer.org][[[file:framebuffer.org::#drawing-image-corner][framebuffer.org, Drawing an image (the Land-of-Lisp alien) in a corner]]]]). It indexes glyphs by *real
   codepoint*, which prevents the =·=→=Ö= class of bug. Its licence ships beside it
   (=cozette-LICENSE.txt=). Used when no TrueType file loads; it resizes by integer
   magnification.
@@ -1354,6 +1423,9 @@ handed. So font choice is data, and adding a backend is additive.
   structure (borders, scrollbar, caret bar, selection rectangle) is drawn as shapes.
 
 ** 6.3 Guest specifics (framebuffer)
+:PROPERTIES:
+:CUSTOM_ID: guest-specifics
+:END:
 
 - *Stop fbcon fighting us.* fbcon and printk share =/dev/fb0=. =KDSETMODE= (=0x4B3A=) to
   =KD_GRAPHICS= on the console stops them drawing; =KD_TEXT= restores it on exit
@@ -1373,25 +1445,28 @@ handed. So font choice is data, and adding a backend is additive.
   The loop =poll(2)=s the console tty, every pointer and every keyboard's evdev at once,
   sleeping until one has something. It decodes =EV_REL= (a PS/2 mouse, plus =REL_WHEEL=),
   =EV_ABS= (a =usb-tablet= or a touchpad) and =EV_KEY= / =BTN_LEFT=; a cursor is
-  composited over the frame ([[file:framebuffer.org][framebuffer.org]] §9.5).
+  composited over the frame ([[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]]).
 - *Finding devices without udev.* Don't assume =eventN= or grep the Handlers line for
   =mouse= — =mousedev= isn't built, so a PS/2 mouse shows only =Handlers=eventN=.
   =input-device-kind= reads =/proc/bus/input/devices= and classifies each block by its
   =B: EV== mask (=EV_REL= bit 2, =EV_ABS= bit 3 with an X axis) and =B: PROP== mask:
   mouse, tablet, touchpad or keyboard. *Every* device is open at once, hotplug included
-  ([[file:input.org][input.org]] §4¾).
+  ([[file:input.org::#every-device-once-ones][input.org, Every device at once, and the ones plugged in later]]).
 - *Touchpads.* Their absolute readings are in the pad's own units, so they're
   differenced rather than mapped. A tap reports no button and there's no libinput, so a
   deliberate tap (brief, still, firm) clicks; a graze doesn't. Tap-to-click is off by
-  default. Press-and-slide on a clickpad drags ([[file:input.org][input.org]] §4½). The kernel has
+  default. Press-and-slide on a clickpad drags ([[file:input.org::#touchpad-absolute-but-position][input.org, The touchpad: absolute, but not a position]]). The kernel has
   =CONFIG_MOUSE_PS2= and =CONFIG_I2C_HID= + =_ACPI= (tag #23 onward), so PS/2 and I2C-HID
   pads enumerate like any pointer.
 - *The mouse is an accelerant, never a requirement.* Every pointer gesture has a key.
 - *Resolution* is whatever the firmware set (efifb can't modeset —
-  [[file:framebuffer.org][framebuffer.org §6]]): 1280x800 under QEMU's default OVMF, 1920×1200 on a laptop
+  [[file:framebuffer.org][[[file:framebuffer.org::#limits-efifb-vs-drm][framebuffer.org, Limits: efifb vs DRM/KMS]]]]): 1280x800 under QEMU's default OVMF, 1920×1200 on a laptop
   panel. Layout is resolution-agnostic.
 
 ** 6.4 What it looks like — the visual conventions
+:PROPERTIES:
+:CUSTOM_ID: looks-like-visual-conventions
+:END:
 
 *Colour carries meaning, and nothing else does.* The palette lives in
 [[file:../poc/widgets.lisp][=poc/widgets.lisp=]] so a widget and its caller can't drift; the concept half comes
@@ -1433,7 +1508,7 @@ selected ground, =#FF9F43= "opens elsewhere".
 - *Rows are the font's cell plus 5* (=(row-h)=: 26 px at the default 18 px TrueType
   size, 20 with the 6x15 bitmap). The cell plus two was legible but airless. The text
   offset is derived from row and font height, so nothing drifts off its highlight
-  ([[file:fonts.org][fonts.org]] §6).
+  ([[file:fonts.org::#size-change-reaches-every][fonts.org, How a size change reaches every pixel of layout]]).
 - *Source panes* reuse the concept colours: purple keywords and special forms, green for
   the name a =def= form introduces, teal for a form's head, amber numbers, =#A8D078=
   strings. The *furniture* is quieter than the code: gutter =#3A414B=, comments =#6B727D=
@@ -1452,7 +1527,7 @@ selected ground, =#FF9F43= "opens elsewhere".
 still =CL-USER=.
 
 A full retrofit isn't a prerequisite: a single =LOL= package would only rename
-=CL-USER=, and the grouping readers want is by module (§4⅔). Packages still earn their
+=CL-USER=, and the grouping readers want is by module ([[#module-index-files-categories][The module index — our files ARE our categories  (DONE)]]). Packages still earn their
 keep for *namespacing* — =LOL.CANVAS:PRESENT= vs our =PRESENT= is a real collision
 avoided.
 
@@ -1472,6 +1547,9 @@ fail *silently*:
    while the real one keeps running.
 
 * 8. Phases (each independently demoable — this repo likes screenshots)
+:PROPERTIES:
+:CUSTOM_ID: phases
+:END:
 
 *The authoritative status.* The model comes first and the window second: the model is
 the hard part to get right, and it's testable from the REPL. The UI is pixel-native
@@ -1484,18 +1562,18 @@ deterministic key sequence, driven over QMP into a headless QEMU boot.
 
 | scene             | shows                                         | section |
 |-------------------+-----------------------------------------------+---------|
-| =package=         | the flat =CL-USER= list + a source pane       | §4½     |
-| =modules=         | the module index                              | §4⅔     |
-| =matrix=          | =collide='s dispatch grid                     | §3      |
-| =debugger=        | the live debugger on =(lol.examples:launch)=  | §3      |
-| =stage=           | the COLLIDE stage, running                    | §3b     |
-| =stage-debugger=  | the stage meeting a hole in the matrix        | §3b     |
-| =stage-workspace= | the Workspace beside the stage, on its primer | §3b     |
-| =stage-accept=    | beat 4 — define the missing method, Accept it | §3b     |
-| =stage-inspect=   | Tab to a sprite, Enter for the Inspector      | §3b     |
-| =workspace=       | the scratch buffer and its verbs              | §3a     |
-| =spotter=         | the find-anything palette                     | §4¾     |
-| =sbcl-source=     | =M-.= on =mapcar=: SBCL's source from the disk  | §2      |
+| =package=         | the flat =CL-USER= list + a source pane       | [[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]     |
+| =modules=         | the module index                              | [[#module-index-files-categories][The module index — our files ARE our categories  (DONE)]]     |
+| =matrix=          | =collide='s dispatch grid                     | [[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]      |
+| =debugger=        | the live debugger on =(lol.examples:launch)=  | [[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]      |
+| =stage=           | the COLLIDE stage, running                    | [[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]     |
+| =stage-debugger=  | the stage meeting a hole in the matrix        | [[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]     |
+| =stage-workspace= | the Workspace beside the stage, on its primer | [[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]     |
+| =stage-accept=    | beat 4 — define the missing method, Accept it | [[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]     |
+| =stage-inspect=   | Tab to a sprite, Enter for the Inspector      | [[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]]     |
+| =workspace=       | the scratch buffer and its verbs              | [[#workspace-scratch-buffer-editor][The Workspace — a scratch buffer with the editor's hands]]     |
+| =spotter=         | the find-anything palette                     | [[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]]     |
+| =sbcl-source=     | =M-.= on =mapcar=: SBCL's source from the disk  | [[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]      |
 
 =--scenes= lists them; =--scene NAME= re-captures one and rewrites this file's link to
 the new dated PNG. (README's two shots come from =--mode repl= / =--mode browser=, not
@@ -1527,10 +1605,13 @@ module. Headless; the =present= methods are thin renderers over these.
 ** Phase 2 — the window opens  [DONE]
 
 In [[file:../poc/][poc/]]: the pixel buffer, drawing primitives, bitmap font and blitter, event loop,
-and the pure-Lisp X11 client (§6.1). A window on the desktop drawn entirely by our own
+and the pure-Lisp X11 client ([[#host-dev-loop][The host dev loop (build this first)]]). A window on the desktop drawn entirely by our own
 Lisp, and the identical buffer on =/dev/fb0=. Damage tracking arrived with Morphic.
 
 ** Phase 3 — the toolkit  [DONE]
+:PROPERTIES:
+:CUSTOM_ID: phase-3-toolkit
+:END:
 
 [[file:../poc/textview.lisp][poc/textview.lisp]] + [[file:../poc/widgets.lisp][poc/widgets.lisp]]. The text view subsumes
 [[file:../initramfs/line-editor.lisp][line-editor.lisp]]'s buffer logic and reuses a run-based lexer. =lol.widgets=:
@@ -1559,7 +1640,7 @@ Lisp, and the identical buffer on =/dev/fb0=. Damage tracking arrived with Morph
 ** Phase 3a — the Workspace  [DONE]
 
 [[file:../initramfs/present.lisp][present.lisp]] (=subj-workspace=) + [[file:../poc/shell.lisp][poc/shell.lisp]] (the verbs) + supervisor menu
-=p=. A =:workspace= pane reuses the editable text view; its verbs (§3a) evaluate
+=p=. A =:workspace= pane reuses the editable text view; its verbs ([[#workspace-scratch-buffer-editor][The Workspace — a scratch buffer with the editor's hands]]) evaluate
 instead of Accepting. Chords go through =*pending-prefix*=.
 
 *Which form the verbs take.* The form is *found* by an editor's scan that never reads
@@ -1607,11 +1688,14 @@ debugger and a restart's value flows back.
 - *Editing in place.* A =:source= pane is an editable buffer; =C-c C-c= runs
   =accept-source=, compiling into the live image and pushing the old text onto
   =defn-versions=. An invalid form shows its error.
-- *Tabs and the Spotter* (§4¾): =draw-tabs=, =draw-spotter-card=; candidates from
+- *Tabs and the Spotter* ([[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]]): =draw-tabs=, =draw-spotter-card=; candidates from
   =spotter-candidates= / =spotter-filter= in present.lisp. Clicks route through the hit
   map the draw recorded.
 
 ** Phase 4a — the two Lisp-native views  [DONE]
+:PROPERTIES:
+:CUSTOM_ID: phase-4a-lisp-native-views
+:END:
 
 *Generics* ([[file:../initramfs/model.lisp][model.lisp]] + [[file:../initramfs/present.lisp][present.lisp]]). A generic function is one entry in a
 package list that drills into its own view: the *dispatch matrix* (=dispatch-matrix=,
@@ -1670,7 +1754,7 @@ registry can. The lists walk =*REGISTRY*=, =READ=ing each captured form and matc
 [[file:../initramfs/fb-browser.lisp][fb-browser.lisp]]. The *same* shell runs full-screen on =/dev/fb0= as PID 1; the
 image boots into it. Output is =lol.fb:present-fb= under =KD_GRAPHICS=; input is
 =poll(2)= over the raw console keyboard (=with-raw-mode= + escape parsing), the evdev
-pointers and the keyboard's own evdev (§6.3). The toolkit is baked into the image; the
+pointers and the keyboard's own evdev ([[#guest-specifics][Guest specifics (framebuffer)]]). The toolkit is baked into the image; the
 fonts ship in the cpio.
 
 - *Jump to definition.* Ctrl-click on a symbol, or =M-.= from the keyboard: Esc is the
@@ -1700,6 +1784,9 @@ fonts ship in the cpio.
   of its own source (containing the literal =~s=) can never match.
 
 ** Phase 6 — the live system  [DONE]
+:PROPERTIES:
+:CUSTOM_ID: phase-6-live-system
+:END:
 
 *The debugger* (=run-debugger-fb= / =draw-debugger= in fb-browser.lisp, model.lisp,
 =workspace-debug-it= in shell.lisp). An unhandled =serious-condition= from Debug it opens
@@ -1723,7 +1810,7 @@ ABORT returns to the Workspace with "aborted"; =(with-simple-restart (retry …)
   the header shows the value read back or why not (dead here, =(debug 0)=, a raw fixnum
   slot offered a string). CONTINUE runs on with it, or *=R= re-enters the frame* with the
   arguments it now holds. SBCL's own setter faults on an indirect variable:
-  [[file:inspector-history.org][inspector-history.org]] §5.4. Tested by [[file:../check-debugger.lisp][check-debugger.lisp]] (25 checks).
+  [[file:inspector-history.org::#set-local-debugger-frame][inspector-history.org, Set a local in a debugger frame (#9) — and re-enter it]]. Tested by [[file:../check-debugger.lisp][check-debugger.lisp]] (25 checks).
 
 *The change set* (=changed-definitions= in registry.lisp, =subj-change-set= in
 present.lisp, supervisor menu =c=). Every definition Accepted this session, edited ("1
@@ -1741,7 +1828,7 @@ appended to =~/.lol/journal/changes.lisp= and replayed at boot; the journal view
 Shipped work that isn't a numbered phase, listed so this section stays the complete
 status.
 
-- *The module index* (§4⅔) [DONE]. =subj-modules= / =subj-module=; =SuperL-m=.
+- *The module index* ([[#module-index-files-categories][The module index — our files ARE our categories  (DONE)]]) [DONE]. =subj-modules= / =subj-module=; =SuperL-m=.
 - *The inspector's powers* [DONE — [[file:inspector-history.org][inspector-history.org]]]. The inspector used to
   answer only "what fields does this object have"; four powers close the gap with the
   behaviour views:
@@ -1760,14 +1847,14 @@ status.
   - A *clipboard* with Parcellite's history, X's PRIMARY and the Emacs kill and
     rectangle keys ([[file:clipboard.org][clipboard.org]]; manager on =SuperL-h=); X's double click (word)
     and triple click (line) into PRIMARY.
-  - The *right-button menu* and the *halo* (§4½).
+  - The *right-button menu* and the *halo* ([[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]).
   - A *systray* with battery and clock ([[file:systray.org][systray.org]]), and a pointer that hides
-    when idle ([[file:framebuffer.org][framebuffer.org]] §9.5).
+    when idle ([[file:framebuffer.org::#pointer-part-frame][framebuffer.org, The pointer is not part of the frame]]).
   - =C-n= / =C-p= in the Spotter and menus; =SuperL-q= asks how to leave (the
     supervisor's console, power off, …).
-  - Emacs *undo* in every editor (=C-_=, =C-/=, =C-x u=; [[file:clipboard.org][clipboard.org]] §6½) and
+  - Emacs *undo* in every editor (=C-_=, =C-/=, =C-x u=; [[file:clipboard.org::#undo-other-history-beside][clipboard.org, Undo — the other history beside the kill ring]]) and
     *incremental search* in every text view, read-only ones too (=C-s= / =C-r=, checked
-    against Emacs's own answers; =C-x C-x= back to where it began; §6¾ there).
+    against Emacs's own answers; =C-x C-x= back to where it began; [[file:clipboard.org::#search-c-s-c][Search — =C-s= / =C-r=, and the mark it leaves]]).
   - *Org*: an =.org= file is coloured, folded (TAB / S-TAB, =#+STARTUP=), moved through
     by heading, edited by subtree (=M-RET=, the M-arrows, =C-c C-t=), its links followed
     (=C-c C-o=; a =defun= link opens the live definition), and its outline is a subject
@@ -1780,7 +1867,7 @@ status.
   / copy / move / delete / symlink / hard link behind prompts that never overwrite and
   always confirm a delete; previews for text, images, gzip, tar, zip, ELF and hex; a
   text editor saving with =C-x C-s= through a temp file and a rename. It added three
-  generic pieces: the *minibuffer* (a non-modal prompt, [[file:file-manager.org][file-manager.org]] §5),
+  generic pieces: the *minibuffer* (a non-modal prompt, [[file:file-manager.org::#asking-questions-minibuffer][file-manager.org, Asking questions: the minibuffer]]),
   =subject-key= / =subject-hints= (a subject's own keys on its list), and
   =present-preview=. =SuperL-f=, or a path in the Spotter.
 - *The web pane* [DONE — [[file:web-browser.org][web-browser.org]]]. =SUBJ-WEB=, a view of kind =:web=: a
@@ -1796,7 +1883,7 @@ status.
   =C-c C-a= is /Apply it/). A conversation is a Workspace pane: prose arrives as =;;=
   comments and =```lisp= blocks as live code, so =C-x C-e= and =C-c C-c= work on a
   proposal as it stands; =C-c C-o= on a =;; #N= line opens what that tool call read
-  (agent.org §8.6). =SuperL-a= shows the conversation; =C-g= stops a turn. A write the
+  ([[file:agent.org::#do-know-keystroke][agent.org, "How do you know that?" is one keystroke]]). =SuperL-a= shows the conversation; =C-g= stops a turn. A write the
   model wants is a =TOOL-APPROVAL-REQUEST= *condition* whose ALLOW / DENY / EDIT
   restarts appear in the menu's chooser; the debugger's rail gains an =ASK= restart.
   Tested by =check-agent.lisp= against a mock API.
@@ -1810,8 +1897,7 @@ status.
 ** Phase 7 — Morphic  [DONE]
 
 The browser stops being *the* application and becomes the first window on a Lisp window
-system. Design, decisions and per-step status: [[file:morphic.org][morphic.org]] (§2 the design and its choices, §3–§8 the
-steps as built, §5 panes and bodies as morphs, §9 drag and drop).
+system. Design, decisions and how it works: [[file:morphic.org][morphic.org]] ([[file:morphic.org::#design][The design]], [[file:morphic.org::#shell-tree-morphs][The shell as a tree of morphs]], [[file:morphic.org::#hand-press-progress-drag][The hand: the press in progress, drag and drop]]).
 
 - *Step 0 — clipping.* The canvas's clip rectangle.
 - *Step 1 — one World.* Morphs as CLOS objects (=poc/morph.lisp=, =poc/morphic.lisp=);
@@ -1830,14 +1916,14 @@ steps as built, §5 panes and bodies as morphs, §9 drag and drop).
   same loop, so nothing behind it stops ([[file:../poc/overlays.lisp][poc/overlays.lisp]]).
 - *Step 5 — stepping.* A running stage, a live run pane, a terminal's rows and a live
   worker each damage only what changed; idle, the loop sleeps.
-- *Panes as morphs* (§12 there). The =PANE= is a CLOS morph; so are the tab strip,
+- *Panes as morphs* ([[file:morphic.org::#shell-tree-morphs][The shell as a tree of morphs]]). The =PANE= is a CLOS morph; so are the tab strip,
   systray, status line, the trail area (the accordion as a layout policy), and a
   window's title bar and frame. A window is a /surface/ holding the same pane morphs, so
   tearing off and re-tiling move morphs between trail areas. Hit testing and the halo
   walk the morph tree. Damage is per morph: a key repairs its pane, and anything else
   that changed (a tab's title, the status line, a pane the agent streamed into) is
   found by comparing each morph's /signature/.
-- *Bodies, the hand, drag and drop* (§13 there). A pane's *body* — list, text view,
+- *Bodies, the hand, drag and drop* ([[file:morphic.org::#pane-s-body-morph][A pane's body is a morph]], [[file:morphic.org::#hand-press-progress-drag][The hand: the press in progress, drag and drop]]). A pane's *body* — list, text view,
   grid, stage, page, terminal — is a morph of its own, damaged on its own (a key in a
   text view repairs the lines it changed). The hand keeps the press in progress.
   *Drag and drop*: a row (a definition, class, file, inspector value) or a sprite,
@@ -1848,16 +1934,19 @@ steps as built, §5 panes and bodies as morphs, §9 drag and drop).
 
 ** Not built
 
-- =SuperL-→= (drill-history forward): nothing remembers popped panes (§4¾).
-- A Macroexpand pane and a compiler-notes pane (§3).
-- Multiple *aspects* per subject (§4½) and user-assigned categories (§3).
-- A screenshot of the onion: needs a scripted absolute click (§3).
-- Saving the image from inside (§5).
+- =SuperL-→= (drill-history forward): nothing remembers popped panes ([[#environment-trails-spotter-tiled][The environment — trails, the Spotter, and the tiled shell]]).
+- A Macroexpand pane and a compiler-notes pane ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]).
+- Multiple *aspects* per subject ([[#drill-down-protocol-present][The drill-down protocol — one =present=, everything browsable]]) and user-assigned categories ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]).
+- A screenshot of the onion: needs a scripted absolute click ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]).
+- Saving the image from inside ([[#persistence-kernel-gap][Persistence — and the kernel gap]]).
 - Applying an edit in a child process and *running* it there before PID 1 takes it
-  (§9): the sandbox catches a definition that kills or hangs on *load*, not one that's
+  ([[#risks-honestly][Risks, honestly]]): the sandbox catches a definition that kills or hangs on *load*, not one that's
   wrong to *call*.
 
 * 8½. Horizon — live documents & browsable third-party code (long-term, nothing now)
+:PROPERTIES:
+:CUSTOM_ID: horizon-live-documents-browsable
+:END:
 
 A future direction, not a phase. *Documentation stops being a static sibling of the
 code and becomes a navigable surface inside the tool:* a guide like [[file:fonts.org][fonts.org]] opens in
@@ -1875,12 +1964,15 @@ opens the live definition ([[file:org.org][org.org]]). What remains:
 - *Runnable examples.* An org =src= block as a Workspace Do it against the live image.
 - *A third-party library's own source, browsable.* Either load-record it at build time
   (its source baked into the registry, no disk needed), or read it on demand from its
-  files via =sb-introspect= source locations (§2's layered =source-of=). No
+  files via =sb-introspect= source locations ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]'s layered =source-of=). No
   per-library patching either way. A library goes into the image at *build* time (the
   frozen heap can't =require= at runtime), and its inline entry points must not cost
-  live editing ([[file:processes.org][processes.org]] §6).
+  live editing ([[file:processes.org::#sb-posix-audit-nothing][processes.org, sb-posix — the audit, and why nothing was migrated]]).
 
 * 9. Risks, honestly
+:PROPERTIES:
+:CUSTOM_ID: risks-honestly
+:END:
 
 - *Redefining =defstruct= in a live image can break it.* CLOS handles class
   redefinition (=update-instance-for-redefined-class=); =defstruct= doesn't. The
@@ -1888,20 +1980,20 @@ opens the live definition ([[file:org.org][org.org]]). What remains:
 - *The fixed point can kill PID 1.* Editing the browser, or the supervisor beneath it,
   can crash init. Mitigations: Accept is wrapped in handlers; an error in one turn of
   the loop is logged and survived ([[file:diagnostics.org][diagnostics.org]]); and every Accept is first tried
-  in a child process, refused if the child dies or hangs ([[file:processes.org][processes.org]] §7¾). A
+  in a child process, refused if the child dies or hangs ([[file:processes.org::#accept-tries-definition-child][processes.org, Accept tries a definition in a child first]]). A
   definition that loads fine but is wrong to *call* still reaches PID 1.
 - *One form, many definitions* (=defstruct=, =defclass= accessors). Handled by asking
-  SBCL (§2), but the main source of fiddliness.
+  SBCL ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]), but the main source of fiddliness.
 - *xref covers our code, not SBCL's.* =who-calls= on a builtin returns nothing.
 - *The toolkit is the bulk of the work.* Fonts, a blitter, damage tracking, widgets and
-  — hardest — a proportional-font text view with caret and selection (§6.2). The
+  — hardest — a proportional-font text view with caret and selection ([[#must-write-ourselves][What we must write ourselves]]). The
   mitigation is the host X11 dev loop: build every pixel in a desktop window with a
   two-second edit-rerun cycle, not in QEMU.
 - *Scope creep into a TrueType rasteriser.* A delightful trap. Bitmap fonts came first;
   the rasteriser came once the environment was in daily use, in about 500 lines
   ([[file:fonts.org][fonts.org]]).
 - *The network REPL is a remote IDE.* It's unauthenticated remote =eval= = remote root
-  ([[file:networking.org][networking.org §6]]); a browser on top makes it more useful and no less dangerous.
+  ([[file:networking.org][[[file:networking.org::#exposing-repl-over-network][networking.org, Exposing the REPL over the network]]]]); a browser on top makes it more useful and no less dangerous.
 
 * 10. The one-paragraph answer
 
@@ -1914,4 +2006,4 @@ no kernel change. The road leads to a window system of our own, which is what Sm
 did in the first place.
 
 What decides whether this is a Smalltalk browser or a file viewer with panes isn't the
-graphics. It's §0.1: *put the source in the image.*
+graphics. It's [[#source-code-image][The source code is NOT in the image (the keystone problem)]]: *put the source in the image.*

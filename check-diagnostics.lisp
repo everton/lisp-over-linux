@@ -93,7 +93,7 @@
   ;; It does answer — but the walk cannot get back through libc's sleep (built without
   ;; frame pointers), so the frame that CALLED it (ZZ-CSLEEP) is lost: frame 0 reads
   ;; "bogus stack frame" and the walk resumes further out. Measured 2026-10-16; this
-  ;; is why a long C call should be named with WITH-MAIN-ACTIVITY (doc/diagnostics.org §3).
+  ;; is why a long C call should be named with WITH-MAIN-ACTIVITY (file:doc/diagnostics.org::#pulse-stall-watcher).
   (check "and its backtrace still came back (an answer, not a timeout)"
          (yes "(let ((l (zz-log))) (and (>= (count-if (lambda (i) (search \"thread [main] backtrace\" l :start2 i :end2 (min (length l) (+ i 24)))) (loop for i from 0 below (length l) collect i)) 2) (not (search \"no answer in\" l)) t))" 20.0))
   (row "the C stall's report" (probe "(let* ((l (zz-log)) (a (search \"STALL:\" l :from-end t))) (and a (subseq l a (min (length l) (+ a 900)))))"))

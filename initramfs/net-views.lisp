@@ -59,7 +59,7 @@
                    :subject (subj-wifi-network (getf r :ssid))))
             (row "Wi-Fi networks — c/ret connect, s scan" "(no scan results yet — press s)")))
       ;; --- not connected? then what the kernel said about the radio is the answer
-      ;;     (doc/networking.org §7.4: these are the lines to send back)
+      ;;     (file:../doc/networking.org::#new-machine-checklist: these are the lines to send back)
       (unless (equal (getf *wifi-state* :state) "COMPLETED")
         (dolist (m (last (ignore-errors (wifi-kernel-log)) 8))
           (row "kernel log (iwlwifi, cfg80211, firmware)" m)))

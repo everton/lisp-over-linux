@@ -1,7 +1,7 @@
 ;;;; agent-ui.lisp — the agent in the environment: a conversation is a Workspace,
 ;;;; Ask is a verb, approval is the chooser, and the state is always on screen.
 ;;;;
-;;;; doc/agent.org §8 is the design; its first rule (§8.0) is that the agent may only
+;;;; file:../doc/agent.org::#talk is the design; its first rule (file:../doc/agent.org::#constraint-fifth-idiom) is that the agent may only
 ;;;; use the four moves the environment already has — evaluate a form, drill into a
 ;;;; subject, choose from what is offered, accept a change. So this file adds almost
 ;;;; no interaction of its own. What it adds:
@@ -9,21 +9,21 @@
 ;;;;   PRESENT on a CONVERSATION — a :workspace view. The model's prose arrives as Lisp
 ;;;;     COMMENTS and its ```lisp blocks as live code, so every Workspace verb works on
 ;;;;     the reply as it stands: C-x C-e evaluates a proposed form, C-c C-c compiles a
-;;;;     proposed definition into the image and the change set (§8.3). You ask the
+;;;;     proposed definition into the image and the change set (file:../doc/agent.org::#conversation-workspace-chat-pane). You ask the
 ;;;;     next question by typing it at the end and pressing C-c C-a.
-;;;;   ASK IT (C-c C-a, §8.1) on any pane: the selection, the form before point, or the
+;;;;   ASK IT (C-c C-a, file:../doc/agent.org::#ask-sixth-verb) on any pane: the selection, the form before point, or the
 ;;;;     pane's subject becomes the question's context — you are always somewhere.
 ;;;;   A TICK the environment's loop calls each frame: it streams the reply into any
 ;;;;     pane showing the conversation (~15 Hz while a turn runs, nothing when idle,
-;;;;     §8.7), and runs the tool calls the turn's thread posts — on THIS thread, the
+;;;;     file:../doc/agent.org::#ask-keep-working), and runs the tool calls the turn's thread posts — on THIS thread, the
 ;;;;     one that owns the image's UI state. A write tool signals TOOL-APPROVAL-REQUEST
 ;;;;     there; the handler offers its restarts in the environment's own chooser — the
-;;;;     card the right-button menu uses — and invokes the one picked (§8.4).
-;;;;   INDICATORS (§8.9): the tray says the authority and the session's cost, the tab
+;;;;     card the right-button menu uses — and invokes the one picked (file:../doc/agent.org::#approval-condition-dialog).
+;;;;   INDICATORS (file:../doc/agent.org::#modes-because-actors-now): the tray says the authority and the session's cost, the tab
 ;;;;     of a conversation carries a dot (its colour the authority; it pulses while
 ;;;;     working), and the status line says when the agent is waiting for you.
 ;;;;
-;;;; Never steal focus (§8.5): asking from elsewhere opens the conversation's tab
+;;;; Never steal focus (file:../doc/agent.org::#can-show-things): asking from elsewhere opens the conversation's tab
 ;;;; BEHIND you; an approval is only asked while you are looking at the conversation.
 ;;;;
 ;;;; Loaded after poc/shell.lisp (it calls the shell's pane functions); the shell and
@@ -133,7 +133,7 @@
 
 (defun call-lines (call)
   "A tool call as transcript lines: one ;; #N line — its state as a glyph, what it did,
-   → what came back (C-c C-o on it opens what it was about, §8.6) — and for a WRITE its
+   → what came back (C-c C-o on it opens what it was about, file:../doc/agent.org::#do-know-keystroke) — and for a WRITE its
    input in full, so what you approve is on screen."
   (cons (format nil ";; #~d ~a ~a~@[ → ~a~]~@[  [~a]~]" (call-number call) (call-mark call)
                 (call-headline call) (call-summary call)
@@ -442,7 +442,7 @@
              :edit (lambda (new) (setf (symbol-value var) new))))
 
 (defmethod present ((s subj-agent))
-  "The agent's state as a subject (§8.9 'changing modes needs no new idiom'): the two
+  "The agent's state as a subject (file:../doc/agent.org::#modes-because-actors-now, 'changing modes needs no new idiom'): the two
    dials, the model, the meter — each row settable with C-c C-c like an inspector
    field — and the conversations, which drill."
   (make-view
@@ -478,7 +478,7 @@
         (make-command :label "Reload ~/.lol/agent/settings.lisp" :action #'load-agent-settings)
         (make-command :label "Forget the cached API key" :action #'forget-agent-key)))
 
-;;; Every subject gains Ask (§8.1): one :AROUND method, no per-subject work.
+;;; Every subject gains Ask (file:../doc/agent.org::#ask-sixth-verb): one :AROUND method, no per-subject work.
 (defmethod commands-for :around ((x t))
   (let ((cmds (call-next-method)))
     (if (or (typep x 'conversation) (subj-agent-p x))
@@ -488,7 +488,7 @@
                                     :surfaces '(:menu :halo)
                                     :action (lambda () (agent-ask-about-subject x))))))))
 
-;;; The Spotter finds the agent and every conversation (§8.3).
+;;; The Spotter finds the agent and every conversation (file:../doc/agent.org::#conversation-workspace-chat-pane).
 (pushnew (lambda ()
            (cons (list :label "agent" :detail "modes, model, cost" :group "surfaces" :subject (subj-agent))
                  (mapcar (lambda (c)
@@ -508,7 +508,7 @@
    (SuperL-o focuses it; the conversation's menu hides or shows it) — layout A of
    doc/design/agent-workbench.html. Not chrome: a list view like any other, whose rows
    drill (a subagent to its conversation, a change to its definition, a waiting call
-   to its input), which keeps doc/agent.org §8.0's four moves."
+   to its input), which keeps file:../doc/agent.org::#constraint-fifth-idiom's four moves."
   conversation)
 
 (defun plan-state-mark (state)
@@ -674,7 +674,7 @@
 ;;; ===========================================================================
 
 (defun start-turn-async (conv prompt question origin &key (executor #'post-job-and-wait) again)
-  "Run a turn on its own thread, so the environment keeps drawing (§8.7). Tool calls
+  "Run a turn on its own thread, so the environment keeps drawing (file:../doc/agent.org::#ask-keep-working). Tool calls
    come back to the environment's thread as jobs (POST-JOB-AND-WAIT). AGAIN re-asks a
    failed turn (RUN-TURN). Nothing that goes wrong on the thread is lost: RUN-TURN
    makes any failure the turn's, and anything that escapes even that is still made a
@@ -702,7 +702,7 @@
 
 (defun ensure-conversation-tab (conv)
   "Open CONV in a tab of its own if none shows it — BEHIND the current one: asking
-   from elsewhere must not move you (§8.7: the tab fills in behind you)."
+   from elsewhere must not move you (file:../doc/agent.org::#ask-keep-working: the tab fills in behind you)."
   (unless (conversation-panes conv)
     (let ((active *active*))
       (new-trail conv)
@@ -742,7 +742,7 @@
 
 (defun subject-context (subject)
   "What to tell the model about SUBJECT, the thing the pane presents: a definition's
-   source, or a description. The model can widen it with its tools (§8.1)."
+   source, or a description. The model can widen it with its tools (file:../doc/agent.org::#ask-sixth-verb)."
   (let ((*print-case* :downcase) (*print-length* 20) (*print-level* 4))
     (cond
       ((subj-defn-p subject)
@@ -780,7 +780,7 @@
       (error () nil))))
 
 (defun agent-ask-at-pane (pane)
-  "C-c C-a — Ask it (§8.1). In a conversation: send the draft. Elsewhere, like the
+  "C-c C-a — Ask it (file:../doc/agent.org::#ask-sixth-verb). In a conversation: send the draft. Elsewhere, like the
    other verbs, act on the selection, else the form before point, else the pane's
    subject: prose selected IS the question; a form or a subject is what it is about."
   (let ((conv (pane-conversation pane))
@@ -844,7 +844,7 @@
 
 (defun agent-open-at-point (pane)
   "C-c C-o on a ;; #N line: open what that call was about — the definition it read,
-   the senders it listed, the file — the view you would have reached by hand (§8.6).
+   the senders it listed, the file — the view you would have reached by hand (file:../doc/agent.org::#do-know-keystroke).
    A call with no such subject opens as itself (its input and result)."
   (let ((call (call-at-point pane)))
     (if call
@@ -855,7 +855,7 @@
 ;;; The tick: stream into panes, run posted tool calls, ask for approval
 ;;; ===========================================================================
 
-(defparameter +agent-frame-ms+ 66 "Redraw budget while a turn streams: about 15 Hz (§8.7).")
+(defparameter +agent-frame-ms+ 66 "Redraw budget while a turn streams: about 15 Hz (file:../doc/agent.org::#ask-keep-working).")
 
 (defvar *agent-seen-revisions* (make-hash-table :test 'eq :weakness :key))
 
@@ -1055,7 +1055,7 @@
     (or dirty (and (some #'conversation-busy-p *conversations*) t))))
 
 ;;; ===========================================================================
-;;; Indicators (§8.9)
+;;; Indicators (file:../doc/agent.org::#modes-because-actors-now)
 ;;; ===========================================================================
 
 (defun authority-tone ()
@@ -1066,7 +1066,7 @@
 (defun agent-tray-item ()
   "The tray's agent item: the agent's creature (DRAW-AGENT-ICON), the authority and the
    session's cost, always on screen — an environment that can spend money owes you a
-   visible meter (§8.9). A trailing … while a turn runs, ? while one waits for you."
+   visible meter (file:../doc/agent.org::#modes-because-actors-now). A trailing … while a turn runs, ? while one waits for you."
   (list :kind :agent :icon :agent :tone (authority-tone)
         :text (format nil "~(~a~) ~a~a"
                       (if (eq *agent-initiative* :off) "off" *agent-authority*)
@@ -1089,7 +1089,7 @@
           (t (values (tray-tone-color tone) (eq *agent-initiative* :interacting))))))))
 
 ;;; ===========================================================================
-;;; The debugger doorway (§8.8): ASK is one more restart
+;;; The debugger doorway (file:../doc/agent.org::#debugger-where-converges): ASK is one more restart
 ;;; ===========================================================================
 ;;;
 ;;; fb-browser.lisp's RUN-DEBUGGER-FB establishes an ASK-THE-AGENT restart around its

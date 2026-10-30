@@ -3,8 +3,8 @@
 ;;;;     LOL_PORT=4101 sbcl --script check-debugger.lisp   ; exits 0 if all pass
 ;;;;     LOL_SHOTS=DIR …                                   ; also keep screendumps
 ;;;;
-;;;; The framebuffer debugger's frame locals are PLACES (doc/inspector-history.org
-;;;; §5.4): Tab to the locals strip, pick one, Enter or C-c C-c, type a value, and it
+;;;; The framebuffer debugger's frame locals are PLACES (
+;;;; file:doc/inspector-history.org::#set-local-debugger-frame): Tab to the locals strip, pick one, Enter or C-c C-c, type a value, and it
 ;;;; is written into the frame that is still waiting for ERROR to return. Then either
 ;;;; CONTINUE (when the error offers it) or R, which re-enters the frame with the
 ;;;; arguments it now holds. This drives all of it with REAL keys over QMP — the

@@ -92,14 +92,14 @@
   "When set, a disk IMAGE FILE to attach WRITABLE — no snapshot=on — so a second boot
    sees what the first wrote: check-persist.lisp's two-boot test. It must be a COPY
    the caller made (of test-disk.img), never the pristine image and never a real
-   disk (doc/storage.org §8); LOL_GUEST_DISK is ignored while it is set.")
+   disk (file:../doc/storage.org::#testing-under-qemu-never); LOL_GUEST_DISK is ignored while it is set.")
 
 (defun boot-guest (&optional (name "guest"))
   "Boot iso_root headless with a QMP control socket and the net REPL forwarded.
    NAME (plus our pid) names the scratch directory, which holds the QMP socket, so
    two runs cannot collide there; LOL_PORT keeps their net-REPL forwards apart.
    LOL_QEMU_CPU=max (or any QEMU -cpu model) swaps the default qemu64 CPU — the
-   switch that cornered the LOGCOUNT bug (doc/inspector-history.org §5.6). LOL_QEMU_SMP
+   switch that cornered the LOGCOUNT bug (file:../doc/inspector-history.org::#runtime-arithmetic-did-compile). LOL_QEMU_SMP
    sets the CPU count (default 4: the kernel is SMP since tag #30)."
   (setf *work* (format nil "/tmp/lol-~a-~d/" name (sb-posix:getpid)))
   (ensure-directories-exist *work*)

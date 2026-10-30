@@ -5,7 +5,7 @@
 ;;;; Needs the build host's real root shared into the guest (LOL_GUEST_HOSTROOT=1:
 ;;;; virtio-9p, read-only, doc/storage.org), because Chrome is the HOST's
 ;;;; /usr/bin/google-chrome, run inside a container whose root is that Debian
-;;;; (lol-ct, doc/containers.org). doc/web-browser.org §8 is what this checks:
+;;;; (lol-ct, doc/containers.org). file:doc/web-browser.org::#tests-measurements is what this checks:
 ;;;;
 ;;;;   - SuperL-b (a real held Super) opens a web tab with the address prompt;
 ;;;;   - an address typed over QMP loads a page this script serves on the host
@@ -16,17 +16,17 @@
 ;;;;   - keys typed into a focused input reach it (read back with Runtime.evaluate);
 ;;;;   - the wheel scrolls the page;
 ;;;;   - a real click on a <select> opens OUR chooser (Chrome's own popup is drawn
-;;;;     where the screencast cannot see it, §4.4), arrows skip a disabled option,
+;;;;     where the screencast cannot see it, file:doc/web-browser.org::#pickers-popups-screencast-cannot), arrows skip a disabled option,
 ;;;;     Enter changes the value and runs onchange, Esc changes nothing;
 ;;;;   - a public HTTPS page loads, when the guest has a resolver (it is skipped and
 ;;;;     says so when /etc/resolv.conf is missing — DNS is another track's);
-;;;;   - a page torn off into a window (doc/morphic.org §12): an address loads in it,
+;;;;   - a page torn off into a window (file:doc/morphic.org::#tests): an address loads in it,
 ;;;;     its viewport is the window's pane, its frames reach the window's store and the
 ;;;;     screen, the wheel scrolls it, a click and keys land in it, and after the window
 ;;;;     is dragged elsewhere the page and a click follow it;
 ;;;;   - C-l's candidate panel: a path typed over QMP lists the folder as Chrome sees
 ;;;;     it, Down/Tab take a row, Enter opens the folder in Chrome; the history offers
-;;;;     the test page back and C-n, Enter loads it (doc/web-browser.org §4.6);
+;;;;     the test page back and C-n, Enter loads it (file:doc/web-browser.org::#address-prompt-knows-paths);
 ;;;;   - power-off's WEB-SHUTDOWN ends every Chrome process and leaves no zombie.
 ;;;;
 ;;;; It also prints what the doc records: Chrome's memory (PSS over its processes,
@@ -64,7 +64,7 @@
 <p><input id=q style='font-size:20px;width:300px'></p>
 <div style='height:3000px;background:linear-gradient(#fff,#88a)'>tall</div></body>")
     ("/two.html" . "<!doctype html><title>LoL page two</title><h1>Page two</h1>")
-    ;; doc/web-browser.org §4.4: a <select> whose options Chrome would draw in a popup
+    ;; file:doc/web-browser.org::#pickers-popups-screencast-cannot: a <select> whose options Chrome would draw in a popup
     ;; the screencast never shows — with optgroups, a disabled option, and an onchange
     ;; that writes the title and counts
     ("/pick.html" . "<!doctype html><title>LoL pickers</title>
@@ -97,7 +97,7 @@
     ;; preconnect, an idle keep-alive), and a server that served one connection at a
     ;; time sat reading a request line that never came while the real request waited
     ;; behind it — a page load that never finished, which first looked like Chrome
-    ;; hanging a page torn off into a window (doc/morphic.org §12)
+    ;; hanging a page torn off into a window (file:doc/morphic.org::#tests)
     (sb-thread:make-thread
      (lambda ()
        (loop (let ((c (sb-bsd-sockets:socket-accept sock)))
@@ -177,7 +177,7 @@
 (defun mem-available-mb ()
   (probe "(with-open-file (s \"/proc/meminfo\") (loop for l = (read-line s nil) while l when (search \"MemAvailable\" l) return (round (parse-integer l :start 13 :junk-allowed t) 1024)))"))
 
-;;; ---- a page in a window (doc/morphic.org §12) --------------------------------------
+;;; ---- a page in a window (file:doc/morphic.org::#tests) --------------------------------------
 ;;; A web pane torn off into a trail window: its page is drawn into the window's
 ;;; backing store, at the window's own coordinates, and the window is copied to the
 ;;; screen. Everything that maps between the page and the screen must therefore add the
@@ -231,7 +231,7 @@
               finally (return pts))))))
 
 (defun address-prompt ()
-  "C-l's candidate panel (doc/web-browser.org §4.6), by real keys: a path lists the
+  "C-l's candidate panel (file:doc/web-browser.org::#address-prompt-knows-paths), by real keys: a path lists the
    folder as CHROME sees it (from /mnt/host outside /home and /tmp), Tab takes a row,
    Enter opens the folder in Chrome; then the history offers the test page back."
   (format t "~&~%== the address prompt: paths and the history ==~%")

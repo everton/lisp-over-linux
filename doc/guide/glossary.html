@@ -104,7 +104,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>sb-alien (FFI)</dt>
   <dd>SBCL's foreign function interface: declare a C function and call it. Every syscall here goes through it, e.g.
     <code>poll</code>, <code>open</code>, <code>ioctl</code> at the top of <a class="ref" data-ref="initramfs/fb-browser.lisp#%fbb-poll" href="../../initramfs/fb-browser.lisp"><code>%fbb-poll</code><span class="loc">initramfs/fb-browser.lisp:26</span></a>.
-    <code>sb-posix</code> is avoided on purpose (<a href="../processes.org">processes.org</a> §6).</dd>
+    <code>sb-posix</code> is avoided on purpose (<a href="../processes.org">processes.org</a>, “sb-posix — the audit, and why nothing was migrated”).</dd>
   <dt>pinning, SAP</dt>
   <dd>The GC moves objects. <code>with-pinned-objects</code> promises it will not, and <code>vector-sap</code> gives the raw address
     (a "system area pointer") to hand to the kernel (<a class="ref" data-ref="poc/fb.lisp#blit-fb" href="../../poc/fb.lisp"><code>blit-fb</code><span class="loc">poc/fb.lisp:104</span></a>).</dd>
@@ -119,7 +119,7 @@ term is and then where <em>this</em> code uses it. Grouped from the metal up.</p
   <dt>POPCNT, the LOGCOUNT fix</dt>
   <dd>A CPU instruction QEMU's default CPU lacks. SBCL 2.6.8's fallback routine had a register mismatch, so compiling arithmetic
     crashed the guest. <a class="ref" data-ref="initramfs/logcount-fix.lisp#patch-logcount-routine" href="../../initramfs/logcount-fix.lisp"><code>patch-logcount-routine</code><span class="loc">initramfs/logcount-fix.lisp:124</span></a> patches the machine
-    code at build time (<a href="../inspector-history.org">inspector-history.org</a> §5.6).</dd>
+    code at build time (<a href="../inspector-history.org">inspector-history.org</a>, “Runtime arithmetic did not compile in the guest”).</dd>
 </dl>
 
 <h2>CLOS and the condition system</h2>
