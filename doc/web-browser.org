@@ -37,6 +37,9 @@ that already covers frames, input, tabs, downloads and dialogs. It's usually
 installed already (=/usr/bin/google-chrome=).
 
 ** 1.1 Chrome or WPE: the comparison that decided it
+:PROPERTIES:
+:CUSTOM_ID: chrome-wpe-comparison-decided
+:END:
 
 | What matters                              | Chrome (built)                                                                     | WPE WebKit (explored, [[#alternatives-considered][Alternatives considered]])                                                                                 |
 |-------------------------------------------+------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------|

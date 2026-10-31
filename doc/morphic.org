@@ -192,6 +192,9 @@ This differs from Squeak, which draws a morph straight onto the screen. The back
 store is what makes opaque drag nearly free.
 
 * 4. Drawing and damage
+:PROPERTIES:
+:CUSTOM_ID: drawing-damage
+:END:
 
 ** 4.1 The canvas clip rectangle
 :PROPERTIES:
@@ -549,6 +552,9 @@ Inspect on a body shows the morph — its bounds, its records — not the model 
 fields.
 
 * 6. Windows
+:PROPERTIES:
+:CUSTOM_ID: windows
+:END:
 
 ** 6.1 What a window is
 :PROPERTIES:

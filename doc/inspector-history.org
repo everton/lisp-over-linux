@@ -614,6 +614,9 @@ guest is still alive" fail.
   the wrong name.
 
 * 6. Lessons
+:PROPERTIES:
+:CUSTOM_ID: lessons
+:END:
 
 The four powers cost roughly twice the first estimate, almost all of it [[#function-leaf][A function is not a leaf (#14)]], which
 the estimate didn't contain. Every surprise was found by running a prototype, not by

@@ -151,6 +151,9 @@ device, before the IP layer decides anything.
   =COMPLETED= and there's no lease.
 
 *** Logs that survive the machine
+:PROPERTIES:
+:CUSTOM_ID: logs-survive-machine
+:END:
 
 Every exchange leaves a line in netd's log:
 =wlan0: DHCP no offer — sent 4, 37 packets seen, 0 DHCP replies (packet socket)=.

@@ -104,6 +104,9 @@ It works from an initramfs on kernel 7.2: rootfs now sits on an immutable
 =MS_MOVE= + =chroot= as a fallback and logs which one it used.
 
 * 3. The container's layout
+:PROPERTIES:
+:CUSTOM_ID: layout
+:END:
 
 #+begin_example
 new root = a fresh tmpfs
@@ -228,6 +231,9 @@ the Lisp ── lol-ct (OUTER)   unshare user+mount+uts, write the id maps,
   namespace's init, because the parent lives in the ancestor namespace.
 
 * 6. Using it
+:PROPERTIES:
+:CUSTOM_ID: using
+:END:
 
 ** 6.1 From the environment
 

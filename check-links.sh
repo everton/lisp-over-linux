@@ -18,7 +18,7 @@
 #      the stable way to cite a SECTION: [[file:containers.org::#layout]] in a
 #      doc, [[#layout]] within one.
 #
-# It also checks the code (*.lisp, *.c, *.sh): a comment cites a doc's section as
+# It also checks the code (*.lisp, *.c, *.sh) and AGENTS.md: a comment cites a doc's section as
 # the plain Org link  file:../doc/containers.org::#layout  (relative to the
 # citing file; Emacs's org-open-at-point-global and the environment's C-c C-o
 # both follow it). Each must resolve, and a section NUMBER (containers.org §3)
@@ -103,10 +103,12 @@ done
 # syntax: M-x org-open-at-point-global follows it from any buffer, and the
 # environment's C-c C-o does too). The path is relative to the citing file.
 # A section NUMBER (doc.org §4) is refused: numbers move when a doc is rewritten.
-CODE=$(git ls-files '*.lisp' '*.c' '*.sh' | grep -v -e '^poc/org-data/' -e '^check-links.sh$')
+CODE="$(git ls-files '*.lisp' '*.c' '*.sh' | grep -v -e '^poc/org-data/' -e '^check-links.sh$') AGENTS.md"
 while IFS=: read -r f lineno link; do
   [ -n "$link" ] || continue
   path="${link#file:}"; path="${path%%::*}"; id="${link#*::}"
+  # AGENTS.md's conventions quote a code comment's link (../doc/...), not its own.
+  case "$f:$path" in AGENTS.md:../*) continue;; esac
   full="$(dirname "$f")/$path"
   checked=$((checked + 1))
   if [ ! -f "$full" ]; then
