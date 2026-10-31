@@ -1208,7 +1208,7 @@ tab's number badge maps to =SuperL-1…9=.
 | =SuperL-↵=                        | a terminal: a shell in a new trail ([[file:terminal.org][terminal.org]])                                                       |
 | =SuperL-⇧-↵= / =SuperL-click=     | open the selection in a NEW trail                                                                       |
 | =↵=                               | drill in place (same trail)                                                                             |
-| =SuperL-←=                        | back in the drill history (=SuperL-→= forward is *not* built — nothing remembers popped panes)          |
+| =SuperL-←= / =SuperL-→=           | back / forward in the drill history: forward puts back the same pane (scroll, edits); drilling elsewhere drops it |
 | =↑= / =↓=                         | move the selection within a panel                                                                       |
 | =→=                               | focus the RIGHT-hand column (below)                                                                     |
 | a plain *click* in the other half | move focus there — the pointer's =SuperL-o= (below)                                                     |
@@ -1220,6 +1220,7 @@ tab's number badge maps to =SuperL-1…9=.
 |---------------------+---------------------------------------------------------------------------|
 | =C-c C-c=           | *Accept* — compile the definition into the live image                     |
 | =C-x C-e=           | Do it                                                                     |
+| =C-↵=               | submit: Accept in a source pane, Do it in a Workspace or Lisp file, send in a conversation |
 | =C-c C-p=           | Print it                                                                  |
 | =C-c C-i=           | Inspect it (arrives as =C-c= then Tab, since Ctrl-I *is* Tab)             |
 | =C-c C-d=           | Debug it                                                                  |

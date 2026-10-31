@@ -367,7 +367,7 @@
                    (lambda (text)
                      (when (string-equal (string-trim " " text) "yes")
                        (delete-container name)
-                       (trail-pop)
+                       (trail-pop) (drop-forward)   ; its pane is gone for good
                        (setf (pane-view (current-pane)) (present (pane-subject (current-pane))))
                        (setf *browser-status* (format nil "deleted container ~a" name))))
                    :hint "anything else cancels"))

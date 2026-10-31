@@ -684,7 +684,7 @@
       ((not (session-live-p ss))
        (setf *terminal-chrome-dirty* t)
        (cond ((member key '(:return #\q #\Q :escape))
-              (if (cdr (current-trail)) (trail-pop) (close-trail))
+              (if (cdr (current-trail)) (progn (trail-pop) (drop-forward)) (close-trail))
               (terminal-sweep))
              ((member key '(#\r #\R)) (terminal-restart subject)))
        t)

@@ -2479,7 +2479,7 @@
      ("Super-S-Enter/click" "open the selection in a NEW tab")
      ("Super-w"            "close the current tab")
      ("Super-o"            "focus list <-> side pane")
-     ("Super-Left"         "back in the trail"))
+     ("Super-Left / Right" "back / forward in the trail"))
     ("Windows  (doc/morphic.org)"
      ("Super-g"            "tear this tab off into a window;")
      (""                   "  on a window: grab it (keys below)")
@@ -2536,6 +2536,8 @@
      ("C-c C-c"            "Accept / define the form")
      ("C-x C-e"            "Do it: the form before the caret,")
      (""                   "  or the selection; value to status")
+     ("C-Enter"            "submit: Accept a source, Do it in")
+     (""                   "  a Workspace, send a conversation")
      ("C-c C-e"            "Do it: the top-level form around")
      (""                   "  the caret (code in a conversation)")
      ("C-;"                "comment / uncomment line or region")

@@ -358,10 +358,43 @@
     (note-recent subject (view-title (pane-view pane))       ; for the Spotter's recents
                  nil (subject-concept subject pane))
     (set-current-trail (append (current-trail) (list pane)))))
+;; Forward, a web browser's way: what back took off a trail is kept, and SuperL-→
+;; puts it back — the same pane, scroll and edits included. It is kept with the trail
+;; it was cut from, and only that exact trail can go forward, so drilling anywhere
+;; lets it lapse, as a page's forward history does once you follow a new link.
+(defvar *trail-forward* (make-hash-table :test 'eq :weakness :key)
+  "Root pane -> (PANES . AHEAD): AHEAD are the panes back cut off, shallowest first;
+   valid while the trail is still exactly PANES.")
+
+(defun note-forward (kept cut)
+  "Back went from KEPT + CUT to KEPT: remember CUT ahead of whatever was there."
+  (let ((old (gethash (first kept) *trail-forward*)))
+    (setf (gethash (first kept) *trail-forward*)
+          (cons kept (append cut (and old (equal (car old) (append kept cut)) (cdr old)))))))
+
+(defun drop-forward ()
+  "Forget the active trail's forward: what back took off is gone for good (a
+   deleted container, an ended terminal closed)."
+  (remhash (first (current-trail)) *trail-forward*))
+
 (defun trail-pop () "Pop the active trail's deepest pane (back)."
-  (when (cdr (current-trail)) (set-current-trail (butlast (current-trail)))))
+  (let ((trail (current-trail)))
+    (when (cdr trail)
+      (note-forward (butlast trail) (last trail))
+      (set-current-trail (butlast trail)))))
+(defun trail-forward ()
+  "Put back the pane back last took off the active trail; NIL when there is none."
+  (let* ((trail (current-trail)) (f (gethash (first trail) *trail-forward*)))
+    (when (and f (cdr f) (equal (car f) trail))
+      (let ((next (append trail (list (cadr f)))))
+        (setf (gethash (first trail) *trail-forward*) (cons next (cddr f)))
+        (set-current-trail next)
+        t))))
 (defun trail-goto (n) "Collapse the active trail back to level N (a breadcrumb click)."
-  (when (< n (length (current-trail))) (set-current-trail (subseq (current-trail) 0 (1+ n)))))
+  (let ((trail (current-trail)))
+    (when (< n (1- (length trail)))
+      (note-forward (subseq trail 0 (1+ n)) (nthcdr (1+ n) trail))
+      (set-current-trail (subseq trail 0 (1+ n))))))
 
 ;; --- across trails (the tab layer) ---
 (defun new-trail (subject)
@@ -2951,6 +2984,19 @@
            ((and (eq prefix :c-c) c (eql key #\e) (or (workspace-pane-p p) (lisp-file-pane-p p)))
             (workspace-do-it p t)))
          nil))
+      ;; C-Enter — "submit", as most editors give it: a conversation sends its draft
+      ;; (C-c C-a), a definition's source is Accepted (C-c C-c), the Workspace or a
+      ;; Lisp file does the form before the caret (C-x C-e). Elsewhere it is Enter.
+      ((and c tv (member key '(:return #\Return))
+            (or (and (fboundp 'pane-conversation) (funcall 'pane-conversation p))
+                (editable-pane-p p) (workspace-pane-p p) (lisp-file-pane-p p)))
+       (cond ((and (fboundp 'pane-conversation) (funcall 'pane-conversation p))
+              (funcall 'agent-ask-at-pane p))
+             ((editable-pane-p p) (accept-pane p))
+             (t (workspace-do-it p)))
+       nil)
+      ;; (tv-key would answer C-Enter with :ACCEPT, poc/run-editor.lisp's, and insert nothing)
+      ((and c tv (member key '(:return #\Return))) (lol.textview:tv-key tv :return 0) nil)
       ;; C-s / C-r — incremental search (after the chords: C-x C-s is still save)
       ((and c tv (member key '(#\s #\S #\r #\R)))
        (start-isearch tv (member key '(#\s #\S))) nil)
@@ -3068,6 +3114,8 @@
          ((and (member key '(:left :right)) (eq (view-kind (pane-view (current-pane))) :web))
           (funcall 'web-go (view-data (pane-view (current-pane))) (if (eq key :left) -1 1)) nil)
          ((eq key :left) (trail-pop) (setf *browser-status* nil) nil)          ; back in trail
+         ((eq key :right)                                                      ; forward again
+          (setf *browser-status* (if (trail-forward) nil "nothing to go forward to")) nil)
          ((eq key :tab) (cycle-trail (if (lol.canvas:shift-p state) -1 1)) nil) ; cycle tabs
          ((and (characterp key) (char<= #\1 key #\9))                          ; jump to tab N
           (activate-trail (- (char-code key) (char-code #\1))) nil)
