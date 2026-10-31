@@ -105,8 +105,9 @@
 (defstruct (pty-proc (:constructor %make-pty-proc))
   "A program running on a pseudo-terminal: its PID, our MASTER fd, the slave's name,
    and — once it has ended — how (STATUS is :running, :exited or :signaled; CODE the
-   exit code or signal number)."
-  pid master slave-name argv (status :running) code)
+   exit code or signal number). HUNG-UP-AT is when PTY-CLOSE hung a still-running
+   program up (internal real time), :KILLED once it has been sent SIGKILL."
+  pid master slave-name argv (status :running) code hung-up-at)
 
 (defvar *pty-children* (make-hash-table)
   "pid -> PTY-PROC for every program we spawned and have not yet waited for. PID 1
@@ -288,25 +289,69 @@
 (defvar *pty-orphans* '()
   "Programs whose terminal we closed while they still ran. They were sent SIGHUP and
    will die in a moment; until we wait for them they are zombies, so PTY-REAP-ORPHANS
-   (called from the browser's loop) collects them.")
+   (called from the browser's loop) collects them — and SIGKILLs one that is still
+   alive +PTY-KILL-GRACE+ seconds after the hangup.")
+
+(defparameter +pty-kill-grace+ 3
+  "Seconds a hung-up program has to exit before it gets SIGKILL. A program that
+   ignores SIGHUP (a shell under trap '' HUP, a daemon-minded command) would
+   otherwise run on with no terminal — and in a container keep its whole namespace,
+   mounts included, alive.")
+
+(defparameter +pty-reap-tick-ms+ 250
+  "How often the loop looks at the orphans while any are left.")
 
 (defun pty-close (proc)
   "Close our end. If the program is still running this HANGS UP its terminal: the
    kernel sends SIGHUP to the session, which is what closing an xterm window does and
    why bash exits then. We send one SIGHUP of our own as well, to the leader directly,
-   for a program that had already given its terminal away."
+   for a program that had already given its terminal away. One still running is an
+   orphan: reaped, or killed after the grace, by PTY-REAP-ORPHANS."
   (let ((m (pty-proc-master proc)))
     (when m
       (%pty-close m)
       (setf (pty-proc-master proc) nil)))
   (when (eq (pty-reap proc) :running)
     (%pty-kill (pty-proc-pid proc) +sighup+)
-    (when (eq (pty-reap proc) :running) (pushnew proc *pty-orphans*)))
+    (when (eq (pty-reap proc) :running)
+      (setf (pty-proc-hung-up-at proc) (get-internal-real-time))
+      (pushnew proc *pty-orphans*)))
   (pty-proc-status proc))
 
+(defun pty-overdue-p (proc)
+  "Has PROC outlived its grace since the hangup, without having been killed yet?"
+  (let ((at (pty-proc-hung-up-at proc)))
+    (and (integerp at)
+         (>= (- (get-internal-real-time) at)
+             (* +pty-kill-grace+ internal-time-units-per-second)))))
+
 (defun pty-reap-orphans ()
-  "Wait for any hung-up program that has finished dying."
+  "Wait for any hung-up program that has finished dying; SIGKILL one that is
+   overdue. The kill goes to its whole process group (PTY-KILL): a container's outer
+   lol-ct and its init are in it, and the init's death takes everything else in its
+   pid namespace with it."
+  (dolist (p *pty-orphans*)
+    (when (and (eq (pty-reap p) :running) (pty-overdue-p p))
+      (pty-kill p +sigkill+)
+      (setf (pty-proc-hung-up-at p) :killed)))
   (setf *pty-orphans* (remove-if-not (lambda (p) (eq (pty-reap p) :running)) *pty-orphans*)))
+
+(defun pty-orphans-timeout ()
+  "The poll deadline the orphans need: -1 when there are none, else a short tick —
+   sooner if a kill falls due before it — so they are reaped, and killed, even
+   while no key is pressed."
+  (if (null *pty-orphans*)
+      -1
+      (reduce #'min *pty-orphans*
+              :initial-value +pty-reap-tick-ms+
+              :key (lambda (p)
+                     (let ((at (pty-proc-hung-up-at p)))
+                       (if (integerp at)
+                           (max 0 (ceiling (* 1000 (- (+ at (* +pty-kill-grace+
+                                                               internal-time-units-per-second))
+                                                     (get-internal-real-time)))
+                                           internal-time-units-per-second))
+                           +pty-reap-tick-ms+))))))
 
 (defun pty-kill (proc &optional (signal +sigkill+))
   "Send SIGNAL (default SIGKILL: no negotiation) to the program's whole process

@@ -80,6 +80,21 @@
   (check "closing the master hangs the program up" (list (pty-proc-status p) (pty-proc-code p))
          '(:signaled 1)))
 
+;;; 4b. a program that ignores the hangup is SIGKILLed after the grace — the whole
+;;; group, so a child it started goes too
+(let ((p (pty-spawn '("/usr/bin/bash" "-c" "trap '' HUP; sleep 30 & echo ready; while :; do sleep 0.05; done")
+                    :env *env*))
+      (+pty-kill-grace+ 0.3))
+  (drain p :until "ready")
+  (pty-close p)
+  (sleep 0.1)
+  (pty-reap-orphans)
+  (check "SIGHUP ignored: still running inside the grace" (pty-proc-status p) :running)
+  (check "the loop is asked to wake before the kill" (<= 0 (pty-orphans-timeout) 300) t)
+  (loop repeat 100 while *pty-orphans* do (pty-reap-orphans) (sleep 0.02))
+  (check "SIGKILL after the grace" (list (pty-proc-status p) (pty-proc-code p)) '(:signaled 9))
+  (check "no orphans left, no deadline" (list *pty-orphans* (pty-orphans-timeout)) '(nil -1)))
+
 ;;; 5. errors are conditions, not crashes
 (check "a missing program signals"
        (handler-case (progn (pty-spawn '("/nonexistent/prog") :env *env*) :no-error)
