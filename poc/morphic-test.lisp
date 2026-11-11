@@ -1066,6 +1066,29 @@
     (trail-goto 0) (drop-forward)))
 (close-trail)
 
+(format t "~&== a name says its package ==~%")
+(let* ((ship (find-symbol "SHIP" :lol.examples))
+       (view (present (find-class ship)))
+       (row (find "ship" (spotter-candidates)
+                  :key (lambda (c) (getf c :label)) :test #'string=)))
+  (check "qualified-name: ours with its package, CL's and CL-USER's bare"
+         (and (string= "lol.examples:ship" (qualified-name ship))
+              (string= "mapcar" (qualified-name 'mapcar))
+              (string= "(setf lol.examples::zz)"
+                       (qualified-name (list 'setf (intern "ZZ" :lol.examples))))))
+  (check "the class view's title qualifies the name"
+         (string= "class lol.examples:ship" (view-title view)))
+  (check "the class view opens its package"
+         (find (find-package :lol.examples) (view-items view) :key #'item-subject))
+  (check "the Spotter's row says the package"
+         (and row (search "· lol.examples" (getf row :detail))))
+  (check "a CL-USER-visible name gets no tag" (null (name-package-tag 'car)))
+  (check "the tab drops the package again"
+         (and (string= "ship" (short-title "class lol.examples:ship"))
+              (string= "ship" (short-title "class lol.examples::ship"))
+              (string= ":foo" (short-title ":foo"))
+              (string= "http://x" (short-title "http://x")))))
+
 (format t "~&== what it costs, on this host ==~%")
 (let* ((w (first (windows))) (iters 30))
   (flet ((ms (fn) (let ((t0 (get-internal-real-time)))

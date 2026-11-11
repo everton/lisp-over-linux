@@ -135,6 +135,27 @@
    subject itself. Evaluate-in-context and Apply act on THIS, never on the wrapper."
   (if (subj-object-p subject) (subj-object-value subject) subject))
 
+;;; ---- a name with its package --------------------------------------------
+;;; Every view of a definition shows its NAME, and a name read without its package
+;;; is ambiguous: `ship' could be anyone's. These print it as the reader would have
+;;; to be told it from CL-USER — the package the Workspace starts in — so a name of
+;;; ours reads `lol.examples::ship', while `car' and CL-USER's own stay bare.
+
+(defun qualified-name (name)
+  "NAME (a symbol, or a (SETF symbol) list) printed for a title, lower case, with its
+   package prefix unless CL-USER would read it without one: `lol.examples::ship',
+   `lol.stage:subj-stage' (external: one colon), `mapcar'."
+  (let ((*package* (find-package :cl-user)) (*print-pretty* nil))
+    (string-downcase (prin1-to-string name))))
+
+(defun name-package-tag (name)
+  "The package NAME lives in, lower case, for a Spotter detail — or NIL when CL-USER
+   sees NAME without a prefix (its own symbols, CL's), as QUALIFIED-NAME would."
+  (let* ((sym (if (consp name) (second name) name))
+         (pkg (and (symbolp sym) (symbol-package sym))))
+    (when (and pkg (not (eq (find-symbol (symbol-name sym) :cl-user) sym)))
+      (string-downcase (package-name pkg)))))
+
 (defun inspect-subject (x)
   "The subject that inspects X field by field. X itself when PRESENT would already
    do that (no more specific method than the T fallback); SUBJ-OBJECT around it when
@@ -264,9 +285,11 @@
                      ;; already a candidate (above), so this would just duplicate it.
                      (unless (eq kind :package)
                        (push (list :label (string-downcase (princ-to-string name))
-                                   :detail (cond (gf "generic function")
-                                                 (kind (string-downcase (symbol-name kind)))
-                                                 (t "definition"))
+                                   :detail (format nil "~a~@[ · ~a~]"
+                                                   (cond (gf "generic function")
+                                                         (kind (string-downcase (symbol-name kind)))
+                                                         (t "definition"))
+                                                   (name-package-tag name))
                                    :group "definitions"
                                    :subject (if gf (fdefinition name) (subj-defn name)))
                              out)))))
@@ -614,8 +637,9 @@
         (and (null src) (null (subj-defn-kind d)) (structure-defining (subj-defn-name d)))
       (cond
         (src
-         (make-view :title (format nil "~(~a~) ~(~a~)"
-                                   (or (subj-defn-kind d) "definition") (subj-defn-name d))
+         (make-view :title (format nil "~(~a~) ~a"
+                                   (or (subj-defn-kind d) "definition")
+                                   (qualified-name (subj-defn-name d)))
                     :kind :source :subject d
                     :text (if (listp src) (format nil "~{~a~^~%~%~}" src) src)))
         ;; a function our own DEFSTRUCT made (VIEW-KIND, MAKE-VIEW…): its definition
@@ -623,7 +647,7 @@
         ((and struct (source-of struct :struct))
          (present (subj-defn struct :struct)))
         (t
-         (make-view :title (format nil "~a" (subj-defn-name d))
+         (make-view :title (qualified-name (subj-defn-name d))
                     :kind :reference :subject d
                     :text (with-output-to-string (*standard-output*)
                             (when struct
@@ -666,11 +690,17 @@
 (defmethod present ((c class))
   (let ((i (class-info (class-name c))))
     (make-view
-     :title (format nil "~(~a~) ~(~a~)" (getf i :kind) (getf i :name))
+     :title (format nil "~(~a~) ~a" (getf i :kind) (qualified-name (getf i :name)))
      :kind :class :subject c
      ;; labels stay within the font's coverage (file:../doc/code-browser.org::#must-write-ourselves): the detail distinguishes
      ;; super- from sub-class, so no >255 arrow glyphs in the text.
      :items (append
+             ;; the package its name lives in — the answer to "whose class is this?"
+             (let ((pkg (symbol-package (class-name c))))
+               (when pkg
+                 (list (make-item :label (string-downcase (package-name pkg))
+                                  :detail "the package its name is in"
+                                  :group "package" :subject pkg))))
              ;; A condition IS a class, so it lands here — but the interesting half
              ;; of a condition is not its shape, it is who signals and who handles
              ;; it, and that is a different subject (file:../doc/code-browser.org::#condition-system). Offer the door.
@@ -1001,7 +1031,7 @@
   (let* ((name (sb-mop:generic-function-name gf))
          (methods (methods-of name)))
     (make-view
-     :title (format nil "generic-function ~(~a~)" name)
+     :title (format nil "generic-function ~a" (qualified-name name))
      :kind :generic :subject gf
      ;; the dispatch matrix (coverage) on top; then each method — drilling one opens
      ;; that method's OWN source (the defmethod for its specialised case).

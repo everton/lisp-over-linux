@@ -435,14 +435,21 @@
    name — \"modules — ever..\" — which is precisely backwards, because the kind is
    already there as the tab's colour stripe. So: cut any \" — \" gloss, then drop a
    leading kind word. The mock-up's tabs read \"draw\", \"parse-headers\",
-   \"Playground\"; these now read the same way."
+   \"Playground\"; these now read the same way. A name's package prefix goes too
+   (\"class lol.examples::ship\" is the tab \"ship\"): the header keeps it, and a tab
+   spent on it would clip the name, as the kind word did."
   (let* ((t1 (let ((dash (search (format nil " ~c " (code-char #x2014)) title)))
                (if dash (subseq title 0 dash) title)))
          (sp (position #\Space t1))
-         (head (and sp (string-downcase (subseq t1 0 sp)))))
-    (if (and head (member head +title-kind-words+ :test #'string=) (< (1+ sp) (length t1)))
-        (subseq t1 (1+ sp))
-        t1)))
+         (head (and sp (string-downcase (subseq t1 0 sp))))
+         (name (if (and head (member head +title-kind-words+ :test #'string=) (< (1+ sp) (length t1)))
+                   (subseq t1 (1+ sp))
+                   t1))
+         ;; pkg:name / pkg::name, one word — not a keyword (:foo), not a URL or path
+         (colon (and (not (find #\Space name)) (not (find #\/ name))
+                     (position #\: name :start 1)))
+         (end (and colon (position #\: name :start colon :test-not #'char=))))
+    (if (and end (< end (length name))) (subseq name end) name)))
 
 (defun trail-title (trail)
   "The tab label for TRAIL — the ROOT pane's subject, short enough to be a tab."

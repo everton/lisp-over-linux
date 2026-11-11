@@ -853,6 +853,26 @@ next panel while its parent collapses to a *breadcrumb bar* you click to re-expa
 bars are the breadcrumb and the drill path at once. A flat panel showing everything at
 once was rejected: it doesn't let you *drill*.
 
+** Which package a name is in
+:PROPERTIES:
+:CUSTOM_ID: which-package-name
+:END:
+
+A bare name is ambiguous — =ship= could be anyone's — so every place that names a
+definition says its package too, the way the reader would have to be told it from
+=CL-USER= (the Workspace's package): =qualified-name= in [[file:../initramfs/present.lisp::defun qualified-name][present.lisp]] prints with
+=*package*= bound to =CL-USER=, so a name of ours reads =lol.examples:ship= (one colon:
+exported) or =lol.examples::armed-p= (two: internal), while =mapcar= and =CL-USER='s own
+stay bare.
+
+- *View titles*: a class, a definition's source or reference, a generic function —
+  =class lol.examples:ship=.
+- *The class view* opens with a *package* row; drilling it is the package view below.
+- *The Spotter*: a definition row's detail ends with its package, as the builtins'
+  always did — =class · lol.examples= (=name-package-tag=).
+- *Tabs* drop the prefix again (=short-title=): the header keeps it, and a 16-character
+  tab spent on it would clip the name.
+
 ** The package view
 
 A package view is one expanded list with the selected definition's source beside it —
@@ -1136,7 +1156,8 @@ kind-coloured stripe, each labelled by its *subject* (=short-title=), not its vi
 since the kind is already the stripe. Where the kind isn't a Lisp one (a terminal, the
 journal, an agent conversation, a folder, a file, an image) or the title can't carry it
 (a web page's title is the page's), the tab draws a small *icon* and keeps its sixteen
-characters for the name: =terminal bash= is the terminal icon and =bash=
+characters for the name: =terminal bash= is the terminal icon and =bash=. A name's
+package prefix is dropped too (=class lol.examples:ship= is the tab =ship=)
 (=trail-label= and =+tab-icons+= in [[file:../poc/shell.lisp::defun trail-label][shell.lisp]]; a window's title bar shows the
 same).
 
@@ -1167,8 +1188,9 @@ like =colorize-lisp=. =./refresh-screenshot.sh --scene spotter=./
   variable or class — 1198 on SBCL 2.6.8 (934 + 264), the package in the detail
   (=function · sb-ext=) so =gc= still matches exactly. A builtin opens its GF view,
   class view, or the reference with SBCL's source. A name the registry has
-  (=print-object=) stays in the definitions band. Building the list costs ~1.2 ms on
-  the host.
+  (=print-object=) stays in the definitions band; a definition's detail names its
+  package as well (=class · lol.examples=, [[#which-package-name][Which package a name is in]]). Building the
+  list costs ~1.2 ms on the host.
 - *Ranking.* Fuzzy *subsequence*, exact > prefix > word boundary > plain.
 - *Banding doesn't disturb ranking.* =draw-spotter-card= ([[file:../poc/shell.lisp][poc/shell.lisp]]) bands results
   into recent / definitions / packages & files / surfaces; =spotter-band= keeps each
