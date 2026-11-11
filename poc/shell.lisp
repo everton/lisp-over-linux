@@ -538,6 +538,10 @@
   "The pending chord prefix in an editable pane: NIL, :c-c (after C-c) or :c-x
    (after C-x). The next key completes the chord — C-c C-c Accept, C-x C-e Do it,
    C-c C-p Print it, C-c C-i Inspect it.")
+(defvar *universal-argument* nil
+  "T after C-u in an editable pane — Emacs's prefix argument, reduced to a flag. It
+   survives the C-c of a chord and is consumed by the next command, which reads it
+   (C-u C-c C-i: Inspect it in a NEW tab) or ignores it.")
 (defvar *last-edit* nil
   "What the previous editing key did, for the two Emacs commands that depend on it:
    (:KILL) — so another kill APPENDS to the same history entry — and
@@ -1000,16 +1004,19 @@
                                  (format nil "!! ~a" res))))
           (setf *browser-status* nil))))))
 
-(defun workspace-inspect-it (pane)
+(defun workspace-inspect-it (pane &optional new-tab)
   "Eval the form before point and open the value in the inspector (a new trail
-   level) — the landing pad that makes 'Inspect it' from anywhere land here."
+   level) — the landing pad that makes 'Inspect it' from anywhere land here. With
+   NEW-TAB (C-u C-c C-i) the value opens as a trail of its own instead, so the
+   Workspace keeps its whole width and SuperL-g can make the inspector a window."
   (multiple-value-bind (form foundp) (form-before-point (pane-tv pane))
     (if (not foundp)
         (setf *browser-status* "Inspect it: no form before point")
         (multiple-value-bind (ok res) (ws-eval form)
           (if ok
-              (progn (setf *browser-status* (format nil "~a => inspecting" (form-echo form)))
-                     (trail-push res))
+              (progn (setf *browser-status* (format nil "~a => inspecting~:[~; in a new tab~]"
+                                                    (form-echo form) new-tab))
+                     (if new-tab (new-trail res) (trail-push res)))
               (setf *browser-status* (format nil "~a error: ~a" (form-echo form) res)))))))
 
 (defun workspace-debug-it (pane)
@@ -2925,7 +2932,8 @@
    and the ⇧↵ side pane, and guarded so a list side (no textview) can't crash. Returns NIL."
   (let ((c (lol.canvas:ctrl-p state))
         (tv (pane-tv p))
-        (previous (shiftf *last-edit* nil)))     ; consumed: see *LAST-EDIT*
+        (previous (shiftf *last-edit* nil))      ; consumed: see *LAST-EDIT*
+        (arg (shiftf *universal-argument* nil))) ; consumed too, unless C-c keeps it
     (cond
       ;; an Org file's own keys come first: TAB folds on a headline, C-c C-n moves
       ;; by heading, M-RET … (poc/org-mode.lisp, which loads after this file)
@@ -2969,7 +2977,7 @@
            ;; delivers this chord as C-c then :tab — accept both.
            ((and (eq prefix :c-c) (or (and c (eql key #\i)) (eq key :tab))
                  (workspace-pane-p p))
-            (workspace-inspect-it p))
+            (workspace-inspect-it p arg))
            ((and (eq prefix :c-c) c (eql key #\d) (workspace-pane-p p)) (workspace-debug-it p))
            ;; C-c C-a — Ask it: the agent's verb (file:../doc/agent.org::#ask-sixth-verb, initramfs/agent-ui.lisp)
            ((and (eq prefix :c-c) (or (and c (eql key #\a)) (eql key #\?)) (fboundp 'agent-ask-at-pane))
@@ -3002,7 +3010,10 @@
        (start-isearch tv (member key '(#\s #\S))) nil)
       ;; C-; comments the line or the region (or uncomments it)
       ((and c (eql key #\;) tv) (editor-toggle-comment tv) nil)
-      ((and c (eql key #\c)) (setf *pending-prefix* :c-c) nil)
+      ;; C-u — the prefix argument (*UNIVERSAL-ARGUMENT*); C-c carries it into its chord
+      ((and c (member key '(#\u #\U)) tv)
+       (setf *universal-argument* t *browser-status* "C-u-") nil)
+      ((and c (eql key #\c)) (setf *pending-prefix* :c-c *universal-argument* arg) nil)
       ((and c (eql key #\x)) (setf *pending-prefix* :c-x) nil)
       ((and tv (clipboard-key tv key state previous)) nil)
       ((and (eq key :tab) (pane-tv p)) (editor-complete p) nil)

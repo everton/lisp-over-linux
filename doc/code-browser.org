@@ -595,7 +595,9 @@ whole definition:
 - *Do it* (=C-x C-e=) — eval, value to the status line.
 - *Print it* (=C-c C-p=) — eval and insert the printed result *inline*, after the
   form. The buffer accretes an editable, re-runnable session.
-- *Inspect it* (=C-c C-i=) — eval and open the value in the Inspector.
+- *Inspect it* (=C-c C-i=) — eval and open the value in the Inspector, as the next
+  pane of the Workspace's trail; =C-u C-c C-i= opens it in a new tab instead (and
+  =SuperL-g= there makes it a window).
 - *Debug it* (=C-c C-d=) — eval with the debugger armed ([[#smalltalk-lisp-concept-map][The Smalltalk → Lisp concept map]]).
 - *Accept* (=C-c C-c=) — compile the top-level form at point as a definition ([[#stage-dispatch-happening-done][The Stage — dispatch, happening  (DONE)]],
   "Beat 4").
@@ -1223,6 +1225,7 @@ tab's number badge maps to =SuperL-1…9=.
 | =C-↵=               | submit: Accept in a source pane, Do it in a Workspace or Lisp file, send in a conversation |
 | =C-c C-p=           | Print it                                                                  |
 | =C-c C-i=           | Inspect it (arrives as =C-c= then Tab, since Ctrl-I *is* Tab)             |
+| =C-u C-c C-i=       | Inspect it in a new tab (=C-u= is a one-command flag, not a count)        |
 | =C-c C-d=           | Debug it                                                                  |
 | =C-c C-e=           | eval the top-level form (in an inspector: with =self= bound)              |
 | =M-.= / =M-,=       | jump to definition / Senders (both via =token-at-point=)                  |

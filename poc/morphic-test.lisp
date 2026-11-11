@@ -1029,6 +1029,43 @@
     (check "the screen is right" (screen-right-p))))
 (close-trail)
 
+(format t "~&== C-u C-c C-i: Inspect it in a new tab ==~%")
+(setf *active* (tiled-index))
+(open-workspace t)
+(desk-sync *world*) (repair)
+(let* ((tv (pane-tv (current-pane)))
+       (ws (current-pane)))
+  (lol.textview:tv-move-point tv (1- (length (lol.textview:tv-lines tv))) 0)
+  (loop for ch across "(list 1 2)" do (lol.textview:tv-key tv ch 0))
+  (desk-sync *world*)
+  ;; plain C-c C-i first: the value is pushed onto THIS trail
+  (let ((tabs (length *trails*)))
+    (ev :key :key #\c :state 4) (ev :key :key #\i :state 4) (desk-sync *world*) (repair)
+    (check "C-c C-i pushes onto the Workspace's trail"
+           (and (= tabs (length *trails*)) (= 2 (length (current-trail)))
+                (equal '(1 2) (pane-subject (current-pane)))))
+    (trail-goto 0) (drop-forward) (desk-sync *world*) (repair)
+    (check "back on the Workspace" (eq (current-pane) ws))
+    (ev :key :key #\u :state 4)
+    (check "C-u says so" (equal "C-u-" *browser-status*))
+    (ev :key :key #\c :state 4) (ev :key :key #\i :state 4) (desk-sync *world*) (repair)
+    (check "C-u C-c C-i opens a new tab, focused"
+           (and (= (1+ tabs) (length *trails*)) (= *active* (1- (length *trails*)))
+                (= 1 (length (current-trail)))
+                (equal '(1 2) (pane-subject (current-pane)))))
+    (check "the Workspace's trail kept only the Workspace"
+           (= 1 (length (nth (1- *active*) *trails*))))
+    (check "the argument was used up" (null *universal-argument*))
+    (check "the screen is right" (screen-right-p))
+    (close-trail) (desk-sync *world*) (repair)
+    ;; C-u then an ordinary key: the argument is dropped, not carried to a later C-c
+    (ev :key :key #\u :state 4) (ev :key :key #\Space :state 0)
+    (ev :key :key #\c :state 4) (ev :key :key #\i :state 4) (desk-sync *world*) (repair)
+    (check "C-u lapses after another key"
+           (and (= tabs (length *trails*)) (= 2 (length (current-trail)))))
+    (trail-goto 0) (drop-forward)))
+(close-trail)
+
 (format t "~&== what it costs, on this host ==~%")
 (let* ((w (first (windows))) (iters 30))
   (flet ((ms (fn) (let ((t0 (get-internal-real-time)))

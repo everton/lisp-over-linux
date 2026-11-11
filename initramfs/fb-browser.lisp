@@ -2543,6 +2543,7 @@
      ("C-;"                "comment / uncomment line or region")
      ("C-c C-p"            "Print it: result woven inline")
      ("C-c C-i"            "Inspect it: open the value")
+     ("C-u C-c C-i"        "Inspect it in a new tab")
      ("C-c C-d"            "Debug it: debugger armed"))
     ("Web page  (doc/web-browser.org)"
      ("C-l"                "the address: url, path or search")
