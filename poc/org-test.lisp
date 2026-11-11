@@ -221,6 +221,90 @@
 (check "C-c C-t keeps the priority and tags"
        (aref (cycle-todo (v "* [#A] Fix :x:") 0) 0) "* TODO [#A] Fix :x:")
 
+;;; ---- source blocks and their results, against Emacs ----------------------------------
+;;; Each expected vector is the buffer poc/org-data/babel-probe.el printed for the
+;;; same fixture (Emacs Lisp blocks there; placement does not depend on the language).
+
+(defun results (lines line text &key name)
+  "Run LINES' block at LINE the way the shell does: find it, write TEXT under it."
+  (multiple-value-bind (b e) (src-block-at (analyze lines) line)
+    (declare (ignore b))
+    (insert-results lines e (result-lines text) :name name)))
+
+(let ((d (analyze (v "* A" "#+BEGIN_SRC Lisp :results output :package lol.org" "(+ 1 2)" "#+end_src"
+                     "#+begin_src lisp" "* a headline ends it" "#+end_src" "#+begin_example" "x" "#+end_example"))))
+  (check "the src block around its body line" (multiple-value-list (src-block-at d 2)) '(1 3 "lisp"))
+  (check "and around its #+begin and #+end lines"
+         (list (src-block-at d 1) (src-block-at d 3)) '(1 1))
+  (check "not outside it" (src-block-at d 0) nil)
+  (check "a block a headline cut is no block" (src-block-at d 4) nil)
+  (check "an example block is not a src block" (src-block-at d 8) nil)
+  (check "header arguments" (header-args (aref (doc-lines d) 1))
+         '((":results" . "output") (":package" . "lol.org"))))
+(check "a value of several words" (header-args "#+begin_src lisp :results output silent :x")
+       '((":results" . "output silent") (":x" . "")))
+(check "no header arguments" (header-args "#+begin_src lisp") nil)
+
+(check "new results, text follows: a blank line before and after"
+       (results (v "* A" "#+begin_src lisp" "(+ 1 2)" "#+end_src" "after") 2 "3")
+       (v "* A" "#+begin_src lisp" "(+ 1 2)" "#+end_src" "" "#+RESULTS:" ": 3" "" "after"))
+(check "new results at the end of the file"
+       (results (v "#+begin_src lisp" "(+ 1 2)" "#+end_src") 1 "3")
+       (v "#+begin_src lisp" "(+ 1 2)" "#+end_src" "" "#+RESULTS:" ": 3"))
+(check "new results, blank lines follow: they are kept, none added"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "" "" "" "* next") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 3" "" "" "" "* next"))
+(check "the line of #+RESULTS:"
+       (nth-value 1 (results (v "#+begin_src lisp" "x" "#+end_src") 1 "3")) 4)
+(check "old fixed-width results replaced, what follows kept"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 99" ": 98" "" "after") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 3" "" "after"))
+(check "old results right below, text right after them"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "#+RESULTS:" ": old" "after") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "#+RESULTS:" ": 3" "after"))
+(check "an old example block replaced"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "#+RESULTS:" "#+begin_example" "old" "#+end_example" "after") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "#+RESULTS:" ": 3" "after"))
+(check "an old table replaced"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" "| 1 | 2 |" "| 3 | 4 |" "after") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 3" "after"))
+(check "an old drawer replaced"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ":results:" "x" ":end:" "after") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 3" "after"))
+(check "a paragraph under #+RESULTS: is not a result, and stays"
+       (results (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" "not a result") 1 "3")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": 3" "not a result"))
+(check "from the #+begin_src line"
+       (results (v "#+begin_src lisp" "x" "#+end_src") 0 "xxx")
+       (v "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS:" ": xxx"))
+(check "two lines" (result-lines (format nil "two~%lines")) '(": two" ": lines"))
+(check "a blank line inside keeps the colon's space" (result-lines (format nil "a~%~%b")) '(": a" ": " ": b"))
+(check "a trailing newline is not a line" (result-lines (format nil "x~%")) '(": x"))
+(check "nothing: a bare #+RESULTS:"
+       (results (v "#+begin_src lisp" "nil" "#+end_src") 1 "")
+       (v "#+begin_src lisp" "nil" "#+end_src" "" "#+RESULTS:"))
+(check "9 lines are fixed-width"
+       (result-lines (format nil "~{~a~^~%~}" '(1 2 3 4 5 6 7 8 9)))
+       '(": 1" ": 2" ": 3" ": 4" ": 5" ": 6" ": 7" ": 8" ": 9"))
+(check "10 lines are an example block"
+       (result-lines (format nil "~{~a~^~%~}" '(1 2 3 4 5 6 7 8 9 10)))
+       '("#+begin_example" "1" "2" "3" "4" "5" "6" "7" "8" "9" "10" "#+end_example"))
+(check "a headline or keyword inside the example is escaped with a comma"
+       (subseq (result-lines (format nil "~{~a~^~%~}" '("* h" "#+x" ",* c" "a" "b" "c" "d" "e" "f" "g"))) 0 4)
+       '("#+begin_example" ",* h" ",#+x" ",,* c"))
+(check "a named block: #+RESULTS: NAME"
+       (results (v "#+name: foo" "#+begin_src lisp" "x" "#+end_src") 2 "3" :name "foo")
+       (v "#+name: foo" "#+begin_src lisp" "x" "#+end_src" "" "#+RESULTS: foo" ": 3"))
+(check "an indented block: indented results"
+       (results (v "  #+begin_src lisp" "  x" "  #+end_src") 1 "3")
+       (v "  #+begin_src lisp" "  x" "  #+end_src" "" "  #+RESULTS:" "  : 3"))
+
+(check "the inline code at a column" (code-at "see =draw-string= here" 6) "draw-string")
+(check "~code~ too, and just after its closing marker"
+       (code-at "call ~tv-scroll~ now" 16) "tv-scroll")
+(check "no inline code elsewhere" (code-at "see =draw-string= here" 19) nil)
+(check "bold is not code" (code-at "a *bold* word" 4) nil)
+
 ;;; ---- every .org this project keeps --------------------------------------------------
 
 (defun read-lines (path)

@@ -7,7 +7,7 @@
 ;;;; they change, and can never disagree with the text. That is the one property of
 ;;;; Org this file is built to keep. Design and the subset chosen: doc/org.org.
 ;;;;
-;;;; Four things live here, all pure and host-testable (sbcl --script poc/org-test.lisp):
+;;;; Five things live here, all pure and host-testable (sbcl --script poc/org-test.lisp):
 ;;;;
 ;;;;   1. The READER — each line classified by its first characters (ANALYZE), the
 ;;;;      headlines with their keyword, priority, title and tags, the blocks a line is
@@ -20,6 +20,9 @@
 ;;;;   4. STRUCTURE EDITS — promote/demote, move a subtree, a new heading, TODO
 ;;;;      cycling — as functions from a line vector to a NEW line vector (the editor's
 ;;;;      undo is free because its buffer is persistent; file:../doc/clipboard.org::#undo-other-history-beside).
+;;;;   5. SOURCE BLOCKS and their RESULTS — the block around a line, its header
+;;;;      arguments, and where Org Babel puts what a block returned (INSERT-RESULTS),
+;;;;      checked against the same Emacs; inline code (CODE-AT) for a mention's name.
 ;;;;
 ;;;; Text model, shared with poc/textview.lisp and poc/clipboard.lisp: a buffer is a
 ;;;; SIMPLE-VECTOR of strings, one per line, no newline inside; a line index is
@@ -45,7 +48,9 @@
    #:reveal-line #:visible-line-p
    ;; structure edits
    #:org-edit-error #:promote-heading #:demote-heading #:promote-subtree #:demote-subtree
-   #:move-subtree-up #:move-subtree-down #:insert-heading #:cycle-todo))
+   #:move-subtree-up #:move-subtree-down #:insert-heading #:cycle-todo
+   ;; source blocks and their results; inline code
+   #:src-block-at #:header-args #:result-lines #:insert-results #:code-at))
 
 (in-package :lol.org)
 
@@ -777,3 +782,133 @@
     (setf (aref new (head-line h))
           (format nil "~a ~@[~a ~]~a~a" (make-string stars :initial-element #\*) next prio rest))
     (values new line next)))
+
+;;; ---- 5. source blocks and their results ----------------------------------------------
+;;;
+;;; C-c C-c in a #+begin_src block runs it and writes what it returned under it, as
+;;; Org Babel does (file:../doc/org.org::#running-src-block). Running is the shell's
+;;; business; WHERE the answer goes is pure text, and is Org's: each rule below is an
+;;; answer Emacs 30.2's Org 9.7.11 gave in batch mode (org-ctrl-c-ctrl-c on a fixture,
+;;; org-confirm-babel-evaluate nil), reproduced by poc/org-test.lisp.
+
+(defun src-block-at (doc line)
+  "When LINE is inside a source block of DOC — its #+begin_src and #+end_src lines
+   included — (values BEGIN END LANGUAGE), the lines of those two markers and the
+   language word, downcased (NIL when there is none). NIL otherwise, and for a block
+   that is never closed, which Org does not treat as a block either."
+  (let* ((n (length (doc-lines doc)))
+         (b (and (< -1 line n) (aref (doc-blocks doc) line))))
+    (when (and b (equal (first b) "src"))
+      (let ((end (loop for i from (third b) below n
+                       while (eq (aref (doc-blocks doc) i) b)
+                       when (eq (aref (doc-kinds doc) i) :block-end) return i)))
+        (and end (values (third b) end (second b)))))))
+
+(defun header-args (s)
+  "The header arguments of a #+begin_src line S, as an alist of (\":name\" . \"value\"),
+   names downcased, a value being every word up to the next :name, joined by one
+   space: \"#+begin_src lisp :results output :package lol.org\" ->
+   ((\":results\" . \"output\") (\":package\" . \"lol.org\"))."
+  (let ((ws (rest (words (subseq s (min (length s) (+ (indent-of s) (length "#+begin_src")))))))
+        (out '()))
+    (loop while ws
+          do (let ((w (pop ws)))
+               (when (char= (char w 0) #\:)
+                 (let ((vals (loop while (and ws (char/= (char (first ws) 0) #\:)) collect (pop ws))))
+                   (push (cons (string-downcase w) (format nil "~{~a~^ ~}" vals)) out)))))
+    (nreverse out)))
+
+(defparameter +min-lines-for-block-output+ 10
+  "Org's org-babel-min-lines-for-block-output: a result of this many lines or more is
+   written as an example block instead of fixed-width lines.")
+
+(defun split-lines (s)
+  (loop with start = 0
+        for nl = (position #\Newline s :start start)
+        collect (subseq s start (or nl (length s)))
+        while nl do (setf start (1+ nl))))
+
+(defun escape-example-line (s)
+  "Org's org-escape-code-in-string: a line that would read as a headline or a #+
+   keyword inside the block (a * or #+, after any commas) gets one more comma."
+  (let* ((i (indent-of s)) (j (or (position #\, s :start i :test-not #'char=) (length s))))
+    (if (or (and (< j (length s)) (char= (char s j) #\*))
+            (and (< (1+ j) (length s)) (char= (char s j) #\#) (char= (char s (1+ j)) #\+)))
+        (concatenate 'string (subseq s 0 i) "," (subseq s i))
+        s)))
+
+(defun result-lines (text)
+  "TEXT, what a block returned as a string, -> the lines of its results element:
+   none when it is empty (trailing newlines are not part of it: \"x~%\" is \": x\"),
+   fewer than +MIN-LINES-FOR-BLOCK-OUTPUT+ lines as \": \" fixed-width lines (an empty
+   one is \": \", with its space), else a #+begin_example block."
+  (let ((s (string-right-trim '(#\Newline) text)))
+    (if (zerop (length s))
+        '()
+        (let ((ls (split-lines s)))
+          (if (>= (length ls) +min-lines-for-block-output+)
+              (append '("#+begin_example") (mapcar #'escape-example-line ls) '("#+end_example"))
+              (mapcar (lambda (l) (concatenate 'string ": " l)) ls))))))
+
+(defun results-keyword-p (s)
+  "Is S a #+RESULTS: line (named or not, any case)?"
+  (let ((i (indent-of s)))
+    (and (prefix-ci-p "#+results" s i)
+         (< (+ i 9) (length s)) (find (char s (+ i 9)) ":["))))
+
+(defun results-element-end (doc line)
+  "The line after the results element that starts at LINE (the line below a
+   #+RESULTS:): a run of fixed-width lines, a table, a block, a drawer — or LINE
+   itself when what is there is none of those (Org leaves a paragraph alone)."
+  (let ((n (length (doc-lines doc))) (kinds (doc-kinds doc)))
+    (flet ((run-of (kind) (or (loop for i from line below n
+                                    unless (eq (aref kinds i) kind) return i)
+                              n)))
+      (if (>= line n)
+          line
+          (case (aref kinds line)
+            (:fixed (run-of :fixed))
+            (:table (run-of :table))
+            (:block-begin (let ((b (aref (doc-blocks doc) line)))
+                            (or (loop for i from line below n
+                                      while (eq (aref (doc-blocks doc) i) b)
+                                      when (eq (aref kinds i) :block-end) return (1+ i))
+                                line)))
+            (:drawer (let ((e (position :drawer-end kinds :start line)))
+                       (if e (1+ e) line)))
+            (t line))))))
+
+(defun insert-results (lines end result &key name)
+  "LINES with RESULT (lines from RESULT-LINES) written as the results of the block
+   whose #+end_src is line END -> (values NEW-LINES RESULTS-LINE). Org's rules:
+   - the first thing after the block, past blank lines, being a #+RESULTS: line, its
+     element is REPLACED and whatever follows it is kept as it was;
+   - otherwise a blank line, #+RESULTS: and the result are inserted right below
+     #+end_src, and one more blank line after them when the next line is text;
+   - a block named by #+name: writes #+RESULTS: NAME; an indented block, indented
+     results; an empty result, a bare #+RESULTS:."
+  (let* ((doc (analyze lines)) (n (length lines)) (kinds (doc-kinds doc))
+         (indent (subseq (aref lines end) 0 (indent-of (aref lines end))))
+         (key (format nil "~a#+RESULTS:~@[ ~a~]" indent name))
+         (body (mapcar (lambda (l) (concatenate 'string indent l)) result))
+         (old (loop for i from (1+ end) below n
+                    unless (eq (aref kinds i) :blank)
+                      return (and (results-keyword-p (aref lines i)) i))))
+    (if old
+        (values (concatenate 'simple-vector (subseq lines 0 old) (list key) body
+                             (subseq lines (results-element-end doc (1+ old))))
+                old)
+        (let ((next (1+ end)))
+          (values (concatenate 'simple-vector (subseq lines 0 next) (list "" key) body
+                               (and (< next n) (not (eq (aref kinds next) :blank)) '(""))
+                               (subseq lines next))
+                  (1+ next))))))
+
+(defun code-at (s col)
+  "The text inside the =verbatim= or ~code~ object of S under column COL (its
+   markers included, or just after the closing one), or NIL — what a doc's mention
+   of a definition looks like: =draw-string=."
+  (let ((o (find-if (lambda (o) (and (member (third o) '(:verbatim :code))
+                                     (<= (first o) col) (<= col (second o))))
+                    (line-objects s))))
+    (and o (subseq s (1+ (first o)) (1- (second o))))))

@@ -253,5 +253,92 @@
 (check "#+STARTUP: overview — the file opens folded" (equal (hidden) '(2 4)))
 (check "and the screen is right" (screen-right-p))
 
+(format t "~&== mentions: =name= is the live definition ==~%")
+;; file:../doc/org.org::#mentions-live-code
+(defparameter *live*
+  (put "live.org" "* Live"
+       "see =analyze= and ~line-objects~ and =org-follow-link=, =:org=, =t=, =/dev/fb0=, =analyze= again"
+       "#+begin_src lisp" "(+ 1 2) =not-a-mention=" "#+end_src" "after"))
+(open-file *live*)
+(at 1 6) (keys "M-.")
+(check "M-. on =analyze= opens the live definition (registry name, any package)"
+       (let ((s (pane-subject (current-pane))))
+         (and (subj-defn-p s) (eq (subj-defn-name s) 'lol.org:analyze))))
+(keys "C-g")
+(check "C-g comes back to the doc" (equal (org-pane-path (current-pane)) *live*))
+(at 1 23) (keys "M-,")
+(check "M-, on ~line-objects~ opens its senders"
+       (let ((s (pane-subject (current-pane))))
+         (and (subj-xref-p s) (eq (subj-xref-name s) 'lol.org:line-objects))))
+(keys "C-g")
+(at 1 1) (keys "M-.")
+(check "M-. on prose jumps nowhere" (equal (org-pane-path (current-pane)) *live*))
+(check "a keyword, T, a path, a form and a bare + name nothing"
+       (equal (mapcar #'mention-symbol '(":org" "t" "/dev/fb0" "(present x)" "nil" "+")) '(nil nil nil nil nil nil)))
+(check "a package-qualified mention" (eq (mention-symbol "lol.org:code-at") 'lol.org:code-at))
+(let ((v (present (subj-org *live* '("Live")))))
+  (check "a heading lists the code its section mentions, once each, not inside blocks"
+         (equal (mapcar #'item-label (remove "code it mentions" (view-items v)
+                                             :key #'item-group :test-not #'equal))
+                '("analyze" "line-objects" "org-follow-link")))
+  (check "and each row drills into the definition"
+         (let ((it (find "analyze" (view-items v) :key #'item-label :test #'equal)))
+           (and (subj-defn-p (item-subject it)) (eq (subj-defn-name (item-subject it)) 'lol.org:analyze)))))
+
+(format t "~&== C-c C-c runs a Lisp source block ==~%")
+;; file:../doc/org.org::#running-src-block — the placement is Emacs's
+;; (poc/org-data/babel-probe.el); poc/org-test.lisp checks every rule of it
+(defparameter *blocks*
+  (put "blocks.org" "* Blocks"
+       "#+begin_src lisp" "(+ 1 2)" "#+end_src" "after"
+       "#+begin_src lisp :results output" "(princ \"hi\") (terpri) (princ \"there\")" "#+end_src"
+       "#+begin_src lisp" "(error \"boom\")" "#+end_src"
+       "#+begin_src sh" "echo x" "#+end_src"
+       "#+begin_src lisp :results silent" "(list 1 2)" "#+end_src"
+       "#+begin_src lisp :package lol.org" "(code-at \"=x=\" 1)" "#+end_src"))
+(defun line-of (text &optional (start 0))
+  (position text (lines) :test #'string= :start start))
+(open-file *blocks*)
+(at 2 3) (keys "C-c C-c")
+(check "C-c C-c asks first, as Org does" (and *minibuffer* (search "Evaluate" (mb-prompt *minibuffer*))))
+(keys "n")
+(check "n: not evaluated, nothing written"
+       (and (null *minibuffer*) (search "not evaluated" *browser-status*) (null (line-of "#+RESULTS:"))))
+(at 2 3) (keys "C-c C-c y")
+(check "y: the value under the block, where Org writes it"
+       (equal (subseq (lines) 1 8) '("#+begin_src lisp" "(+ 1 2)" "#+end_src" "" "#+RESULTS:" ": 3" "")))
+(check "and the text below kept" (equal (nth 8 (lines)) "after"))
+(check "the status says where" (search "results at line 6" *browser-status*))
+(check "the screen is right" (screen-right-p))
+(at 1) (keys "C-c C-c y")
+(check "again, from the #+begin_src line: the results replaced, not added"
+       (and (equal (subseq (lines) 4 9) '("" "#+RESULTS:" ": 3" "" "after"))
+            (= 1 (count "#+RESULTS:" (lines) :test #'string=))))
+(keys "C-_")
+(check "C-_ takes the run back in one step"
+       (equal (subseq (lines) 3 9) '("#+end_src" "" "#+RESULTS:" ": 3" "" "after")))
+(let ((b (line-of "#+begin_src lisp :results output")))
+  (at (1+ b)) (keys "C-c C-c y")
+  (check ":results output writes what the block printed"
+         (equal (subseq (lines) (+ b 3) (+ b 7)) '("" "#+RESULTS:" ": hi" ": there"))))
+(let ((b (line-of "(error \"boom\")")) (n (length (lines))))
+  (at b) (keys "C-c C-c y")
+  (check "an error is shown, not thrown, and nothing is written"
+         (and (search "boom" *browser-status*) (= n (length (lines))))))
+(at (line-of "echo x")) (keys "C-c C-c")
+(check "another language is not run, and says so"
+       (and (null *minibuffer*) (search "only Common Lisp" *browser-status*)))
+(let ((n (length (lines))))
+  (at (line-of "(list 1 2)")) (keys "C-c C-c y")
+  (check ":results silent: the value in the status line only"
+         (and (search "(1 2)" *browser-status*) (= n (length (lines))))))
+(let ((b (line-of "#+begin_src lisp :package lol.org")))
+  (at (1+ b)) (keys "C-c C-c y")
+  (check ":package reads the block in that package (a string is written as itself)"
+         (equal (subseq (lines) (+ b 3) (+ b 6)) '("" "#+RESULTS:" ": x"))))
+(at 0) (keys "C-c C-c")
+(check "outside a block, C-c C-c says so" (search "not in a source block" *browser-status*))
+(check "the screen is right after it all" (screen-right-p))
+
 (format t "~&~d checks, ~d failed~%" *checks* *fails*)
 (sb-ext:exit :code (if (zerop *fails*) 0 1))

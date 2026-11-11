@@ -3321,13 +3321,24 @@
         (or (click-token s col)
             (and (> col 0) (click-token s (1- col))))))))
 
+(defvar *mention-at-point* nil
+  "A function (TV) -> the symbol a mention under TV's caret names, or NIL — asked
+   before the token under it by M-., M-, and Ctrl-click. poc/org-mode.lisp sets it, so
+   in an Org text =draw-string= names DRAW-STRING, markers and all.")
+
+(defun symbol-at-point (tv)
+  "The symbol M-. and M-, act on: what *MENTION-AT-POINT* says, else the token under
+   (or just before) the caret, resolved."
+  (or (and *mention-at-point* (funcall *mention-at-point* tv))
+      (resolve-symbol (token-at-point tv))))
+
 (defun jump-at-point (tv)
   "Resolve the symbol at TV's caret and drill into its definition on a new trail
    level (source if we recorded it, else a reference — PRESENT on a SUBJ-DEFN handles
    both). The keyboard M-. and the Ctrl-click share this once the caret is placed.
    Tries the caret column, then one to its left, so M-. also fires with the caret
    resting just past a symbol. No-op when there's no jumpable symbol there."
-  (let ((sym (resolve-symbol (token-at-point tv))))
+  (let ((sym (symbol-at-point tv)))
     (when (jumpable-p sym)
       (setf *pending-prefix* nil *browser-status* nil)
       (trail-push (subj-defn sym))
@@ -3337,7 +3348,7 @@
   "M-, — open SENDERS of the symbol at TV's caret. Smalltalk's senders, reached the
    same way as the jump: resolve the token under (or just before) point, and drill a
    SUBJ-XREF rather than the definition. No-op when there is no such symbol."
-  (let ((sym (resolve-symbol (token-at-point tv))))
+  (let ((sym (symbol-at-point tv)))
     (when (and (symbolp sym) sym (fboundp sym))
       (setf *pending-prefix* nil *browser-status* nil)
       (trail-push (subj-xref :senders sym))

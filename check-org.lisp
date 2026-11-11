@@ -22,6 +22,7 @@
 ;;;;   C. M-RET makes a heading; M-<down> / M-<up> move a subtree; M-S-<right> demotes it
 ;;;;   D. Alt-Left / Alt-Right promote and demote — and no longer switch the VT
 ;;;;   E. C-c C-o follows a link; the outline subject opens and drills
+;;;;   F. M-. on a =mention= opens the definition; C-c C-c runs a Lisp block, y to the question
 
 (load (merge-pathnames "host-client/guest-harness.lisp"
                        (make-pathname :directory (pathname-directory *load-truename*))))
@@ -136,6 +137,23 @@
   (qmp-key "down") (qmp-key "ret") (sleep 1.0)
   (check "a heading drills: Edit here, then its children"
          (yes "(equal (mapcar (function item-label) (view-items (pane-view (current-pane)))) '(\"Edit here\" \"A1\" \"A2\"))"))
+
+  (format t "~&~%== F. live code: a mention, a source block ==~%")
+  ;; file:doc/org.org::#live-code-document
+  (probe "(with-open-file (s \"/tmp/live.org\" :direction :output :if-exists :supersede) (dolist (l '(\"see =analyze= here\" \"#+begin_src lisp\" \"(* 6 7)\" \"#+end_src\")) (write-line l s)) t)")
+  (probe "(progn (new-trail (subj-file \"/tmp/live.org\")) t)")
+  (sleep 1.5)
+  (probe "(progn (lol.textview:tv-move-point (pane-tv (current-pane)) 0 6) t)") (sleep 0.3)
+  (qmp-chord "alt" "dot") (sleep 1.0)
+  (check "M-. (Alt-.) on =analyze= opens the live definition"
+         (yes "(let ((s (pane-subject (current-pane)))) (and (subj-defn-p s) (eq (subj-defn-name s) 'lol.org:analyze)))"))
+  (qmp-chord "ctrl" "g") (sleep 0.8)
+  (goto 2)
+  (qmp-chord "ctrl" "c") (qmp-chord "ctrl" "c") (sleep 0.5)
+  (check "C-c C-c in the block asks first" (yes "(and *minibuffer* t)"))
+  (qmp-key "y") (sleep 1.0)
+  (check "y: the value written under the block, Org's way"
+         (lines-are 4 "" "#+RESULTS:" ": 42"))
   t)
 
 (run-guest-checks "check-org" #'checks)

@@ -1956,13 +1956,15 @@ the browser, and its mention of =draw-string= is a *live link* into =(present
 =[[file:...]]= resolved by hand. Glamorous Toolkit's "moldable development", in our
 terms.
 
-Part of it exists: an =.org= file is already a subject (=subj-org=), and a =defun= link
-opens the live definition ([[file:org.org][org.org]]). What remains:
+Much of it exists ([[file:org.org::#live-code-document][org.org, Live code in a document]]). An =.org= file is a subject
+(=subj-org=), and a =defun= link opens the live definition. *Inline mentions are
+items:* =M-.= on =draw-string= in a doc opens it, and a heading's view lists the
+definitions its section mentions, resolved through the registry. *Examples run:*
+=C-c C-c= in a Lisp source block evaluates it in the image and writes the result
+under it, as Org Babel does. What remains:
 
-- *Inline symbol mentions as items.* Each code reference becomes a drill item whose
-  target is the definition, resolved through the registry and model layer
-  (=definitions-of=, =class-info=, …).
-- *Runnable examples.* An org =src= block as a Workspace Do it against the live image.
+- *Mentions that aren't marked up.* A name written as a plain word in prose, not
+  as inline code, isn't resolved: prose is full of words that are also symbols.
 - *A third-party library's own source, browsable.* Either load-record it at build time
   (its source baked into the registry, no disk needed), or read it on demand from its
   files via =sb-introspect= source locations ([[#model-layer-unit-code][The model layer — what is a "unit of code" in Lisp?]]'s layered =source-of=). No

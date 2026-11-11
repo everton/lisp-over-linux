@@ -7,9 +7,11 @@ Sibling docs: [[file:code-browser.org][code-browser.org]] (the =present= protoco
 [[file:morphic.org::#text-view-damages-rows][morphic.org, A text view damages rows, not the pane]] (per-row damage in a text view, which folding must keep true).
 
 *Status: built.* =.org= files are coloured, folded, navigated by heading, edited by
-subtree, have their links followed, and show as a drillable outline. It's a stated
-subset of Org, re-implemented in Lisp, with every fold, motion and structure edit
-checked against Emacs 30.2 / Org 9.7.11 in batch mode ([[#tests][Tests]]).
+subtree, have their links followed, and show as a drillable outline. A mention of a
+definition (=draw-string=) leads to the live one, and a Lisp source block runs with
+=C-c C-c= ([[#live-code-document][Live code in a document]]). It's a stated subset of Org, re-implemented in
+Lisp, with every fold, motion, structure edit and result placement checked against
+Emacs 30.2 / Org 9.7.11 in batch mode ([[#tests][Tests]]).
 
 * The one-sentence essence
 
@@ -80,10 +82,12 @@ text view already scrolls sideways to follow the caret (=tv-hscroll=,
 - *In.* Reading the outline (headlines, levels, keywords, tags, drawers, blocks,
   lists, tables as lines), colouring it, showing it as a drillable subject,
   following links, folding (TAB / S-TAB and =#+STARTUP=), moving between headings,
-  and editing the structure (new heading, promote/demote, move a subtree, TODO
-  cycling).
-- *Out* ([[#out-scope-would-cost][Out of scope, and what it would cost]]). Table alignment and formulas, the agenda, export, Babel, timestamps
-  as dates, capture, clocking, footnotes, inline images, soft wrap.
+  editing the structure (new heading, promote/demote, move a subtree, TODO
+  cycling), and live code: mentions as links to definitions, and running a Lisp
+  source block in the image (Babel's =C-c C-c=, for Common Lisp only).
+- *Out* ([[#out-scope-would-cost][Out of scope, and what it would cost]]). Table alignment and formulas, the agenda, export, timestamps
+  as dates, capture, clocking, footnotes, inline images, soft wrap; Babel beyond
+  =C-c C-c= on a Lisp block.
 
 * 2. What it builds on
 :PROPERTIES:
@@ -218,8 +222,8 @@ file has a second face beside its editor:
 - *=(subj-org path)=* presents the file's top-level headings as rows (child count,
   tags, line), plus "Edit the file".
 - *=(subj-org path titles)=* is one heading, named by its *chain of titles* from the
-  top. It lists "Edit here" (the editor at that line), its child sections, and its
-  links as rows that open them.
+  top. It lists "Edit here" (the editor at that line), its child sections, its
+  links as rows that open them, and the definitions its section mentions ([[#mentions-live-code][Mentions — =name= is the definition]]).
 - *Previews read the document.* A heading's =present-preview= is the section's own
   text (up to 400 lines), read-only and coloured — so moving down an outline reads
   the document in the nav split, and drilling goes deeper.
@@ -395,6 +399,8 @@ Org's own bindings:
 | =C-c C-t=            | =org-todo=                | cycle TODO → DONE → none                      |
 | =C-c C-o=            | =org-open-at-point=       | follow the link ([[#links][Links]])                        |
 | =C-c C-l=            | =org-insert-link=         | minibuffer for target, then description       |
+| =C-c C-c= in a src block | =org-babel-execute-src-block= | run a Lisp block, write its results ([[#running-src-block][Running a source block]]) |
+| =M-.= / =M-,= on =name= | (the shell's)         | the definition / its senders ([[#mentions-live-code][Mentions]]) |
 
 - *=C-c C-j=* is Org's =org-goto= minus its outline buffer, which the outline subject
   already is.
@@ -427,17 +433,111 @@ On the bare framebuffer the keys come through the Linux console's keymap
   a hole set by ioctl, because entries are stored as =val ^ 0xf000=; Alt-Left then
   sent nothing.
 
-* 7. The files
+* 7. Live code in a document
+:PROPERTIES:
+:CUSTOM_ID: live-code-document
+:END:
+
+A doc in this project is about code that is *running* in the image it's read in.
+Two things connect them: a mention of a definition leads to the definition, and a
+Lisp source block can be run where it stands. This is the first part of the
+"live documents" horizon in [[file:code-browser.org::#horizon-live-documents-browsable][code-browser.org, Horizon — live documents & browsable third-party code]].
+
+** 7.1 Mentions — =name= is the definition
+:PROPERTIES:
+:CUSTOM_ID: mentions-live-code
+:END:
+
+A doc names code in inline code: =draw-string=, ~tv-scroll~, =lol.org:analyze=. That
+markup is already the link; nothing has to be written differently.
+
+- *=M-.=* on it opens the live definition (source, Accept, Senders) and *=M-,=* its
+  senders, as on a word in Lisp source. So does Ctrl-click. In an Org pane they
+  read the inline code under the caret (=code-at= in [[file:../poc/org.lisp][=poc/org.lisp=]]), markers
+  and all, before falling back to the word as Lisp. The shell asks through
+  =*mention-at-point*= ([[file:../poc/shell.lisp][=poc/shell.lisp=]]), which =org-mode.lisp= sets.
+- *A heading's view* lists the definitions its section mentions, as rows under
+  "code it mentions", once each in reading order, with their kind, file and line.
+  So drilling a doc's outline reaches the code it explains. Lines inside blocks
+  are skipped: they are code, not mentions.
+- *What a name resolves to* (=mention-symbol=). First the way the shell reads a
+  word: the pane's package, =CL-USER=, =CL=, with =pkg:name= honoured. Failing that,
+  the registry's definitions in *every* package, when exactly one symbol has that
+  name. A doc writes =tv-scroll=, not =lol.textview:tv-scroll=, and that is enough.
+  A name two packages define is ambiguous and names nothing.
+- *What names nothing:* a keyword (=:org=), =t= and =nil=, a form (=(present x)=), a
+  path (=/dev/fb0=), a phrase, and a word with no letter in it. Docs write =+= and
+  =-= for keys, not for the functions.
+
+Measured on the docs themselves: [[file:fonts.org][fonts.org]] mentions 41 definitions this way,
+[[file:morphic.org][morphic.org]] 146.
+
+** 7.2 Running a source block — =C-c C-c=
+:PROPERTIES:
+:CUSTOM_ID: running-src-block
+:END:
+
+=C-c C-c= with the caret anywhere in a =#+begin_src lisp= block (its marker lines
+included) is Org Babel's =org-babel-execute-src-block=, for Common Lisp only:
+
+1. *It asks first*, as Org does by default (=org-confirm-babel-evaluate=): "Evaluate
+   this lisp code block in the image? (y/n)". A file may come from anywhere. The
+   setting =:org-confirm-evaluate nil= in =~/.lol/settings= stops the asking.
+2. *The block's forms are read and evaluated in this image*, one after another, by
+   the Workspace's =ws-eval=: an error goes to the status line and is never thrown,
+   and the compiler's notes follow the message. Nothing is written for an error.
+3. *The result is written where Org writes it* (=insert-results=), and =C-_= takes
+   that back in one step.
+
+Header arguments (=header-args=):
+
+| argument            | does                                                         |
+|---------------------+--------------------------------------------------------------|
+| (none) / =:results value= | the last form's value is the result                    |
+| =:results output=   | what the forms printed is the result                         |
+| =:results silent= / =none= | the value goes to the status line; nothing is written |
+| =:package NAME=     | the forms are read and evaluated in that package (Org's ob-lisp has it too) |
+
+*The rules for where a result goes* were taken from Emacs, not guessed:
+[[file:../poc/org-data/babel-probe.el][=poc/org-data/babel-probe.el=]] runs =org-ctrl-c-ctrl-c= on 22 fixtures and prints the
+buffer, and [[file:../poc/org-test.lisp][=poc/org-test.lisp=]] reproduces each answer.
+
+- A *blank line*, then =#+RESULTS:=, then the result, right under =#+end_src=. One
+  more blank line follows when text came right after the block.
+- *Results already there are replaced.* "There" means the first thing after the
+  block, past blank lines, is a =#+RESULTS:= line. Its element is replaced: a run
+  of =:= lines, a table, an example block, a drawer. What follows it stays as it
+  was. A paragraph under =#+RESULTS:= isn't a result, and stays.
+- *The text of a result.* A string is itself, without quotes. =nil= or an empty
+  string is a bare =#+RESULTS:=. Trailing newlines are dropped. Fewer than 10 lines
+  become =: = fixed-width lines (a blank line is =: = with its space). 10 or more
+  become a =#+begin_example= block, where a line that would read as a headline or
+  a =#+= keyword gets a comma (Org's =org-escape-code-in-string=).
+- A block named by =#+name: foo= writes =#+RESULTS: foo=. An indented block gets
+  indented results.
+
+*Where we differ, on purpose:*
+
+- *A list is printed, not made into a table.* Org's default turns =(1 2)= into
+  =| 1 | 2 |=. Here every value other than a string is printed readably (=prin1=,
+  pretty, 78 columns): Org's =:results verbatim=. A table can't be read back as
+  the value it came from.
+- *Only Common Lisp runs* (=lisp=, =common-lisp=, =cl=). An =emacs-lisp= or =sh=
+  block says so. Emacs Lisp is coloured as Lisp but isn't Common Lisp.
+- *No sessions, no =:var=, no other header arguments.* Every block runs in the one
+  image, so state already persists between blocks, as in Org's =:session=.
+
+* 8. The files
 
 | file | what | lines |
 |------+------+-------|
-| [[file:../poc/org.lisp][poc/org.lisp]] | =lol.org=, pure: the reader ([[#reader-lol-org][The reader — =lol.org=]]), objects and links, folding as bits, the structure edits | 760 |
-| [[file:../poc/org-mode.lisp][poc/org-mode.lisp]] | the shell's side: the =:org= colourer, =subj-org=, links, folding in a pane, =org-key= | 627 |
+| [[file:../poc/org.lisp][poc/org.lisp]] | =lol.org=, pure: the reader ([[#reader-lol-org][The reader — =lol.org=]]), objects and links, folding as bits, the structure edits, source blocks and where their results go, =code-at= | 914 |
+| [[file:../poc/org-mode.lisp][poc/org-mode.lisp]] | the shell's side: the =:org= colourer, =subj-org=, links, mentions, =C-c C-c=, folding in a pane, =org-key= | 830 |
 | [[file:../poc/textview.lisp][poc/textview.lisp]] | hidden lines ([[#folding-change-text-view][Folding — the one change to the text view]]): the bits, the rows, motion and drawing through them; =*syntaxes*= | ~170 of it |
 | [[file:../initramfs/fb-browser.lisp][initramfs/fb-browser.lisp]] | =ESC CR= / =ESC TAB=, =unbind-console-alt-arrows=, the cheatsheet's "Org files" group | ~50 of it |
-| [[file:../poc/shell.lisp][poc/shell.lisp]], [[file:../poc/morphic.lisp][poc/morphic.lisp]], [[file:../initramfs/file-views.lisp][file-views.lisp]], [[file:../initramfs/desk.lisp][desk.lisp]], [[file:../poc/x11.lisp][x11.lisp]] | the hooks: =org-key= first in =edit-pane-command=, =*pane-opened-hooks*=, row computations through =line-row=, =text-syntax=, the desk's =(:org …)=, X's =ISO_Left_Tab= | ~40 |
+| [[file:../poc/shell.lisp][poc/shell.lisp]], [[file:../poc/morphic.lisp][poc/morphic.lisp]], [[file:../initramfs/file-views.lisp][file-views.lisp]], [[file:../initramfs/desk.lisp][desk.lisp]], [[file:../poc/x11.lisp][x11.lisp]] | the hooks: =org-key= first in =edit-pane-command=, =*mention-at-point*= for =M-.= / =M-,=, =*pane-opened-hooks*=, row computations through =line-row=, =text-syntax=, the desk's =(:org …)=, X's =ISO_Left_Tab= | ~40 |
 
-* 8. Out of scope, and what it would cost
+* 9. Out of scope, and what it would cost
 :PROPERTIES:
 :CUSTOM_ID: out-scope-would-cost
 :END:
@@ -447,9 +547,10 @@ On the bare framebuffer the keys come through the Linux console's keymap
   =org-table.el=); formulas are a calculator.
 - *Soft wrap* ([[#sizing-subset][Sizing the subset]]): the display map of [[#folding-change-text-view][Folding — the one change to the text view]] is the hard half; wrapping a line into
   several rows is the other.
-- *Babel*: evaluating a =#+begin_src lisp= block. =C-x C-e= / =C-c C-e= in a file
-  pane already evaluate Lisp, so making that work inside a src block is small.
-  Results blocks, other languages, sessions: no.
+- *More of Babel* than =C-c C-c= on a Lisp block ([[#running-src-block][Running a source block]]): other
+  languages (a shell block could run in the container, [[file:containers.org][containers.org]]), =:var=,
+  =:session=, tables as results, =C-c C-v= keys, tangling. Each is small alone;
+  none was needed by a doc here.
 - *Agenda, capture, clocking, timestamps as dates, export, footnotes, inline
   images.* Each is an application on top of the outline. Inline images would be
   cheaper than most, since =lol.image= already decodes the formats.
@@ -462,17 +563,17 @@ On the bare framebuffer the keys come through the Linux console's keymap
   (the gutter has no offset); the preview's title says the real line.
 - *Nested objects* (a link inside bold) aren't seen ([[#objects-within-line][Objects within a line]]).
 
-* 9. Tests
+* 10. Tests
 :PROPERTIES:
 :CUSTOM_ID: tests
 :END:
 
 | test | checks | what |
 |------+--------+------|
-| [[file:../poc/org-test.lisp][poc/org-test.lisp]] | 92 | the reader, objects, links, and Emacs's answers for every fold cycle, =#+STARTUP=, move / promote / demote / =M-RET= / TODO; every project =.org= read |
-| [[file:../poc/org-mode-test.lisp][poc/org-mode-test.lisp]] | 61 | the real shell: the keys in a pane (Emacs's answers again, heading motion included), folds through edits, undo and =M-<down>=, =C-s= into a fold, the smart guard, links (same file, another file, a missing one, the live definition), the outline subject, the Spotter's headings, =#+STARTUP=; the repaired screen equals a fresh paint |
+| [[file:../poc/org-test.lisp][poc/org-test.lisp]] | 124 | the reader, objects, links, and Emacs's answers for every fold cycle, =#+STARTUP=, move / promote / demote / =M-RET= / TODO, and where a block's results go; =code-at=; every project =.org= read |
+| [[file:../poc/org-mode-test.lisp][poc/org-mode-test.lisp]] | 84 | the real shell: the keys in a pane (Emacs's answers again, heading motion included), folds through edits, undo and =M-<down>=, =C-s= into a fold, the smart guard, links (same file, another file, a missing one, the live definition), the outline subject, the Spotter's headings, =#+STARTUP=; =M-.= / =M-,= on a mention and a heading's "code it mentions"; =C-c C-c= asking, writing, replacing, undone in one step, =:results output= / =silent=, =:package=, an error, another language; the repaired screen equals a fresh paint |
 | [[file:../poc/journal-test.lisp][poc/journal-test.lisp]] | +4 | an outline tab and a heading tab through the desk; a vanished file refused |
-| [[file:../check-org.lisp][check-org.lisp]] | 22 | in the guest, by QMP keys: S-TAB, TAB, =C-c C-n= / =C-u=, =M-RET=, =M-<up>= / =<down>=, =M-S-<right>= once, Alt-Left / Right promote and demote with the VT unchanged, =C-c C-o=, the outline drilled |
+| [[file:../check-org.lisp][check-org.lisp]] | 25 | in the guest, by QMP keys: S-TAB, TAB, =C-c C-n= / =C-u=, =M-RET=, =M-<up>= / =<down>=, =M-S-<right>= once, Alt-Left / Right promote and demote with the VT unchanged, =C-c C-o=, the outline drilled; Alt-. on a mention, =C-c C-c= + =y= writing the results |
 
 *Emacs as the oracle.* The expected answers come from =emacs -Q --batch= with
 Org 9.7.11: each probe reads a fixture, runs one command and prints the lines left

@@ -13,7 +13,9 @@
 ;;;;   - LINKS: C-c C-o (and a link row) opens what Org would open;
 ;;;;   - the KEYS of an Org file pane (ORG-KEY, offered every key first by
 ;;;;     EDIT-PANE-COMMAND): TAB / S-TAB folding, heading motion, M-RET, the M-arrows,
-;;;;     C-c C-t, C-c C-j, C-c C-l.
+;;;;     C-c C-t, C-c C-j, C-c C-l, and C-c C-c, which runs a Lisp source block;
+;;;;   - MENTIONS: inline code that names a definition (=draw-string=) is a link to the
+;;;;     live one — M-. and M-, on it, and a heading's "code it mentions" rows.
 ;;;;
 ;;;; Every behaviour below that Org has, it has as Org does — checked against Emacs
 ;;;; 30.2 with its Org 9.7.11 in batch mode; the pure part's answers are asserted by
@@ -257,7 +259,9 @@
                                    (org-heading-items path doc (lol.org:head-children doc k)
                                                       (subj-org-heading s) "sections")
                                    (org-link-items path lines (lol.org:head-line h)
-                                                   (lol.org:entry-end doc k))))))))))
+                                                   (lol.org:entry-end doc k))
+                                   (org-mention-items lines (lol.org:head-line h)
+                                                      (lol.org:entry-end doc k))))))))))
 
 (defparameter +org-preview-lines+ 400 "A section preview shows at most this many lines.")
 
@@ -422,6 +426,170 @@
                     (setf *browser-status* (format nil "link: ~a not found in ~a"
                                                    (second search) (path-name path))))
                   (org-edit-at path (or line 0)))))))))))
+
+;;; ---- mentions: a doc's =name= is the live definition -------------------------------
+;;;
+;;; A doc names code in inline code — =draw-string=, ~tv-scroll~, =lol.org:analyze= —
+;;; and that is the link (file:../doc/org.org::#mentions-live-code): M-. on it opens the
+;;; definition, M-, its senders, and a heading's view lists the definitions its section
+;;; mentions. The name is resolved as the shell resolves a word (RESOLVE-SYMBOL: the
+;;; pane's package, CL-USER, CL); failing that, by the registry's names across every
+;;; package, when exactly one symbol has it — a doc writes =tv-scroll=, not
+;;; =lol.textview:tv-scroll=.
+
+(defvar *registry-names* nil "(COUNT . TABLE): the registry's symbols by name, built at COUNT entries.")
+
+(defun registry-symbols-named (name)
+  "The symbols the registry has a definition of whose name is NAME (any case, any
+   package). The index is rebuilt when the registry has grown."
+  (let ((count (hash-table-count *registry*)))
+    (unless (eql (car *registry-names*) count)
+      (let ((table (make-hash-table :test 'equal)))
+        (maphash (lambda (sym defs) (declare (ignore defs))
+                   (when (and (symbolp sym) sym)
+                     (pushnew sym (gethash (symbol-name sym) table))))
+                 *registry*)
+        (setf *registry-names* (cons count table))))
+    (gethash (string-upcase name) (cdr *registry-names*))))
+
+(defun mention-symbol (text)
+  "The symbol an Org mention's TEXT names, or NIL: a single word (#' allowed) that
+   is a function, variable or class here, or that exactly one recorded definition is
+   named. Keywords, T and NIL are words, not definitions; a form, a path, a phrase
+   or a word without a letter (=+= in \"the keys + and -\") names nothing."
+  (let ((word (string-trim " " text)))
+    (when (and (plusp (length word))
+               (some #'alpha-char-p word)          ; =+= and =-= are keys in prose
+               (not (find-if (lambda (c) (find c " ()\"/;|")) word))
+               (char/= (char word 0) #\:))
+      (let ((s (ignore-errors (resolve-symbol word))))
+        (cond ((and s (not (eq s t)) (not (keywordp s)) (jumpable-p s)) s)
+              (t (let ((hits (registry-symbols-named
+                              (string-left-trim "#'" (subseq word (1+ (or (position #\: word :from-end t) -1)))))))
+                   (and (= 1 (length hits)) (first hits)))))))))
+
+(defun org-mention-at-point (tv)
+  "*MENTION-AT-POINT* for an Org text: the symbol the inline code under the caret
+   names. NIL in any other text, where M-. reads the word as Lisp."
+  (when (eq (lol.textview:tv-syntax tv) :org)
+    (let* ((lines (lol.textview:tv-lines tv)) (line (lol.textview:tv-point-line tv))
+           (code (and (< line (length lines))
+                      (not (aref (lol.org:doc-blocks (lol.org:analyze lines)) line))
+                      (lol.org:code-at (aref lines line) (lol.textview:tv-point-col tv)))))
+      (and code (mention-symbol code)))))
+
+(setf *mention-at-point* 'org-mention-at-point)
+
+(defun org-mention-items (lines from to)
+  "The definitions LINES[FROM, TO) mention, once each in the order first met, as rows
+   that drill into them. Lines inside blocks are code, not prose, and are skipped."
+  (let ((doc (lol.org:analyze lines)) (seen '()) (items '()))
+    (loop for i from from below to
+          unless (aref (lol.org:doc-blocks doc) i)
+            do (dolist (o (lol.org:line-objects (aref lines i)))
+                 (when (member (third o) '(:verbatim :code))
+                   (let ((sym (mention-symbol (subseq (aref lines i) (1+ (first o)) (1- (second o))))))
+                     (when (and sym (not (member sym seen)))
+                       (push sym seen)
+                       (let ((d (first (definitions-of sym))))
+                         (push (make-item :label (string-downcase (symbol-name sym))
+                                          :detail (if d
+                                                      (format nil "~(~a~) · ~a · line ~d" (defn-kind d)
+                                                              (path-name (namestring (or (defn-file d) "?")))
+                                                              (1+ i))
+                                                      (format nil "~(~a~) · line ~d"
+                                                              (package-name (symbol-package sym)) (1+ i)))
+                                          :kind (if d (defn-kind d) :function)
+                                          :group "code it mentions"
+                                          :subject (subj-defn sym))
+                               items)))))))
+    (nreverse items)))
+
+;;; ---- C-c C-c: running a Lisp source block -------------------------------------------
+;;;
+;;; Org Babel's C-c C-c, for Common Lisp only (file:../doc/org.org::#running-src-block):
+;;; the block's forms are read and evaluated in this image, one after another, and the
+;;; last one's value — or, with :results output, what they printed — is written under
+;;; the block where Org writes it (LOL.ORG:INSERT-RESULTS). The evaluation is the
+;;; Workspace's (WS-EVAL): an error is shown, never thrown, and nothing is written.
+;;; As Org does by default, it asks first; the :org-confirm-evaluate setting NIL stops
+;;; the asking.
+
+(defparameter +runnable-languages+ '("lisp" "common-lisp" "cl")
+  "Source-block languages C-c C-c evaluates. Emacs Lisp and Scheme are coloured as
+   Lisp (+LISP-BLOCK-LANGUAGES+) but are not Common Lisp.")
+
+(defun org-block-value-text (value)
+  "VALUE as Org writes it: a string as itself, NIL as nothing, anything else printed
+   readably — a list as (1 2), not as Org's table (doc/org.org says why)."
+  (cond ((null value) "")
+        ((stringp value) value)
+        (t (let ((*print-pretty* t) (*print-right-margin* 78) (*print-length* 200) (*print-level* 10))
+             (prin1-to-string value)))))
+
+(defun org-block-name (lines begin)
+  "The #+name: of the block starting at BEGIN — the keyword line right above it."
+  (let ((above (and (plusp begin) (string-trim " " (aref lines (1- begin))))))
+    (and above (> (length above) 7) (string-equal "#+name:" above :end2 7)
+         (let ((n (string-trim " " (subseq above 7)))) (and (plusp (length n)) n)))))
+
+(defun org-run-block (tv begin end)
+  "Evaluate the Lisp block whose markers are lines BEGIN and END of TV and write its
+   results, Org's way. -> the status-line message."
+  (let* ((lines (lol.textview:tv-lines tv))
+         (args (lol.org:header-args (aref lines begin)))
+         (results (string-downcase (or (cdr (assoc ":results" args :test #'string=)) "")))
+         (rwords (lol.org::words results))
+         (pkg-name (cdr (assoc ":package" args :test #'string=)))
+         (pkg (if pkg-name (find-package (string-upcase pkg-name)) *package*))
+         (text (format nil "~{~a~^~%~}" (coerce (subseq lines (1+ begin) end) 'list))))
+    (unless pkg
+      (return-from org-run-block (format nil "C-c C-c: no package ~a" pkg-name)))
+    (multiple-value-bind (ok value output notes)
+        (let ((*package* pkg))
+          (handler-case (ws-eval (cons 'progn (read-forms-from-text text)))
+            (error (c) (values nil (format nil "can't read the block: ~a" c) "" nil))))
+      (cond
+        ((not ok)
+         (format nil "C-c C-c: error: ~a"
+                 (ws-remove-string "COMMON-LISP-USER::" (princ-to-string value))))
+        ((intersection rwords '("silent" "none") :test #'string=)
+         (let ((*print-length* 40) (*print-level* 5))
+           (format nil "=> ~s~@[   [~{~a~^; ~}]~]" value notes)))
+        (t
+         (let ((shown (if (member "output" rwords :test #'string=)
+                          output
+                          (let ((*package* pkg)) (org-block-value-text value)))))
+           (multiple-value-bind (new at)
+               (lol.org:insert-results lines end (lol.org:result-lines shown)
+                                       :name (org-block-name lines begin))
+             (with-undo (tv)
+               (lol.textview:tv-replace tv new (lol.textview:tv-point-line tv)
+                                        (lol.textview:tv-point-col tv)))
+             (format nil "results at line ~d~@[   [~{~a~^; ~}]~]" (1+ at) notes))))))))
+
+(defun org-ctrl-c-ctrl-c (tv)
+  "C-c C-c in an Org pane: run the source block around the caret (asking first,
+   as Org does), or say why not."
+  (multiple-value-bind (begin end lang)
+      (lol.org:src-block-at (lol.org:analyze (lol.textview:tv-lines tv)) (lol.textview:tv-point-line tv))
+    (cond
+      ((null begin) (setf *browser-status* "C-c C-c: not in a source block"))
+      ((not (member lang +runnable-languages+ :test #'equal))
+       (setf *browser-status* (format nil "C-c C-c: only Common Lisp blocks run here (this one is ~a)"
+                                      (or lang "unnamed"))))
+      ((not (if (fboundp 'setting) (funcall 'setting :org-confirm-evaluate t) t))
+       (setf *browser-status* (org-run-block tv begin end)))
+      (t (let ((lines (lol.textview:tv-lines tv)))
+           (minibuffer-read "Evaluate this lisp code block in the image? (y/n) "
+                            (lambda (k)
+                              (setf *browser-status*
+                                    (cond ((not (member k '(#\y #\Y))) "not evaluated")
+                                          ;; edited meanwhile (the prompt is modal, but be sure)
+                                          ((not (eq lines (lol.textview:tv-lines tv)))
+                                           "C-c C-c: the text changed; not evaluated")
+                                          (t (org-run-block tv begin end)))))
+                            :single-key t))))))
 
 ;;; ---- folding in a pane -------------------------------------------------------------
 ;;;
@@ -616,7 +784,7 @@
       (cond
         ;; C-c <key>: the Org chords (the C-c itself set the prefix in the shell)
         ((and (eq *pending-prefix* :c-c) ctrl (characterp key)
-              (member (char-downcase key) '(#\n #\p #\f #\b #\u #\j #\o #\l #\t)))
+              (member (char-downcase key) '(#\n #\p #\f #\b #\u #\j #\o #\l #\t #\c)))
          (setf *pending-prefix* nil)
          (case (char-downcase key)
            (#\n (org-heading-motion tv :next))
@@ -625,6 +793,7 @@
            (#\b (org-heading-motion tv :backward))
            (#\u (org-heading-motion tv :up))
            (#\j (org-goto tv))
+           (#\c (org-ctrl-c-ctrl-c tv))
            (#\l (org-insert-link tv))
            (#\t (multiple-value-bind (lines l kw)
                     (ignore-errors (lol.org:cycle-todo (lol.textview:tv-lines tv) line))

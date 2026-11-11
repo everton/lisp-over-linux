@@ -2602,7 +2602,9 @@
      ("M-Up / M-Down"      "move the subtree")
      ("M-Left / M-Right"   "promote / demote (M-S-: subtree)")
      ("C-c C-t"            "TODO -> DONE -> none")
-     ("C-c C-o / C-c C-l"  "follow / insert a link"))
+     ("C-c C-o / C-c C-l"  "follow / insert a link")
+     ("M-. / M-, on =name=" "its definition / its senders")
+     ("C-c C-c in src block" "run the Lisp; results below"))
     ("Clipboard  (Emacs + PC)"
      ("C-w / S-Delete"     "cut the region")
      ("M-w / C-Insert"     "copy the region")
